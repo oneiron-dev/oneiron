@@ -2,7 +2,6 @@
 
 use loro::LoroDoc;
 
-use crate::affect::Vad;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
@@ -16,6 +15,7 @@ use crate::sync::quarantine::{
 };
 use crate::sync::quota;
 use crate::{Error, Result, Vault};
+use oneiron_contracts::affect::Vad;
 
 /// Shared fail-closed ingest door for replicated type-76 identity-topology
 /// event records (ARCH-0023b single-writer stream class, AUTHORITY_LOG
@@ -109,6 +109,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
                 end: header.occurred_end,
             },
             header.learned_at,
+            Some(header.row_version),
             data,
         )
         .apply(wtxn);
@@ -142,6 +143,10 @@ fn validate_replicated_identity_topology_record_before_mutation(
     id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
 ) -> Result<()> {
+    // FIX 10188: a part lives only under the id its manifest and index
+    // derive. Its decision is judged whole, once every part is here, by the
+    // effective fold that reconciliation below runs.
+    crate::identity_topology::validate_operation_part_id(id, record)?;
     vault.validate_identity_disposition_binding_in_txn(rtxn, id, record)?;
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)
@@ -279,7 +284,18 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // quarantines remote failures and commits siblings, so hydration needs
     // the same per-entity rollback boundary as the entity-delta observer.
     // A carrier its window binds by reference is the body it names (FIX 5489).
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones).with_body_refs(doc);
+    let mut ingest =
+        IngestCtx::new(vault, window_key, lease_vault_id, tombstones).with_body_refs(doc);
+    // An AUTHORITY_LOG endpoint is judged beside the window's other authority
+    // rows, as its carrier's are (FIX 11959).
+    if crate::sync::ingest::is_authority_row(&blob) {
+        ingest = ingest.with_authority_beside(
+            crate::sync::selector::authority_beside::AuthorityBeside::gather(
+                &doc.get_map("entities"),
+                |_| true,
+            ),
+        );
+    }
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
     if let EntityStep::Quarantine(refusal) = step {
@@ -316,7 +332,8 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         // A hydrated TASK reaches board subscribers after the same commit.
         Some(crate::registry::ENTITY_TYPE_TASK) => {
             if let Some(id) = step.written() {
-                crate::batch::queue_task_updates(vault, wtxn, [id]);
+                let announce = crate::context_board::task_for_announcement(&blob, id);
+                crate::batch::queue_task_updates(vault, wtxn, [announce]);
             }
         }
         _ => {}
@@ -371,10 +388,7 @@ pub fn encode_edge_value_for_crdt(
     )
 }
 
-/// Formats an edge key for CRDT map: `{src_hex}:{kind:02}:{tgt_hex}`.
-pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String {
-    format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
-}
+pub use crate::store::replica_edge_key::format_edge_key;
 
 #[cfg(test)]
 #[path = "companion_identity_tests.rs"]

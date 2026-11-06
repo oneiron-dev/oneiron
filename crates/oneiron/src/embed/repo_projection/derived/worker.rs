@@ -4,12 +4,14 @@
 //! stored bytes), the host's own model derives a text from them outside
 //! every writer, and the copy lands only when the writer finds the same
 //! proof. A model that derives nothing leaves the copy pending for the next
-//! pass; no deadline or retry count retires it.
+//! pass; no deadline or retry count retires it. A pass reads the marks
+//! twice, whatever its size (FIX 10409): once for every source it reads,
+//! once in the one writer that lands its copies.
 
 use heed::RoTxn;
 
 use super::{
-    RepoDerivedOwner, RepoDerivedReady, is_storage_error, pending_in, put_ready_in_txn,
+    RepoDerivedOwner, RepoDerivedReady, copy_in, is_storage_error, pending_in, put_ready_in_txn,
     republish_in_txn,
 };
 use crate::Vault;
@@ -17,10 +19,14 @@ use crate::embed::media::{MediaEmbeddingInput, TEXT_MEDIA_TYPE};
 use crate::embed::{EgressDecision, EgressPredicate, EmbedderLocality, InputKind};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::machine_destination::PeerMachine;
 use crate::origin::secret_projection::index::{
-    RepoDerivedIndexSources, RepoIndexMarks, opaque_index_text, repo_derived_index_sources_in,
+    RepoDerivedIndexSources, RepoIndexMarks, bind_envelope_sources_in_txn, opaque_index_text,
+    repo_derived_index_sources_in,
 };
 use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
+use crate::settings::ReadDestination;
 
 /// A host model that writes the text standing in for one a model derived
 /// from repo bytes: a caption of an image, a transcript of audio, a short
@@ -103,7 +109,11 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<RepoDerivedIndexReport> {
         let mut report = RepoDerivedIndexReport::default();
-        let texts: Vec<EntityId> = {
+        // FIX 10409: one read transaction and one mark walk read every
+        // drawn text's sources; one writer and one walk land them.
+        let mut reads = Vec::new();
+        {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let mut texts: Vec<EntityId> = pending_in(&self.store, &rtxn, usize::MAX)?
                 .into_iter()
@@ -119,28 +129,33 @@ impl Vault {
                 *blake3::keyed_hash(blake3::hash(&draw).as_bytes(), id.as_bytes()).as_bytes()
             });
             texts.truncate(max_items);
-            texts
-        };
-        for entity in texts {
-            let read = {
-                let rtxn = self.store.env.read_txn()?;
-                let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
+            if texts.is_empty() {
+                return Ok(report);
+            }
+            let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
+            for entity in texts {
                 match repo_derived_index_sources_in(self, &self.store, &rtxn, &marks, &entity) {
-                    Ok(Some(sources)) => Some((
-                        sources.proof(),
-                        source_copies_in(self, &rtxn, &marks, &sources)?,
+                    Ok(Some(sources)) => reads.push((
+                        entity,
+                        Some((
+                            sources.proof(),
+                            source_copies_in(self, &rtxn, &marks, &sources)?,
+                        )),
                     )),
-                    Ok(None) => None,
+                    Ok(None) => reads.push((entity, None)),
                     Err(error) if is_storage_error(&error) => return Err(error),
                     Err(error) => {
                         tracing::warn!(error = %error, "a derived text's sources stay unread");
                         report.declined += 1;
-                        continue;
                     }
                 }
-            };
+            }
+        }
+        let mut released = Vec::new();
+        let mut derived = Vec::new();
+        for (entity, read) in reads {
             let Some((proof, copies)) = read else {
-                self.release_derived_text(&entity)?;
+                released.push(entity);
                 report.released += 1;
                 continue;
             };
@@ -175,8 +190,23 @@ impl Vault {
                 report.declined += 1;
                 continue;
             };
-            let mut wtxn = self.store.env.write_txn()?;
-            let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
+            derived.push((entity, proof, safe_text));
+        }
+        if released.is_empty() && derived.is_empty() {
+            return Ok(report);
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
+        // A pending text no marked source reaches any more: its row goes and
+        // its index reads its own words again, when that still holds here.
+        for entity in released {
+            if repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, &entity)?.is_some() {
+                continue;
+            }
+            super::delete_in_txn(&self.store, &mut wtxn, RepoDerivedOwner::Text(entity))?;
+            republish_in_txn(self, &mut wtxn, &marks, &entity, None)?;
+        }
+        for (entity, proof, safe_text) in derived {
             let sources =
                 match repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, &entity) {
                     Ok(sources) => sources,
@@ -187,6 +217,7 @@ impl Vault {
                 report.superseded += 1;
                 continue;
             };
+            bind_envelope_sources_in_txn(&self.store, &mut wtxn, &sources)?;
             put_ready_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -203,9 +234,9 @@ impl Vault {
                 },
             )?;
             republish_in_txn(self, &mut wtxn, &marks, &entity, None)?;
-            wtxn.commit()?;
             report.derived += 1;
         }
+        wtxn.commit()?;
         Ok(report)
     }
 
@@ -221,32 +252,20 @@ impl Vault {
         if author.locality() != EmbedderLocality::ThirdParty {
             return Ok(true);
         }
+        // This door carries no endpoint for its author: the judge stays a destination
+        // nobody proved, as today.
+        let unknown = ReadDestination::toward(PeerMachine::Unknown);
         for input in inputs.iter().filter(|input| input.kind != InputKind::Text) {
             let Some(egress) = egress else {
                 return Ok(false);
             };
             if egress.decide_media(input) != EgressDecision::Allow
-                || !self.media_rows_may_leave(None, &[input.entity_id])?
+                || !self.media_rows_may_leave(None, input.source_rows(), &unknown)?
             {
                 return Ok(false);
             }
         }
         Ok(true)
-    }
-
-    /// A pending text no marked source reaches any more: its row goes and
-    /// its index reads its own words again, when that still holds in the
-    /// writer.
-    fn release_derived_text(&self, entity: &EntityId) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
-        if repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, entity)?.is_some() {
-            return Ok(());
-        }
-        super::delete_in_txn(&self.store, &mut wtxn, RepoDerivedOwner::Text(*entity))?;
-        republish_in_txn(self, &mut wtxn, &marks, entity, None)?;
-        wtxn.commit()?;
-        Ok(())
     }
 }
 
@@ -265,8 +284,18 @@ fn source_copies_in(
         let Some(row) = vault.store.port_entity_record(txn, &source.id)? else {
             continue;
         };
+        let logical;
+        let body = match crate::store::asset_file_in_txn(&vault.store, txn, &source.id, &row.body)?
+        {
+            Some(manifest) => {
+                logical = vault.asset_file_body(txn, &manifest)?;
+                logical.as_slice()
+            }
+            None => row.body.as_slice(),
+        };
         if let Some(blob) = marks.source_of(&source.id) {
-            let input = marks.source_input_in_txn(vault, txn, &blob, row.body)?;
+            let blob = marks.carried_source(&source.id, blob, body)?;
+            let input = marks.source_input_in_txn(vault, txn, &blob, body.to_vec())?;
             copies.push(if input.opaque() {
                 SourceCopy::placeholder(source.id)
             } else {
@@ -274,12 +303,36 @@ fn source_copies_in(
             });
             continue;
         }
+        if matches!(
+            row.entity_type,
+            ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY
+        ) {
+            let text =
+                match repo_derived_index_sources_in(vault, &vault.store, txn, marks, &source.id)? {
+                    Some(current) => {
+                        let Some(text) =
+                            copy_in(&vault.store, txn, RepoDerivedOwner::Text(source.id))?
+                                .and_then(|row| {
+                                    row.ready_under(&current.proof())
+                                        .map(|ready| ready.safe_text.clone())
+                                })
+                        else {
+                            return Ok(Vec::new());
+                        };
+                        Some(text)
+                    }
+                    None => super::derived_text_words(body)
+                        .map(|text| marks.text_in_txn(vault, txn, text))
+                        .transpose()?,
+                };
+            if let Some(text) = text {
+                copies.push(SourceCopy::text(source.id, text.into_bytes()));
+            }
+            continue;
+        }
         // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-        let Some((media_type, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
-            Ok(vault
-                .store
-                .port_entity_record(txn, blob)?
-                .map(|blob| blob.body))
+        let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
+            crate::embed::repo_blob_body_in_txn(vault, txn, blob)
         })?
         else {
             continue;

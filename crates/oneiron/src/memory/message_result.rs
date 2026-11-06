@@ -6,23 +6,29 @@
 //! sends names another run, body or occurrence. Each read is checked again,
 //! as the run's own reads are, against the rows the run's answers were served
 //! from and the taint the hold has now; so is the preview a transcript shows.
-//! Only a canonical MESSAGE is read here: an off-record room's lives in its
-//! room, which no lookup here reaches.
+//! A MESSAGE no canonical read finds is looked up in the off-record room
+//! session the surface binds (FIX 3620): for someone in the room, by the
+//! sight its talk copy shows the result by, its body read through the
+//! room's own storage and never copied to this vault.
 
 use serde_json::Value;
 
 use super::structural::kind_string_for_type;
 use super::*;
 
-use crate::claim::{CallerLocality, ClaimReadStatus, ScopedReadResult};
-use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, ExecutorStorage, ResultFacet, ResultRead,
-    result_refusal, unknown_handle,
-};
+use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead, ScopedReadResult};
+use crate::code_run::ExecutorStorage;
+use crate::code_run::ResultRead;
+use crate::code_run::result_refusal;
+use crate::code_run::unknown_handle;
 use crate::engine_executor::{JsResultRef, JsResultTarget};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::memory::result_facet::ResultFacet;
+use crate::off_record::OffRecordSession;
 use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
+use crate::store::result_manifest::CodeRunRawOutput;
 use crate::vault::ReadMode;
 
 /// The facet input key that narrows a read to a range of the body: a range
@@ -35,6 +41,11 @@ impl MessageResultAttachment {
     /// door's rules find a secret in it now (OF-067).
     #[must_use]
     pub(crate) fn as_shown(self, withhold: bool) -> Self {
+        if self.erased {
+            let mut shown = self;
+            shown.retire_content();
+            return shown;
+        }
         if !withhold
             && crate::batch::secret_scan::write_payload_hit(self.preview.as_bytes()).is_none()
         {
@@ -54,13 +65,23 @@ impl Memory<'_> {
     /// (a null input is an empty one). `input.ref`, a range ref of this
     /// result, narrows the read to that range; a ref to anything else names
     /// no result of it. The reply is the run's own: `{"output": ...}` or a
-    /// `denied` refusal, `result_withheld` while the rows the run's answers
-    /// were served from stay where the actor is not.
+    /// `denied` refusal, `response_erased` when an erase retired its content,
+    /// or `result_withheld` while the rows the run's answers were served from
+    /// stay where the actor is not.
+    ///
+    /// A MESSAGE that is no canonical one the actor may read is read as an
+    /// overlay MESSAGE of the off-record room session this surface binds,
+    /// when there is one ([`Self::in_off_record_session`], FIX 3620):
+    /// through the room's storage, as its participant, on the route the read
+    /// captures.
     ///
     /// # Errors
     ///
     /// `NOT_FOUND` when the actor may not read the MESSAGE, it is no visible
-    /// MESSAGE, or it carries no result a hold of its own backs.
+    /// MESSAGE, or it carries neither a held result nor its erased
+    /// disposition. In the room, when they are not on its roster, their
+    /// membership did not show
+    /// the MESSAGE when it was said, or no run of the room holds its body.
     pub fn read_message_result(
         &self,
         message: &EntityId,
@@ -80,9 +101,15 @@ impl Memory<'_> {
             .and_then(|view| view.body)
             .filter(|body| body.get("is_visible").and_then(Value::as_bool) == Some(true))
         else {
+            if let Some(reply) = self.read_room_message_result(&lane, *message, facet, input)? {
+                return Ok(reply);
+            }
             return Err(MemoryError::not_found("message not found").with_read_receipt(receipt));
         };
         let held = match MessageResultAttachment::from_metadata(body.get("metadata")) {
+            Ok(Some(attachment)) if attachment.erased => {
+                return Ok(result_refusal(crate::code_run::RESPONSE_ERASED));
+            }
             Ok(Some(attachment)) => self.held_result(*message, &attachment)?,
             Ok(None) | Err(_) => None,
         };
@@ -104,8 +131,85 @@ impl Memory<'_> {
         )?)
     }
 
+    /// [`Self::read_message_result`] of `message` as an overlay MESSAGE of
+    /// the off-record room session this surface binds (FIX 3620), for the
+    /// principal it binds the session for. Their credential-backed lane must
+    /// admit the overlay MESSAGE through the session view, they must be on the
+    /// room's roster, and their membership must have shown the MESSAGE when it
+    /// was said, as their copy of the talk shows its result. Its body is read
+    /// through the room's storage on the route the read captures, checked
+    /// against the participant on every read, as a run in the room reads it:
+    /// only a body
+    /// the room's producer run holds at the path the MESSAGE names resolves,
+    /// withheld as the canonical read withholds one, by the rows that run's
+    /// answers were served from and by the marks the room keeps on the
+    /// producer's occurrence and the MESSAGE's own. A read only: nothing of
+    /// the room is written to this vault. `None` for every refusal, so a
+    /// caller who is not in the room hears today's not-found and learns
+    /// nothing more.
+    fn read_room_message_result(
+        &self,
+        lane: &ScopedRead<'_>,
+        message: EntityId,
+        facet: Option<ResultFacet>,
+        input: Value,
+    ) -> MemoryResult<Option<Value>> {
+        let Some((session_ref, Some(reader))) = self.off_record_binding() else {
+            return Ok(None);
+        };
+        let held = self
+            .vault
+            .off_record_session_vault()
+            .bind_for(session_ref, reader)
+            .and_then(|session| {
+                let view = session.read_view()?;
+                let admitted = self
+                    .vault
+                    .scoped_read_in_session(lane.actor_key().clone(), &view)
+                    .with_claim_status(ClaimReadStatus::Recorded)
+                    .is_ref_readable(&message)?;
+                if !admitted {
+                    return Ok(None);
+                }
+                room_held_result(&session, message, reader)
+            });
+        let held = match held {
+            Ok(Some(held)) => held,
+            Ok(None) | Err(Error::OffRecord(_)) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let rows = held.served_rows.as_deref();
+        self.produced_from(rows.into_iter().flatten().copied());
+        let withheld = {
+            let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+            self.withholds_served_in(&txn, rows)?
+        };
+        if withheld {
+            return Ok(Some(result_refusal("result_withheld")));
+        }
+        let (range, input) = match narrowed(&held.output, input) {
+            Ok(narrowed) => narrowed,
+            Err(refused) => return Ok(Some(refused)),
+        };
+        match ResultRead::outside_run(
+            &held.storage,
+            held.owner,
+            held.output,
+            None,
+            range,
+            facet,
+            input,
+        ) {
+            Ok(reply) => Ok(Some(reply)),
+            // Removed from the room while the body was read.
+            Err(Error::OffRecord(_)) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// `attachment` as MESSAGE `message`'s transcript shows it to this
-    /// reader now: `None` when no hold of the MESSAGE's own backs it, its
+    /// reader now: its erased disposition when its content was retired;
+    /// otherwise `None` when no hold of the MESSAGE's own backs it, its
     /// preview withheld while the rows the run's answers were served from
     /// stay where the reader is not or the held body is not clean. A preview
     /// stored when the MESSAGE was said never outlives a later withholding.
@@ -115,6 +219,9 @@ impl Memory<'_> {
         message: EntityId,
         attachment: MessageResultAttachment,
     ) -> MemoryResult<Option<MessageResultAttachment>> {
+        if attachment.erased {
+            return Ok(Some(attachment.as_shown(false)));
+        }
         let Some((output, withheld)) = self.held_result(message, &attachment)? else {
             return Ok(None);
         };
@@ -188,6 +295,59 @@ impl Memory<'_> {
         }
         Ok(false)
     }
+}
+
+/// The body a room's MESSAGE carries, as one in the room reads it
+/// ([`Memory::read_room_message_result`]).
+struct RoomHeldResult<'v> {
+    /// The room's storage, bound for the reader on the route captured now.
+    storage: ExecutorStorage<'v>,
+    output: CodeRunRawOutput,
+    /// The run whose occurrence of the body answers for its taint: the
+    /// MESSAGE's own once the room marks it, else its producer's, so the
+    /// read is withheld while either is marked, as the talk copy's preview
+    /// is.
+    owner: EntityId,
+    /// The rows the producer run's answers were served from; `None` when
+    /// its record keeps no set, which is unknown.
+    served_rows: Option<Vec<EntityId>>,
+}
+
+/// The body MESSAGE `message` of `session`'s room carries, for `reader`, who
+/// is in the room ([`OffRecordSession::room_message_result`]); `None` when
+/// the room said no such MESSAGE, it carries no result, or the room's
+/// producer run holds no such body at the path it names.
+fn room_held_result<'v>(
+    session: &OffRecordSession<'v>,
+    message: EntityId,
+    reader: EntityId,
+) -> crate::Result<Option<RoomHeldResult<'v>>> {
+    let Some(attachment) = session.room_message_result(message, reader)? else {
+        return Ok(None);
+    };
+    let output = attachment.output()?;
+    let storage = ExecutorStorage::for_session(session, reader)?;
+    let producer = attachment.source.run_id;
+    let Some(record) = storage.get_code_run_replay_record(&producer)? else {
+        return Ok(None);
+    };
+    let produced = record.outputs.iter().any(|held| {
+        held.path == output.path
+            && held.handle == output.handle
+            && held.raw_blake3 == output.raw_blake3
+            && held.raw_len == output.raw_len
+    });
+    if !produced {
+        return Ok(None);
+    }
+    let (own, _) = storage.code_run_result_taint(Some(message), &output)?;
+    let owner = if own.is_tainted() { message } else { producer };
+    Ok(Some(RoomHeldResult {
+        storage,
+        output,
+        owner,
+        served_rows: record.agent_verb_rows(),
+    }))
 }
 
 /// `input` less its range ref, and the range of `output`'s body that ref

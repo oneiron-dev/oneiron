@@ -9,15 +9,16 @@
 use super::codec::{invalid, reply_summary};
 use super::doors::ScopeSources;
 use super::request::REQUEST_VERSION;
-use crate::attempt_queue::AttemptId;
-use crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::StoreRead;
+use crate::store::attempt_id::AttemptId;
+use crate::store::consolidation_scope::DreamerConsolidationScope;
+use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -143,6 +144,22 @@ pub(super) fn session_sources_in_txn(
     })
 }
 
+/// Whether any retained source of this sitting belongs to an excluded
+/// conversation, using the planner's membership rules before reading text.
+pub(crate) fn session_summary_excluded(vault: &Vault, session: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(&txn)?;
+    if excluded.is_empty() {
+        return Ok(false);
+    }
+    for turn in session_sources_in_txn(vault, &txn, session)?.sources {
+        if excluded.contains_turn(vault, &txn, &turn)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// `turn`'s learned time while a sitting retains its words: a TURN whose row
 /// stands, not withdrawn (deleted, stale or held from use) nor archived, and
 /// not an earlier summary's reply.
@@ -175,16 +192,16 @@ pub(super) fn source_set_id(session: &EntityId, turns: &[EntityId]) -> [u8; 32] 
 
 /// A sitting's summary covers TURNs of its sitting, each still live and not
 /// archived; it is not served once one is not.
-pub(super) fn validate_session_covers_in_txn(
+pub(super) fn validate_session_covers_through_in(
     vault: &Vault,
+    dbs: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     session: &EntityId,
     covers: &[EntityId],
 ) -> Result<()> {
     for covered in covers {
-        if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, covered)?
-            != Some(*session)
-            || crate::vault::live_entity_row_in_txn(&vault.store, txn, covered)?.live_type()
+        if crate::compaction::turn_session_membership_in_txn(dbs, txn, covered)? != Some(*session)
+            || crate::vault::live_entity_row_in_txn(dbs, txn, covered)?.live_type()
                 != Some(ENTITY_TYPE_TURN)
             || vault.archive_tombstone_in_txn(txn, covered)?.is_some()
         {

@@ -7,11 +7,9 @@ use super::claims::{
 };
 use super::opt_out_slots::{
     consume_clear_gates_in_txn, opt_out_slot_heads_in_txn, pending_clear_request_at,
+    rematerialize_subject_contacts_in_txn,
 };
-use super::parties::{
-    active_comm_party_key_in_txn, resolve_or_create_party_in_txn, resolve_party,
-    resolve_party_ref_in_txn,
-};
+use super::parties::{resolve_or_create_party_in_txn, resolve_party, resolve_party_ref_in_txn};
 use super::projection_writes::{
     build_contact_view_in_txn, count_comm_claims, matching_claims_in_txn,
     put_engine_owned_comm_claim_in_txn, require_at_most_one,
@@ -37,24 +35,22 @@ use std::collections::BTreeSet;
 /// The `comm.opt_out` reason vocabulary is the RECEIPT vocabulary
 /// (`CounterpartyOptOutReason::receipt_reason`), never the `as_str()` one: the
 /// landed heads carry these tokens, and swapping vocabularies would invalidate
-/// them. Pinned to the enum's own const fn so the two can never drift.
-pub(super) const OPT_OUT_REASON_STOP: &str = CounterpartyOptOutReason::Stop.receipt_reason();
+/// them. The enum and claim validator share the store-owned vocabulary.
+pub(super) const OPT_OUT_REASON_STOP: &str =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_STOP;
 
-const OPT_OUT_REASON_UNSUBSCRIBE: &str = CounterpartyOptOutReason::Unsubscribe.receipt_reason();
+const OPT_OUT_REASON_UNSUBSCRIBE: &str =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_UNSUBSCRIBE;
 
 const OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL: &str =
-    CounterpartyOptOutReason::BlockOrFriendRemoval.receipt_reason();
+    crate::write_envelope::communication::COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL;
 
-pub(super) const OPT_OUT_REASONS: [&str; 3] = [
-    OPT_OUT_REASON_STOP,
-    OPT_OUT_REASON_UNSUBSCRIBE,
-    OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
-];
+pub(super) const OPT_OUT_REASONS: [&str; 3] =
+    crate::write_envelope::communication::COMM_OPT_OUT_REASONS;
 
-/// Longest `send_ref` a one-shot override may bind.
-pub(super) const MAX_SEND_REF_BYTES: usize = 256;
+pub(super) use crate::write_envelope::communication_record::MAX_SEND_REF_BYTES;
 
-pub(super) const OPT_OUT_CLEAR_REASON: &str = "comm_opt_out_clear";
+pub(super) use crate::write_envelope::communication_record::OPT_OUT_CLEAR_REASON;
 
 const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 
@@ -138,7 +134,10 @@ pub fn request_opt_out_clear(
             created_at,
             pending: true,
         };
-        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &gate)?;
+        let gate_id = vault.store.clock.entity_id()?;
+        put_comm_record_in_txn(vault, wtxn, gate_id, &gate)?;
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(vault, wtxn, BTreeSet::from([gate_id]));
         Ok(CommClearOptOutOutcome::PendingHumanRuling)
     })
 }
@@ -234,6 +233,12 @@ pub fn approve_pending_opt_out_clear(
                 });
             if superseded {
                 consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+                #[cfg(feature = "sync")]
+                crate::batch::queue_committed_rows(
+                    vault,
+                    wtxn,
+                    gates.iter().map(|(gate_id, _, _)| *gate_id).collect(),
+                );
                 // Commit the consumed gates, then refuse after the txn —
                 // returning Err here would roll the consume back.
                 return Ok(ClearRuling::Superseded);
@@ -253,9 +258,23 @@ pub fn approve_pending_opt_out_clear(
         // other; whether a REMAINING head still suppresses each of those
         // rows stays the fold's decision.
         let cleared: BTreeSet<EntityId> = heads.iter().map(|head| head.subject).collect();
-        rematerialize_subject_contacts_in_txn(vault, wtxn, &cleared, channel_class, ruled_at)?;
+        let contacts =
+            rematerialize_subject_contacts_in_txn(vault, wtxn, &cleared, channel_class, ruled_at)?;
         consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+        // The retracted heads, rebuilt contacts and consumed gates go to the
+        // live-window mirror when the write commits, with the receipt below.
+        #[cfg(feature = "sync")]
+        let mut rows: BTreeSet<EntityId> = heads
+            .iter()
+            .map(|head| head.claim_ref)
+            .chain(contacts)
+            .chain(gates.iter().map(|(gate_id, _, _)| *gate_id))
+            .collect();
+        #[cfg(not(feature = "sync"))]
+        drop(contacts);
         if heads.is_empty() {
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(vault, wtxn, rows);
             return Ok(ClearRuling::NoActiveOptOut);
         }
         let receipt = CommRecord::Receipt {
@@ -265,7 +284,12 @@ pub fn approve_pending_opt_out_clear(
             outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
             actor_ref: actor.entity_ref(),
         };
-        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &receipt)?;
+        let receipt_id = vault.store.clock.entity_id()?;
+        put_comm_record_in_txn(vault, wtxn, receipt_id, &receipt)?;
+        #[cfg(feature = "sync")]
+        rows.insert(receipt_id);
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(vault, wtxn, rows);
         Ok(ClearRuling::Cleared)
     })?;
     match ruling {
@@ -704,14 +728,15 @@ pub(crate) fn supersede_party_opt_out_head_in_txn(
 /// `channel_class`, inside the projector's own write transaction.
 ///
 /// Claims moved; the cache follows in the SAME transaction, so the gate's
-/// type-132-fed fold can never observe the old suppression state.
+/// type-132-fed fold can never observe the old suppression state. Answers the
+/// contacts whose rows it re-derived.
 pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     party_ref: EntityId,
     channel_class: &str,
     now: u64,
-) -> CommResult<()> {
+) -> CommResult<Vec<EntityId>> {
     rematerialize_subject_contacts_in_txn(
         vault,
         wtxn,
@@ -719,52 +744,4 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
         channel_class,
         now,
     )
-}
-
-/// Re-derives the type-132 cache of every contact that folds a
-/// `channel_class` head standing on one of `subjects`.
-///
-/// A contact folds the heads of the ACTIVE party its key resolves to, and that
-/// party reads its shells through, so a head on a shell reaches the contacts of
-/// every active party the shell points at: a twin's survivor shares its key
-/// (F06 H170), and a merge of two different keys puts the survivor's contacts
-/// under the shell's heads (F06 R2-F3). Those parties come from the witnesses
-/// the fold's inbound walk reads, not the redirect table alone, and the walk
-/// has no depth or cycle error, so a dropped table or a long chain can neither
-/// narrow the refresh nor refuse the STOP (F06 R3-F1, R3-F2). A merged
-/// entity's own key is skipped: no active party answers it, so a rebuild there
-/// folds none of the heads it still carries and would drop its STOP (F06
-/// R4-F1). That also keeps a chain at one refresh per active head (R4-F2).
-/// Each key's contacts come from the full scan the send gate also uses:
-/// the party-channel index (ONE-1868) cannot prove it lists every contact.
-/// Channel scope stays the fold's class match, so an email STOP never
-/// re-derives a telegram contact.
-fn rematerialize_subject_contacts_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    subjects: &BTreeSet<EntityId>,
-    channel_class: &str,
-    now: u64,
-) -> CommResult<()> {
-    let mut parties = subjects.clone();
-    parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
-        &vault.store,
-        &*wtxn,
-        subjects,
-    )?);
-    let mut party_keys = BTreeSet::new();
-    for party in parties {
-        party_keys.extend(active_comm_party_key_in_txn(&vault.store, &*wtxn, party)?);
-    }
-    let channel_class = normalize_channel_class(channel_class);
-    for party_key in party_keys {
-        crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
-            vault,
-            wtxn,
-            &party_key,
-            Some(&channel_class),
-            now,
-        )?;
-    }
-    Ok(())
 }

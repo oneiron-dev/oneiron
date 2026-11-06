@@ -18,18 +18,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    CoordinationPattern, SkillRevisionRef, load_team_type_tree_at_in_txn,
-    load_team_type_tree_in_txn, store_team_type_tree, team_shape_skill_in_force_in_txn,
+    SkillRevisionRef, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
+    store_team_type_tree, team_shape_skill_in_force_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
-use crate::learning::TypeRef;
-use crate::llm::ReasoningEffort;
-use crate::llm::decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::model_decision::{DecisionRung, ProviderPin};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
+use crate::team::team_shape::CoordinationPattern;
 use crate::team::{PatternSkillRef, SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
+use oneiron_model::llm::ReasoningEffort;
 
 pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
 

@@ -11,13 +11,15 @@
 //! the key file, and the custody door lends it to each signature, recorded
 //! as a use (FIX 1297). `ONEIRON_SEAL_TRUST` names the trust anchors (PEM;
 //! the chain's last certificate when unset),
-//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal; B-B without one),
-//! and `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
+//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal, B-LT with revocation origins; B-B without one),
+//! `ONEIRON_SEAL_CRL_ORIGINS` and `ONEIRON_SEAL_OCSP_ORIGINS` comma-separated
+//! origins whose revocation material the seal may fetch, and
+//! `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
 //! at the host's public origin when unset). A managed vault reads no
 //! environment, so its supervisor passes the same settings per vault as
 //! `--seal-key-file` (or `--seal-key-handle`), `--seal-chain-file`,
-//! `--seal-trust-file`, `--seal-tsa-url`, `--seal-signing-url` and
-//! `--seal-organ` (FIX 3487).
+//! `--seal-trust-file`, `--seal-tsa-url`, `--seal-crl-origins`,
+//! `--seal-ocsp-origins`, `--seal-signing-url` and `--seal-organ` (FIX 3487).
 //! The seal organ is the build an installed pack carries for this platform,
 //! written under `ONEIRON_ORGAN_DIR`, or the program `ONEIRON_SEAL_ORGAN`
 //! (`--seal-organ`) names. A pack build follows the packs: when the
@@ -25,9 +27,10 @@
 //! installed (a seal pack updated or removed), the host drops it, and the
 //! tick installs the current one, or waits for one. A pack's seal build is
 //! third party unless the operator listed its blake3
-//! (`--trusted-organ-build`, FIX 7644), and a third-party organ cannot start
-//! until filesystem confinement for organs lands: seals then wait, and the
-//! worker says so once. The program the host names stays first party.
+//! (`--trusted-organ-build`, FIX 7644), and a third-party organ starts only
+//! inside a filesystem fence (Landlock on Linux, Seatbelt on macOS, FIX
+//! 7885): on a host with none, seals wait, and the worker says so once. The
+//! program the host names stays first party.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +54,8 @@ const KEY_HANDLE: SettingName = ("ONEIRON_SEAL_KEY_HANDLE", "--seal-key-handle")
 const CHAIN: SettingName = ("ONEIRON_SEAL_CHAIN", "--seal-chain-file");
 const TRUST: SettingName = ("ONEIRON_SEAL_TRUST", "--seal-trust-file");
 const TSA: SettingName = ("ONEIRON_SEAL_TSA", "--seal-tsa-url");
+const CRL_ORIGINS: SettingName = ("ONEIRON_SEAL_CRL_ORIGINS", "--seal-crl-origins");
+const OCSP_ORIGINS: SettingName = ("ONEIRON_SEAL_OCSP_ORIGINS", "--seal-ocsp-origins");
 const URL: SettingName = ("ONEIRON_SEAL_URL", "--seal-signing-url");
 const ORGAN: SettingName = ("ONEIRON_SEAL_ORGAN", "--seal-organ");
 
@@ -69,6 +74,10 @@ pub(crate) struct SealConfig {
     pub(crate) trust: Option<PathBuf>,
     /// A timestamp authority's URL: a B-T seal, B-B without one.
     pub(crate) tsa: Option<String>,
+    /// Origins whose certificate revocation lists the seal may fetch.
+    pub(crate) crl_origins: Vec<String>,
+    /// Origins whose OCSP responders the seal may query.
+    pub(crate) ocsp_origins: Vec<String>,
     /// The signing page the evidence names.
     pub(crate) signing_url: Option<String>,
     /// The seal organ's program, in place of an installed pack's build.
@@ -81,12 +90,21 @@ impl SealConfig {
     /// The `ONEIRON_SEAL_*` environment.
     pub(crate) fn from_env() -> Self {
         let text = |(name, _): SettingName| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let list = |setting| {
+            text(setting)
+                .map(|value| {
+                    crate::config::normalize_list(value.split(',').map(str::to_owned).collect())
+                })
+                .unwrap_or_default()
+        };
         Self {
             key: env_path(KEY),
             key_handle: text(KEY_HANDLE),
             chain: env_path(CHAIN),
             trust: env_path(TRUST),
             tsa: text(TSA),
+            crl_origins: list(CRL_ORIGINS),
+            ocsp_origins: list(OCSP_ORIGINS),
             signing_url: text(URL),
             organ: env_path(ORGAN),
             argv: false,
@@ -112,18 +130,7 @@ const PER_TICK: usize = 8;
 /// fetch row does not ask twice.
 const FETCH_MAX_BYTES: u64 = u64::MAX;
 
-/// Starts the seal worker on the server's runtime, every tick admitted, on
-/// the environment's seal settings. It seals on the server's organ host,
-/// the one the mesh listener offers.
-pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
-    spawn_admitted(
-        server,
-        crate::server::admit_every_pass(),
-        SealConfig::from_env(),
-    )
-}
-
-/// [`spawn`] under a host's freeze (a managed host that reaps its vault): a
+/// Starts the seal worker under a host's freeze (a managed host that reaps its vault): a
 /// tick runs only when `admit` lets it, and holds what it was given until
 /// its seals are written. It seals on `seal`, the vault's own settings.
 pub(crate) fn spawn_admitted(
@@ -193,20 +200,21 @@ fn tick(
     if seal.organ.is_none() {
         follow_seal_pack(server, installs);
     }
-    let keys = seal_keys(server, seal)?;
     let tsa = seal.tsa.clone();
     if host.status(SEAL_ORGAN).is_none() {
         host.install(install(server, seal, fetch_grant(seal, tsa.as_deref())?)?);
     }
+    let keys = seal_keys(server, seal)?;
     if let Some(installed) = host.spec(SEAL_ORGAN)
         && installed.tier == OrganTier::ThirdParty
+        && !oneiron_organ_host::filesystem_confined()
     {
         let build = installed
             .program_hash
             .map(|hash| hash.to_hex())
             .unwrap_or_default();
         return Err(format!(
-            "the seal organ build {build} is third party, and this platform has no filesystem confinement for organs yet: set {}, or list the build with --trusted-organ-build",
+            "the seal organ build {build} is third party, and this host has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS): set {}, or list the build with --trusted-organ-build",
             seal.name(ORGAN)
         ));
     }
@@ -230,13 +238,18 @@ fn tick(
         }
     };
     let mut settings = SealSettings::new(anchors, "esign.seal");
+    let revocation = !seal.crl_origins.is_empty() || !seal.ocsp_origins.is_empty();
     let profile = match tsa {
         Some(url) => {
             settings.timestamp_authorities.push(SealTsa {
                 url,
                 policy_oid: None,
             });
-            SealProfile::BaselineT
+            if revocation {
+                SealProfile::BaselineLt
+            } else {
+                SealProfile::BaselineT
+            }
         }
         None => SealProfile::BaselineB,
     };
@@ -333,13 +346,13 @@ fn install(server: &SyncServer, seal: &SealConfig, fetch: FetchGrant) -> Result<
     let tier = server.pack_build_tier(&binary.build);
     let spec = seal_spec_from_pack(&binary, &server.organ_dir(), tier, fetch)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    if tier == OrganTier::ThirdParty {
+    if tier == OrganTier::ThirdParty && !oneiron_organ_host::filesystem_confined() {
         tracing::warn!(
             organ = SEAL_ORGAN,
             pack = %entry.pack_name,
             build = %binary.build.blake3,
             %platform,
-            "pack organ build is third party: it will not start on this platform until filesystem confinement for organs lands; to seal with it, the operator lists its blake3 with --trusted-organ-build, or names a seal organ program"
+            "pack organ build is third party: it will not start on this host, which has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS); to seal with it, the operator lists its blake3 with --trusted-organ-build, or names a seal organ program"
         );
     }
     Ok(spec)
@@ -387,24 +400,52 @@ fn follow_seal_pack(server: &SyncServer, seen: &mut Option<Vec<PackInstallReceip
     *seen = Some(installs);
 }
 
-/// Where the seal may fetch: its timestamp authority's origin.
+/// One exact origin a configured URL admits to the seal's fetch grant.
+fn fetch_origin(
+    seal: &SealConfig,
+    setting: SettingName,
+    value: &str,
+) -> Result<FetchOrigin, String> {
+    let name = seal.name(setting);
+    let url = reqwest::Url::parse(value).map_err(|_| format!("{name} is not a URL"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("{name} names no host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| format!("{name} names no port"))?;
+    Ok(FetchOrigin::new(url.scheme(), host, port))
+}
+
+/// Where the seal may fetch: its timestamp authority and configured
+/// certificate-revocation origins (FIX 1298).
 fn fetch_grant(seal: &SealConfig, tsa: Option<&str>) -> Result<FetchGrant, String> {
     let mut grant = FetchGrant {
         max_bytes: FETCH_MAX_BYTES,
         ..FetchGrant::default()
     };
     if let Some(tsa) = tsa {
-        let name = seal.name(TSA);
-        let url = reqwest::Url::parse(tsa).map_err(|_| format!("{name} is not a URL"))?;
-        let host = url
-            .host_str()
-            .ok_or_else(|| format!("{name} names no host"))?;
-        let port = url
-            .port_or_known_default()
-            .ok_or_else(|| format!("{name} names no port"))?;
-        grant
-            .origins
-            .push(FetchOrigin::new(url.scheme(), host, port));
+        grant.origins.push(fetch_origin(seal, TSA, tsa)?);
+    }
+    for value in &seal.crl_origins {
+        match fetch_origin(seal, CRL_ORIGINS, value) {
+            Ok(origin) => grant.origins.push(origin),
+            Err(error) => tracing::warn!(
+                setting = %seal.name(CRL_ORIGINS),
+                %error,
+                "invalid revocation origin omitted"
+            ),
+        }
+    }
+    for value in &seal.ocsp_origins {
+        match fetch_origin(seal, OCSP_ORIGINS, value) {
+            Ok(origin) => grant.origins.push(origin),
+            Err(error) => tracing::warn!(
+                setting = %seal.name(OCSP_ORIGINS),
+                %error,
+                "invalid revocation origin omitted"
+            ),
+        }
     }
     Ok(grant)
 }

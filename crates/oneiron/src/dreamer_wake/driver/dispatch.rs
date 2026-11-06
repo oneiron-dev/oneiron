@@ -11,6 +11,11 @@ use super::*;
 use crate::dreamer_consolidation::PreparedWake;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 
+/// The stage of an attempt the wake's frozen preparation does not hold: it
+/// ran nothing this pass, so it settles as a backlog wait, never as a
+/// selection deferral.
+pub(super) const BACKLOG_DEFERRED_STAGE: &str = "backlog_deferred";
+
 /// What one admitted attempt dispatches with: its pass, the attempt, the
 /// pass's cancellation and whether it was raised at the checkpoint, the
 /// wake's frozen preparation, the attempt's run line and its meter, and the
@@ -99,7 +104,7 @@ impl DreamerWakeDriver<'_> {
             // a backlog larger than one wake prepares: never admit it to
             // this snapshot or fall back to a newer per-attempt read. Past
             // the head, the pass ends here and the next prepares the rest.
-            stage = Some("backlog_deferred");
+            stage = Some(BACKLOG_DEFERRED_STAGE);
             backlog_left = prepared_wake.left_for_later(attempt_id);
             Ok(DreamerAttemptExecution::Deferred {
                 completed_units: 0,
@@ -133,10 +138,15 @@ impl DreamerWakeDriver<'_> {
                 step_hashes: Vec::new(),
             })
         } else {
+            // Pre-dispatch sync (FIX 11963): a wake ask raised while
+            // the window settled trips the device work this attempt is
+            // about to admit under.
+            sync_wake_cancel(cancel, &self.device_cancel);
             let mut ctx = WakeAttemptContext {
                 vault: self.vault,
                 deadline: &self.deadline,
                 cancel: Some(cancel),
+                device_cancel: Some(self.device_cancel.clone()),
                 budget_id: line,
                 now_ms: input.now.saturating_mul(1_000),
                 prepared_wake: Some(prepared_wake),
@@ -222,9 +232,7 @@ impl DreamerWakeDriver<'_> {
                         "dreamer attempt executor panicked; parking the admitted attempt"
                     );
                     stage = Some("executor_panic");
-                    Err(crate::Error::InvariantViolation(
-                        "dreamer attempt executor panicked",
-                    ))
+                    Err(crate::dreamer_wake::executor_panic_error())
                 }
             }
         };

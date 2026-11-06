@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops, apply_ops_with_gate_mode,
 };
@@ -17,6 +16,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 impl Vault {
     /// Writes a typed CLAIM (type 0) entity with full structural validation
@@ -53,6 +53,14 @@ impl Vault {
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
+        if body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_PASSPORT {
+            crate::calendar::settle_generic_calendar_claim_in_txn(
+                self,
+                &mut wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+        }
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
         // The approval's commit carries its consolidation debt (FIX 9598).
         if !approved.is_empty() {
@@ -113,6 +121,65 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 
+    /// A selected value-field redaction keeps the existing subject edge
+    /// byte-for-byte, including its current weight and recorded-at stamp.
+    /// Only the exact-field transform constructs this row; ordinary body,
+    /// family and source-trust admission still run on its actual bytes.
+    pub(crate) fn put_claim_value_redaction_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        row: &crate::vault::entity_revision::ClaimValueRedactionRow,
+    ) -> Result<()> {
+        let raw = row.raw();
+        let header = EntityMetadataHeader::parse(raw)
+            .ok_or(Error::CorruptedIndex("claim redaction header"))?;
+        let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        let body = validate_claim_body_and_decode_in_txn(&self.store, txn, data, false)?;
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
+        match body.subject {
+            ClaimSubject::Edge { .. }
+                if !self.owner_reads_edge_subject_in(txn, &body.subject)? =>
+            {
+                return Err(Error::EntityNotFound);
+            }
+            ClaimSubject::Entity(subject)
+                if self.store.port_entity_record(txn, &subject)?.is_none() =>
+            {
+                return Err(Error::EntityNotFound);
+            }
+            _ => {}
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+                row_version: Some(header.row_version),
+                data: data.to_vec(),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
     /// Whether any live Owner of the vault may read `subject`'s exact live
     /// edge and both its endpoints in `txn` (OF-063, 1222): the union of
     /// every live Owner's scoped reader, so no Owner's place in the roster
@@ -166,6 +233,36 @@ impl Vault {
         learned_at: u64,
         allow_reserved_predicate: bool,
     ) -> Result<()> {
+        let ops = self.claim_put_ops_in_txn(
+            wtxn,
+            id,
+            body,
+            occurred,
+            learned_at,
+            allow_reserved_predicate,
+        )?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
+    fn claim_put_ops_in_txn(
+        &self,
+        wtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        allow_reserved_predicate: bool,
+    ) -> Result<Vec<BatchOp>> {
         let data = encode_claim_body(body)?;
         // Full structural validation runs here and again at the BatchOp write
         // chokepoint with the exact same reserved-door setting.
@@ -176,6 +273,7 @@ impl Vault {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate,
@@ -194,17 +292,45 @@ impl Vault {
                 vad: Vad::NEUTRAL,
             });
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )
+        Ok(ops)
+    }
+
+    /// The ordinary typed claim program, landed only for the actual selected
+    /// room closure and the saver its closed capability proves.
+    pub(crate) fn put_saved_claim_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        saver: crate::WriteActor,
+        grant: &crate::off_record::PromoteReplayGrant,
+        edges: Vec<BatchOp>,
+    ) -> Result<()> {
+        if !grant.exempts(id) || grant.selected_saver() != Some(saver) {
+            return Err(Error::InvariantViolation(
+                "claim is outside the selected save",
+            ));
+        }
+        crate::memory::guard_existing_claim_in_txn(self, txn, saver, *id)?;
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
+        if let ClaimSubject::Edge { .. } = body.subject
+            && !self.owner_reads_edge_subject_in(txn, &body.subject)?
+        {
+            return Err(Error::EntityNotFound);
+        }
+        // This admitted room row already owns its selected identity. The
+        // generic projector router would author a different derived head.
+        let mut ops = self.claim_put_ops_in_txn(txn, id, body, occurred, learned_at, false)?;
+        // Current source edge metadata, including its claim_of weight and
+        // stamp, replaces the native default for that same edge.
+        ops.extend(edges);
+        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(txn, &saver)
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
@@ -231,31 +357,7 @@ impl Vault {
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            // The batch door's pairing: an overwrite drops the prospective
-            // query hints the prior claim carried (H83).
-            vec![
-                BatchOp::ClaimCandidate {
-                    id: *id,
-                    candidate: Box::new(candidate),
-                    envelope: envelope.clone(),
-                    occurred,
-                    learned_at,
-                    internal_lexical_query_hint: false,
-                },
-                BatchOp::ReconcileLexicalQueryHints {
-                    source: *id,
-                    keep: Vec::new(),
-                },
-            ],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
-        )?;
+        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -427,6 +529,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: old_header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -508,7 +611,7 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         envelope: &WriteEnvelope,
     ) -> Result<()> {
-        crate::gate::validate_write_envelope(envelope)?;
+        crate::write_envelope::validate_write_envelope(envelope)?;
         let actor = envelope.actor();
         let actor_raw = self
             .store
@@ -549,7 +652,7 @@ impl Vault {
             &id,
             crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
             policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,

@@ -11,7 +11,9 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::{ContentPart, ImageContent, LlmMessage, LlmMessageRole, LlmStreamEvent};
+use oneiron::{
+    ContentPart, ImageContent, LlmMessage, LlmMessageRole, LlmStreamEvent, ReasoningPartKind,
+};
 use serde_json::Value as JsonValue;
 
 /// One part as it was shown.
@@ -20,6 +22,8 @@ enum Shown {
     Reasoning {
         text: String,
         signature: Option<String>,
+        reasoning_kind: ReasoningPartKind,
+        data: Option<String>,
     },
     Tool {
         call_id: String,
@@ -48,6 +52,8 @@ enum OrderedReplyPart<'a> {
     Reasoning {
         text: String,
         signatures: Vec<&'a str>,
+        reasoning_kind: ReasoningPartKind,
+        data: Option<&'a str>,
     },
     Tool {
         call_id: &'a str,
@@ -66,11 +72,18 @@ impl Emitted {
         use LlmStreamEvent as Event;
         match event {
             Event::TextStart { part_id } => self.start(part_id, Shown::Text(String::new())),
-            Event::ReasoningStart { part_id, signature } => self.start(
+            Event::ReasoningStart {
+                part_id,
+                signature,
+                reasoning_kind,
+                data,
+            } => self.start(
                 part_id,
                 Shown::Reasoning {
                     text: String::new(),
                     signature: signature.clone(),
+                    reasoning_kind: *reasoning_kind,
+                    data: data.clone(),
                 },
             ),
             Event::TextDelta { part_id, text } | Event::ReasoningDelta { part_id, text } => {
@@ -78,6 +91,14 @@ impl Emitted {
                     self.parts.get_mut(part_id)
                 {
                     shown.push_str(text);
+                }
+            }
+            Event::ReasoningEnd { part_id, signature } => {
+                if let Some(Shown::Reasoning {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id)
+                {
+                    shown.clone_from(signature);
                 }
             }
             Event::ToolCallStart {
@@ -120,7 +141,13 @@ impl Emitted {
     /// is the answer then.
     pub(crate) fn is_empty(&self) -> bool {
         self.parts.values().all(|part| match part {
-            Shown::Text(text) | Shown::Reasoning { text, .. } => text.is_empty(),
+            Shown::Text(text) => text.is_empty(),
+            Shown::Reasoning {
+                text,
+                signature,
+                data,
+                ..
+            } => text.is_empty() && signature.is_none() && data.is_none(),
             Shown::Tool { .. } | Shown::Image { .. } => false,
         })
     }
@@ -152,9 +179,16 @@ impl Emitted {
             .iter()
             .filter_map(|id| match self.parts.get(id)? {
                 Shown::Text(text) => Some(ContentPart::Text { text: text.clone() }),
-                Shown::Reasoning { text, signature } => Some(ContentPart::Reasoning {
+                Shown::Reasoning {
+                    text,
+                    signature,
+                    reasoning_kind,
+                    data,
+                } => Some(ContentPart::Reasoning {
                     text: text.clone(),
                     signature: signature.clone(),
+                    reasoning_kind: *reasoning_kind,
+                    data: data.clone(),
                 }),
                 Shown::Tool {
                     call_id,
@@ -185,18 +219,27 @@ fn ordered<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Vec<OrderedRep
                 _ if text.is_empty() => {}
                 _ => parts.push(OrderedReplyPart::Text(text.clone())),
             },
-            ContentPart::Reasoning { text, signature } => match parts.last_mut() {
+            ContentPart::Reasoning {
+                text,
+                signature,
+                reasoning_kind,
+                data,
+            } => match parts.last_mut() {
                 Some(OrderedReplyPart::Reasoning {
                     text: run,
                     signatures,
-                }) => {
+                    reasoning_kind: run_kind,
+                    data: run_data,
+                }) if *run_kind == *reasoning_kind && *run_data == data.as_deref() => {
                     run.push_str(text);
                     signatures.extend(signature.as_deref());
                 }
-                _ if text.is_empty() && signature.is_none() => {}
+                _ if text.is_empty() && signature.is_none() && data.is_none() => {}
                 _ => parts.push(OrderedReplyPart::Reasoning {
                     text: text.clone(),
                     signatures: signature.as_deref().into_iter().collect(),
+                    reasoning_kind: *reasoning_kind,
+                    data: data.as_deref(),
                 }),
             },
             ContentPart::ToolCall {

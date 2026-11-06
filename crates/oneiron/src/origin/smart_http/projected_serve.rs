@@ -27,7 +27,6 @@ use super::recipient_serve::{RepoGitReadContext, store_holds_readable_marks_in_t
 use super::serve::unpinned_repo_ref;
 use super::serve_cmd::{ServeCommand, ServeRequest};
 use crate::Vault;
-use crate::checkout::lease::CheckoutLeaseAct;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
@@ -38,6 +37,7 @@ use crate::origin::secret_projection::checkout_recipient::projected_checkout_rec
 use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionRecord,
 };
+use crate::origin::secret_projection::disposal::retire_superseded_recipient_copies;
 use crate::origin::secret_projection::git::{
     RepoGitProjection, RepoGitProjectionRoots, materialize_masked_git_graph,
     materialize_recipient_git_graph, plan_repo_git_release, projection_ingress_dir,
@@ -45,6 +45,7 @@ use crate::origin::secret_projection::git::{
 };
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
 use crate::secret_custody::RepoFileReadDisclosure;
+use crate::store::checkout_lease::CheckoutLeaseAct;
 
 /// What a masked recipient's exchange on a marked store runs against.
 pub(super) enum ProjectedExchange {
@@ -213,7 +214,8 @@ pub(super) fn select_projected_exchange(
 /// grant on some of its marked files reads the granted sibling of
 /// `masked`, each released file delivered afresh before an upload-pack
 /// exchange sends anything; every other read is `masked`, as today, with
-/// no ask and no refusal.
+/// no ask and no refusal. The recipient's copies planned under any other
+/// release are retired (FIX 10846).
 ///
 /// # Errors
 /// A store or git failure, or the file check's own.
@@ -242,20 +244,21 @@ fn granted_variant(
             None => return Ok(masked),
         },
     };
-    let Some(mut plan) = plan_repo_git_release(vault, &masked, binding)? else {
+    let Some(mut plan) = plan_repo_git_release(vault, &masked, binding.clone())? else {
+        retire_superseded_recipient_copies(vault, &masked, &binding, None);
         return Ok(masked);
     };
     if request.method == "POST" && request.path_info.ends_with("/git-upload-pack") {
         plan = prepare_repo_git_delivery(vault, wire, canonical, plan, &why)?;
         if plan.is_empty() {
+            retire_superseded_recipient_copies(vault, &masked, &binding, None);
             return Ok(masked);
         }
     }
     let now = vault.now_recorded_at();
-    Ok(
-        materialize_recipient_git_graph(vault, wire, canonical, &masked, &plan, now)?
-            .unwrap_or(masked),
-    )
+    let granted = materialize_recipient_git_graph(vault, wire, canonical, &masked, &plan, now)?;
+    retire_superseded_recipient_copies(vault, &masked, &binding, Some(&plan));
+    Ok(granted.unwrap_or(masked))
 }
 
 /// The lease the request's checkout ticket names, as the credential door
@@ -287,7 +290,7 @@ fn admitted_lease(
 }
 
 fn lease_pin(lease: &CheckoutLeaseAct) -> Result<GitOid> {
-    let crate::codebase::RepoRef::LocalFolder { commit, .. } = &lease.repo_ref else {
+    let crate::store::code_snapshot::RepoRef::LocalFolder { commit, .. } = &lease.repo_ref else {
         return Err(serve_failed(
             "a checkout lease's repo must be a local folder",
         ));

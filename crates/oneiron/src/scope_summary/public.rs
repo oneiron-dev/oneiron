@@ -1,11 +1,13 @@
 //! Credential-bound adapters. Text storage, grants and fork settlement stay in EntityDoc.
 
 use super::public_types::*;
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
+use crate::ports::ScopedReadResult;
+use crate::ports::{ClaimReadStatus, PointRead};
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::{EntityId, WriteActor};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 fn side_id(value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value).map_err(|_| MemoryError::bad_request("expected a full hex id"))
@@ -13,7 +15,7 @@ fn side_id(value: &str) -> MemoryResult<EntityId> {
 
 fn absent() -> MemoryError {
     MemoryError::new(
-        crate::memory::MEMORY_CODE_NOT_FOUND,
+        oneiron_contracts::memory::MEMORY_CODE_NOT_FOUND,
         "SUMMARY or proposal member is absent or not readable",
         &[],
     )
@@ -21,7 +23,8 @@ fn absent() -> MemoryError {
 
 impl SummaryScope {
     fn selector(&self, memory: &Memory<'_>) -> MemoryResult<ScopeSelector> {
-        let resolve = |value: &str| crate::memory::resolve_entity_ref(memory.vault(), value);
+        let resolve =
+            |value: &str| crate::vault::entity_refs::resolve_entity_ref(memory.vault(), value);
         Ok(ScopeSelector {
             conversation: resolve(&self.conversation_ref)?,
             session: self.session.as_deref().map(resolve).transpose()?,
@@ -97,7 +100,9 @@ impl Memory<'_> {
                     land_on: input
                         .land_on
                         .as_deref()
-                        .map(|value| crate::memory::resolve_entity_ref(self.vault(), value))
+                        .map(|value| {
+                            crate::vault::entity_refs::resolve_entity_ref(self.vault(), value)
+                        })
                         .transpose()?,
                     as_record: input.as_record,
                 }
@@ -113,9 +118,34 @@ impl Memory<'_> {
             target,
             requester: self.write_actor(),
         };
-        let queued = match &input.purpose {
-            Some(purpose) => self.vault().request_scope_summary_for(&request, purpose)?,
-            None => self.vault().request_scope_summary(&request)?,
+        let plain_queue = || match &input.purpose {
+            Some(purpose) => self.vault().request_scope_summary_for(&request, purpose),
+            None => self.vault().request_scope_summary(&request),
+        };
+        let queued = if matches!(
+            &request.target,
+            super::ScopeSummaryTarget::Sources { scope: None, .. }
+        ) {
+            let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+            if lane.actor_key().room_turn().is_some() {
+                // A room turn has no frozen form; keep this door's current queue.
+                plain_queue()?
+            } else {
+                match self.vault().request_scope_summary_in_lane(
+                    &request,
+                    input.purpose.as_deref(),
+                    &lane,
+                ) {
+                    // Narrowed guests likewise have no portable lane. This door
+                    // keeps its existing admission rather than adding a refusal.
+                    Err(error) if crate::claim::FrozenReadLane::is_guest_lane_refusal(&error) => {
+                        plain_queue()?
+                    }
+                    outcome => outcome?,
+                }
+            }
+        } else {
+            plain_queue()?
         };
         let attempt = crate::entity_id::bytes_to_hex_lower(queued.attempt.as_bytes());
         Ok(SummaryQueued {
@@ -132,13 +162,13 @@ impl Memory<'_> {
         let status = match (&input.attempt, &input.session_ref) {
             (Some(attempt), None) => {
                 let id = side_id(attempt)?;
-                let attempt = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
+                let attempt = crate::store::attempt_id::AttemptId::from_bytes(id.as_bytes())?;
                 self.vault().scope_summary_status(attempt)?
             }
             // A sitting's summary is its own actor's (FIX 7509): the caller
             // is bound to the sitting's actor before its attempt is read.
             (None, Some(session)) => {
-                let session = crate::memory::resolve_entity_ref(self.vault(), session)?;
+                let session = crate::vault::entity_refs::resolve_entity_ref(self.vault(), session)?;
                 self.vault()
                     .session_summary_status(&session, self.actor())?
                     .ok_or_else(absent)?
@@ -163,7 +193,8 @@ impl Memory<'_> {
         &self,
         input: &SummaryReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<SummaryReadView>>> {
-        let summary = crate::memory::resolve_entity_ref(self.vault(), &input.summary_ref)?;
+        let summary =
+            crate::vault::entity_refs::resolve_entity_ref(self.vault(), &input.summary_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         lane.read_projected(&[PointRead::id(summary)], None, |txn, rows| {
             let Some(row) = rows
@@ -198,7 +229,7 @@ impl Memory<'_> {
         })?
         .value
         .ok_or_else(absent)?;
-        crate::memory::resolve_entity_ref(self.vault(), reference)
+        crate::vault::entity_refs::resolve_entity_ref(self.vault(), reference)
     }
 
     /// A NOTE set (FIX 5757): each NOTE read on the caller's own lane before
@@ -218,7 +249,7 @@ impl Memory<'_> {
             .iter()
             .map(|note| {
                 self.require_summary_source(note)?;
-                crate::memory::resolve_entity_ref(self.vault(), note)
+                crate::vault::entity_refs::resolve_entity_ref(self.vault(), note)
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         Ok(super::ScopeSummaryTarget::Sources {
@@ -231,7 +262,7 @@ impl Memory<'_> {
         if self.get_entity(reference)?.value.is_none() {
             return Err(absent());
         }
-        Ok(crate::memory::resolve_entity_ref(self.vault(), reference)?.to_hex())
+        Ok(crate::vault::entity_refs::resolve_entity_ref(self.vault(), reference)?.to_hex())
     }
 
     fn summary_authorization(&self) -> DocAuthorization<'_> {

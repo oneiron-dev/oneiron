@@ -63,6 +63,7 @@ pub(crate) use self::file::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight,
 };
+pub(crate) use self::replay::run_person_prints_in_txn;
 pub use self::types::{
     HandleReveal, OwnerSecretReveal, RevealGrantScope, RevealTarget, SecretHandleCard,
     SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealCause,
@@ -131,6 +132,8 @@ pub(crate) struct RevealAsker {
     provider: Option<String>,
     project: Option<EntityId>,
     run: Option<String>,
+    /// The actual durable execution that receives a PERSON value.
+    exec_run: Option<EntityId>,
     reader: Option<crate::claim::ScopedReadActorKey>,
     /// The leased try the asker's run holds, as its host bound it: the run
     /// a run-bound secret's record names (FIX 8028); `None` for an asker no
@@ -141,7 +144,7 @@ pub(crate) struct RevealAsker {
     task: Option<String>,
     /// The durable code-mode step the asker's call is, as its run's
     /// dispatcher named it (FIX 11683); `None` for any other call.
-    step: Option<crate::runtime_hooks::InvocationId>,
+    step: Option<crate::store::verb_invocation::InvocationId>,
 }
 
 impl RevealAsker {
@@ -151,6 +154,7 @@ impl RevealAsker {
             provider: None,
             project,
             run,
+            exec_run: None,
             reader: None,
             attempt: None,
             task: None,
@@ -158,8 +162,17 @@ impl RevealAsker {
         }
     }
 
+    /// The durable execution the host binds, not the queue's string run tag.
+    pub(crate) fn with_exec_run(mut self, exec_run: Option<EntityId>) -> Self {
+        self.exec_run = exec_run;
+        self
+    }
+
     /// This asker with the code-mode step its call is, as the host bound it.
-    pub(crate) fn with_step(mut self, step: Option<crate::runtime_hooks::InvocationId>) -> Self {
+    pub(crate) fn with_step(
+        mut self,
+        step: Option<crate::store::verb_invocation::InvocationId>,
+    ) -> Self {
         self.step = step;
         self
     }

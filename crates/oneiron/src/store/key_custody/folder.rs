@@ -31,9 +31,10 @@ pub(super) const THIS_INSTALL: &str = "this-install";
 pub(crate) struct FolderTarget {
     folder: PathBuf,
     spec: TargetSpec,
+    pending: Option<TargetPending>,
     /// The floor its files claim their room on first: a backup's landing
     /// disk's (FIX 5858). `None` claims nothing.
-    room: Option<Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>>,
+    room: Option<Box<dyn crate::store::recovery_write_budget::RecoveryWriteBudget>>,
 }
 
 impl FolderTarget {
@@ -42,6 +43,7 @@ impl FolderTarget {
             spec: TargetSpec::folder(folder.clone()),
             folder,
             room: None,
+            pending: None,
         }
     }
 
@@ -50,10 +52,33 @@ impl FolderTarget {
     /// name, retried by the next pass, and refuses nothing else.
     pub(crate) fn claiming(
         mut self,
-        room: Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>,
+        room: Box<dyn crate::store::recovery_write_budget::RecoveryWriteBudget>,
     ) -> Self {
         self.room = Some(room);
         self
+    }
+
+    /// A copy the owner's backup-deletion deadline no longer keeps. Its
+    /// explicit target identity prevents the registered-folder retry from
+    /// substituting a publishing target for this pass.
+    pub(crate) fn unavailable(mut self, pending: TargetPending) -> Self {
+        self.pending = Some(pending);
+        self
+    }
+
+    /// Removes only this lineage, including its keyless log. The caller
+    /// holds the backup publication lock and legal-hold exclusion.
+    pub(crate) fn remove_lineage(&self, lineage: Lineage) -> Result<()> {
+        let parent = self.folder.join(FOLDER);
+        match fs::remove_dir_all(self.dir(lineage)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        match super::platform::sync_dir(&parent) {
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 
     /// The lineage's directory under this folder.
@@ -138,17 +163,20 @@ impl CustodyTarget for FolderTarget {
     }
 
     fn publish(&self, batch: &CustodyBatch) -> Result<TargetPublication> {
+        if let Some(pending) = &self.pending {
+            return Ok(TargetPublication::Pending(pending.clone()));
+        }
         let lineage = batch.lineage();
         let position = batch.position();
-        let dir = match self.open_lineage(lineage) {
-            Ok(dir) => dir,
-            Err(error) => return Ok(unreachable(&error)),
-        };
         // One pass at a time reads the head held here, checks this batch
         // extends it and switches it in: a slower pass sealed at an older
         // position never renames its head over a newer one (FIX 6394). The
         // lock lives in the local journal, never on the folder.
         let _lock = Journal::of_batch(batch).publish_lock(self.spec.id())?;
+        let dir = match self.open_lineage(lineage) {
+            Ok(dir) => dir,
+            Err(error) => return Ok(unreachable(&error)),
+        };
         let held = held_position(&dir);
         if let Some(held) = held.filter(|held| !extends(held, &position)) {
             return Ok(newer_head(&held, batch));

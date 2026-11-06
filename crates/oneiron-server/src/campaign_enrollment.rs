@@ -20,10 +20,11 @@ use oneiron::attempt_queue::{
 use oneiron::campaign::enrollment::{
     CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, EnrollmentLegDrive,
     audience_programs, campaign_enrollment_event, campaign_home_node_designation,
-    decode_enrollment_attempt_payload, drive_enrollment_outbound_leg,
-    elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
+    decode_enrollment_attempt_payload, elect_campaign_home_node_designation, enroll_audience_wake,
+    local_campaign_home_node_candidate,
 };
 use oneiron::campaign::sender::CampaignChannelSender;
+use oneiron::channel_identity_provider::stalwart::{StalwartClient, StalwartConfig};
 use oneiron::saved_query::{
     QueryScope, SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, read_saved_query,
     sweep_owner_read,
@@ -40,6 +41,16 @@ const PUMP_ATTEMPTS: usize = 32;
 const LEASE_OWNER: &str = "oneiron-server-campaign-enrollment";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
 const FAILED: &str = "the campaign enrollment attempt failed";
+/// First wait between a Gate-held send's re-drives (FIX 11514).
+const HOLD_REDRIVE_BASE_SECS: u64 = 30;
+/// Longest wait between a Gate-held send's re-drives (FIX 11514).
+const HOLD_REDRIVE_MAX_SECS: u64 = 15 * 60;
+/// Re-arms after which a Gate-held send fails instead (~2 days at the ceiling, FIX 11514).
+const HOLD_REDRIVE_MAX_ATTEMPTS: u32 = 192;
+/// The built-in native mail pack connection whose checked credential opens
+/// the host's Stalwart client for a campaign send (FIX 11642).
+const NATIVE_MAIL_PACK: &str = "oneiron.native_mail";
+const NATIVE_MAIL_CONNECTION: &str = "mail-server";
 
 /// One bounded wake of `record` over `page` under the sweep's `evaluator`. A
 /// query that active campaigns' programs name as their audience detects and
@@ -227,25 +238,44 @@ async fn execute(
 }
 
 /// Runs the outward leg of `attempt` on the campaign channel sender
-/// (FIX 2636, FIX 11513). `None` when the designation moved before the
-/// send: the row stays leased for the new home node. A Gate hold waits on
-/// the owner's press and fails the attempt with its digest, as a review
-/// hold does.
+/// (FIX 2636, FIX 11513, FIX 11642). `None` when the designation moved
+/// before the send: the row stays leased for the new home node. A Gate hold
+/// waits on the owner's press and re-arms the attempt until the press lands
+/// or the wait ends (FIX 11514); past the wait it fails with the digest,
+/// as a review hold does.
 fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Settlement> {
     let vault = server.vault();
-    let mut sender = CampaignChannelSender::new(
+    let sender = CampaignChannelSender::new(
         Arc::clone(server.vault()),
         server.config.line.monthly_push_allowance(),
     );
+    // FIX 11642: only the native-email branch invokes this factory. Non-email
+    // sends, Gmail and Gate-held attempts never connect to Stalwart.
+    let mut sender = sender.with_stalwart({
+        let vault = Arc::clone(server.vault());
+        let placement = server
+            .config
+            .native_mail
+            .as_ref()
+            .and_then(|native| native.stalwart().ok());
+        move || campaign_stalwart_client(&vault, placement.clone())
+    });
     let now_ms = crate::runtime::wall_clock_ms();
-    let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
+    let drive = vault.drive_enrollment_outbound_leg(node, attempt, &mut sender, now_ms);
     Some(match drive {
         Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
             Settlement::Complete
         }
-        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(format!(
-            "a campaign send awaits the owner's approval press on {approval_digest}"
-        )),
+        // FIX 11514: only this arm re-arms; a press on the digest re-drives
+        // the send, and every other arm below is unchanged.
+        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => {
+            hold_redrive(vault, attempt, &approval_digest)
+        }
+        // FIX 12176: a paced send waits out its window, then resends.
+        Ok(EnrollmentLegDrive::Paced { retry_at }) => Settlement::RetryAt {
+            until: retry_at,
+            last_error: None,
+        },
         Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => return None,
         // The reason is recorded on the attempt, not logged: it can quote
         // the vault.
@@ -253,11 +283,89 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
     })
 }
 
+/// How a Gate-held campaign send settles (FIX 11514): under the re-arm cap
+/// it retries at a doubling backoff, past the cap it fails with the digest.
+/// The depth is the row's `retry_of` lineage (`retry_chain_depth`), not its
+/// `attempt_count`: a retry mints a fresh row whose lease counter restarts
+/// at zero, so the counter cannot key a backoff. A broken chain fails
+/// closed, as the hold did before this fix. The digest in `last_error`
+/// lands on the finalized source row; the successor's digest is recomputed
+/// on re-drive, not stored (verify45-11514 (d)).
+fn hold_redrive(vault: &Vault, attempt: &AttemptRecord, approval_digest: &str) -> Settlement {
+    let now = vault.now_recorded_at();
+    match AttemptQueue::new(vault).retry_chain_depth(attempt.id) {
+        Ok(depth) if depth < HOLD_REDRIVE_MAX_ATTEMPTS => {
+            let backoff = HOLD_REDRIVE_BASE_SECS
+                .saturating_mul(1u64 << depth.min(31))
+                .min(HOLD_REDRIVE_MAX_SECS);
+            Settlement::RetryAt {
+                until: now.saturating_add(backoff),
+                last_error: Some(format!(
+                    "a campaign send awaits the owner's approval press on {approval_digest}; a press on it re-drives the send"
+                )),
+            }
+        }
+        Ok(_) => Settlement::Fail(format!(
+            "a campaign send awaited the owner's approval press on {approval_digest}, which never came within the wait"
+        )),
+        Err(_) => Settlement::Fail(format!(
+            "a campaign send awaited the owner's approval press on {approval_digest}, but its retry chain is unreadable, so the wait ends here"
+        )),
+    }
+}
+
+/// The host-owned Stalwart client for one campaign send (FIX 11642), or
+/// none when native mail is unconfigured, unchecked, or unreachable. Any
+/// failure fails closed: the sender's stalwart branch answers
+/// InvalidRequest without a client, and gmail/slack/line sends flow
+/// untouched. Built per send inside the credential door, as the pack's own
+/// connection check builds it (`builtin_host::checks`): the stored value is
+/// the whole `Authorization` header or a bare bearer token, and the token
+/// bytes never leave the closure. The pump runs on a blocking thread, so
+/// the session discovery and domain read are safe here.
+fn campaign_stalwart_client(
+    vault: &Vault,
+    placement: Option<StalwartConfig>,
+) -> Option<StalwartClient> {
+    let placement = placement?;
+    let secret = vault
+        .verified_pack_connection_secret(NATIVE_MAIL_PACK, NATIVE_MAIL_CONNECTION)
+        .ok()?;
+    let mut connected = None;
+    vault
+        .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
+            let value = std::str::from_utf8(value)
+                .map_err(|_| {
+                    oneiron::Error::InvalidConfig("the stored credential is not text".to_owned())
+                })?
+                .trim();
+            let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
+                value.to_owned()
+            } else {
+                format!("Bearer {value}")
+            };
+            let header = reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
+                oneiron::Error::InvalidConfig(
+                    "the stored credential is not a header value".to_owned(),
+                )
+            })?;
+            connected = StalwartClient::connect(placement.clone(), header).ok();
+            Ok(())
+        })
+        .ok()?;
+    connected
+}
+
 /// How one executed attempt settles.
 enum Settlement {
     Complete,
-    /// The member's saved pause falls due at this instant (FIX 9662).
-    RetryAt(u64),
+    /// The member's saved pause falls due at this instant (FIX 9662), or a
+    /// Gate-held send re-drives then (FIX 11514); `last_error` stamps the
+    /// finalized source row only.
+    RetryAt {
+        until: u64,
+        last_error: Option<String>,
+    },
     Fail(String),
 }
 
@@ -276,7 +384,10 @@ fn membership_settlement(executed: oneiron::Result<EnrollmentExecution>) -> Opti
             | EnrollmentExecution::SkippedStale
             | EnrollmentExecution::RejectedStaleEpoch { .. },
         ) => Settlement::Complete,
-        Ok(EnrollmentExecution::DeferredUntil { until }) => Settlement::RetryAt(until),
+        Ok(EnrollmentExecution::DeferredUntil { until }) => Settlement::RetryAt {
+            until,
+            last_error: None,
+        },
         Ok(EnrollmentExecution::ReviewRequired { cause }) => Settlement::Fail(format!(
             "a {} enrollment awaits the owner's review",
             cause.as_str()
@@ -312,13 +423,13 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, settlement: Settlement) {
                 now,
             })
             .map(drop),
-        Settlement::RetryAt(until) => queue
+        Settlement::RetryAt { until, last_error } => queue
             .retry(RetryAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: attempt.attempt_count,
                 backoff_until: until,
-                last_error: None,
+                last_error,
                 now,
             })
             .map(drop),

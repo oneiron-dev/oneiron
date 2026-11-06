@@ -188,6 +188,21 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// its outbox revision to 4 at the floor. No `Ping` field is added and this
 /// version stays 3.
 ///
+/// VM descriptor-first outbox sets (FIX 11071 / 6685): carrier revision 5
+/// sends the complete set as descriptor-only
+/// [`VmOutboxFrame::Offer`](crate::vm_outbox::VmOutboxFrame::Offer) frames,
+/// then waits for [`VmOutboxFrame::Go`](crate::vm_outbox::VmOutboxFrame::Go)
+/// before body chunks. Only the existing ordered final acks report the
+/// result after the set; an early deferral returns them without bodies.
+/// It carries a build floor at the engine revision it merges in: the host
+/// library, guest image and companion all speak revision 5, and LC's image
+/// acceptance moves its outbox revision to 5 at that floor. Other revisions
+/// are refused at the hello, with no old reader. Native staging allocation
+/// uses the same file through body receipt and publication; unsupported
+/// allocation keeps the original write path and later failures keep their
+/// final outcomes. No cap, timing or `Ping` field changes, and this version
+/// stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
@@ -233,16 +248,17 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// address are the supervisor's; the engine defaults none. No `Ping` field is
 /// added and this version stays 3.
 ///
-/// VM managed profile (FIX 6809): the config drive's five typed files,
-/// `/config/organization-owner`, `/config/member-vault`,
-/// `/config/failure-signal-export`, `/config/failure-signal-training` and
-/// `/config/fast-dims`
+/// VM managed profile (FIX 6809; FIX 13707): the config drive's seven typed
+/// files, `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training`,
+/// `/config/fast-dims`, `/config/privacy-posture` and
+/// `/config/checkpoint-host-opt-out`
 /// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
-/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// and its six siblings), which `oneiron-vm-init` reads before the vault's
 /// key goes in and passes to an open's or a cold restore's engine as its
 /// managed-profile flags, carry a build floor, at the engine revision they
 /// merged in, proven by the image manifest's required
-/// `vm_managed_profile_revision` 1
+/// `vm_managed_profile_revision` 2
 /// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
 /// An image before the floor ignores the files, so its vault would start
 /// without its tenancy or its owner's choices: a supervisor checks the
@@ -500,6 +516,51 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only from installed engines at or after the floor, and as unknown from
 /// one before it. A block that does not read is unknown too, never a failed
 /// `Ping`. This version stays 3.
+///
+/// Live preview lease origins (FIX 1115,
+/// [`PreviewOrigin`](crate::artifact_origin::PreviewOrigin)): the
+/// `p-<lease>.<domain>` label, naming and host-reading codec carries a build
+/// floor, at the engine revision it merged in, proven by
+/// `preview_origin_revision` on `Ping`. A vault built before it sends none,
+/// which reads as unknown, never as revision 1; a value that is not a u32
+/// reads as unknown too. A supervisor opens lease-scoped preview ingress only
+/// after that proof. The standalone loopback preview authority is unchanged,
+/// and this version stays 3.
+///
+/// Native private-preview routing (FIX 292,
+/// [`PreviewRouteRequest`](crate::PreviewRouteRequest)): the managed
+/// `--preview-socket` flag and its held registration/data listener carry a
+/// separate build floor, at the engine revision they merged in. A supervisor
+/// passes the flag only to installed engines at or after that floor, and
+/// selects its fixed per-vault socket only for an explicitly configured preview
+/// domain. `preview_origin_revision = 1` proves the label codec above, not this
+/// argv flag or listener. The route ack binds the exact manifest and current
+/// generation; its held connection retires hosted ingress without revoking the
+/// standalone loopback lease. This native surface does not extend the vault-VM
+/// typed ledger carrier, and this version stays 3.
+///
+/// Managed widen body transcripts (FIX 5767,
+/// [`ManagedWidenTranscript`](crate::ManagedWidenTranscript)): a body spooled
+/// and counted first is hashed in its exact pieces under the widen action's
+/// own v1 domain, with the vault, holder and counted body length in the whole
+/// body's existing length-prefix order. Signing and verification require the
+/// exact counted length, and the MAC is byte-identical to the whole-body MAC;
+/// the action, header and wire shapes do not change. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a supervisor and
+/// vault use streamed transcripts only with installed engines at or after the
+/// floor. Whole-body signing and verification stay, and this version stays 3.
+///
+/// Published artifact origins (FIX 11004): wake-ledger reports require
+/// `artifact_origins_total` on their head and pages, and paged logical
+/// `artifact_origins` (`vault` or `app` with `artifact_id`). Entries and origins
+/// share the existing page-row bound, digest and complete-report assembly.
+/// The standalone VM wake schedule retains those origins with the acknowledged
+/// report. The vault reports publication facts, never public DNS or Access
+/// authority; the supervisor joins its own public slug and domains. This
+/// carries a build floor at the engine revision it merges in, with no `Ping`
+/// field: engine, supervisor and vault-VM readers use this shape together at
+/// or after that floor. New fields are required, no reader without them is
+/// kept, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

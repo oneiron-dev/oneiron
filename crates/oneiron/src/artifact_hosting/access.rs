@@ -59,7 +59,7 @@ fn matches_token(capability: ArtifactLinkCapability, token: Option<&str>) -> boo
 struct ResolvedArtifactTarget {
     pointer: ArtifactPointer,
     owner: EntityId,
-    scope: crate::federation::Scope,
+    scope: oneiron_authority::federation::Scope,
     snapshot: Option<CodebaseSnapshot>,
 }
 
@@ -201,7 +201,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         world_id: u64,
         principal: EntityId,
-        target_scope: &crate::federation::Scope,
+        target_scope: &oneiron_authority::federation::Scope,
     ) -> Result<bool> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
@@ -232,13 +232,13 @@ impl Vault {
                 && grant.confers_at(now)
                 && matches!(
                     crate::authority::federation_grant_activation(&fold, &id),
-                    crate::authority::FederationGrantActivation::Unpacted
-                        | crate::authority::FederationGrantActivation::Active
+                    oneiron_authority::authority::FederationGrantActivation::Unpacted
+                        | oneiron_authority::authority::FederationGrantActivation::Active
                 )
                 && grant.authority_scope.admits(
                     "read",
                     target_scope,
-                    &crate::federation::Scope::top(),
+                    &oneiron_authority::federation::Scope::top(),
                 )
                 && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
@@ -273,8 +273,8 @@ impl Vault {
         // A hosted reader is never the owner verified at a door (OF-560): the
         // bytes it reads are masked. A body kept in its ASSET's file is masked
         // as it is read, never held whole beside its copy (FIX 6507).
-        let sight = crate::secret_custody::SecretSight::Masked;
-        let (bytes, media_type, hash) = match target.pointer.export {
+        let sight = crate::file_secret_marks::SecretSight::Masked;
+        let (bytes, media_type, _stored_hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
                 let Some(snapshot) = target.snapshot else {
                     return Ok(None);
@@ -300,7 +300,8 @@ impl Vault {
                     let hash = *blake3::hash(&bytes).as_bytes();
                     (bytes, None, hash)
                 } else {
-                    let asset = crate::codebase::snapshot_asset_entity_id(&entry.content_hash)?;
+                    let asset =
+                        crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
                     let bytes = match self.sighted_body_file_in_txn(
                         txn,
                         &asset,
@@ -345,6 +346,9 @@ impl Vault {
         };
         // A DOCX copy shows its default author (FIX 4513).
         let bytes = self.resolve_docx_authors_in_txn(txn, bytes)?;
+        // The served file's hash names this copy (FIX 5491): masked here,
+        // or its DOCX author resolved, it is no longer the stored bytes.
+        let hash = *blake3::hash(&bytes).as_bytes();
         let size_bytes = u64::try_from(bytes.len())
             .map_err(|_| Error::ArithmeticOverflow("artifact served length"))?;
         Ok(Some(ArtifactServedFile {
@@ -371,12 +375,12 @@ impl Vault {
         if blake3::hash(&bytes).as_bytes() != hash {
             return Err(Error::CorruptedIndex("artifact served content hash"));
         }
-        crate::secret_custody::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn(
             &self.store,
             txn,
             bytes,
             Some(hash),
-            crate::secret_custody::SecretSight::Masked,
+            crate::file_secret_marks::SecretSight::Masked,
         )
     }
 }

@@ -189,6 +189,8 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                             .get("signature")
                             .and_then(JsonValue::as_str)
                             .map(str::to_owned),
+                        reasoning_kind: oneiron::ReasoningPartKind::Full,
+                        data: None,
                     });
                 }
             }
@@ -207,8 +209,18 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
                 });
             }
-            // Redacted reasoning carries nothing to read.
-            Some("redacted_thinking") => {}
+            Some("redacted_thinking") => {
+                let data = block
+                    .get("data")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                content.push(ContentPart::Reasoning {
+                    text: String::new(),
+                    signature: None,
+                    reasoning_kind: oneiron::ReasoningPartKind::Encrypted,
+                    data: Some(data.to_owned()),
+                });
+            }
             // Every other block kind is tool traffic this decoder cannot read,
             // so the decode fails, as the streamed decoder's does.
             _ => return Err(FatalLlmError::InvalidRequest.into()),
@@ -238,9 +250,23 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
     })
 }
 
+/// A part's system text: ordinary text and a reasoning part's own words. A
+/// summary or a count describes the reasoning instead of speaking it, so it
+/// never joins the system string.
 fn text_content(part: &ContentPart) -> Option<String> {
     match part {
-        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => Some(text.clone()),
+        ContentPart::Text { text } => Some(text.clone()),
+        ContentPart::Reasoning {
+            text,
+            reasoning_kind,
+            ..
+        } if !matches!(
+            reasoning_kind,
+            oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count
+        ) =>
+        {
+            Some(text.clone())
+        }
         _ => None,
     }
 }
@@ -251,7 +277,7 @@ fn anthropic_message(message: &LlmMessage) -> JsonValue {
         "content": message
             .content
             .iter()
-            .map(anthropic_content_part)
+            .filter_map(anthropic_content_part)
             .collect::<Vec<_>>(),
     })
 }
@@ -264,41 +290,57 @@ fn anthropic_role(role: LlmMessageRole) -> &'static str {
     }
 }
 
-fn anthropic_content_part(part: &ContentPart) -> JsonValue {
+fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
     match part {
-        ContentPart::Text { text } => json!({ "type": "text", "text": text }),
-        ContentPart::Reasoning { text, signature } => {
+        ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
+        ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind: oneiron::ReasoningPartKind::Full,
+            ..
+        } => {
             let mut object = JsonMap::new();
             object.insert("type".to_owned(), JsonValue::String("thinking".to_owned()));
             object.insert("thinking".to_owned(), JsonValue::String(text.clone()));
             if let Some(signature) = signature {
                 object.insert("signature".to_owned(), JsonValue::String(signature.clone()));
             }
-            JsonValue::Object(object)
+            Some(JsonValue::Object(object))
         }
+        ContentPart::Reasoning {
+            reasoning_kind: oneiron::ReasoningPartKind::Encrypted,
+            data,
+            ..
+        } => data
+            .as_ref()
+            .map(|data| json!({ "type": "redacted_thinking", "data": data })),
+        ContentPart::Reasoning {
+            reasoning_kind: oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count,
+            ..
+        } => None,
         ContentPart::ToolCall {
             call_id,
             name,
             input,
-        } => json!({
+        } => Some(json!({
             "type": "tool_use",
             "id": call_id,
             "name": name,
             "input": input,
-        }),
+        })),
         ContentPart::ToolResult {
             call_id,
             output,
             is_error,
-        } => json!({
+        } => Some(json!({
             "type": "tool_result",
             "tool_use_id": call_id,
             "content": output.to_string(),
             "is_error": is_error,
-        }),
-        ContentPart::Image { media_type, image } => anthropic_image_part(media_type, image),
+        })),
+        ContentPart::Image { media_type, image } => Some(anthropic_image_part(media_type, image)),
         // `validate_capabilities` refuses audio before any part is built.
-        ContentPart::Audio { .. } => JsonValue::Null,
+        ContentPart::Audio { .. } => Some(JsonValue::Null),
     }
 }
 
@@ -330,7 +372,11 @@ fn anthropic_tool(tool: &LlmToolSpec) -> JsonValue {
     })
 }
 
-pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an Anthropic Messages `usage` object reports: input with its
+/// cache reads and writes counted in, and output. A relayed reply's own
+/// body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let input_tokens = u64_field(usage, "input_tokens");
     let cache_read = u64_field(usage, "cache_read_input_tokens");
     let cache_write = u64_field(usage, "cache_creation_input_tokens");
@@ -351,6 +397,7 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     }
 }
 

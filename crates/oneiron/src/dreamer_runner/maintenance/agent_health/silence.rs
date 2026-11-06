@@ -29,9 +29,11 @@
 //! that did not read and may be its newest activity: a step capsule of its
 //! generation, or a call receipt newer than all the activity it read.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-use super::call_evidence::{AgentCalls, CallActivity};
+use super::call_evidence::{AgentCalls, CallActivity, UnreadCalls};
 use super::{
     AgentHealthCounter, AgentHealthOutcome, Attempts, CARDS, DialBook, Dispatches, Finding, Traps,
     card_key, entity, said_blocked, task_of,
@@ -40,7 +42,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::activity::AttemptActivity;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::receipt::CallAttemptRef;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The activity `silent` judged one leased attempt's quiet by (OF-568 L5),
@@ -100,9 +102,15 @@ pub(super) struct SilenceRefresh {
 
 /// Where `silent` takes each leased attempt's calls from.
 pub(super) enum SilenceCalls<'a> {
-    /// Every agent's calls in the nightly review's lookback, read once, and
-    /// the newest time a receipt that did not read may hold.
-    Actors(&'a AgentCalls, Option<u64>),
+    /// Every agent's calls in the nightly review's lookback, read once, the
+    /// unread bounds scoped by native agent witnesses, and, for leased
+    /// attempts claimed before the lookback, their calls back to their claim
+    /// (FIX 8374), which the lookback alone would truncate.
+    Actors(
+        &'a AgentCalls,
+        &'a UnreadCalls,
+        &'a BTreeMap<[u8; 16], CallActivity>,
+    ),
     /// One attempt's, from its targeted review's scan.
     Attempt(AttemptId, CallActivity),
 }
@@ -118,14 +126,19 @@ impl SilenceCalls<'_> {
         claimed: u64,
     ) -> Option<CallActivity> {
         match self {
-            Self::Actors(calls, unread) => Some(CallActivity {
-                unread: *unread,
-                ..CallActivity::of(
-                    calls.get(&actor).map_or(&[][..], Vec::as_slice),
-                    own,
-                    claimed,
-                )
-            }),
+            Self::Actors(calls, unread, extended) => {
+                if let Some(activity) = extended.get(attempt.as_bytes()) {
+                    return Some(*activity);
+                }
+                Some(CallActivity {
+                    unread: unread.for_actor(actor),
+                    ..CallActivity::of(
+                        calls.get(&actor).map_or(&[][..], Vec::as_slice),
+                        own,
+                        claimed,
+                    )
+                })
+            }
             Self::Attempt(read, activity) => (*read == attempt).then_some(*activity),
         }
     }

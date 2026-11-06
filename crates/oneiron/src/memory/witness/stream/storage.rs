@@ -57,7 +57,7 @@ pub(super) struct Seed {
     /// pinned by the terminal witness that births the MESSAGE, so a quote
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
     /// The verified read proof the stream's opener held, when a host bound
     /// one (FIX 1667): the terminal reads its links under that same proof,
     /// after a restart too. `None` is an opener with no bound proof. Every
@@ -78,11 +78,22 @@ impl Seed {
             .ok_or(Error::CorruptedIndex("stream actor class"))
     }
     pub(super) fn message(&self, content: String) -> WitnessMessage {
+        self.message_with_parts(content, None)
+    }
+    /// The MESSAGE a new-message terminal witnesses, carrying the terminal's
+    /// ordered output parts: birth facts like `quote`, kept verbatim. Text
+    /// readers keep reading `content`; parts never enter the seed row.
+    pub(super) fn message_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessMessage {
         WitnessMessage {
             id: Some(self.message_id.to_hex()),
             author: self.author,
             message_type: self.message_type.clone(),
             content,
+            parts,
             metadata: self.metadata.clone(),
             is_visible: self.is_visible,
             order: self.order,
@@ -90,11 +101,19 @@ impl Seed {
         }
     }
     pub(super) fn turn(&self, content: String) -> WitnessTurn {
+        self.turn_with_parts(content, None)
+    }
+    /// [`Self::turn`], carrying the terminal's ordered output parts.
+    pub(super) fn turn_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessTurn {
         WitnessTurn {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
             thread_audience: self.thread_audience.clone(),
-            messages: vec![self.message(content)],
+            messages: vec![self.message_with_parts(content, parts)],
             occurred_at: self.occurred_at,
             assertions: self.assertions.clone(),
         }
@@ -168,7 +187,7 @@ pub(crate) fn redact_receipt_assertions_in_txn(
     if let Some(mut latest) = RECEIPT.get(store, txn, message)?
         && !latest.reply_assertions.is_empty()
     {
-        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        latest.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT.put(store, txn, message, &latest)?;
     }
     let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
@@ -177,10 +196,47 @@ pub(crate) fn redact_receipt_assertions_in_txn(
         .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
         .collect();
     for (reference, mut done) in generations {
-        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        done.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
     }
     Ok(())
+}
+
+/// A native session terminal's receipt pair, in the sink that staged its MESSAGE.
+/// Its caller has already admitted that exact new row in this same transaction.
+pub(in crate::memory::witness) fn keep_session_terminal_in_txn(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &MessageStreamReceipt,
+) -> Result<()> {
+    RECEIPT.put(dbs, txn, &receipt.message_id, receipt)?;
+    let reference = format!(
+        "{}:{}",
+        receipt.message_id.to_hex(),
+        receipt.generation.to_hex()
+    );
+    RECEIPT_BY_REF.put(dbs, txn, &reference, receipt)
+}
+
+pub(in crate::memory::witness) fn receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT.get(dbs, txn, &message)
+}
+
+pub(in crate::memory::witness) fn generation_receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    generation: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT_BY_REF.get(
+        dbs,
+        txn,
+        &format!("{}:{}", message.to_hex(), generation.to_hex()),
+    )
 }
 
 pub(super) fn receipt(
@@ -326,5 +382,101 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let suffix = reference[10..].to_owned();
         Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
+    }
+    /// The live MESSAGE a stored continuation names in the caller's snapshot.
+    /// Fresh, missing or malformed seeds and absent or non-MESSAGE records
+    /// stay unknown; no source is reconstructed from a terminal receipt.
+    pub(crate) fn message_stream_continuation_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let Some(seed) = ACTIVE.get_lenient(&self.store, txn, message)? else {
+            return Ok(None);
+        };
+        if seed.message_id != *message || !seed.continuation {
+            return Ok(None);
+        }
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &seed.message_id)?
+        else {
+            return Ok(None);
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
+            return Ok(None);
+        }
+        Ok(Some(seed.message_id))
+    }
+}
+
+impl crate::off_record::FloorWrites<'_> {
+    /// Selects only plan MESSAGEs not already held by base, before replay.
+    pub(crate) fn promoted_stream_messages_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        fresh: Option<&std::collections::BTreeSet<EntityId>>,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        let mut messages = std::collections::BTreeSet::new();
+        for op in &plan.ops {
+            if let crate::batch::BatchOp::Put {
+                id, entity_type, ..
+            } = op
+                && *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                && fresh.is_none_or(|fresh| fresh.contains(id))
+                && !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)?
+            {
+                messages.insert(*id);
+            }
+        }
+        Ok(messages)
+    }
+
+    /// Carries the newly saved MESSAGEs' terminal history from the exact source
+    /// view, after native replay and body holds, in that same writer.
+    pub(crate) fn keep_promoted_stream_receipts_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        messages: &std::collections::BTreeSet<EntityId>,
+    ) -> Result<()> {
+        use crate::session_overlay::{OverlayKeyspace, SnapshotMergeRow};
+
+        let snapshot = plan.source_snapshot();
+        for id in messages {
+            if let Some(bytes) =
+                snapshot.staged_value(OverlayKeyspace::VaultMeta, &RECEIPT.key_bytes(id))
+            {
+                let receipt = RECEIPT.decode_value(bytes)?;
+                if receipt.message_id != *id {
+                    return Err(Error::CorruptedIndex("stream receipt message"));
+                }
+                RECEIPT.put(&vault.store, txn, id, &receipt)?;
+            }
+            let prefix = RECEIPT_BY_REF.key_bytes(&format!("{}:", id.to_hex()));
+            let generations =
+                snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(&prefix));
+            for row in generations.rows {
+                let SnapshotMergeRow::Single {
+                    key,
+                    value: Some(bytes),
+                } = row
+                else {
+                    continue;
+                };
+                let receipt = RECEIPT_BY_REF.decode_value(&bytes)?;
+                let reference = format!("{}:{}", id.to_hex(), receipt.generation.to_hex());
+                if receipt.message_id != *id || key != RECEIPT_BY_REF.key_bytes(&reference) {
+                    return Err(Error::CorruptedIndex("stream receipt generation"));
+                }
+                RECEIPT_BY_REF.put(&vault.store, txn, &reference, &receipt)?;
+            }
+        }
+        Ok(())
     }
 }

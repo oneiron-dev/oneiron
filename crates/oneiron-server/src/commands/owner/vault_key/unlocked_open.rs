@@ -91,7 +91,9 @@ impl<'a> UnlockRequest<'a> {
         self.method == UnlockMethod::Device
     }
 
-    /// Whether reading this unlock takes stdin: a password, a PRF output or
+    /// Whether reading this unlock takes stdin without a kept-piece count.
+    /// Existing-vault kits decide after importing their pieces (FIX 12396).
+    /// A password, a PRF output or
     /// an escrow secret with no file or recovery box named, a kit opened
     /// with one piece and no passphrase file, and a recovery box program,
     /// whose `release` inherits stdin for its own sign-in.
@@ -152,7 +154,23 @@ pub(in crate::commands::owner) fn refuse_two_stdin_secrets(
     what: &str,
     file_flag: &str,
 ) -> anyhow::Result<()> {
-    if !(own_reads_stdin && unlock.reads_stdin()) {
+    refuse_stdin_conflict(
+        unlock,
+        unlock.reads_stdin(),
+        own_reads_stdin,
+        what,
+        file_flag,
+    )
+}
+
+fn refuse_stdin_conflict(
+    unlock: &UnlockRequest<'_>,
+    unlock_reads_stdin: bool,
+    own_reads_stdin: bool,
+    what: &str,
+    file_flag: &str,
+) -> anyhow::Result<()> {
+    if !(own_reads_stdin && unlock_reads_stdin) {
         return Ok(());
     }
     if unlock.box_reads_stdin() {
@@ -182,6 +200,66 @@ pub(in crate::commands::owner) fn open_with_unlock(
     need: KeyNeed,
     instead: &str,
 ) -> anyhow::Result<oneiron::Vault> {
+    open_with_unlock_inner(config, request, need, instead, |_, _| Ok(()))
+}
+
+/// Opens with the unlock before reading the command's own secret. A kit's
+/// stdin demand is checked after counting its exact kept piece (FIX 12396).
+pub(in crate::commands::owner) fn open_with_unlock_for_secret(
+    config: &ServeConfig,
+    request: &UnlockRequest<'_>,
+    need: KeyNeed,
+    instead: &str,
+    own_reads_stdin: bool,
+    what: &str,
+    file_flag: &str,
+) -> anyhow::Result<oneiron::Vault> {
+    open_with_unlock_inner(config, request, need, instead, |_, unlock_reads_stdin| {
+        refuse_stdin_conflict(
+            request,
+            unlock_reads_stdin,
+            own_reads_stdin,
+            what,
+            file_flag,
+        )
+    })
+}
+
+/// Opens before the command's own secret, whose stdin need may depend on
+/// this same plain vault's kept pieces, or on the sealed install's keystore.
+pub(in crate::commands::owner) fn open_with_unlock_for_secret_checked(
+    config: &ServeConfig,
+    request: &UnlockRequest<'_>,
+    need: KeyNeed,
+    instead: &str,
+    own_reads_stdin: impl FnOnce(Option<&oneiron::Vault>) -> anyhow::Result<bool>,
+    what: &str,
+    file_flag: &str,
+) -> anyhow::Result<oneiron::Vault> {
+    open_with_unlock_inner(
+        config,
+        request,
+        need,
+        instead,
+        |vault, unlock_reads_stdin| {
+            refuse_stdin_conflict(
+                request,
+                unlock_reads_stdin,
+                own_reads_stdin(vault)?,
+                what,
+                file_flag,
+            )
+        },
+    )
+}
+
+fn open_with_unlock_inner(
+    config: &ServeConfig,
+    request: &UnlockRequest<'_>,
+    need: KeyNeed,
+    instead: &str,
+    before_secret: impl FnOnce(Option<&oneiron::Vault>, bool) -> anyhow::Result<()>,
+) -> anyhow::Result<oneiron::Vault> {
     request.refuse_unused()?;
     if request.is_device() {
         let vault = open_stopped_vault(config, instead)?;
@@ -201,10 +279,16 @@ pub(in crate::commands::owner) fn open_with_unlock(
     let path = &config.vault_path;
     if world_keys::vault_is_sealed(path)? {
         refuse_orphaned_page_seal(path)?;
-        let unlock = HostUnlock::read_for_vault(request, || {
-            world_keys::page_seal_vault_id(path)
-                .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
-        })?;
+        let unlock = HostUnlock::read_for_vault(
+            request,
+            || {
+                world_keys::page_seal_vault_id(path)
+                    .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
+            },
+            None,
+            config,
+            |reads_stdin| before_secret(None, reads_stdin),
+        )?;
         let opened = open_sealed(config, &unlock, instead);
         name_released(&unlock);
         return opened;
@@ -213,7 +297,13 @@ pub(in crate::commands::owner) fn open_with_unlock(
     if need != KeyNeed::Held && vault.vault_key_status()? == VaultKeyStatus::NoKey {
         return Ok(vault);
     }
-    let unlock = HostUnlock::read_for_vault(request, || Ok(vault.vault_key_vault_id()))?;
+    let unlock = HostUnlock::read_for_vault(
+        request,
+        || Ok(vault.vault_key_vault_id()),
+        Some(&vault),
+        config,
+        |reads_stdin| before_secret(Some(&vault), reads_stdin),
+    )?;
     let unlocked = unlock.unlock_live(&vault).map_err(|error| {
         anyhow::anyhow!(
             "the vault key did not unlock with {}: {error}",

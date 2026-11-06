@@ -11,8 +11,8 @@
 //! agent may suggest a save: the suggestion is a notice everyone sees, and it
 //! waits, saving nothing, until a holder confirms or declines it. A stretch
 //! the owner entered alone has no room. It is the 1:1 with their own
-//! companion, and it posts no notice; nor does a room that holds only the
-//! owner and the vault's own agents.
+//! companion, and it posts no notice. A room's agent participants hear its
+//! notices as its people do.
 //!
 //! Each room names its own stretches: the registry keys one as
 //! [`room_session_key`], so a name taken in one room says nothing about
@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::batch::BatchOp;
-use crate::code_run::ResultOccurrence;
 use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -33,6 +32,7 @@ use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::session_overlay::{JournalEntry, JournalRole};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::result_manifest::ResultOccurrence;
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
@@ -42,6 +42,8 @@ use super::types::{
 };
 
 mod export_roots;
+mod message_result;
+mod stretches;
 
 /// The most notices a room's timeline holds, and the most save suggestions
 /// that wait in it; past it the oldest drop, so a member repeating an act
@@ -76,27 +78,74 @@ pub fn room_session_key(room: EntityId, session_ref: &str) -> String {
 
 impl<'vault> OffRecordSessionVault<'vault> {
     /// Starts an off-record stretch named `session_ref` in `room` for `by`,
-    /// who must be on the room's roster now.
+    /// on their own live slip. An agent must hold this vault's save grant.
+    /// Membership and that grant are read in the same transaction.
     ///
     /// # Errors
     ///
-    /// [`OffRecordError::OffRecordNotInRoom`] when `room` is no conversation
-    /// or `by` is not on its roster, checked before the name is; otherwise as
-    /// [`Self::enter`].
+    /// [`OffRecordError::OffRecordNotInRoom`] when `by` is not on the room's
+    /// roster; [`OffRecordError::OffRecordPromoteUnauthenticated`] when the
+    /// slip does not bind the starter or an agent lacks the grant;
+    /// otherwise as [`Self::enter`].
     pub fn enter_in_room(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         room: EntityId,
         by: EntityId,
+        credential: &VerifiedSlip,
+    ) -> Result<OffRecordSession<'vault>> {
+        self.enter_in_room_for(session_ref, backend, room, by, |txn| {
+            let claims = credential.claims();
+            let refused = || super::save_grant::not_a_holder(session_ref, by);
+            if EntityId::from_hex(&claims.holder_ref).ok() != Some(by) {
+                return Err(refused());
+            }
+            match claims.actor_class.as_deref() {
+                Some("agent") => super::save_grant::SaveGrant::claimed(by, credential)
+                    .ok_or_else(refused)?
+                    .require_in_txn(self.vault, txn, session_ref),
+                Some("human")
+                    if self.vault.capability_slip_is_live_in_txn(txn, credential)?
+                        && crate::consent::person_is_live_in_txn(self.vault, txn, &by)? =>
+                {
+                    Ok(())
+                }
+                _ => Err(refused()),
+            }
+        })
+    }
+
+    /// A live person's start on their proof. This is a person-tier act:
+    /// being a member, not owning the vault, admits a human starter.
+    pub fn enter_in_room_as(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        room: EntityId,
+        person: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OffRecordSession<'vault>> {
+        let by = person.revalidate_person(self.vault)?;
+        self.enter_in_room_for(session_ref, backend, room, by, |txn| {
+            person.revalidate_person_in_txn(self.vault, txn).map(drop)
+        })
+    }
+
+    fn enter_in_room_for(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        room: EntityId,
+        by: EntityId,
+        proof: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<OffRecordSession<'vault>> {
         let key = room_session_key(room, session_ref);
         let txn = self.vault.store.env.read_txn()?;
-        let member = is_member_in_txn(self.vault, &txn, room, by)?;
-        drop(txn);
-        if !member {
+        if !is_member_in_txn(self.vault, &txn, room, by)? {
             return Err(not_in_room(&key, by));
         }
+        proof(&txn)?;
+        drop(txn);
         let entry = self.vault.enter_off_record_session_entry(
             &key,
             backend,
@@ -106,24 +155,39 @@ impl<'vault> OffRecordSessionVault<'vault> {
         Ok(self.handle(key, entry))
     }
 
-    /// [`Self::enter_in_room`], its memory charged to `charge` (FIX 5991):
-    /// the host reserved [`super::room_entry_bytes`] on its retained-memory
-    /// line before this call, and the stretch moves the charge to what it
-    /// holds until its overlay drains. A refusal drops the charge unused.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::enter_in_room`].
+    /// [`Self::enter_in_room`], its memory charged to `charge` (FIX 5991).
+    /// The host reserved [`super::room_entry_bytes`] before this call; a
+    /// refusal drops the charge unused.
     pub fn enter_in_room_charged(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         (room, by): (EntityId, EntityId),
         charge: Box<dyn super::RetainedCharge>,
+        credential: &VerifiedSlip,
     ) -> Result<OffRecordSession<'vault>> {
-        let session = self.enter_in_room(session_ref, backend, room, by)?;
-        let entered = super::room_entry_bytes(session_ref);
-        session.entry.overlay.bind_charge(charge, entered);
+        let session = self.enter_in_room(session_ref, backend, room, by, credential)?;
+        session
+            .entry
+            .overlay
+            .bind_charge(charge, super::room_entry_bytes(session_ref));
+        Ok(session)
+    }
+
+    /// [`Self::enter_in_room_as`] with the host's retained-memory charge.
+    pub fn enter_in_room_charged_as(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        room: EntityId,
+        charge: Box<dyn super::RetainedCharge>,
+        person: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OffRecordSession<'vault>> {
+        let session = self.enter_in_room_as(session_ref, backend, room, person)?;
+        session
+            .entry
+            .overlay
+            .bind_charge(charge, super::room_entry_bytes(session_ref));
         Ok(session)
     }
 
@@ -296,24 +360,75 @@ impl OffRecordSession<'_> {
     /// # Errors
     ///
     /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
-    /// was revoked or expired by the time the talk is gathered,
+    /// does not bind a live human person, or was revoked or expired by the
+    /// time the talk is gathered,
     /// [`OffRecordError::OffRecordNotInRoom`] when `person` is not in the
     /// room by then: either way nothing is released and nobody is told.
     pub fn export_talk_by(
         &self,
         person: EntityId,
+        credential: &VerifiedSlip,
+    ) -> Result<OffRecordTalk> {
+        let claims = credential.claims();
+        if claims.actor_class.as_deref() != Some("human")
+            || EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
+        {
+            return Err(super::save_grant::not_a_holder(&self.session_ref, person));
+        }
+        self.export_talk_for(person, Some(credential), |txn| {
+            if crate::consent::person_is_live_in_txn(self.vault, txn, &person)? {
+                Ok(())
+            } else {
+                Err(super::save_grant::not_a_holder(&self.session_ref, person))
+            }
+        })
+    }
+
+    /// A live person's own copy on their proof, whether or not they own this
+    /// vault. The proof is rechecked with the membership that releases it.
+    pub fn export_talk_as(
+        &self,
+        person: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OffRecordTalk> {
+        let actor = person.revalidate_person(self.vault)?;
+        self.export_talk_for(actor, None, |txn| {
+            person.revalidate_person_in_txn(self.vault, txn).map(drop)
+        })
+    }
+
+    fn export_talk_for(
+        &self,
+        person: EntityId,
         credential: Option<&VerifiedSlip>,
+        proof: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<OffRecordTalk> {
         let room = self.require_in_room(person)?;
         let mut state = self.recording_state()?;
-        let gathered = self.gather_talk(&state)?;
+        let mut gathered = self.gather_talk(&state)?;
         // Who hears the export is read with the sight that admits it, and so
         // is whether its taker owns this vault (FIX 6427), and each thread
         // the copy carries, while the stretch is held (FIX 6681).
         let (turns, thread_roots, hearing, owner) = {
             let txn = self.vault.store.env.read_txn()?;
+            proof(&txn)?;
             let windows = self.sight_in_txn(&txn, room, person, credential)?;
             let owner = crate::memory::owner_copy_in_txn(self.vault, &txn, person);
+            if !owner {
+                let view = self.read_view()?;
+                for (turn, root) in &gathered.roots {
+                    let turn = EntityId::from_bytes(*turn)?;
+                    if !crate::workspace_roster::thread_turn_readable_with_read_in(
+                        self.vault,
+                        &view.read(),
+                        &txn,
+                        *root,
+                        turn,
+                        &[person],
+                    )? {
+                        gathered.turns.remove(&turn);
+                    }
+                }
+            }
             let (turns, roots) = gathered.finish_with_roots(Some(windows.as_slice()), self, &txn);
             let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
             (turns, roots, hearing, owner)
@@ -555,10 +670,8 @@ impl Talk {
     }
 }
 
-/// Who hears an act in a room, and when. A stretch with no room, and a room
-/// whose roster is one owner of this vault and the vault's own agents, is
-/// the owner's 1:1 with their own companion: no other person is there to
-/// hear it.
+/// Who hears an act in a room, and when. Only a stretch with no room is
+/// the owner's silent 1:1; a room's agents hear its notices too.
 #[derive(Clone, Copy)]
 pub(super) struct Hearing {
     heard: bool,
@@ -616,20 +729,9 @@ pub(super) fn post_notice(
     });
 }
 
-/// Whether, in `txn`, `room`'s roster holds anyone but one owner of this
-/// vault and the vault's own agents: another person, a second owner, or
-/// someone else's agent.
+/// Whether the room has participants to hear its notice, including agents.
 fn heard_by_another_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<bool> {
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    let mut owners = 0_usize;
-    for member in vault.members_in_txn(txn, room)? {
-        if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &member)? {
-            owners += 1;
-        } else if !crate::disclosure::is_vault_agent_in(vault, txn, &fold, &member)? {
-            return Ok(true);
-        }
-    }
-    Ok(owners > 1)
+    Ok(!vault.members_in_txn(txn, room)?.is_empty())
 }
 
 /// A roster that does not read counts as heard, so the notice posts.

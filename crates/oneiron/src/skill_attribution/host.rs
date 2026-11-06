@@ -32,22 +32,24 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
-};
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
-use crate::learning::TypeRef;
-use crate::learning_setting::{
-    CREDIT_CHECK_EVERY_HOP, CREDIT_DEPTH_CAP, CREDIT_ENABLED, SettingSpec, setting_value_scoped,
-};
+use crate::learning_setting::setting_value_scoped;
 use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStore};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::store::setting_seed::CREDIT_CHECK_EVERY_HOP;
+use crate::store::setting_seed::CREDIT_DEPTH_CAP;
+use crate::store::setting_seed::CREDIT_ENABLED;
+use crate::store::setting_seed::SettingSpec;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.
@@ -135,8 +137,8 @@ pub fn bind_agent_run_attribution(
 /// The Dreamer attempts that load a skill pack and bind its attribution:
 /// the weave lens's render and an owner-admitted weave recipe.
 const DREAMER_WEAVE_ATTEMPT_TYPES: [&str; 2] = [
-    crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND,
-    crate::dreamer_runner::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+    crate::store::dreamer_attempt_kind::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 ];
 
 /// Binds the execution context of the leased Dreamer weave `attempt` (a
@@ -246,14 +248,29 @@ pub fn witness_agent_run_close(
     output: EntityId,
 ) -> Result<bool> {
     let mut txn = vault.store.env.write_txn()?;
+    let witnessed = witness_agent_run_close_in_txn(vault, &mut txn, attempt, lease_owner, output)?;
+    txn.commit()?;
+    Ok(witnessed)
+}
+
+/// The close witness inside the caller's result/completion transaction.
+/// A staged output and its attribution become visible together with the
+/// result whose terminal receipt freezes them.
+pub(crate) fn witness_agent_run_close_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptRecord,
+    lease_owner: &str,
+    output: EntityId,
+) -> Result<bool> {
     AttemptQueue::new(vault).require_skill_load_lease_in_txn(
-        &txn,
+        txn,
         attempt.id,
         lease_owner,
         attempt.attempt_count,
     )?;
     let Some(mut fields) =
-        crate::receipt::attempt_pack_attribution_in_txn(&vault.store, &txn, attempt.id)?
+        crate::receipt::attempt_pack_attribution_in_txn(&vault.store, txn, attempt.id)?
     else {
         return Ok(false);
     };
@@ -263,7 +280,7 @@ pub fn witness_agent_run_close(
     }
     super::derivation_witness::drain_in_txn(
         &vault.store,
-        &txn,
+        txn,
         attempt.id,
         attempt.attempt_count,
         &mut fields,
@@ -281,7 +298,7 @@ pub fn witness_agent_run_close(
         .collect();
     let stored: BTreeSet<EntityId> = vault
         .port_edge_neighbors(
-            &txn,
+            txn,
             &output,
             EdgeDirection::Out,
             Some(EdgeKind::DerivedFrom),
@@ -306,22 +323,16 @@ pub fn witness_agent_run_close(
         }
     }
     if new_edges {
-        batch.apply(&mut txn)?;
+        batch.apply(txn)?;
     }
-    witness_lineage_in_txn(vault, &txn, &mut fields, &mut seen, output)?;
+    witness_lineage_in_txn(vault, txn, &mut fields, &mut seen, output)?;
     // The whole chain is kept; its length is measured (Rule 5).
     let _ = vault.measure_limit(
         EngineLimit::AttemptManifestEntries,
         fields.used_edges.len() as u64,
     );
     fields.output = Some(output);
-    crate::receipt::put_attempt_pack_attribution_in_txn(
-        &vault.store,
-        &mut txn,
-        attempt.id,
-        &fields,
-    )?;
-    txn.commit()?;
+    crate::receipt::put_attempt_pack_attribution_in_txn(&vault.store, txn, attempt.id, &fields)?;
     Ok(true)
 }
 

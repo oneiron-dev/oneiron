@@ -28,7 +28,7 @@ use super::{Attempts, DialBook, Dispatches, Finding, entity, run_loop, settled, 
 use crate::attempt_queue::AttemptState;
 use crate::code_run::{DiagnosticCollection, StepKey, StoredStepFeedback, TypeDiagnostics};
 use crate::receipt::CallOutcome;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 /// One logical check's current streak of equal failures on equal inputs.
@@ -106,7 +106,7 @@ pub(super) fn check_repeat_findings(
             continue;
         };
         let live = matches!(record.state, AttemptState::Leased | AttemptState::Paused);
-        if !live && !(settled(record.state) && record.updated_at >= since) {
+        if !live && !(settled(record.state) && record.settled_at.is_some_and(|at| at >= since)) {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -184,9 +184,14 @@ pub(super) fn check_repeat_findings(
                     .step_checkpoints
                     .iter()
                     .find(|checkpoint| checkpoint.seq == seq)
-                    .map_or(record.updated_at, |checkpoint| {
-                        checkpoint.created_at_ms / 1000
-                    });
+                    .map(|checkpoint| checkpoint.created_at_ms / 1000)
+                    .or_else(|| {
+                        if live {
+                            Some(record.updated_at)
+                        } else {
+                            record.settled_at
+                        }
+                    })?;
                 Some((at, report))
             })
             .collect();

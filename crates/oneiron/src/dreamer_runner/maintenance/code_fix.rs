@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use self::admission::{read_granted_in_txn, settle_in_txn};
+use self::candidate_run::ReplayCandidate;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
@@ -48,30 +49,38 @@ use self::work::{
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
-    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
-    ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,
-    InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
+    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplayRequest,
+    FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage,
+    ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::CODE_FIX_JUDGMENT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 mod admission;
+mod candidate_run;
 mod engine;
 mod instruction;
 mod publisher;
+mod publisher_refs;
 mod work;
 pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
+pub use self::candidate_run::CandidateRun;
 pub use self::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
     artifact_digest_text, parse_artifact_digest_text,
+};
+pub use self::publisher_refs::{
+    PublisherCandidateInput, PublisherCandidateRef, publisher_candidates_with_refs,
 };
 pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 
@@ -131,45 +140,15 @@ pub struct CodeFixSettled {
     pub candidates: Vec<CandidateRun>,
 }
 
-/// One candidate's shadow replay: its outcome and its export's verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CandidateRun {
-    pub candidate_id: String,
-    /// `None` when the replay could not run, or did not fail before the fix.
-    pub outcome: Option<FixOutcome>,
-    pub export: CodeFixVerdict,
-    /// How the replay ran the real failure (FIX 1662): the request the
-    /// failing call sent, or a call rebuilt from its text. `None` when it
-    /// could not run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub replay: Option<ReplayFidelity>,
-    /// An engine candidate's matched pair (FIX 1661, 2144), content-free:
-    /// its pin, each arm's summary, and whether it was judged or why not.
-    /// `None` for an instruction, and for a candidate whose failure no
-    /// longer stood.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<EngineCandidateRun>,
-    /// The Grant an instruction's exact replay read the kept request under
-    /// (FIX 9448): its keep is rechecked against that Grant alone. `None`
-    /// for an engine pair, which holds its own, and for any other run.
-    pub grant: Option<EntityId>,
-}
-
-impl CandidateRun {
-    /// Whether this run stands for its candidate: every run does but an
-    /// engine pair kept not run at another shadow protocol, or kept for want
-    /// of the Coach's Grant when `read_granted` says that Grant now reads
-    /// the run's scope; each is tried once more (FIX 1661, 2144, 7031).
-    fn tried(&self, read_granted: bool) -> bool {
-        self.engine
-            .as_ref()
-            .is_none_or(|engine| !engine.retries(read_granted))
-    }
-}
-
-/// A candidate's run and the record it sealed, queued in the write that
-/// keeps the run.
-type SealedRun = (CandidateRun, Option<SealedCodeFix>);
+/// A candidate's run, the record it sealed, and the captured step an
+/// engine pair ran from: queued in the write that keeps the run, which holds
+/// a judged pair to that same step (FIX 7027). The capsule never persists;
+/// the kept [`CandidateRun`] stays content-free.
+type SealedRun = (
+    CandidateRun,
+    Option<SealedCodeFix>,
+    Option<StepReplayCapsule>,
+);
 
 /// A first run's result, its records sealed and not yet queued.
 struct Unkept {
@@ -254,6 +233,12 @@ pub trait CodeFixHost {
 /// answers are for, the dial and bands they run under, and each question's
 /// own budget.
 pub struct CodeFixDecisions<'a> {
+    /// The question asking whether a replay reproduced the failure.
+    pub reproduced_wording: String,
+    /// The question comparing the replies before and after a fix.
+    pub fixed_wording: String,
+    /// The question checking the invented example before export.
+    pub export_safe_wording: String,
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
@@ -348,8 +333,8 @@ impl Vault {
     /// One step of the catch-up that tries publisher candidates pinned after
     /// a failure settled on that failure (OF-380): reads up to 256 work rows
     /// after `after` and queues a top-up run for at most 2 settled ones with
-    /// no run that stands of some id in `pinned` (an engine pair kept not run
-    /// at another shadow protocol stands no longer, nor one kept for want of
+    /// no run that stands of some input occurrence in `pinned` (an engine pair
+    /// kept not run at another shadow protocol stands no longer, nor one kept for want of
     /// a Grant the Coach now holds, FIX 7031). Returns the key the next
     /// step goes on after, or `None` once the last row is read. A deployment
     /// that does not export queues nothing.
@@ -360,12 +345,13 @@ impl Vault {
     pub fn queue_code_fix_top_ups(
         &self,
         after: Option<EntityId>,
-        pinned: &[&str],
+        pinned: &[PublisherCandidate],
         now: u64,
     ) -> Result<Option<EntityId>> {
         if pinned.is_empty() || !self.config.failure_signals.exports() {
             return Ok(None);
         }
+        let pinned = publisher_candidates_with_refs(pinned);
         // Resolved outside the writer: resolving it opens a writer of its own.
         let coach = self.coach_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
@@ -383,11 +369,11 @@ impl Vault {
                     continue;
                 };
                 let granted = read_granted_in_txn(self, &*txn, settled, &work.source, coach)?;
-                let lacks = pinned.iter().any(|id| {
-                    !settled
-                        .candidates
-                        .iter()
-                        .any(|run| run.candidate_id == *id && run.tried(granted))
+                let lacks = pinned.iter().any(|(candidate, publisher_ref)| {
+                    !settled.candidates.iter().any(|run| {
+                        run.matches_publisher(&candidate.id, Some(publisher_ref))
+                            && run.tried(granted)
+                    })
                 });
                 if !lacks {
                     continue;
@@ -462,10 +448,9 @@ impl Vault {
                 let mut settled = work.settled.take().ok_or_else(super::invalid)?;
                 let granted = read_granted_in_txn(self, &*txn, &settled, &work.source, coach)?;
                 for run in runs {
-                    let kept = settled
-                        .candidates
-                        .iter()
-                        .position(|kept| kept.candidate_id == run.0.candidate_id);
+                    let kept = settled.candidates.iter().position(|kept| {
+                        kept.matches_publisher(&run.0.candidate_id, run.0.publisher_ref.as_ref())
+                    });
                     if kept.is_some_and(|at| {
                         settled
                             .candidates
@@ -547,9 +532,9 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        // An erased capsule's call is never replayed, rebuilt or not (FIX
-        // 6251): nothing is classed or drafted for it.
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        // An erased capsule's call, or one whose route prompt is unavailable,
+        // is never replayed (FIX 6251, 6255): nothing is classed or drafted.
+        if snapshot.replay.exact.runs_none() {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::ReplayUnavailable,
@@ -586,23 +571,24 @@ impl Vault {
                 .fix
                 .clone()
                 .filter(|fix| !fix.trim().is_empty())
-                .map(|instruction| {
-                    (
-                        format!("coach.{}", route.as_str()),
-                        PublisherCandidateKind::Instruction { instruction },
-                    )
+                .map(|instruction| ReplayCandidate {
+                    id: format!("coach.{}", route.as_str()),
+                    kind: PublisherCandidateKind::Instruction { instruction },
+                    coach_own: true,
+                    publisher_ref: None,
                 }),
             _ => None,
         };
-        let drafted_id = own.as_ref().map(|(id, _)| id.clone());
         // A publisher candidate needs no draft of the Coach's: it is replayed
         // against the real failure whatever the heal's route.
-        let candidates: Vec<(String, PublisherCandidateKind)> = own
+        let candidates: Vec<ReplayCandidate> = own
             .into_iter()
             .chain(
-                host.publisher_candidates()
-                    .iter()
-                    .map(|candidate| (candidate.id.clone(), candidate.kind.clone())),
+                publisher_candidates_with_refs(host.publisher_candidates())
+                    .into_iter()
+                    .map(|(candidate, publisher_ref)| {
+                        ReplayCandidate::publisher(candidate, publisher_ref)
+                    }),
             )
             .collect();
         measure_candidates(self, &candidates);
@@ -616,7 +602,6 @@ impl Vault {
             decisions,
             evidence: &snapshot.evidence,
             snapshot: &snapshot,
-            drafted: drafted_id,
             candidates,
             exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
@@ -664,7 +649,7 @@ impl Vault {
         proposal: EntityId,
         route: HealRoute,
         settled: &CodeFixSettled,
-        missing: &[(String, PublisherCandidateKind)],
+        missing: &[ReplayCandidate],
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
     ) -> Result<Vec<SealedRun>> {
@@ -673,10 +658,11 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        if snapshot.replay.exact.runs_none() {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
-        measure_candidates(self, missing);
+        let candidates = missing.to_vec();
+        measure_candidates(self, &candidates);
         let job = snapshot_job(&snapshot, source, route, settled.failure_class, proposal);
         let replay = CoachReplay {
             vault: self,
@@ -685,8 +671,7 @@ impl Vault {
             decisions,
             evidence: &snapshot.evidence,
             snapshot: &snapshot,
-            drafted: None,
-            candidates: missing.to_vec(),
+            candidates,
             exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
         };
@@ -710,15 +695,16 @@ impl Vault {
         };
         let failure_class = replay.job.failure_class;
         let mut candidates = Vec::with_capacity(replay.candidates.len());
-        for (candidate_id, kind) in &replay.candidates {
-            let (shadow, fidelity, engine) = match kind.engine_pin() {
+        for candidate in &replay.candidates {
+            let candidate_id = &candidate.id;
+            let (shadow, fidelity, engine, capsule) = match candidate.kind.engine_pin() {
                 None => {
-                    let shadow = replay.shadow_replay(&replay.job.source, candidate_id)?;
-                    (shadow, replay.fidelity(), None)
+                    let shadow = replay.shadow_candidate(candidate)?;
+                    (shadow, replay.fidelity(), None, None)
                 }
                 Some(pin) => {
                     let pair = replay.engine_pair(candidate_id, pin)?;
-                    (pair.shadow, pair.fidelity, Some(pair.run))
+                    (pair.shadow, pair.fidelity, Some(pair.run), pair.capsule)
                 }
             };
             let outcome = match shadow {
@@ -747,13 +733,15 @@ impl Vault {
             };
             let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
+                coach_own: candidate.coach_own,
+                publisher_ref: candidate.publisher_ref,
                 outcome,
                 export,
                 replay: replay_fidelity,
                 engine,
                 grant,
             };
-            candidates.push((run, sealed));
+            candidates.push((run, sealed, capsule));
         }
         Ok(candidates)
     }
@@ -776,13 +764,15 @@ const fn class_name(class: FailureClassV1) -> &'static str {
 
 /// Measures the candidates one run replays (Rule 5): how many, and the
 /// longest id or instruction among them, each read whole.
-fn measure_candidates(vault: &Vault, candidates: &[(String, PublisherCandidateKind)]) {
+fn measure_candidates(vault: &Vault, candidates: &[ReplayCandidate]) {
     let longest = candidates
         .iter()
-        .map(|(id, kind)| match kind {
-            PublisherCandidateKind::Instruction { instruction } => id.len().max(instruction.len()),
+        .map(|candidate| match &candidate.kind {
+            PublisherCandidateKind::Instruction { instruction } => {
+                candidate.id.len().max(instruction.len())
+            }
             PublisherCandidateKind::EngineBuild { .. }
-            | PublisherCandidateKind::EnginePatch { .. } => id.len(),
+            | PublisherCandidateKind::EnginePatch { .. } => candidate.id.len(),
         })
         .max()
         .unwrap_or(0);

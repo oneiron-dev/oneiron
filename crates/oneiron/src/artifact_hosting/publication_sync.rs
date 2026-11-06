@@ -51,11 +51,22 @@ pub enum ArtifactPublicationOutcome {
     Applied,
     /// A row it names has not arrived by window sync yet; send it again.
     Staged,
-    /// Malformed or inconsistent; sending it again would change nothing.
+    /// Admission denied, malformed or inconsistent; nothing was applied.
     Refused,
 }
 
 impl ArtifactPublicationOutcome {
+    /// Reads the outcome from an exactly framed whole-publication receipt.
+    pub fn from_receipt(payload: &[u8]) -> Option<Self> {
+        let [_, _, .., outcome] = payload else {
+            return None;
+        };
+        if payload.len() != RECEIPT_LEN {
+            return None;
+        }
+        Self::from_byte(*outcome)
+    }
+
     const fn byte(self) -> u8 {
         match self {
             Self::Applied => 0,
@@ -125,7 +136,7 @@ pub(super) fn mark_publication_in_txn(
 }
 
 fn publication_entity_id(channel: ArtifactPointerChannel, artifact: &str) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         PUBLICATION_ID_DOMAIN,
         &[&[channel.key_byte()], artifact.as_bytes()],
     )
@@ -247,7 +258,9 @@ impl Vault {
                         pointer,
                         owner: found.code_artifact_id,
                         rows: ExportWire::Code {
-                            snapshot: crate::codebase::encode_codebase_snapshot(&found.snapshot)?,
+                            snapshot: crate::store::code_snapshot::encode_codebase_snapshot(
+                                &found.snapshot,
+                            )?,
                         },
                     })
                 })
@@ -364,7 +377,7 @@ impl Vault {
         snapshot: &[u8],
     ) -> Result<ArtifactPublicationOutcome> {
         use ArtifactPublicationOutcome::Refused;
-        let Ok(snapshot) = crate::codebase::decode_codebase_snapshot(snapshot) else {
+        let Ok(snapshot) = crate::store::code_snapshot::decode_codebase_snapshot(snapshot) else {
             return Ok(Refused);
         };
         // The fork hash is recomputed from the manifest, never taken on trust.
@@ -404,7 +417,7 @@ impl Vault {
             return Ok(Staged);
         };
         if body.class != CodeArtifactClass::Artifact
-            || crate::codebase::RepoRef::parse(&body.repo_ref)
+            || crate::store::code_snapshot::RepoRef::parse(&body.repo_ref)
                 .ok()
                 .as_ref()
                 != Some(&snapshot.repo_ref)
@@ -417,12 +430,19 @@ impl Vault {
                 return Ok(Staged);
             }
         }
-        self.put_filtered_codebase_snapshot_in_txn(
-            wtxn,
-            owner,
-            snapshot,
-            crate::secret_snapshot::SnapshotCustodyReport::default(),
-        )?;
+        // Keep a readable report for an identical retained manifest. Every
+        // case still replaces the snapshot and repairs its indexes (FIX 294).
+        let custody_report = if let Ok(Some(existing)) =
+            self.get_codebase_snapshot_in_txn(wtxn, owner)
+            && existing == *snapshot
+            && let Ok(Some(report)) =
+                self.get_codebase_snapshot_custody_report_in_txn(wtxn, &snapshot.fork_hash)
+        {
+            report
+        } else {
+            crate::secret_snapshot::SnapshotCustodyReport::default()
+        };
+        self.put_filtered_codebase_snapshot_in_txn(wtxn, owner, snapshot, custody_report)?;
         Ok(Applied)
     }
 

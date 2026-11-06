@@ -28,14 +28,16 @@ use crate::dreamer_wake::{
 };
 use crate::error::{Error, Result};
 use crate::human_task::{OpenAskFollowup, OpenHumanAskKind};
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step,
-};
+use crate::llm::call_as_step;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::receipt::ReceiptQuery;
 use crate::{
     ClaimApprovalStatus, ClaimListFilter, ClaimView, EdgeActorClass, EntityId, Vault, WriteActor,
+};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
 /// The share of the window its records may fill; the rest is the reply's.
@@ -423,7 +425,7 @@ pub async fn run_free_time_for_human(
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // Its free time for its human. Its own records leave the vault
             // as an extraction's do, so the call is admitted, gated and
             // routed as extraction, and the tier reads that row too.

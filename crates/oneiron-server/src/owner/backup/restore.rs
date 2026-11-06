@@ -10,9 +10,13 @@ use oneiron::VaultPageSeal;
 use oneiron::recovery::checkpoint::{
     CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
 };
+use oneiron::world_keys::{
+    page_seal_custody_path, page_seal_incarnations, unlock_page_seal, vault_is_sealed,
+};
+use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::Serialize;
 
-use super::super::stamp::{file_stamp, now_unix_ms};
+use super::super::stamp::{file_stamp, now_unix_ms, parse_file_stamp};
 use super::rehearse::{Owned, SharedPathWarning, shared_path_warning};
 use super::{kind_counts, sync_dir};
 
@@ -51,6 +55,11 @@ pub(crate) struct Restored {
     /// (PAD-1), each as the engine words it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_object_notes: Vec<String>,
+    /// Outcomes for staging directories earlier interrupted restores left
+    /// beside this vault (FIX 2706): each is claimed as a pre-restore archive
+    /// or left whole where it is, with the outcome named here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) staging_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -89,7 +98,17 @@ pub(crate) fn restore_over_keyed(
     config: oneiron::VaultConfig,
     key: CheckpointKey,
 ) -> anyhow::Result<Restored> {
-    restore_over_with(backup, vault_path, config, |_| Ok(key), exchange, sync_dir)
+    // Only a checkpoint key, no vault-key unlock: sealed staging stays
+    // report-only (FIX 2706).
+    restore_over_with(
+        backup,
+        vault_path,
+        config,
+        None,
+        |_| Ok(key),
+        exchange,
+        sync_dir,
+    )
 }
 
 pub(super) fn restore_over_syncing(
@@ -104,10 +123,15 @@ pub(super) fn restore_over_syncing(
     // carries, and trusts the signers it holds; with none it refuses (FIX 12225).
     let open_key =
         |_vault_path: &Path| CheckpointKey::unlock_on_this_device(backup, keystore.as_ref());
+    // The same keystore probes sealed staging earlier restores left (FIX 2706).
+    let staging_unlock = keystore
+        .as_ref()
+        .map(|keystore| oneiron::world_keys::VaultKeyUnlock::Device(keystore.as_ref()));
     restore_over_with(
         backup,
         vault_path,
         config,
+        staging_unlock.as_ref(),
         |vault_path| open_key(vault_path).map_err(anyhow::Error::from),
         swap,
         sync_after_swap,
@@ -118,6 +142,7 @@ fn restore_over_with(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    staging_unlock: Option<&oneiron::world_keys::VaultKeyUnlock>,
     open_key: impl FnOnce(&Path) -> anyhow::Result<CheckpointKey>,
     swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
@@ -141,9 +166,21 @@ fn restore_over_with(
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
         .to_string_lossy()
         .into_owned();
+    // Earlier interrupted restores left their staging beside the vault; list
+    // it before this restore makes its own (FIX 2706).
+    let staged = interrupted_restore_staging(vault_path, &name);
     // The backup opens before anything is made.
     let key = open_key(vault_path.as_path())
         .map_err(|error| anyhow::anyhow!("backup {} does not open: {error:#}", backup.display()))?;
+    // A sealed previous vault a crash left in staging is claimed as its
+    // archive now, after the backup opened and before either vault is held:
+    // the probes refuse while this process holds the env (FIX 2705).
+    let staging_notes: Vec<String> = staged
+        .into_iter()
+        .map(|(_, stamp_text, staging)| {
+            claim_staged_archive(vault_path, &name, &stamp_text, &staging, staging_unlock)
+        })
+        .collect();
     let stamp = file_stamp(now_unix_ms());
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(
@@ -155,11 +192,29 @@ fn restore_over_with(
     // fresh incarnation of it, and so keeps its tier.
     let mut target = config.clone();
     target.page_seal = restore_target_seal(RestoreTarget::Beside(config.page_seal.as_ref()))?;
+    // The original restore holds the same per-staging claim lock from before
+    // its staging becomes visible through archive publication, rename and
+    // cleanup (round-2 P1): a claimant that scans this staging takes the
+    // lock only once this restore is done with it, and otherwise leaves the
+    // staging and archive mirrors untouched.
+    let Some(parent) = vault_path.parent() else {
+        anyhow::bail!("vault path {} has no parent", vault_path.display());
+    };
+    let claim_guard = match take_staging_claim_lock(parent, &name, &stamp) {
+        Some(guard) => guard,
+        None => {
+            anyhow::bail!(
+                "the staging claim for {} is already held; try again",
+                vault_path.display()
+            );
+        }
+    };
     let staging = Owned::create(vault_path.with_file_name(format!(".{name}.restore-{stamp}")))?;
     let live = match oneiron::Vault::open_owned(vault_path, config) {
         Ok(live) => live,
         Err(error) => {
             staging.remove();
+            claim_guard.release();
             return Err(match error {
                 oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => {
                     anyhow::anyhow!(
@@ -184,6 +239,7 @@ fn restore_over_with(
         Ok(restored) => restored,
         Err(error) => {
             staging.remove();
+            claim_guard.release();
             anyhow::bail!("backup {} does not restore: {error}", backup.display());
         }
     };
@@ -192,6 +248,7 @@ fn restore_over_with(
         Err(error) => {
             drop(restored);
             staging.remove();
+            claim_guard.release();
             return Err(error);
         }
     };
@@ -203,6 +260,7 @@ fn restore_over_with(
         Err(error) => {
             drop(restored);
             staging.remove();
+            claim_guard.release();
             anyhow::bail!("the restored copy's page-seal mirrors were not staged: {error}");
         }
     };
@@ -234,6 +292,7 @@ fn restore_over_with(
             );
         }
         staging.remove();
+        claim_guard.release();
         anyhow::bail!(
             "cannot swap the restored copy into {} ({error}); nothing was moved, and the vault \
              there stays live only at that path",
@@ -254,6 +313,7 @@ fn restore_over_with(
     let previous = match named {
         Ok(()) => {
             staging.remove();
+            claim_guard.release();
             previous
         }
         Err(_) => {
@@ -317,7 +377,370 @@ fn restore_over_with(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        staging_notes,
     })
+}
+
+/// The staging directories earlier interrupted restores of this vault left
+/// beside it (FIX 2706), oldest first, each as its stamp in ms, its stamp
+/// text and its path. A restore that dies mid-flight leaves
+/// `.<name>.restore-<stamp>` holding a whole vault: before its atomic
+/// exchange that is the restored copy, after it the previous vault, its
+/// archive rename never run. The scan never fails the restore that lists it.
+/// Each hit is claimed or left whole by [`claim_staged_archive`], which names
+/// it in `staging_notes` so it is not lost track of.
+fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, String, PathBuf)> {
+    let Some(parent) = vault_path.parent() else {
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                parent = %parent.display(),
+                "could not look for staging left by an interrupted restore"
+            );
+            return Vec::new();
+        }
+    };
+    let prefix = format!(".{name}.restore-");
+    let mut found: Vec<(u64, String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(stamp) = file_name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Some(stamp_ms) = parse_file_stamp(stamp) else {
+            continue;
+        };
+        // The staging directory itself, never a symlink to one.
+        if !matches!(entry.file_type(), Ok(kind) if kind.is_dir()) {
+            continue;
+        }
+        found.push((stamp_ms, stamp.to_owned(), entry.path()));
+    }
+    found.sort_unstable();
+    found
+}
+
+/// Cross-process claim lock for one leftover staging directory (round-1 P1
+/// on #4518): two restores reaching the same staging take it in turn, and
+/// the contender leaves the staging and archive mirrors untouched instead
+/// of deleting the winner's archive mirror on its failed rename. The lock
+/// file stays while the staging directory may still exist, so every taker
+/// meets the same inode (unlinking on drop would let a contender lock a
+/// fresh inode while the winner still holds the old one); the held-open
+/// file (and its flock on unix) lasts until the guard drops.
+struct StagingClaimGuard {
+    _held: std::fs::File,
+    path: PathBuf,
+}
+
+impl StagingClaimGuard {
+    /// Unlinks the lock file; call only once the staging directory is gone,
+    /// so no later taker can meet a live staging under a fresh inode.
+    fn release(self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Opens (creating) the claim-lock file for one leftover staging directory
+/// and takes it nonblocking-exclusive. `None` means the claim is already
+/// held: the caller leaves the staging and archive mirrors untouched. On
+/// unix the flock releases if the holder dies, so no stale lock survives a
+/// crash; elsewhere the create is exclusive and the file stays until the
+/// staging is gone and the holder releases it.
+fn take_staging_claim_lock(
+    parent: &Path,
+    name: &str,
+    stamp_text: &str,
+) -> Option<StagingClaimGuard> {
+    let path = parent.join(format!(".{name}.restore-{stamp_text}.claim-lock"));
+    #[cfg(unix)]
+    {
+        use rustix::fs::{FlockOperation, Mode, OFlags};
+        let held = std::fs::File::from(
+            rustix::fs::open(
+                &path,
+                OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            )
+            .ok()?,
+        );
+        match rustix::fs::flock(&held, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => Some(StagingClaimGuard { _held: held, path }),
+            // A contender holds it: leave the mirrors untouched.
+            Err(_) => None,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(held) => Some(StagingClaimGuard { _held: held, path }),
+            Err(_) => None,
+        }
+    }
+}
+
+/// Claims the staging directory `staging` (stamp `stamp_text`) an earlier
+/// interrupted restore of the vault at `vault_path` left, as the archive name
+/// that restore never reached, or leaves it whole where it is (FIX 2706).
+/// Shape (a) only: a sealed vault whose home and staged mirrors each name the
+/// opened incarnation second ((1, 1)) holds its previous vault in staging, and
+/// that vault is renamed to `<name>.pre-restore-<stamp>` with its stamp. A
+/// pre-swap copy ((0, 0)), a torn or ambiguous pair, a plain vault (no
+/// universal discriminator), a sealed vault with no unlock to probe it, and
+/// anything that fails along the way stays whole and is reported as left: the
+/// scan and the claim never fail the restore, add no refusal, hold or wait,
+/// and remove nothing but the staging mirror and directory of a claim that
+/// landed (and its own claim-lock file). Two restores reaching the same
+/// leftover staging take the cross-process claim lock in turn; the contender
+/// leaves the staging and archive mirrors untouched. Returns the
+/// `staging_notes` line for the staging directory.
+fn claim_staged_archive(
+    vault_path: &Path,
+    name: &str,
+    stamp_text: &str,
+    staging: &Path,
+    unlock: Option<&oneiron::world_keys::VaultKeyUnlock>,
+) -> String {
+    let staged_vault = staging.join("vault");
+    // Without a whole vault there is nothing to claim.
+    if !staged_vault.join("data.mdb").is_file() {
+        let note = format!(
+            "an earlier interrupted restore left its staging directory {} \
+             without a whole vault in it; the staging directory is left \
+             where it is",
+            staging.display()
+        );
+        tracing::warn!(staging = %staging.display(), "{note}");
+        return note;
+    }
+    // A whole vault left where it is, as Pack1 reports it.
+    let left_whole = || {
+        let note = format!(
+            "an earlier interrupted restore left a whole vault in its staging \
+             directory {}; the vault at {} is the live one, and the staged one \
+             is left whole where it is",
+            staging.display(),
+            vault_path.display()
+        );
+        tracing::warn!(staging = %staging.display(), "{note}");
+        note
+    };
+    // Plain vaults stay undecidable and report-only: no universal
+    // discriminator names which environment is the previous one.
+    let sealed = match vault_is_sealed(vault_path) {
+        Ok(sealed) => sealed,
+        Err(_) => return left_whole(),
+    };
+    if !sealed {
+        return left_whole();
+    }
+    // Sealed with no unlock (a keyed restore, a keystore that is off) cannot
+    // be probed, so it stays report-only.
+    let Some(unlock) = unlock else {
+        return left_whole();
+    };
+    // Shape (a): the index of the incarnation that opens each side in the
+    // mirror beside it. Only (1, 1) claims; (0, 0) is a pre-swap copy and
+    // anything else, including a probe that does not open, is torn and stays.
+    let mirror_index = |path: &Path| -> Option<(usize, VaultPageSeal)> {
+        let seal = unlock_page_seal(path, unlock).ok()?;
+        let named = page_seal_incarnations(path).ok()?;
+        let index = named
+            .iter()
+            .position(|candidate| *candidate == seal.incarnation())?;
+        Some((index, seal))
+    };
+    let home = mirror_index(vault_path).map(|(index, _)| index);
+    let staged = mirror_index(&staged_vault);
+    let previous_seal = match (home, staged) {
+        (Some(1), Some((1, seal))) => seal,
+        _ => return left_whole(),
+    };
+    let Some(parent) = vault_path.parent() else {
+        return left_whole();
+    };
+    // The cross-process claim lock (round-1 P1 on #4518): two restores that
+    // reach the same leftover staging take it in turn, and the contender
+    // leaves the staging and archive mirrors untouched instead of deleting
+    // the winner's archive mirror on its failed rename.
+    let claim_guard = match take_staging_claim_lock(parent, name, stamp_text) {
+        Some(guard) => guard,
+        None => {
+            let note = format!(
+                "the staging directory {} is already claimed by another                  restore, so the staging and archive mirrors are left untouched",
+                staging.display()
+            );
+            tracing::warn!(staging = %staging.display(), "{note}");
+            return note;
+        }
+    };
+    let archive = parent.join(format!("{name}.pre-restore-{stamp_text}"));
+    // Never overwrite: any name in the way leaves the staging whole.
+    if std::fs::symlink_metadata(&archive).is_ok() {
+        tracing::warn!(
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "the archive name is taken; the staged vault is left whole where it is"
+        );
+        return left_whole();
+    }
+    let archive_mirror = match page_seal_custody_path(&archive) {
+        Ok(path) => path,
+        Err(_) => return left_whole(),
+    };
+    // `write_private_file` renames over, so the mirror name must be free too.
+    if std::fs::symlink_metadata(&archive_mirror).is_ok() {
+        tracing::warn!(
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "the archive mirror name is taken; the staged vault is left whole where it is"
+        );
+        return left_whole();
+    }
+    let staged_mirror = match page_seal_custody_path(&staged_vault) {
+        Ok(path) => path,
+        Err(_) => return left_whole(),
+    };
+    let mirror_bytes = match std::fs::read(&staged_mirror) {
+        Ok(bytes) => bytes,
+        Err(_) => return left_whole(),
+    };
+    // The archive mirror copies the staging mirror's bytes, never the home
+    // mirror's: after a rename-failed-then-confirmed run the home mirror is
+    // narrowed to the restored incarnation alone while the staging mirror
+    // still names both. A both-naming archive mirror is an engine-tolerated
+    // mid-protocol state ("A crash between any two steps leaves each
+    // environment beside a mirror that names its incarnation... its next
+    // mirror rewrite names that one alone"): the archive opens under the
+    // previous incarnation. After the rename the finisher below names that
+    // one alone; if it fails, the archive's first open still narrows it.
+    // This assumes the carried wraps, the replacement's, still open
+    // the previous vault: it holds the writer lease from the replacement's
+    // build through the swap, so no wrap change can land on it between them;
+    // a stale carry would fail the archive's first open.
+    let Some(mirror_name) = archive_mirror.file_name().and_then(|name| name.to_str()) else {
+        return left_whole();
+    };
+    // The mirror lands before the rename, as the restore's own archive does.
+    if let Err(error) = write_private_file(parent, mirror_name, &mirror_bytes) {
+        tracing::warn!(
+            %error,
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "the archive mirror was not written; the staged vault is left whole where it is"
+        );
+        return left_whole();
+    }
+    #[cfg(unix)]
+    let renamed = rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        &staged_vault,
+        rustix::fs::CWD,
+        &archive,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from);
+    #[cfg(not(unix))]
+    let renamed = std::fs::rename(&staged_vault, &archive);
+    if let Err(error) = renamed {
+        // The rename lost, so the mirror just written goes: the inline body
+        // of `discard_archive_mirror`, which needs a live swap to call.
+        if let Ok(written) = page_seal_custody_path(&archive) {
+            let _ = std::fs::remove_file(written);
+        }
+        tracing::warn!(
+            %error,
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "the staged vault was not claimed; it is left whole where it is"
+        );
+        return left_whole();
+    }
+    // The claim landed; a sync that fails is reported but keeps it.
+    if let Err(error) = sync_dir(parent) {
+        tracing::warn!(
+            %error,
+            archive = %archive.display(),
+            "a staged vault was claimed but the directory sync failed"
+        );
+    }
+    if let Err(error) = oneiron::world_keys::finish_restore_archive_mirror(&archive, &previous_seal)
+    {
+        tracing::warn!(
+            %error,
+            archive = %archive.display(),
+            "a staged vault was claimed but its page-seal mirror could not be finished"
+        );
+    }
+    // Only the staging mirror and the staging directory itself go, never a
+    // tree: anything left is residue, reported, never fatal.
+    let mut residue = false;
+    if let Err(error) = std::fs::remove_file(&staged_mirror) {
+        tracing::warn!(
+            %error,
+            staging = %staged_mirror.display(),
+            "a claimed restore's staging mirror is left where it is"
+        );
+        residue = true;
+    }
+    if let Err(error) = std::fs::remove_dir(staging) {
+        tracing::warn!(
+            %error,
+            staging = %staging.display(),
+            "a claimed restore's staging directory is left where it is"
+        );
+        residue = true;
+    } else {
+        // The staging is gone, so the lock file may go too.
+        claim_guard.release();
+    }
+    if let Err(error) = sync_dir(parent) {
+        tracing::warn!(
+            %error,
+            archive = %archive.display(),
+            "a staged vault was claimed but the directory sync failed"
+        );
+        residue = true;
+    }
+    if residue {
+        let note = format!(
+            "an earlier interrupted restore left a whole vault in its staging \
+             directory {}; it was the previous vault and is now claimed as {}; \
+             its staging residue is left where it is",
+            staging.display(),
+            archive.display()
+        );
+        tracing::warn!(
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "{note}"
+        );
+        note
+    } else {
+        let note = format!(
+            "an earlier interrupted restore left a whole vault in its staging \
+             directory {}; it was the previous vault and is now claimed as {}",
+            staging.display(),
+            archive.display()
+        );
+        tracing::warn!(
+            staging = %staging.display(),
+            archive = %archive.display(),
+            "{note}"
+        );
+        note
+    }
 }
 
 /// What a restore where no vault was made.

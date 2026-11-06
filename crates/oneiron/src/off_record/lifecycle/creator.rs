@@ -24,6 +24,7 @@
 use std::sync::Arc;
 
 use crate::authority::VerifiedSlip;
+use crate::compaction::TurnVector;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
@@ -181,6 +182,7 @@ impl OffRecordSession<'_> {
         turn: &WitnessTurn,
         summary: Option<&str>,
         credential: &VerifiedSlip,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<WitnessReceipt> {
         let refused = || {
             MemoryError::new(
@@ -208,6 +210,31 @@ impl OffRecordSession<'_> {
         // The session witness that takes its door's own admission: the same
         // guest witness the owner's and a member's doors run, with no room
         // roster to read.
-        memory.witness_into_session_for_run(self, turn, summary, None, admit, |_| Ok(()))
+        memory.witness_into_session_for_run(
+            self,
+            turn,
+            summary,
+            None,
+            admit,
+            |_| Ok(()),
+            turn_vector,
+        )
+    }
+}
+
+impl<'vault> super::session::OffRecordSessionVault<'vault> {
+    /// Resolve the name inside this principal's creator namespace, then bind
+    /// the exact live instance without entering or re-minting a session.
+    pub(crate) fn bind_caller_session(
+        &self,
+        session_ref: &str,
+        principal: EntityId,
+    ) -> Result<OffRecordSession<'vault>> {
+        let created = self
+            .vault
+            .store
+            .off_record_sessions
+            .created_key(session_ref, principal);
+        self.bind_for(created.as_deref().unwrap_or(session_ref), principal)
     }
 }

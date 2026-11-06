@@ -1,7 +1,10 @@
 mod cache_evict;
 mod cache_store;
 mod community;
+mod invalidation;
+pub(crate) use invalidation::PprCacheInvalidator;
 mod policy;
+pub(crate) mod project_weight;
 mod query;
 mod walk;
 

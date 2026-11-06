@@ -5,106 +5,7 @@
 // Section 5 — pull read: ScopedRead clamp plus provenance-labelled DATA
 // ---------------------------------------------------------------------------
 
-/// The bounded always-on subset: interface and policy contracts only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeMemoryContractKind {
-    Interface,
-    Policy,
-}
-
-impl CodeMemoryContractKind {
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Interface => CONTRACT_TAG_INTERFACE,
-            Self::Policy => CONTRACT_TAG_POLICY,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            CONTRACT_TAG_INTERFACE => Ok(Self::Interface),
-            CONTRACT_TAG_POLICY => Ok(Self::Policy),
-            _ => Err(record_error()),
-        }
-    }
-}
-
-/// One registered always-on interface/policy contract.
-///
-/// Always-on status is ATTACHMENT METADATA, not a NOTE payload field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AlwaysOnCodeMemoryContract {
-    pub symbol_id: EntityId,
-    pub slot: CodeMemorySlotName,
-    pub payload: CodeMemoryPayloadRef,
-    pub kind: CodeMemoryContractKind,
-    pub actor_id: EntityId,
-    pub valid_time: TimeRange,
-    pub recorded_at: u64,
-    pub provenance_claim_id: EntityId,
-}
-
-/// What an L2 pull returns is DATA. There is deliberately no instruction or
-/// executable material kind in this enum, and none may be added: an L2 note
-/// is context a caller reasons about, never a command it obeys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProvenanceMaterialKind {
-    Data,
-}
-
-/// The provenance label carried by every pulled item.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodeMemoryProvenance {
-    pub actor_id: EntityId,
-    pub valid_time: TimeRange,
-    pub recorded_at: u64,
-    pub provenance_claim_id: EntityId,
-}
-
-/// A pulled item and its label. There is no unlabelled read surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvenanceLabelled<T> {
-    pub data: T,
-    pub provenance: CodeMemoryProvenance,
-    pub material_kind: ProvenanceMaterialKind,
-}
-
-/// An L2 pull request. PULL, never push: nothing in this module calls back
-/// into a caller with memory it did not ask for.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CodeMemoryPullRequest {
-    /// UNSCORED `CODE_SYMBOL` ids. PPR assigns relevance; callers do not.
-    pub seed_symbols: Vec<EntityId>,
-    /// Threshold on the inherited symbol relevance — the score type carried
-    /// by `pipeline::ScoredEntity`.
-    pub minimum_relevance: f32,
-    /// Caller cut, applied EXACTLY ONCE and only to the note list.
-    pub limit: usize,
-    pub include_always_on_contracts: bool,
-}
-
-impl CodeMemoryPullRequest {
-    /// A request over `seed_symbols` with the default note limit and no
-    /// relevance floor.
-    pub fn new(seed_symbols: Vec<EntityId>) -> Self {
-        Self {
-            seed_symbols,
-            minimum_relevance: 0.0,
-            limit: CODE_MEMORY_DEFAULT_PULL_LIMIT,
-            include_always_on_contracts: true,
-        }
-    }
-}
-
-/// Provenance-labelled DATA returned by an L2 pull.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodeMemoryPullResult {
-    pub notes: Vec<ProvenanceLabelled<CodeMemorySlotValue>>,
-    pub always_on_contracts: Vec<ProvenanceLabelled<AlwaysOnCodeMemoryContract>>,
-    /// The actor's read, resolved in the pull's own snapshot: stored payloads
-    /// the actor may not see are counted here, never silently dropped.
-    pub read_receipt: crate::claim::ScopedReadReceipt,
-}
+pub use crate::store::code_memory_values::CodeMemoryPullResult;
 
 /// Payload admission for one pull candidate, decided ON THE CALLER'S SNAPSHOT.
 ///
@@ -156,8 +57,9 @@ type PullNoteCandidates = Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlot
 /// Returns at most `request.limit` notes, every one of them already admitted
 /// by [`payload_visible_in_txn`] on THIS snapshot, plus the always-on
 /// registrations of every retained symbol (which the caller's note limit never
-/// cuts), and the count of examined payloads stored but withheld from the
-/// actor (a missing payload is absence of data and is not counted).
+/// cuts), and the count of examined, non-opaque payload rows that the actor's
+/// floor admits but whose payload projection withholds. Missing or floor-denied
+/// rows are not counted.
 ///
 /// TWO BOUNDS, BOTH LOAD-BEARING:
 ///
@@ -221,7 +123,13 @@ fn collect_pull_candidates(
                         {
                             Some(true) => {}
                             Some(false) => {
-                                withheld.set(withheld.get() + 1);
+                                withheld.set(
+                                    withheld.get()
+                                        + scoped_read.code_memory_payload_suppression_in(
+                                            rtxn,
+                                            &value.payload.entity_id(),
+                                        ),
+                                );
                                 continue;
                             }
                             None => continue,
@@ -416,7 +324,8 @@ pub fn pull_code_memory(
             match payload_visible_in_txn(&vault.store, &rtxn, scoped_read, contract.payload)? {
                 Some(true) => {}
                 Some(false) => {
-                    withheld += 1;
+                    withheld += scoped_read
+                        .code_memory_payload_suppression_in(&rtxn, &contract.payload.entity_id());
                     continue;
                 }
                 None => continue,

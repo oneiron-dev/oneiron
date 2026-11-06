@@ -30,10 +30,11 @@
 
 use std::sync::Arc;
 
-use super::attempt::{self, Reconciled};
+use super::attempt::{self, AttemptKey};
+use super::work;
 use super::{
-    PartSource, ResidenceRpc, commit_generation, fetch_generation, list_generations_for,
-    put_object, refused, residence_budgets, storage, turn,
+    PartSource, ResidenceRpc, fetch_generation, list_generations_for, put_object, refused,
+    residence_budgets, storage, turn,
 };
 use crate::authority::{AuthorityEntryHash, Destination, PeerMachine};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
@@ -78,12 +79,14 @@ fn observe(
     home: Option<EntityId>,
     reach: PublishReach,
     latest: LatestRead,
+    incomplete_authority: Vec<EntityId>,
 ) {
     let observed = PublishObserved {
         at: vault.store.clock.now_recorded_at(),
         home,
         reach,
         latest,
+        incomplete_authority,
     };
     vault.observe_bundle_publication(request, observed);
 }
@@ -91,7 +94,14 @@ fn observe(
 /// Keeps `reach`, with no home and nothing read, for every request asked.
 fn observe_all(vault: &Vault, asked: &[(AuthorityEntryHash, EntityId)], reach: PublishReach) {
     for (request, _) in asked {
-        observe(vault, *request, None, reach, LatestRead::NotRead);
+        observe(
+            vault,
+            *request,
+            None,
+            reach,
+            LatestRead::NotRead,
+            Vec::new(),
+        );
     }
 }
 
@@ -141,6 +151,7 @@ async fn publish_all(
                 Some(home),
                 PublishReach::OtherHome,
                 LatestRead::NotRead,
+                Vec::new(),
             );
             continue;
         }
@@ -150,6 +161,7 @@ async fn publish_all(
             Some(home),
             PublishReach::Reached,
             LatestRead::NotRead,
+            Vec::new(),
         );
         publish_one(manager, &mut rpc, request, home, materialize).await?;
     }
@@ -170,10 +182,10 @@ async fn publish_one(
     let slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
     // An attempt this install persisted and has not resolved comes first
     // (CALLS BUNDLE_PUBLISH_RECONCILE).
-    match attempt::reconcile(vault, rpc, request, home).await? {
-        Reconciled::Committed => return enact(manager, request).await,
-        Reconciled::Uncertain => return Ok(()),
-        Reconciled::Open => {}
+    match work::reconcile_request(rpc, vault, request, home).await? {
+        work::WorkFate::Committed(_) => return enact(manager, request).await,
+        work::WorkFate::Uncertain => return Ok(()),
+        work::WorkFate::Open => {}
     }
     let latest = list_generations_for(rpc, Some(request))
         .await?
@@ -205,7 +217,14 @@ async fn publish_one(
             read.map_err(storage)?
         }
     };
-    observe(vault, request, Some(home), PublishReach::Reached, read);
+    observe(
+        vault,
+        request,
+        Some(home),
+        PublishReach::Reached,
+        read.clone(),
+        Vec::new(),
+    );
     if named {
         return enact(manager, request).await;
     }
@@ -214,6 +233,12 @@ async fn publish_one(
     if latest.is_some_and(|newest| newest.slot > slot) || !turn::ask_turn(rpc, false).await? {
         return Ok(());
     }
+    // Without an executor identity no begin addresses: the next machine
+    // waiting need not wait out the lease.
+    let Some(executor) = work::executor_id(vault).map_err(storage)? else {
+        let _ = turn::ask_turn(rpc, true).await;
+        return Ok(());
+    };
     let assembling = Arc::clone(manager);
     let upload = turn::renewing_turn(rpc, move || {
         assembling.assemble_sealed_bundle(
@@ -233,8 +258,17 @@ async fn publish_one(
             return Err(storage(error));
         }
     };
+    // The owner sees each world this upload could not seal fresh (FIX 12417).
+    observe(
+        vault,
+        request,
+        Some(home),
+        PublishReach::Reached,
+        read,
+        upload.incomplete_authority.clone(),
+    );
     let generation = upload.bundle.generation();
-    let committed = if put_object(
+    let staged = put_object(
         rpc,
         &generation,
         SealedBundleObject::Bundle,
@@ -247,23 +281,51 @@ async fn publish_one(
             SealedBundleObject::Pads,
             upload.pads.as_bytes(),
         )
-        .await?
-    {
-        // The exact attempt is persisted before the commit, so an ack lost
-        // on the way is reconciled, never published again (FIX 4787).
-        attempt::persist(vault, request, home, generation, upload.bundle.digest())
-            .map_err(storage)?;
-        commit_generation(rpc, &generation, latest, upload.kit_root, Some(request)).await?
-    } else {
-        None
-    };
-    let enacted = match BUNDLE_PUBLISH_COMPLETION {
-        PublishCompletion::HomeCommitWithRequest => committed.is_some_and(|entry| {
-            entry.generation == generation && entry.bundle_digest == upload.bundle.digest()
-        }),
-    };
-    if enacted {
-        return enact(manager, request).await;
+        .await?;
+    if staged {
+        let attempt = attempt::BundleAttempt {
+            home: Some(home),
+            executor,
+            generation,
+            bundle_digest: upload.bundle.digest(),
+            parent: latest,
+            root: upload.kit_root,
+            request: Some(request),
+            bundle_total: upload.bundle.as_bytes().len() as u64,
+            pads_total: upload.pads.as_bytes().len() as u64,
+            pads_digest: upload.pads.digest(),
+            incomplete_authority: upload.incomplete_authority.clone(),
+            awaiting_reader: Vec::new(),
+        };
+        // The exact attempt persists before the first commit send, so an ack
+        // lost on the way resumes, never reuploads.
+        attempt::persist(vault, AttemptKey::Request(request), &attempt).map_err(storage)?;
+        match work::begin_work(rpc, &attempt).await? {
+            work::WorkOutcome::Accepted(status) => match status.state {
+                work::WorkState::Pending => return Ok(()),
+                work::WorkState::Committed => {
+                    let entry = status.entry.ok_or_else(refused)?;
+                    let enacted = match BUNDLE_PUBLISH_COMPLETION {
+                        PublishCompletion::HomeCommitWithRequest => {
+                            entry.generation == generation
+                                && entry.bundle_digest == upload.bundle.digest()
+                        }
+                    };
+                    if enacted {
+                        return enact(manager, request).await;
+                    }
+                    return Err(refused());
+                }
+                work::WorkState::NeedsRebase | work::WorkState::Refused => {
+                    attempt::settle_one(vault, AttemptKey::Request(request), &attempt)
+                        .map_err(storage)?;
+                }
+            },
+            work::WorkOutcome::Refused => {
+                attempt::settle_one(vault, AttemptKey::Request(request), &attempt)
+                    .map_err(storage)?;
+            }
+        }
     }
     let _ = turn::ask_turn(rpc, true).await;
     Ok(())

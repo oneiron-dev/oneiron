@@ -1,6 +1,10 @@
-//! Provider read formats share prepared rows and always null credential-bearing fields.
+//! Core half of `serialize::provider_codecs`: its store-layer items live in `oneiron_store::serialize::provider_codecs` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::serialize::provider_codecs::*;
+
 use super::pack_entry::PreparedPack;
-use crate::context_pack::PackFormat;
+use crate::serialize::pack_format::PackFormat;
 use serde_json::{Value, json};
 
 pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> Vec<u8> {
@@ -33,6 +37,7 @@ pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> 
     };
     serde_json::to_vec(&body).expect("provider value is serializable")
 }
+
 pub(crate) fn scrub(key: &str, value: &mut Value) {
     let lower: String = key
         .chars()
@@ -75,13 +80,6 @@ pub(crate) fn scrub(key: &str, value: &mut Value) {
         Value::Object(values) => values.iter_mut().for_each(|(k, v)| scrub(k, v)),
         _ => {}
     }
-}
-
-fn contains_private_key(text: &str) -> bool {
-    text.lines().any(|line| {
-        let line = line.trim();
-        line.starts_with("-----BEGIN ") && line.ends_with("PRIVATE KEY-----")
-    })
 }
 
 pub(super) fn sanitize_pack(

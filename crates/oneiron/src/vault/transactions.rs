@@ -28,10 +28,13 @@ pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
 /// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
-/// reservation: only the delete doors write them. Nor a federation world's
+/// reservation: only the delete doors write them. Nor the owner's discard of a
+/// world copy, its marks or a BASE window's projection floor: only the
+/// discard and its projection write them (FIX 14534). Nor a federation world's
 /// registration or stale stamp: only the registration and the stale sweep
 /// write them. Nor a peer-origin digest: only the peer import records what it
-/// brought.
+/// brought. Nor the record of which machine wrote a MESSAGE row: only the put
+/// that stages the row writes it (FIX 12113).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -49,6 +52,11 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
             "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
+    if key.starts_with("it:proposer-scope:") {
+        return Err(Error::InvalidConfig(
+            "identity-topology proposer handles are written only by the proposal writer".to_owned(),
+        ));
+    }
     if [
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
@@ -63,8 +71,20 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
                 .to_owned(),
         ));
     }
-    if key.starts_with(crate::federation::FEDERATION_WORLD_KEY_PREFIX)
-        || key.starts_with(crate::federation::FEDERATION_STALE_KEY_PREFIX)
+    if [
+        crate::side_table::SYNC_DISCARDED_WORLD_ROW.prefix,
+        crate::side_table::SYNC_BASE_WINDOW_DISCARD.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "the owner's discard marks and projection floors are written only by the discard"
+                .to_owned(),
+        ));
+    }
+    if key.starts_with(crate::store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX)
+        || key.starts_with(crate::store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX)
     {
         return Err(Error::InvalidConfig(
             "federation world registrations and stale stamps are written only by the engine"
@@ -77,6 +97,14 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     {
         return Err(Error::InvalidConfig(
             "peer-origin digests are written only by the peer import".to_owned(),
+        ));
+    }
+    if key
+        .as_bytes()
+        .starts_with(crate::side_table::SYNC_MESSAGE_WRITER.prefix)
+    {
+        return Err(Error::InvalidConfig(
+            "MESSAGE writer records are written only by the put that stages the row".to_owned(),
         ));
     }
     Ok(())
@@ -168,7 +196,7 @@ impl Vault {
     ) -> Result<Option<u64>> {
         self.latest_learned_at_excluding_entity_types_at(
             excluded_types,
-            crate::claim::CallerLocality::OnDevice,
+            crate::settings::CallerLocality::OnDevice,
         )
     }
 
@@ -215,10 +243,10 @@ impl Vault {
         }
         let txn = self.store.env.read_txn()?;
         let window = [start.to_be_bytes(), end.to_be_bytes()].concat();
-        let mut count = crate::scan_check::ScanCount::start(
+        let mut count = crate::store::scan_count::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::LearnedRangeRows,
+            crate::store::EngineScan::LearnedRangeRows,
             &window,
         )?;
         let query = crate::ports::TimelineQuery {
@@ -358,8 +386,8 @@ impl Vault {
         // published revision; marked while the vectors still say who had one.
         crate::vault::entity_revision::schedule_vector_refills(self, wtxn)?;
         hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
-        hnsw::increment_vector_version(&self.store, wtxn)?;
-        hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
+        crate::store::vector_index::increment_embedding_model_epoch(&self.store, wtxn)?;
         // The sweep below queues the work where the build has a queue. A
         // build without one marks the records only, and leaves the queueing
         // to the next serving open, which runs it from this marker (cold
@@ -367,17 +395,19 @@ impl Vault {
         if cfg!(feature = "sync") {
             self.store
                 .hnsw_meta
-                .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
+                .delete(wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY)?;
         } else {
-            self.store
-                .hnsw_meta
-                .put(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+            self.store.hnsw_meta.put(
+                wtxn,
+                crate::store::embedding::COLD_ATTACH_PENDING_KEY,
+                b"1",
+            )?;
         }
         crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
         crate::embed::remark_all_embeddable_pending_in_txn(
             self,
             wtxn,
-            crate::embed::EMBED_PRIORITY_BACKFILL,
+            crate::store::embedding::EMBED_PRIORITY_BACKFILL,
         )?;
         Ok(pinned_transform)
     }
@@ -406,7 +436,10 @@ impl Vault {
     /// it, so no later write waits on a lock or permit its result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
-    /// [`Self::consolidate_claim_vad_now`] to finish that work.
+    /// [`Self::consolidate_claim_vad_now`] to finish that work. While a host's
+    /// payment worker is attached ([`Self::attach_claim_vad_payment_worker`]),
+    /// that worker runs it after this returns, and its failure stays owed
+    /// for the housekeeping pass (FIX 11702).
     pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
@@ -570,8 +603,8 @@ impl Vault {
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
-        let mut count = crate::scan_check::ScanCount::start_at(
-            crate::scan_check::EngineScan::PackQuarantineRows,
+        let mut count = crate::store::scan_count::ScanCount::start_at(
+            crate::store::EngineScan::SyncPrefixRows,
             prefix.as_bytes(),
             MAX_SYNC_STATE_KEYS as u64,
         );
@@ -623,8 +656,8 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut count = crate::scan_check::ScanCount::start_at(
-            crate::scan_check::EngineScan::PackQuarantineRows,
+        let mut count = crate::store::scan_count::ScanCount::start_at(
+            crate::store::EngineScan::SyncPrefixRows,
             prefix,
             MAX_SYNC_STATE_KEYS as u64,
         );

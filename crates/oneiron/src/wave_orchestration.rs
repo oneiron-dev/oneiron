@@ -49,9 +49,7 @@ use crate::registry::ENTITY_TYPE_TASK;
 /// Wire version of the [`WavePlan`] a planner returns.
 pub const WAVE_PLAN_SCHEMA_VERSION: u8 = 1;
 
-/// Attempt kind the planning step rides on the existing attempt queue: the
-/// PLAN is a task/attempt like any other, not a privileged engine phase.
-pub const WAVE_PLAN_ATTEMPT_KIND: &str = "wave.plan";
+pub use crate::store::dreamer_attempt_kind::WAVE_PLAN_ATTEMPT_KIND;
 
 /// The `blocked_by` edge discriminant, pinned to the ARCH-0034 `edgeKinds`
 /// registry byte owned by [`crate::edge::EdgeKind::BlockedBy`].

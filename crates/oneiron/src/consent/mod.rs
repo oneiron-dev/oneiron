@@ -48,10 +48,13 @@
 //! rewrite, or a byte/status/codec change to the source record.
 
 mod adapters;
+mod answer_wake;
+pub mod approval_proof;
 mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
+pub mod code_wait_state;
 mod codec;
 mod contact_clearance;
 mod doors;
@@ -61,6 +64,7 @@ pub mod lifecycle;
 mod owner_reason;
 mod registry;
 mod support;
+pub mod tool_scope;
 pub mod widen;
 
 mod bypass;
@@ -146,7 +150,7 @@ pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
     person_is_live_for_store_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
-    spend_approve_once_in_txn, standing_grant_is_active_in_txn,
+    spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_row_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,
@@ -182,3 +186,7 @@ use self::codec::{
 };
 #[cfg(test)]
 use self::support::SUBJECT_KIND_AUDIENCE;
+
+pub mod bundle_projection;
+
+pub mod settlement_fact;

@@ -3,6 +3,7 @@ mod approval_target;
 mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
+mod effect_paced;
 mod effect_pair;
 mod evaluate;
 mod record;
@@ -23,6 +24,7 @@ use self::effect_grants::{
     channel_identity_envelope_admission_in_txn, standing_outbound_grant_for_effect,
     touch_standing_outbound_grant_in_txn,
 };
+pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 pub(crate) use self::evaluate::evaluate_external_effect_policy;
 pub(crate) use self::record::{
@@ -58,7 +60,7 @@ pub(crate) struct ExternalEffectBudgetTarget {
 pub(crate) enum ApprovalContext {
     Observe,
     FirstAdmission,
-    Retry(crate::outbound_intent_ledger::AdmittedApproval),
+    Retry(crate::consent::approval_proof::AdmittedApproval),
     /// The first admission of a held effect a code consent wait owns
     /// (DOOR-079 1a): its one-shot approval is the one the wait's answer
     /// minted under the wait's binding digest, which the admission writer
@@ -77,6 +79,7 @@ pub(crate) struct ExternalEffectGovernance {
     grant_ref: Option<String>,
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
+    ask_consent: Option<crate::llm::decision::AskConsent>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
@@ -93,6 +96,12 @@ impl ExternalEffectGovernance {
     #[must_use]
     pub(crate) fn outcome(&self) -> GateOutcome {
         self.decision.outcome()
+    }
+
+    /// The actual hydrated consent composition for a live scoped-MCP hold.
+    /// It is metadata for an owner question, never admission authority.
+    pub(crate) fn ask_consent(&self) -> Option<&crate::llm::decision::AskConsent> {
+        self.ask_consent.as_ref()
     }
 
     /// The typed per-grant capability identity this governance verified, if the

@@ -27,8 +27,8 @@ use base64::Engine as _;
 use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
-    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
-    BornFromSource, DeckProposeRejection, DeckTransaction,
+    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactAppendOutcome, BlobArtifactVersion,
+    BlobVersionProvenance, BornFromSource, DeckProposeRejection, DeckTransaction,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
@@ -325,7 +325,7 @@ pub(super) async fn create(
     payload: Result<Json<CreateArtifact>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let request = json_payload(payload)?;
     let made_by = request
         .made_by
@@ -393,24 +393,50 @@ pub(super) async fn view(
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
+    let owner = super::owner_routes::owner(&auth, &server).ok();
     let view = blocking_read(move || {
         let vault = server.vault();
-        let view = match caveat_lane(vault, &auth)? {
-            None => vault.blob_artifact_view(&id),
-            // A tree the lane does not admit whole reads as absent. A
-            // records caveat that names the artifact covers its own version
-            // rows for the records check alone (FIX 8245): every other check
-            // still judges each of them.
-            Some(lane) => {
-                let lane = lane.with_artifact_records_cover(&[id]);
-                vault.blob_artifact_view_admitted(&id, |rows| lane.all_refs_readable(rows))
-            }
+        let caveat = caveat_lane(vault, &auth)?.map(|lane| lane.with_artifact_records_cover(&[id]));
+        let view = match caveat.as_ref() {
+            None => vault.blob_artifact_view_for_reader(&id, None, None),
+            // A records caveat covers this artifact's own version rows,
+            // while every other check still judges each row (FIX 8245).
+            Some(lane) => vault.blob_artifact_view_admitted_for_reader(&id, None, lane),
+        }
+        .map_err(|error| core_engine_error("artifact read failed", error))?;
+        if view.is_some() {
+            return Ok(view);
+        }
+        let Some(owner) = owner.as_ref() else {
+            return Ok(None);
+        };
+        let action = super::host_action::host_action_of(vault, &auth)
+            .transpose()
+            .map_err(super::host_action::host_action_refusal)?;
+        let key = vault
+            .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+            .map_err(|error| core_engine_error("artifact read failed", error))?;
+        let reader = vault
+            .scoped_read(key.for_destination(&auth.destination()))
+            .with_artifact_records_cover(&[id]);
+        let view = if caveat.is_some() {
+            vault.blob_artifact_view_admitted_for_reader(&id, Some(owner), &reader)
+        } else {
+            vault.blob_artifact_view_for_reader(&id, Some(owner), Some(&reader))
         };
         view.map_err(|error| core_engine_error("artifact read failed", error))
     })
     .await?
     .ok_or_else(|| ApiError::not_found("artifact", Some(artifact.as_str())))?;
     Ok(Json(json!(view)))
+}
+
+struct AppendError(ApiError);
+
+impl From<oneiron::Error> for AppendError {
+    fn from(error: oneiron::Error) -> Self {
+        Self(core_engine_error("artifact version append failed", error))
+    }
 }
 
 /// Append a version, on the head or forked from an earlier version.
@@ -422,7 +448,7 @@ pub(super) async fn view(
     ),
     request_body(content = Object, content_type = "application/json"),
     responses(
-        (status = 200, description = "The new version.", body = Object, content_type = "application/json"),
+        (status = 200, description = "The new version, or a proposal awaiting Keep.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed body, content not base64, or an agent's version without run_ref.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -436,41 +462,33 @@ pub(super) async fn append(
     payload: Result<Json<AppendVersion>, JsonRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let request = json_payload(payload)?;
     let bytes = decode_content(&request.content_base64)?;
     let provenance = provenance(actor, request.run_ref)?;
-    let version = blocking("artifact version append failed", move || {
+    let outcome = blocking_read(move || {
         let vault = server.vault();
         let (occurred, now) = moment(&server);
-        match (&request.made_by, request.fork_parent) {
-            (Some(made_by), fork_parent) => vault.append_blob_artifact_version_made_by(
+        vault
+            .append_blob_artifact_version_checked(
                 &id,
-                fork_parent,
+                request.fork_parent,
                 &bytes,
                 &provenance,
-                made_by,
+                request.made_by.as_ref(),
+                || made_by_reader(vault, &auth, request.made_by.as_ref()).map_err(AppendError),
                 actor,
                 occurred,
                 now,
-            ),
-            (None, Some(parent)) => vault.fork_blob_artifact_version(
-                &id,
-                parent,
-                &bytes,
-                &provenance,
-                actor,
-                occurred,
-                now,
-            ),
-            (None, None) => {
-                vault.append_blob_artifact_version(&id, &bytes, &provenance, actor, occurred, now)
-            }
-        }
+            )
+            .map_err(|AppendError(error)| error)
     })
     .await?;
-    Ok(Json(version_json(&version)))
+    Ok(Json(match outcome {
+        BlobArtifactAppendOutcome::Landed(version) => version_json(&version),
+        BlobArtifactAppendOutcome::Proposed(proposal) => json!({ "proposal": proposal }),
+    }))
 }
 
 async fn export(
@@ -498,35 +516,81 @@ async fn export(
         .map(|s| parse_entity_id_param(s, "principal_ref"))
         .transpose()?;
     let host_owner = host_action.map(|action| action.actor().entity_ref());
+    let owner = super::owner_routes::owner(&auth, &server).ok();
     let file = blocking_read(move || {
         let vault = server.vault();
         let failed = |error: oneiron::Error| core_engine_error("artifact export failed", error);
+        // The exact version served, pinned once before any check (FIX 4997):
+        // every path below reads this version and no other, so a head that
+        // advances mid-export cannot swap what the checks judged.
+        let Some((pinned, rows)) = vault
+            .blob_artifact_version_rows(&id, version)
+            .map_err(failed)?
+        else {
+            return Ok(None);
+        };
+        let lane = caveat_lane(vault, &auth)?;
+        // A wording version whose source the credential cannot read reads as
+        // absent (FIX 4997): judged through the credential's own lane — the
+        // caveat lane when one exists, else one built for the check — whose
+        // own exemptions decide. Never an owner bypass.
+        if vault
+            .commitment_reminder_wording_protected(&id, pinned)
+            .map_err(failed)?
+        {
+            let uncaveated;
+            let guard = match lane.as_ref() {
+                Some(lane) => lane,
+                None => {
+                    uncaveated = crate::api::scoped_read_for_core_auth(vault, &auth)?;
+                    &uncaveated
+                }
+            };
+            if !guard
+                .commitment_reminder_wording_source_readable(&id, pinned)
+                .map_err(failed)?
+            {
+                return Ok(None);
+            }
+        }
         // A credential with record caveats takes the exact version its lane
         // admits (FIX 7645): the artifact, that version's CLAIM and its
         // content's ASSET, judged from its metadata before a byte is read,
         // then that version read and no other. One it withholds reads as
         // absent. A records caveat that names the artifact covers that
         // version's rows for the records check alone (FIX 8245).
-        let version = match caveat_lane(vault, &auth)? {
-            None => version,
-            Some(lane) => {
-                let Some((pinned, rows)) = vault
-                    .blob_artifact_version_rows(&id, version)
-                    .map_err(failed)?
-                else {
-                    return Ok(None);
-                };
-                let lane = lane.with_artifact_records_cover(&[id]);
-                let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
-                if !lane.all_refs_readable(&sources).map_err(failed)? {
-                    return Ok(None);
-                }
-                Some(pinned)
+        if let Some(lane) = lane {
+            let lane = lane.with_artifact_records_cover(&[id]);
+            let sources: Vec<EntityId> = std::iter::once(id).chain(rows).collect();
+            if !lane.all_refs_readable(&sources).map_err(failed)? {
+                return Ok(None);
             }
-        };
+        }
         let file = vault
-            .export_blob_artifact_as(&id, version, sight)
+            .export_blob_artifact_for_reader(&id, Some(pinned), sight, None, None)
             .map_err(failed)?;
+        let file = if file.is_some() {
+            file
+        } else if let Some(owner) = owner.as_ref() {
+            let action = super::host_action::host_action_of(vault, &auth)
+                .transpose()
+                .map_err(super::host_action::host_action_refusal)?;
+            let key = vault
+                .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+                .map_err(failed)?;
+            let reader = vault.scoped_read(key.for_destination(&auth.destination()));
+            vault
+                .export_blob_artifact_for_reader(
+                    &id,
+                    Some(pinned),
+                    sight,
+                    Some(owner),
+                    Some(&reader),
+                )
+                .map_err(failed)?
+        } else {
+            None
+        };
         let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
             vault
@@ -636,7 +700,7 @@ pub(super) async fn export_version(
         ("agent_run" = Option<String>, Query, description = "An agent run ref, as its versions' provenance names it.")
     ),
     responses(
-        (status = 200, description = "`born`: the rows the source created; `versions`: every artifact version it made, in artifact then version order. A credential with record caveats is shown only the rows its lane admits, and nothing for a task, ask, run or skill it does not.", body = Object, content_type = "application/json"),
+        (status = 200, description = "`born`: the rows the source created; `born_records`: each of them as a typed record ref of its kind; `versions`: every artifact version it made, in artifact then version order. A credential with record caveats is shown only the rows its lane admits, and nothing for a task, ask, run or skill it does not.", body = Object, content_type = "application/json"),
         (status = 400, description = "Name exactly one of task, ask, run, skill or agent_run.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -680,7 +744,7 @@ pub(super) async fn born_from(
             .into());
         }
     };
-    let (born, versions) = blocking_read(move || {
+    let (born, born_records, versions) = blocking_read(move || {
         let vault = server.vault();
         let failed = |error: oneiron::Error| core_engine_error("born-from read failed", error);
         let lane = caveat_lane(vault, &auth)?;
@@ -691,13 +755,21 @@ pub(super) async fn born_from(
             BornFromSource::AgentRun(_) => Vec::new(),
         };
         let versions = vault.artifacts_born_from(&source).map_err(failed)?;
-        match lane {
-            None => Ok((born, versions)),
-            Some(lane) => admitted_born_from(vault, lane, &source, born, versions).map_err(failed),
-        }
+        let (born, versions) = match lane {
+            None => (born, versions),
+            Some(lane) => {
+                admitted_born_from(vault, lane, &source, born, versions).map_err(failed)?
+            }
+        };
+        // Each born row the answer keeps, named by the kind its row is
+        // (FIX 9340); one whose kind no longer reads is in `born` alone.
+        let born_records = vault.born_records(&born).map_err(failed)?;
+        Ok((born, born_records, versions))
     })
     .await?;
-    Ok(Json(json!({ "born": born, "versions": versions })))
+    Ok(Json(
+        json!({ "born": born, "born_records": born_records, "versions": versions }),
+    ))
 }
 
 /// List an artifact's pending proposals.
@@ -771,20 +843,25 @@ pub(super) async fn propose_deck(
         let vault = server.vault();
         let failed = |error| core_engine_error("deck proposal failed", error);
         let reader = made_by_reader(vault, &auth, request.made_by.as_ref())?;
-        match vault
-            .propose_blob_artifact_deck_edit(&id, &transaction, &request.run_ref, request.context)
-            .map_err(failed)?
-        {
+        let (outcome, read_rows) = vault
+            .propose_blob_artifact_deck_edit_with_reads(
+                &id,
+                &transaction,
+                &request.run_ref,
+                request.context,
+            )
+            .map_err(failed)?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => {
                 let now = vault.now_recorded_at();
                 vault
-                    .retain_edit_proposal(
+                    .retain_edit_proposal_with_reads(
                         &id,
                         &proposal,
                         request.made_by.as_ref(),
                         reader,
-                        actor,
-                        now,
+                        (actor, now),
+                        &read_rows,
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -835,7 +912,7 @@ pub(super) async fn propose_output(
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
-        report: request.report,
+        report: request.report.to_string(),
         made_by: request.made_by,
     };
     let pending = blocking_read(move || {
@@ -863,7 +940,7 @@ fn settle_request(payload: Option<Json<Settle>>) -> Settle {
     ),
     request_body(content = Object, description = "Optional body: `brief_ref` and `reason`.", content_type = "application/json"),
     responses(
-        (status = 200, description = "The kept `version`, whether a stranded proposal was left, the comments `remapped` and `drifted`, and the settle `receipt`.", body = Object, content_type = "application/json"),
+        (status = 200, description = "The kept `version`, whether a stranded proposal was left, the comments `remapped` and `drifted`, the settle `receipt`, its `reconciliation` when it forked, and the `review` it settled, typed.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -900,6 +977,7 @@ pub(super) async fn keep(
         "drifted": outcome.reanchor.drifted.len(),
         "receipt": outcome.receipt,
         "reconciliation": outcome.reconciliation,
+        "review": outcome.review,
     })))
 }
 
@@ -1194,7 +1272,7 @@ pub(super) async fn reattach(
     payload: Result<Json<Reattach>, JsonRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;

@@ -4,63 +4,9 @@
 //! was put to are forgotten with it (FIX 4588).
 
 use super::asks::{ASKS, DecisionAsk};
-use super::ladder::AskRole;
-use super::rules::RULES;
-use super::types::invalid;
+use super::ladder::{AskConsent, AskRole};
+use crate::vault_shape::ShapeGrantBound;
 use crate::{EntityId, Result, Vault};
-
-/// The actor an answer names (an ask's answerer, a rule row's writer, an
-/// ask's principal or responsible actor), or no one once that actor was
-/// erased (FIX 3520, 4588). It reads and writes as the actor's hex id, or as
-/// [`crate::receipt::ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnswerActor {
-    Actor(EntityId),
-    Erased,
-}
-
-impl schemars::JsonSchema for AnswerActor {
-    fn schema_name() -> String {
-        "AnswerActor".to_owned()
-    }
-
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        <String as schemars::JsonSchema>::json_schema(generator)
-    }
-}
-
-impl AnswerActor {
-    /// Whether this is `actor`.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-
-    /// The actor, while it is not erased.
-    #[must_use]
-    pub const fn id(self) -> Option<EntityId> {
-        match self {
-            Self::Actor(id) => Some(id),
-            Self::Erased => None,
-        }
-    }
-
-    /// The actor, refused once it was erased: no live request is rebuilt
-    /// for no one.
-    pub(super) fn live(self) -> Result<EntityId> {
-        self.id()
-            .ok_or_else(|| invalid("the decision ask names an erased actor"))
-    }
-
-    /// Makes this no one when it is `actor`; whether it was.
-    fn forget(&mut self, actor: EntityId) -> bool {
-        let named = self.is(actor);
-        if named {
-            *self = Self::Erased;
-        }
-        named
-    }
-}
 
 /// Makes a responsible role name no one when it named `actor`; whether it
 /// did. Its project and rank stay, so the chain still walks that project's
@@ -70,6 +16,22 @@ fn forget_role(role: &mut AskRole, actor: EntityId) -> bool {
         AskRole::Responsible { actor: named, .. } => named.forget(actor),
         AskRole::Board { .. } | AskRole::Owner => false,
     }
+}
+
+/// Whether a consent attachment names `actor` as an action subject or an
+/// audience member, including the effect's requirements and its draft bound.
+fn consent_names_actor(consent: &AskConsent, actor: EntityId) -> bool {
+    std::iter::once(&consent.bound)
+        .chain(consent.effect.action.iter())
+        .chain(consent.effect.disclosure.iter())
+        .any(|bound| match bound {
+            ShapeGrantBound::Action { actor: named, .. } => {
+                EntityId::from_hex(named).is_ok_and(|named| named == actor)
+            }
+            ShapeGrantBound::Disclosure { audience, .. } => audience
+                .iter()
+                .any(|named| EntityId::from_hex(named).is_ok_and(|named| named == actor)),
+        })
 }
 
 /// Takes `actor` out of `ask` (FIX 3520, 4588): its principal, the
@@ -93,6 +55,14 @@ fn forget_in_ask(ask: &mut DecisionAsk, actor: EntityId) -> bool {
         named |= answer.by.forget(actor);
         named |= forget_role(&mut answer.role, actor);
     }
+    if ask
+        .consent
+        .as_ref()
+        .is_some_and(|consent| consent_names_actor(consent, actor))
+    {
+        ask.consent = None;
+        named = true;
+    }
     named
 }
 
@@ -102,7 +72,9 @@ use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the asks (FIX 3520): each answer it gave keeps its
 /// value, time, role, kind, reason and rule, and names no one. The ask stays
-/// answered, since clearing the answer would reopen it. A use of the answer
+/// answered, since clearing the answer would reopen it. A consent attachment
+/// naming the erased actor is cleared, not rewritten into a different bound;
+/// the question, answer and withdrawal state stay intact. A use of the answer
 /// still to run takes a live answerer: the e-sign hold refuses an erased
 /// one. An ask for it, or routed or put to it, keeps its question, evidence,
 /// times and answer and names no one (FIX 4588): an ask for no one rebuilds
@@ -133,31 +105,4 @@ pub(crate) fn erase_ask_actor_in_txn(
     Ok(())
 }
 
-/// Erasing `actor` from the rule rows (FIX 3520): every revision it wrote
-/// keeps its question, evidence, answer, reason and times, and names no one.
-/// A standing row still answers its question, as a row is advice and never a
-/// grant; the owner's revoke still stops it. One-way, in the erase's own
-/// transaction. An id whose entity is no actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a rule row that cannot be read.
-pub(crate) fn erase_rule_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if names_no_actor(vault, wtxn, actor)? {
-        return Ok(());
-    }
-    let mut rows = Vec::new();
-    for (key, mut row) in RULES.scan(&vault.store, wtxn)? {
-        if row.by.forget(*actor) {
-            rows.push((key, row));
-        }
-    }
-    for (key, row) in rows {
-        RULES.put(&vault.store, wtxn, &key, &row)?;
-    }
-    Ok(())
-}
+pub use crate::model_decision::AnswerActor;

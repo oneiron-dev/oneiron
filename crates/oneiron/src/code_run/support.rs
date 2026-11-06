@@ -8,13 +8,12 @@ use sha2::{Digest, Sha256};
 use crate::{EdgeKind, EntityId, Error, Result};
 
 use super::replay::CODE_RUN_REPLAY_HASH_LEN;
-use crate::error::ArtifactError;
 
-pub(super) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
+pub(super) use crate::store::result_manifest::CODE_RUN_OUTPUT_HANDLE_PREFIX;
 pub(super) const CODE_RUN_LAYOUT_HASH_DOMAIN: &[u8] = b"oneiron:code-run-replay-layout:v1";
 
 pub(super) const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
-pub(super) const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
+pub(super) use crate::store::result_manifest::CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES;
 
 pub(super) fn request_map(entries: Vec<(&'static str, Value)>) -> Value {
     Value::Map(
@@ -168,12 +167,7 @@ pub(super) fn validate_label(value: &str, field: &'static str) -> Result<()> {
     validate_text(value, CODE_RUN_REPLAY_MAX_LABEL_BYTES, field)
 }
 
-pub(super) fn validate_text(value: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    if value.trim().is_empty() || value.len() > max_bytes {
-        return Err(invalid_code_run_replay(field));
-    }
-    Ok(())
-}
+pub(super) use crate::store::result_manifest::validate_text;
 
 pub(super) fn code_run_layout_hash<I, S>(
     name: &str,
@@ -197,6 +191,4 @@ where
     hasher.finalize().into()
 }
 
-pub(super) fn invalid_code_run_replay(message: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(message))
-}
+pub(super) use crate::store::result_manifest::invalid_code_run_replay;

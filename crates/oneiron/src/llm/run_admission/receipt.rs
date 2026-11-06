@@ -72,6 +72,13 @@ pub enum RunEvent {
         /// when it reported none.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         inference_calls: Vec<InferenceCallReceipt>,
+        /// What the call settled past its reservation, in the run line's
+        /// units (FIX 11481): a `Used` or `UsedCounted` settlement charges
+        /// the settled figure even past what its permit reserved, and the
+        /// overage is marked here with where that figure came from.
+        /// Present only then; ordinary settlements carry none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        overage: Option<RunUsageOverage>,
         units: u64,
         unit: LeaseUnit,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,6 +133,34 @@ pub struct RunStreamUsage {
 pub struct RunTokenUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
+}
+
+/// What a settled call ran past its reservation (FIX 11481), in the
+/// run line's units as `units` is: the settled figure — the provider's
+/// report or the host/caller's own count, per `source` — against what the
+/// permit reserved. On the settlement only when the settled figure ran
+/// past the reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunUsageOverage {
+    /// What the call settled at, as charged.
+    pub reported_units: u64,
+    /// What the permit reserved.
+    pub reserved_units: u64,
+    /// `reported_units - reserved_units`.
+    pub overage_units: u64,
+    /// Where the reported figure came from.
+    pub source: RunOverageSource,
+}
+
+/// Where a settled overage's reported figure came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunOverageSource {
+    /// The provider's own usage report for the call.
+    ProviderReported,
+    /// The host/caller's own count for the call (bytes, audio, fixed
+    /// units, requested length), at its row's rates.
+    Counted,
 }
 
 /// Everything one permit binds.

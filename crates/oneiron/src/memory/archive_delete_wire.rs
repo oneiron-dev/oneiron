@@ -26,7 +26,7 @@ use super::{
     MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 
 /// Explicit archived records to preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

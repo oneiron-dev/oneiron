@@ -1,4 +1,5 @@
 //! Canonical claim-bound archived receipt data, never a native terminal stamp.
+pub(super) use crate::store::receipt_identity::MAGIC;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, export::ExportReceiptSource},
     entity_id::EntityId,
@@ -8,10 +9,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-// Invalid UTF-8 and a non-container MessagePack first byte prevent opaque
-// carriers from falling through a text serializer. Whole export uses the
-// credential-safe source facet, never these bytes as another escape channel.
-pub(super) const MAGIC: &[u8] = b"\xf5oneiron.receipt-archive.v1\0";
 /// The domain an archived source's id hashes its canonical bytes under.
 const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,9 +69,6 @@ impl ReceiptArchive {
         out.write_all(MAGIC).map_err(|_| invalid())?;
         rmp_serde::encode::write_named(out, self).map_err(|_| invalid())
     }
-    pub(super) fn id(&self) -> Result<EntityId> {
-        id_of_bytes(&self.bytes()?)
-    }
     pub(super) fn matches_body(&self, body: &[u8]) -> bool {
         is_inert_holder(body)
             && digest(body) == self.body_sha256
@@ -100,9 +94,7 @@ impl ReceiptArchive {
         Ok(self.matches_body(body))
     }
 }
-pub(crate) fn is_receipt_archive_source(bytes: &[u8]) -> bool {
-    bytes.starts_with(MAGIC)
-}
+pub(crate) use crate::store::receipt_identity::is_receipt_archive_source;
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
     let Some(payload) = bytes.strip_prefix(MAGIC) else {
         return Ok(None);
@@ -120,7 +112,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
 /// The id of the archived source whose canonical stored bytes are `bytes`
 /// ([`ReceiptArchive::bytes`]), hashed once from the bytes already held.
 pub(super) fn id_of_bytes(bytes: &[u8]) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
+    crate::store::code_snapshot::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
 }
 /// A writer that accepts only the next bytes of `rest`, so an encoding is
 /// compared with stored bytes as it is written.
@@ -168,5 +160,5 @@ pub(crate) fn receipt_archive_matches_id(bytes: &[u8], id: &EntityId) -> bool {
     decode(bytes)
         .ok()
         .flatten()
-        .is_some_and(|source| source.id().is_ok_and(|actual| actual == *id))
+        .is_some_and(|_| id_of_bytes(bytes).is_ok_and(|actual| actual == *id))
 }

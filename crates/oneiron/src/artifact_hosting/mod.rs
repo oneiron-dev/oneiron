@@ -9,20 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::code_artifact::{CodeArtifactClass, decode_code_artifact_body};
-use crate::codebase::{
-    CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
-    CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
-};
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result, SecretError};
-use crate::gate::{
-    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
-    GateProvenanceHandles,
-};
+use crate::gate::{self, ExternalEffectGateInput, GateProvenanceHandles};
 use crate::outbound::OutboundDispatchPipeline;
 use crate::ports::EntityStoreRead;
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ArtifactFamilyKindId, artifact_family_kind_of};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
@@ -30,6 +21,14 @@ use crate::secret_rotation::{
 };
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
+use crate::store::code_artifact_body::{CodeArtifactClass, decode_code_artifact_body};
+use crate::store::code_snapshot::{
+    CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
+    CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
+};
+use crate::store::gate_reason::GateOutcome;
+use crate::store::policy_record::{ExternalEffectPolicyRisk, GateActor};
+use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::write_envelope::WriteActor;
 
 /// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
@@ -38,7 +37,7 @@ pub(crate) mod checkpoint;
 pub mod door_types;
 mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
-pub mod preview;
+pub use oneiron_store::artifact_hosting::preview;
 mod publication_sync;
 mod serving;
 // The serving descriptor of a published blob version (FIX 1195).
@@ -377,7 +376,7 @@ impl Vault {
     pub fn artifact_publish_approval_digest(
         &self,
         request: &ArtifactPublishVerbRequest,
-    ) -> Result<crate::consent::EffectDigest> {
+    ) -> Result<crate::write_envelope::EffectDigest> {
         publish::artifact_publish_approval_digest(self, request)
     }
 }

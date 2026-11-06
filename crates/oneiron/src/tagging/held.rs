@@ -66,7 +66,7 @@ impl Vault {
         turn: &EntityId,
         tags: &EncoderOutput,
     ) -> Result<HeldTagsOutcome> {
-        if self.config.tagging.is_none() {
+        if self.tagging_marker_config().is_none() {
             return Err(Error::InvalidConfig(
                 "tagging markers are not armed on this vault".to_owned(),
             ));
@@ -91,10 +91,11 @@ pub(crate) fn settle_held_tags_in_txn(
     tags: &EncoderOutput,
     sent: Option<&[(EntityId, &str)]>,
 ) -> Result<HeldTagsOutcome> {
-    let Some(config) = vault.config.tagging.as_ref() else {
+    let tagging = vault.tagging_marker_config();
+    let Some(config) = tagging.as_ref() else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
-    let queue = AttemptQueue::from_store(&vault.store);
+    let queue = AttemptQueue::new(vault);
     let key = dedupe_key(turn, config);
     let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
         return Ok(HeldTagsOutcome::NoMarker);

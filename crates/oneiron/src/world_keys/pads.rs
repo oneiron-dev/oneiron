@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::pad_custody::{self, decode_pad_body, pad_item};
-use super::{SEALED_BUNDLE_KEEP, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, WorldKeyId, os_fill, refused};
+use super::{SEALED_BUNDLE_KEEP, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, WorldKeyId, refused};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::deletion::{
@@ -57,17 +57,16 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
-use crate::side_table::{self, HexId, Named, Raw, SideTable};
+use crate::side_table::HexId;
 use crate::store::Store;
 use crate::store::legal_hold::HoldActor;
+use crate::store::world_pad_rows::{DELETED, DESTROYED};
 use crate::temporal::TimeRange;
 
-const PAD_ROW_DOMAIN: &[u8] = b"oneiron/world-key-pad-row/v1";
-
-const DESTROYED: SideTable<HexId, WorldKeyDestruction, Named> =
-    SideTable::new(&side_table::WORLD_KEY_DESTROYED);
-/// When a world was soft-deleted here, in vault seconds.
-const DELETED: SideTable<HexId, u64, Raw> = SideTable::new(&side_table::WORLD_KEY_DELETED);
+pub(crate) use crate::store::world_pad_rows::{
+    note_world_deleted_in_txn, pad_body_world, world_keys_destroyed_in_txn,
+};
+pub(crate) use oneiron_store::world_pad_codec::{WorldKeyPad, pad_row_id, pad_world_in_body};
 
 /// How long after a soft delete a pin change still rewraps the world's keys:
 /// while the bundles that hold the world are kept, 90 daily generations
@@ -75,126 +74,12 @@ const DELETED: SideTable<HexId, u64, Raw> = SideTable::new(&side_table::WORLD_KE
 pub(crate) const DELETED_WORLD_KEEP_SECS: u64 =
     SEALED_BUNDLE_KEEP as u64 * SEALED_BUNDLE_UPLOAD_INTERVAL_SECS;
 
-/// One key's pad. It has no `Clone` and no `Serialize`, its `Debug` prints
-/// nothing, and its bytes are wiped on drop.
-pub(crate) struct WorldKeyPad(Zeroizing<[u8; 32]>);
+pub use crate::key_material::WorldKeyDestroyCause;
 
-impl std::fmt::Debug for WorldKeyPad {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("WorldKeyPad(..)")
-    }
-}
-
-impl WorldKeyPad {
-    /// A fresh pad from the OS RNG, for a key being minted.
-    pub(crate) fn mint() -> Result<Self> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        os_fill(&mut bytes[..])?;
-        Ok(Self(bytes))
-    }
-
-    /// A pad back from a sealed pad object (`bundle`).
-    pub(super) fn from_bytes(bytes: Zeroizing<[u8; 32]>) -> Self {
-        Self(bytes)
-    }
-
-    /// The pad's own bytes, for the sealed pad object (`bundle`).
-    pub(super) fn bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    /// `bytes ⊕ pad`: a key to the half its wraps seal, and that half back.
-    pub(crate) fn apply(&self, bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
-        let mut out = Zeroizing::new([0u8; 32]);
-        for (slot, (byte, pad)) in out.iter_mut().zip(bytes.iter().zip(self.0.iter())) {
-            *slot = byte ^ pad;
-        }
-        out
-    }
-}
-
-/// Why a world's keys were destroyed here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorldKeyDestroyCause {
-    /// This vault erased the world through the delete door.
-    LocalDelete,
-    /// A peer's hard tombstone for the world was applied here.
-    ReplayedTombstone,
-    /// A batch delete removed the world's row.
-    BatchDelete,
-}
-
-/// The receipt, and permanent fact, that an erased world's keys were destroyed
-/// here. Ids only: never a key, a pad or an envelope.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorldKeyDestruction {
-    pub receipt_id: String,
-    /// The WORLD row, as hex.
-    pub world: String,
-    pub cause: WorldKeyDestroyCause,
-    /// Each key whose pad was erased, as `generation:mint` with the mint in hex.
-    pub keys: Vec<String>,
-    /// The erased pad rows, as hex. Each also has a queued hard tombstone.
-    pub pad_rows: Vec<String>,
-    /// The delete request this erasure rode, as hex, when it had one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    /// The vault's recorded-at clock when the fact was first written.
-    pub at: u64,
-}
+pub use crate::key_material::WorldKeyDestruction;
 
 fn hex(bytes: &[u8; 16]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// The deterministic row id of `key`'s pad.
-pub(crate) fn pad_row_id(key: &WorldKeyId) -> Result<EntityId> {
-    EntityId::derive(
-        PAD_ROW_DOMAIN,
-        &[
-            key.world.as_bytes(),
-            &key.generation.to_be_bytes(),
-            &key.mint,
-        ],
-    )
-}
-
-/// Whether `world`'s keys were destroyed here, or the world was erased here: a
-/// hard-delete marker. A soft delete keeps the keys, so a soft-deleted world
-/// still takes its own pads. Absence of the WORLD row alone is not
-/// destruction: a first sync can bring a pad before its world.
-pub(crate) fn world_keys_destroyed_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    world: EntityId,
-) -> Result<bool> {
-    let id = HexId(world);
-    Ok(DESTROYED.contains(store, txn, &id)?
-        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &world)?)
-}
-
-/// Records when `world` was soft-deleted, in the delete's own transaction, so a
-/// pin change keeps its keys restorable for [`DELETED_WORLD_KEEP_SECS`]. A row
-/// that is not a WORLD is skipped, and the first record stands.
-pub(crate) fn note_world_deleted_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    world: EntityId,
-    deleted_at: u64,
-) -> Result<()> {
-    let is_world = store
-        .port_entity_with_raw(wtxn, &world, |raw| {
-            Ok(EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
-        })?
-        .unwrap_or(false);
-    let key = HexId(world);
-    if is_world && !DELETED.contains(store, wtxn, &key)? {
-        DELETED.put(store, wtxn, &key, &deleted_at)?;
-    }
-    Ok(())
 }
 
 /// Whether `world` was soft-deleted here less than [`DELETED_WORLD_KEEP_SECS`]
@@ -212,28 +97,6 @@ pub(crate) fn deleted_world_keys_kept_in_txn(
     };
     Ok(now < deleted_at.saturating_add(DELETED_WORLD_KEEP_SECS)
         && !world_keys_destroyed_in_txn(store, txn, world)?)
-}
-
-/// The world whose key a pad row `raw` splits: `None` for a row that is not
-/// a pad, an error for a pad whose body does not decode. Sync reads it to place
-/// a live pad in its world's windows and to keep a destroyed world's late pad
-/// out of every window.
-pub(crate) fn pad_body_world(raw: &[u8]) -> Option<Result<EntityId>> {
-    let header = EntityMetadataHeader::parse(raw)?;
-    if header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD {
-        return None;
-    }
-    Some(
-        raw.get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("world key pad body"))
-            .and_then(pad_world_in_body),
-    )
-}
-
-/// The world a pad row's `body`, with no header, names; an error for a body
-/// that does not decode.
-pub(crate) fn pad_world_in_body(body: &[u8]) -> Result<EntityId> {
-    decode_pad_body(body).map(|body| body.key().world)
 }
 
 /// The window a pad of `world` learned at `learned_at` rides: the world's
@@ -272,7 +135,9 @@ pub(crate) fn pad_in_txn(
     if world_keys_destroyed_in_txn(store, txn, key.world)? {
         return Ok(None);
     }
-    Ok(store.world_pad_in_custody(&pad_item(key))?.map(WorldKeyPad))
+    Ok(store
+        .world_pad_in_custody(&pad_item(key))?
+        .map(WorldKeyPad::from_bytes))
 }
 
 /// [`pad_in_txn`] with the time its row was learned, which files it in its
@@ -402,8 +267,20 @@ fn reject_held_world_in_txn(
     store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
+fn claim_body_world(raw: &[u8]) -> Result<Option<EntityId>> {
+    if let Some(Ok(world)) = pad_body_world(raw) {
+        return Ok(Some(world));
+    }
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world)
+}
+
 /// The claims `world`'s key seals. Of the rows a key seals, only a claim
-/// names a world: by its body (`sync::types::entity_world`), or, for a shell
+/// names a world: by its body ([`claim_body_world`]), or, for a shell
 /// or a body that names none readably, by the deletion address this vault
 /// kept for it (FIX 3062).
 fn sealed_claims_in_txn(
@@ -419,7 +296,7 @@ fn sealed_claims_in_txn(
         let Some(raw) = store.port_entity_raw(txn, &id)? else {
             continue;
         };
-        let of = match crate::sync::types::entity_world(&raw) {
+        let of = match claim_body_world(&raw) {
             Ok(Some(of)) => Some(of),
             Ok(None) | Err(_) => retained_world_in_txn(store, txn, &id)?,
         };
@@ -440,7 +317,7 @@ fn retained_world_in_txn(
     Ok(store
         .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .and_then(|raw| String::from_utf8(raw).ok())
-        .and_then(crate::sync::types::WindowKey::try_new)
+        .and_then(oneiron_store::window_key::WindowKey::try_new)
         .and_then(|key| key.world()))
 }
 
@@ -536,6 +413,40 @@ pub(crate) fn held_pad_world_in_txn(
     Ok(false)
 }
 
+/// The real-legal-hold-only version of the pad keep query, for truthful
+/// reason reports. Cooperative restrictions are not legal-hold facts.
+pub(crate) fn legal_hold_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> Result<bool> {
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    // A body that does not decode names no world: it reads unheld, warned
+    // with no byte of it, so the walk drops it.
+    let world = match pad_body_world(raw) {
+        None => return Ok(false),
+        Some(Ok(world)) => world,
+        Some(Err(_)) => {
+            tracing::warn!("a world key pad row that does not decode reads as unheld");
+            return Ok(false);
+        }
+    };
+    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
+        return Ok(false);
+    }
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, world.as_bytes())? {
+        return Ok(true);
+    }
+    for id in sealed_claims_in_txn(store, txn, world)? {
+        if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Refuses destroying the pad row `raw` read from a carrier, a window value
 /// or a cached body that no canonical row may back, while a legal hold
 /// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
@@ -557,17 +468,7 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
         return Ok(());
     };
     let mut sealed = vec![world];
-    let claims = store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
-        .collect::<Result<Vec<_>>>()?;
-    for id in claims {
-        let Some(claim) = store.port_entity_raw(txn, &id)? else {
-            continue;
-        };
-        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world) {
-            sealed.push(id);
-        }
-    }
+    sealed.extend(sealed_claims_in_txn(store, txn, world)?);
     store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
@@ -578,13 +479,14 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
 /// Only an erase calls it: a soft delete keeps the world's keys. Idempotent: a
 /// second call keeps the first receipt and purges any pad left.
 pub(crate) fn destroy_world_keys_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     target: EntityId,
     cause: WorldKeyDestroyCause,
     request_id: Option<[u8; 16]>,
     deleted_at: u64,
 ) -> Result<Option<WorldKeyDestruction>> {
+    let store = write.store;
     if target == crate::claim::base_world_id() {
         return Ok(None);
     }
@@ -615,7 +517,7 @@ pub(crate) fn destroy_world_keys_in_txn(
         request_id: request_id.unwrap_or(*target.as_bytes()),
     };
     for (id, _, learned_at) in &rows {
-        crate::batch::deindex_entity(store, wtxn, id)?;
+        crate::batch::deindex_entity(write, wtxn, id)?;
         let window = pad_window(target, *learned_at);
         stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window.clone(), &tombstone)?;
         // The batch that owns this transaction publishes the window once it
@@ -747,6 +649,7 @@ impl Vault {
                 end: learned_at,
             },
             learned_at,
+            row_version: None,
             data: pad_custody::encode_carrier(key, pad.bytes()),
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -775,8 +678,14 @@ impl Vault {
         request_id: Option<[u8; 16]>,
     ) -> Result<Option<WorldKeyDestruction>> {
         let deleted_at = self.instant_in_txn(wtxn)?.secs();
-        let destroyed =
-            destroy_world_keys_in_txn(&self.store, wtxn, target, cause, request_id, deleted_at)?;
+        let destroyed = destroy_world_keys_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            wtxn,
+            target,
+            cause,
+            request_id,
+            deleted_at,
+        )?;
         if destroyed.is_some() {
             self.world_key_ring().retain(|id, _| id.world != target);
         }

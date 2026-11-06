@@ -161,13 +161,13 @@ pub use self::redaction::{
 pub use self::report::{
     COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
-    ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRun,
-    ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportDisclosure,
-    ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend, ReportFrozenSignature,
-    ReportIssue, ReportKind, ReportPublisherBinding, ReportPublisherBindingRequest,
-    ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt, ReportRequest, ReportReview,
-    ReportRoute, ReportRoutedPayload, ReportSignature, ReportSignatureTransport,
-    ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
+    ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRetryRequest,
+    ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
+    ReportDisclosure, ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend,
+    ReportFrozenSignature, ReportIssue, ReportKind, ReportPublisherBinding,
+    ReportPublisherBindingRequest, ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt,
+    ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
+    ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
@@ -175,9 +175,10 @@ pub use self::triage::{
     FEEDBACK_TRIAGE_FINDING_PREDICATE, FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE,
     FeedbackTriageBinding, FeedbackTriageBindingRequest, FeedbackTriageChild,
     FeedbackTriageContinuation, FeedbackTriageErased, FeedbackTriageFinding, FeedbackTriageHandoff,
-    FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob,
-    FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob, FeedbackTriageOutput,
-    FeedbackTriagePin, FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest,
+    FeedbackTriageHandoffSource, FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem,
+    FeedbackTriageJob, FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob,
+    FeedbackTriageOutput, FeedbackTriageParkOutcome, FeedbackTriagePending, FeedbackTriagePin,
+    FeedbackTriageProgress, FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest,
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
     FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus,
     FeedbackTriageStatusRequest, FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork,
@@ -185,8 +186,9 @@ pub use self::triage::{
     GithubSweepContinuation,
 };
 pub(crate) use self::triage::{
-    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_in_txn,
-    job_handoff_in_txn, job_target, node_target,
+    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_actor_in_txn,
+    erase_handoff_as_in_txn, erase_handoff_in_txn, erased_queue_input_in_txn, job_handoff_in_txn,
+    job_target, node_target, refuse_erased_in_txn,
 };
 
 #[cfg(test)]

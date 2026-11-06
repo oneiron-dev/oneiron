@@ -25,7 +25,9 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 mod dependencies;
@@ -175,6 +177,18 @@ pub trait SpaceProbeAuthor: Send + Sync {
     /// through the host's media egress gate ([`Vault::author_space_probes_admitted`]); a text
     /// document goes where the host's admitted call (the vault's inference policy) lets it.
     fn locality(&self) -> EmbedderLocality;
+    /// Where this author reads toward (FIX 5588): this device for an
+    /// [`EmbedderLocality::OnDevice`] author, else a destination nobody proved.
+    /// A host whose model sits behind a host-attested Mesh proof overrides this with that
+    /// peer; locality alone never names one.
+    fn endpoint(&self) -> ReadDestination {
+        match self.locality() {
+            EmbedderLocality::OnDevice => ReadDestination::on_device(),
+            EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty => {
+                ReadDestination::toward(PeerMachine::Unknown)
+            }
+        }
+    }
     /// One search query a person might type to find `document`, in other words than its own;
     /// `None` when the model writes none.
     fn write_probe(&self, document: &MediaEmbeddingInput<'_>) -> Result<Option<String>>;
@@ -203,10 +217,10 @@ pub(crate) fn space_probes_in_txn(
 }
 
 impl Vault {
-    /// Stores one probe; every target, its document and every source it names must be a stored
-    /// record, read in the write, so no erased row's words come back (FIX 9829), and a media
-    /// query a stored ASSET holding inline image or audio. The write checks the owner's proof
-    /// again (FIX 8200).
+    /// Stores one probe; every target, its document and every source it names must be a live
+    /// record, read in the write, so no erased row's words come back (FIX 9829, FIX 11173),
+    /// and a media query a stored ASSET holding inline image or audio. The write checks the
+    /// owner's proof again (FIX 8200).
     pub fn put_space_probe(
         &self,
         owner: &AuthenticatedOwner,
@@ -221,14 +235,15 @@ impl Vault {
             .targets
             .iter()
             .chain(&probe.source_refs)
+            .chain(&probe.query_media)
             .chain(std::iter::once(&document))
         {
-            if self.store.port_entity_record(&wtxn, row)?.is_none() {
+            if !dependencies::source_row_is_live_in(self, &wtxn, row)? {
                 return Err(Error::EntityNotFound);
             }
         }
         if let Some(media) = probe.query_media
-            && media_query_in(&self.store, &wtxn, media)?.is_none()
+            && media_query_in(self, &self.store, &wtxn, media)?.is_none()
         {
             return Err(Error::InvalidConfig(
                 "a space probe's media query is a stored ASSET holding inline image or audio"
@@ -282,11 +297,12 @@ impl Vault {
     }
 
     /// [`Self::author_space_probes`] with the host's media egress gate (FIX 6743): an author at
-    /// a third party writes image and audio probes only from the documents `egress` allows
-    /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
-    /// asked again right before its bytes go to the author; the rest stay unsent and are
-    /// counted [`SpaceProbeReport::withheld`]. A text author, or one on this device or the
-    /// owner's server, reads as it does without a gate.
+    /// a third party, or on the owner's server with a gate, writes image and audio probes only
+    /// from the documents `egress` allows ([`EgressPredicate::decide_media`]) that no
+    /// device-local world keeps (DEC-0005), each asked again right before its bytes go to the
+    /// author; the rest stay unsent and are counted [`SpaceProbeReport::withheld`]. A text
+    /// author, one on this device, or one on the owner's server with no gate reads as it does
+    /// without a gate.
     ///
     /// # Errors
     ///
@@ -299,25 +315,31 @@ impl Vault {
         max_items: usize,
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<SpaceProbeReport> {
-        let gated = author.locality() == EmbedderLocality::ThirdParty && kind != InputKind::Text;
-        let egress = match egress {
+        let gated = matches!(
+            author.locality(),
+            EmbedderLocality::ThirdParty | EmbedderLocality::OwnerServer
+        ) && kind != InputKind::Text;
+        let egress = match (author.locality(), egress) {
             _ if !gated => None,
-            Some(egress) => Some(egress),
-            None => {
+            (EmbedderLocality::OwnerServer, egress) => egress,
+            (_, Some(egress)) => Some(egress),
+            _ => {
                 return Err(Error::InvalidConfig(
                     "a third-party probe author has no egress grant for stored media".into(),
                 ));
             }
         };
+        let destination = author.endpoint();
         let mut report = SpaceProbeReport::default();
         // Pending evaluation copies have their own scan (FIX 10408).
         if let Err(error) = self.rebuild_probe_query_copies(kind, author, max_items, egress) {
             tracing::warn!(error = %error, "probe evaluation copies stay pending");
         }
         let documents = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
                 .transpose()?;
             let probes: Vec<SpaceProbe> = space_probes_in_txn(&self.store, &rtxn)?
                 .into_iter()
@@ -402,7 +424,7 @@ impl Vault {
             let input = document.input();
             if let Some(egress) = egress
                 && (egress.decide_media(&input) != EgressDecision::Allow
-                    || !self.media_rows_may_leave(None, &[document.id])?)
+                    || !self.media_rows_may_leave(None, input.source_rows(), &destination)?)
             {
                 report.withheld += 1;
                 continue;
@@ -465,6 +487,10 @@ impl Vault {
                 written_at,
                 cohort: Some(cohort_of(document.learned_at)),
             };
+            if !dependencies::all_stored_in(self, &wtxn, &probe.targets)? {
+                report.vanished += 1;
+                continue;
+            }
             probe.validate()?;
             EMBEDDING_PROBE.put(&self.store, &mut wtxn, &probe.id(), &probe)?;
             repo_projection::record_authored_probe_copy_in_txn(
@@ -568,11 +594,13 @@ fn family_targets_in(
 /// The image or audio document a media query names, as `store` reads it; `None` when it is
 /// gone or holds neither.
 pub(super) fn media_query_in(
+    vault: &Vault,
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<PendingMedia>> {
     asset_document_in(
+        vault,
         store,
         txn,
         id,

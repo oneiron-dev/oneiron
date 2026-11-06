@@ -11,9 +11,9 @@ use crate::side_table::{FixedSideKey, SideKey};
 use crate::store::Store;
 use std::collections::BTreeMap;
 
-/// The short-id prefix the revision kind is registered under at run time,
-/// beside PROJECT in PROJECT's pack.
-pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
+pub(crate) use crate::store::project_kind::{
+    PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
+};
 
 /// Domain of a revision's logical hash; distinct from every authority-log,
 /// slip, challenge, resolution and seal domain.
@@ -288,20 +288,6 @@ pub(super) const REVISION_AWAITING_MINT: SideTable<
 /// Marker of the one-time capture at writable open.
 pub(super) const PROJECT_REVISION_BACKFILL: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::PROJECT_REVISION_BACKFILL);
-
-pub(crate) fn is_project_revision_type(store: &Store, kind: u8) -> bool {
-    store.structural_kind_registration(kind).is_some_and(|row| {
-        row.pack == PACK && row.short_id_prefix == PROJECT_REVISION_SHORT_ID_PREFIX
-    })
-}
-
-pub(crate) fn project_revision_type(store: &Store) -> Option<u8> {
-    store
-        .structural_kind_registrations()
-        .into_iter()
-        .find(|row| row.pack == PACK && row.short_id_prefix == PROJECT_REVISION_SHORT_ID_PREFIX)
-        .map(|row| row.type_byte)
-}
 
 /// A companion body this vault would admit at `id`: canonical, hash-derived
 /// and bound to this vault.

@@ -1,7 +1,7 @@
 //! Shadow execution never runs under the witness transaction or writes another row.
 use super::types::*;
-use crate::embed::EmbedderLocality;
 use crate::memory::{Memory, MemoryResult, WitnessTurn};
+use crate::store::embedding::EmbedderLocality;
 use sha2::{Digest, Sha256};
 impl Memory<'_> {
     /// Witnesses through the ordinary base door, then runs a local served head.
@@ -125,7 +125,22 @@ pub fn infer_encoder_for(
             result: Err("off_device_shadow_denied".into()),
         };
     }
-    let attempt = encoder.infer_for(input, work, caller);
+    checked_attempt(input, encoder.infer_for(input, work, caller))
+}
+
+/// Write-free execution with the actual vault and native host permission.
+/// Witness shadowing and text redaction retain their separate local-only doors.
+pub fn infer_encoder_in(
+    input: &EncoderInput,
+    work: ExtractionWork,
+    encoder: &dyn ExtractionEncoder,
+    caller: &ExtractionCaller,
+    context: &crate::llm::TaggerCallContext,
+) -> EncoderAttempt<String> {
+    checked_attempt(input, encoder.infer_in(input, work, caller, context))
+}
+
+fn checked_attempt(input: &EncoderInput, attempt: EncoderAttempt) -> EncoderAttempt<String> {
     let result = attempt
         .result
         .map_err(|error| format!("{:?}", error.kind()))

@@ -70,9 +70,10 @@ use crate::dreamer_consolidation::{
 };
 use crate::dreamer_runner::{EnqueueDreamerAttemptOutcome, dreamer_turn_role};
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead, withdrawn_in_txn};
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
 use super::read_phase::WakeStop;
@@ -137,10 +138,11 @@ struct LatestTurn {
 struct Given {
     /// The rounds it gave words to, for erasure.
     rounds: Vec<[u8; 32]>,
-    /// The reading of the words the latest round that queued it took;
-    /// `None` once those words changed or the projector put it back to be
-    /// read again. A window leaves the turn out while its words still read
-    /// this way.
+    /// The reading of the words the latest assignment that queued it took
+    /// (a projector round, or a Micro selection retry's widening or owed
+    /// chunk); `None` once those words changed or the projector put it back
+    /// to be read again. A window leaves the turn out while its words still
+    /// read this way.
     taken: Option<[u8; 32]>,
 }
 
@@ -711,6 +713,366 @@ fn reread_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> R
     requeue_turn_in_txn(store, txn, turn)
 }
 
+/// Whether a round already took `turn`'s current words, so a Micro
+/// selection retry's widening leaves it out (FIX 12246): only words no round
+/// has queued, or changed since, are new work for the retry.
+pub(crate) fn words_taken_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<bool> {
+    let Some(taken) = taken_in_txn(&vault.store, txn, turn)? else {
+        return Ok(false);
+    };
+    Ok(turn_statements_in_txn(vault, txn, turn)?
+        .is_some_and(|statements| reading(&statements) == taken))
+}
+
+/// The reading of `text` said in `class`, as a branch froze it: the
+/// version a completed widened branch records as taken, never a live
+/// reread after its commit.
+pub(crate) fn reading_of_text(text: &str, class: Option<ClaimSource>) -> [u8; 32] {
+    reading(&super::statement_material::statements(text, class))
+}
+
+/// Records one frozen reading as taken by the widened branch that read it
+/// (FIX 12246): without it a later deferral re-widens to the same peer and
+/// extracts its words again.
+pub(crate) fn take_reading_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    reading: [u8; 32],
+) -> Result<()> {
+    let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
+    given.taken = Some(reading);
+    GIVEN.put(&vault.store, txn, turn, &given)
+}
+
+/// Whether `turn` is still live and still reads as `frozen` in `txn`:
+/// the guard a widened stamp owes the gap since its branch opened
+/// (FIX 12246). A turn erased in that gap must get no stamp at all -
+/// recording its erased words' digest would undo the erasure's
+/// delete - and a turn whose words moved on must not be marked read
+/// at a reading it no longer has. Liveness is checked before
+/// equality: a gone turn reads as the empty set, which would equal an
+/// empty frozen reading. The live reading is a comparand only; it is
+/// never stamped. Row presence is not liveness: a soft-deleted, stale
+/// or archived TURN keeps its row as a header-only shell whose absent
+/// text reads as the empty set - equal to an empty frozen reading -
+/// so the liveness leg is the chunk gate's: a live row whose words
+/// are not withdrawn.
+pub(crate) fn reading_current_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    frozen: [u8; 32],
+) -> Result<bool> {
+    if !matches!(
+        live_entity_row_in_txn(&vault.store, txn, turn)?,
+        LiveEntityRow::Live { .. }
+    ) || withdrawn_in_txn(&vault.store, txn, turn)?
+    {
+        return Ok(false);
+    }
+    Ok(turn_statements_in_txn(vault, txn, turn)?.is_some_and(|live| reading(&live) == frozen))
+}
+
+/// Whether the carrier round `round` still stands for `originals` (FIX
+/// 12246 follow-on): the guard the widened stamp owes a gap erasure of
+/// an original. A present round proceeds as today. A missing round
+/// proceeds only when every queued original is still live, unwithdrawn,
+/// and still linked to it - the keep-deleted replay, whose `keep`
+/// deleted the ROUND row but left every member's GIVEN link. An
+/// erasure (or unheld demotion) deletes the member's GIVEN row with
+/// the round, so a retired carrier fails here and the whole stamp
+/// skips: recreating the round would resurrect retired membership
+/// under words the erase already released.
+pub(crate) fn carrier_round_live_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    round: &[u8; 32],
+    originals: &[EntityId],
+) -> Result<bool> {
+    if ROUND.get(&vault.store, txn, round)?.is_some() {
+        return Ok(true);
+    }
+    for turn in originals {
+        let linked = GIVEN
+            .get(&vault.store, txn, turn)?
+            .is_some_and(|given| given.rounds.contains(round));
+        if !linked
+            || !matches!(
+                live_entity_row_in_txn(&vault.store, txn, turn)?,
+                LiveEntityRow::Live { .. }
+            )
+            || withdrawn_in_txn(&vault.store, txn, turn)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Stamps a completed original's frozen reading as taken (FIX 12246
+/// follow-on): an away chunk member registered its round at enqueue
+/// without a digest, and runs as a queued original after promotion, so
+/// no other stamp covers it. Fires only while taken is `None` -
+/// ordinary members keep exactly what their enqueue stamped - and only
+/// while the turn still reads as frozen in its frozen partition. No
+/// membership write: the enqueue already linked it. Returns whether
+/// it stamped: only a fired stamp joins the caller's assignment set,
+/// so the chain moves past the returned words and their riders
+/// release - an unrided-but-untaken turn would strand, and untaken
+/// words must re-enter through the usual doors, never become latest.
+pub(crate) fn take_returned_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    frozen: [u8; 32],
+    partition: [u8; 32],
+) -> Result<bool> {
+    let taken = GIVEN
+        .get(&vault.store, txn, turn)?
+        .and_then(|given| given.taken);
+    if taken.is_some() {
+        return Ok(false);
+    }
+    if !reading_current_in_txn(vault, txn, turn, frozen)? {
+        return Ok(false);
+    }
+    if crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, turn)?
+        != Some(partition)
+    {
+        return Ok(false);
+    }
+    take_reading_in_txn(vault, txn, turn, frozen)?;
+    Ok(true)
+}
+
+/// The latest-round bookkeeping of `hold_in_txn` for an assignment a
+/// Micro selection retry records outside a window (a completed widened
+/// branch's stamp, an owed chunk's enqueue): the stamped turns join
+/// `round`'s membership the way a window's payload does, the newest
+/// stamped turn moves `LATEST` forward under `round` - the carrier
+/// attempt's own round, which its completion applies through the usual
+/// door - the previous latest round retires, stamped turns ride
+/// nothing, and riders their assignment may have changed the value of
+/// are released. Without it a stamped turn left an earlier one
+/// holding, and a later return to its words was consumed as that
+/// turn's repeat; without the membership, erasing the stamped turn
+/// never found the round its later repeats rode. `stamped` carries the
+/// readings the caller already recorded as taken; they are never
+/// recomputed here. No round: membership and the forward move are
+/// skipped.
+pub(crate) fn note_assignment_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    round: Option<[u8; 32]>,
+    stamped: &[(EntityId, [u8; 32])],
+) -> Result<()> {
+    let store = &vault.store;
+    let mut queued = BTreeSet::new();
+    let mut latest: Option<(TurnKey, [u8; 32], EntityId)> = None;
+    for (turn, reading) in stamped {
+        let Some(at) = turn_key_in_txn(store, txn, turn)? else {
+            continue;
+        };
+        queued.insert(at);
+        if latest.as_ref().is_none_or(|(before, ..)| at > *before) {
+            latest = Some((at, *reading, *turn));
+        }
+    }
+    if let Some(round_id) = round
+        && !queued.is_empty()
+    {
+        // The stamped turns join the carrier round the way a window's
+        // payload does, so erasing or demoting one later finds the round
+        // and releases the repeats that rode its hold. Append, never
+        // overwrite: the carrier's original members stay members. A
+        // caller that already registered them (owed chunks) makes this
+        // a no-op.
+        let existing = ROUND.get(store, txn, &round_id)?;
+        let mut linked = existing.is_none();
+        let mut round_row = existing.unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+        for (_, turn) in &queued {
+            let mut given = GIVEN.get(store, txn, turn)?.unwrap_or_default();
+            if !given.rounds.contains(&round_id) {
+                given.rounds.push(round_id);
+                GIVEN.put(store, txn, turn, &given)?;
+            }
+            if !round_row.turns.contains(turn) {
+                round_row.turns.push(*turn);
+                linked = true;
+            }
+        }
+        if linked {
+            ROUND.put(store, txn, &round_id, &round_row)?;
+        }
+    }
+    if let (Some(round), Some((key, reading, turn))) = (round, latest) {
+        let previous = LATEST.get(store, txn, &())?;
+        if previous.as_ref().is_none_or(|previous| key >= previous.key) {
+            let partition =
+                crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, &turn)?;
+            if let Some(partition) = partition {
+                let row = LatestTurn {
+                    key,
+                    round,
+                    partition,
+                    reading: Some(reading),
+                };
+                LATEST.put(store, txn, &(), &row)?;
+                if let Some(previous) = previous
+                    && previous.round != round
+                {
+                    retire_in_txn(store, txn, &previous.round)?;
+                }
+            }
+        }
+    }
+    // A turn assigned again rides nothing.
+    for (_, turn) in &queued {
+        unride_in_txn(store, txn, turn)?;
+    }
+    release_in_txn(store, txn, &queued)
+}
+
+/// Records a fresh owed chunk as a projection round and its turns'
+/// snapshot-frozen words as taken, in its enqueue transaction (FIX
+/// 12246; frozen readings FIX 12544): the same
+/// assignment-time record `hold_in_txn` makes, so erasing or demoting one
+/// pending chunk member retires the round and puts its surviving turns
+/// back to be read again. A member demoted while a mate is legally held
+/// registers its round without stamping absent words, so the chunk
+/// waits for its promotion. Completion marks this round applied through
+/// the same kind + dedupe-key id every projector round uses.
+pub(crate) fn take_chunk_words_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    kind: &str,
+    dedupe_key: &str,
+    turns: &[EntityId],
+    frozen: &BTreeMap<EntityId, ([u8; 32], [u8; 32])>,
+) -> Result<()> {
+    // Each member is live (its words read here), gone (erased, deleted,
+    // or otherwise withdrawn: no promotion brings its words back), or
+    // away (its row is demoted to thin while no deletion marker names
+    // it: a promotion may bring it back). A soft-deleted TURN keeps its
+    // row as a header-only shell, so raw row presence cannot tell live
+    // from gone.
+    let mut live = Vec::with_capacity(turns.len());
+    let mut away = Vec::new();
+    let mut gone = false;
+    for turn in turns {
+        match live_entity_row_in_txn(&vault.store, txn, turn)? {
+            LiveEntityRow::Live { .. } => {
+                // The one live state whose words still read as absent.
+                if withdrawn_in_txn(&vault.store, txn, turn)? {
+                    gone = true;
+                } else {
+                    live.push(*turn);
+                }
+            }
+            // Soft-deleted, stale, archived: reads as absent, refuses as
+            // missing, never defers.
+            LiveEntityRow::DeletedShell => gone = true,
+            LiveEntityRow::Absent => {
+                // A hard erase leaves its deletion marker; a demotion
+                // leaves none (and without sync nothing demotes at all,
+                // so every absence there is an erasure).
+                let erased =
+                    vault.store.port_deletion_state(txn, turn)?.deleted || !cfg!(feature = "sync");
+                if erased {
+                    gone = true;
+                } else {
+                    away.push(*turn);
+                }
+            }
+        }
+    }
+    // Any gone member makes the chunk stillborn: its payload still names
+    // a turn whose words never come back, so preparation refuses the
+    // whole one-part chunk and nothing stamped here is ever extracted.
+    // Stamp nothing, register no round, leave every gone member exactly
+    // as its erasure left it, and put the live members back: the
+    // batch-mate reread the erasure owed the round it could not see yet.
+    // Away members are not reread: there is no row to requeue, and
+    // their words are away, not gone.
+    if gone {
+        for turn in &live {
+            reread_in_txn(&vault.store, txn, turn)?;
+        }
+        return Ok(());
+    }
+    // An away member with no legal hold on the chunk defers nowhere:
+    // the residency check needs a held round, and without one
+    // preparation refuses. Take the stillborn shape too, so the live
+    // members are read again now and the away one when its promotion
+    // brings it back.
+    if !away.is_empty() {
+        let mut held = false;
+        for turn in turns {
+            if crate::store::legal_hold::held_in_txn(&vault.store, txn, turn.as_bytes())? {
+                held = true;
+                break;
+            }
+        }
+        if !held {
+            for turn in &live {
+                reread_in_txn(&vault.store, txn, turn)?;
+            }
+            return Ok(());
+        }
+    }
+    let id = round_id(kind, dedupe_key);
+    let mut round = ROUND
+        .get(&vault.store, txn, &id)?
+        .unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+    round.applied = false;
+    // Full membership, away members included: the residency check defers
+    // the chunk only while every missing source is a member of its round.
+    round.turns = turns.to_vec();
+    ROUND.put(&vault.store, txn, &id, &round)?;
+    let mut stamped = Vec::new();
+    for turn in turns {
+        let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
+        if !given.rounds.contains(&id) {
+            given.rounds.push(id);
+        }
+        if away.contains(turn) {
+            // Away words are not here to take: the rounds link stays, so
+            // a later erase or retire finds the round, but no digest is
+            // stamped for words this replica does not hold.
+        } else if let Some((reading, partition)) = frozen.get(turn)
+            && reading_current_in_txn(vault, txn, turn, *reading)?
+            && crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, turn)?
+                == Some(*partition)
+        {
+            // Only the frozen reading is stamped, and only while the
+            // turn still reads as frozen in its frozen partition (FIX
+            // 12544): a republication or same-text scope move since the
+            // wake's snapshot keeps its own reset and re-enters through
+            // the usual doors. Members with no frozen entry (their text
+            // refused at the snapshot) take the rounds link only, like
+            // away members; both run as the chunk's originals, whose
+            // completion stamp covers them.
+            given.taken = Some(*reading);
+            stamped.push((*turn, *reading));
+        }
+        GIVEN.put(&vault.store, txn, turn, &given)?;
+    }
+    note_assignment_in_txn(vault, txn, Some(id), &stamped)
+}
+
 /// The version of one turn's statements.
 fn reading(statements: &BTreeSet<[u8; 32]>) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
@@ -722,7 +1084,7 @@ fn reading(statements: &BTreeSet<[u8; 32]>) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
-fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
+pub(crate) fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:dreamer-projector:round:v1");
     hash.update(&(kind.len() as u64).to_be_bytes());

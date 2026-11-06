@@ -3,14 +3,14 @@
 
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, DriftMarker, FORMAT_DOCX, FORMAT_PPTX,
-    FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
+    FORMAT_HTML, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 
@@ -29,6 +29,10 @@ const KEY_DRIFT: &str = "drift";
 const KEY_DRIFTED_AT_VERSION: &str = "drifted_at_version";
 
 const KEY_PINNED_VERSION: &str = "pinned_version";
+
+const KEY_BODY: &str = "body";
+
+const KEY_FRONTIER: &str = "frontier";
 
 const KEY_AUTHOR: &str = "author";
 
@@ -60,6 +64,8 @@ const KEY_SLIDE: &str = "slide";
 
 const KEY_SHAPE_ID: &str = "shape_id";
 
+const KEY_PART_ID: &str = "part_id";
+
 /// Task role byte for the productivity `role` body ("role": <byte>).
 const TASK_BODY_ROLE_KEY: &str = "role";
 
@@ -74,6 +80,7 @@ pub(super) struct ThreadHead {
     pub(super) state: ThreadState,
     pub(super) locator: Locator,
     pub(super) drift: Option<DriftMarker>,
+    pub(super) body: Option<BodyAnchor>,
 }
 
 pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
@@ -84,6 +91,9 @@ pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result
             )),
             "docx locator para_path" => Error::Artifact(ArtifactError::InvalidAnchor(
                 "docx locator para_path is empty or too long",
+            )),
+            "html locator part_id" => Error::Artifact(ArtifactError::InvalidAnchor(
+                "html locator part_id is empty or too long",
             )),
             _ => Error::Artifact(ArtifactError::InvalidAnchor(
                 "pptx locator shape_id is empty or too long",
@@ -115,6 +125,16 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_SLIDE), Value::from(*slide)),
             (Value::from(KEY_SHAPE_ID), Value::from(shape_id.as_str())),
         ]),
+        Locator::Html {
+            part_id,
+            char_start,
+            char_end,
+        } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_HTML)),
+            (Value::from(KEY_PART_ID), Value::from(part_id.as_str())),
+            (Value::from(KEY_CHAR_START), Value::from(*char_start)),
+            (Value::from(KEY_CHAR_END), Value::from(*char_end)),
+        ]),
     }
 }
 
@@ -136,6 +156,12 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let slide = map_u64(value, KEY_SLIDE)?;
             let shape_id = map_str(value, KEY_SHAPE_ID)?.to_owned();
             Locator::pptx(slide, shape_id)
+        }
+        FORMAT_HTML => {
+            let part_id = map_str(value, KEY_PART_ID)?.to_owned();
+            let char_start = map_u64(value, KEY_CHAR_START)?;
+            let char_end = map_u64(value, KEY_CHAR_END)?;
+            Locator::html(part_id, char_start, char_end)
         }
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",
@@ -175,6 +201,18 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
             ]),
         ));
     }
+    if let Some(body) = &head.body {
+        entries.push((
+            Value::from(KEY_BODY),
+            Value::Map(vec![
+                (
+                    Value::from(KEY_FRONTIER),
+                    Value::Binary(body.frontier.clone()),
+                ),
+                (Value::from(KEY_LOCATOR), encode_locator(&body.locator)),
+            ]),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -195,6 +233,21 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
             pinned_version: map_u64(drift_value, KEY_PINNED_VERSION)?,
         }),
     };
+    // A version-only anchor writes no body key.
+    let body = match map_get(value, KEY_BODY) {
+        None | Some(Value::Nil) => None,
+        Some(body_value) => {
+            let Some(Value::Binary(frontier)) = map_get(body_value, KEY_FRONTIER) else {
+                return Err(Error::Artifact(ArtifactError::InvalidAnchor(KEY_FRONTIER)));
+            };
+            Some(BodyAnchor {
+                frontier: frontier.clone(),
+                locator: decode_locator(map_get(body_value, KEY_LOCATOR).ok_or(
+                    Error::Artifact(ArtifactError::InvalidAnchor("body anchor missing locator")),
+                )?)?,
+            })
+        }
+    };
     Ok(ThreadHead {
         thread_id,
         origin_version,
@@ -202,6 +255,7 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
         state,
         locator,
         drift,
+        body,
     })
 }
 
@@ -281,11 +335,7 @@ pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result
         brief_ref,
         task_id,
         thread_id,
-        anchor: Anchor {
-            artifact_id,
-            version: anchor_version,
-            locator,
-        },
+        anchor: Anchor::new(artifact_id, anchor_version, locator),
         artifact_version: anchor_version,
         thread_text,
         assignee,

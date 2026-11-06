@@ -7,86 +7,23 @@ use heed::{RoTxn, RwTxn};
 use crate::distance::{PreparedCosine, cosine_distance};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::overlay_db::OverlayDb;
-use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, ManifestDbs, VECTOR_VERSION_KEY};
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::keys::{
-    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_EMBEDDING_MODEL_EPOCH_BYTES,
-    ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES, ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
-    ERR_VECTOR_VERSION_BYTES,
+    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES,
+    ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
 };
 use super::one_way::reconcile_removed_one_way_links;
 use super::search::score_prefix;
 use super::types::HeapEntry;
 
-pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, VECTOR_VERSION_KEY)? else {
-        return Ok(0);
-    };
+pub(crate) use crate::store::vector_index::{
+    has_population, increment_embedding_model_epoch, increment_vector_version,
+    read_embedding_model_epoch, read_vector_version,
+};
 
-    let bytes: [u8; 8] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_VERSION_BYTES))?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-pub(crate) fn read_embedding_model_epoch(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, EMBEDDING_MODEL_EPOCH_KEY)? else {
-        return Ok(0);
-    };
-
-    let bytes: [u8; 8] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_EMBEDDING_MODEL_EPOCH_BYTES))?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-pub(crate) fn has_population(hnsw_meta: &OverlayDb, txn: &RoTxn<'_>) -> Result<bool> {
-    if let Some(raw) = hnsw_meta.get(txn, COUNT_KEY)? {
-        let bytes: [u8; 8] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex(ERR_COUNT_BYTES))?;
-        if u64::from_le_bytes(bytes) > 0 {
-            return Ok(true);
-        }
-    }
-
-    Ok(hnsw_meta.get(txn, ENTRY_POINT_KEY)?.is_some())
-}
-
-pub(crate) fn increment_vector_version(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<u64> {
-    let current = read_vector_version(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("vector version"))?;
-    store
-        .hnsw_meta()
-        .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
-    Ok(next)
-}
-
-pub(crate) fn increment_embedding_model_epoch(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<u64> {
-    let current = read_embedding_model_epoch(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("embedding model epoch"))?;
-    store
-        .hnsw_meta()
-        .put(wtxn, EMBEDDING_MODEL_EPOCH_KEY, &next.to_le_bytes())?;
-    Ok(next)
-}
-
-pub(super) fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, COUNT_KEY)? else {
+pub(super) fn read_count(store: &impl VectorIndexDbs, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.index_meta().get(txn, COUNT_KEY)? else {
         return Ok(0);
     };
 
@@ -104,19 +41,19 @@ pub(super) fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u6
 /// count rather than the absent graph-node count. Dropped means "graph shape
 /// absent", not "empty corpus".
 #[cfg(test)]
-pub(crate) fn hnsw_entity_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<usize> {
+pub(crate) fn hnsw_entity_count(store: &impl VectorIndexDbs, txn: &RoTxn<'_>) -> Result<usize> {
     if super::slim_drop::hnsw_is_dropped(store, txn)? {
-        return usize::try_from(store.vectors().len(txn)?)
+        return usize::try_from(store.index_vectors().len(txn)?)
             .map_err(|_| Error::IndexOverflow("hnsw entity count"));
     }
     usize::try_from(read_count(store, txn)?).map_err(|_| Error::IndexOverflow("hnsw entity count"))
 }
 
 pub(super) fn read_entry_point(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
 ) -> Result<Option<EntityId>> {
-    let Some(raw) = store.hnsw_meta().get(txn, ENTRY_POINT_KEY)? else {
+    let Some(raw) = store.index_meta().get(txn, ENTRY_POINT_KEY)? else {
         return Ok(None);
     };
 
@@ -151,11 +88,11 @@ pub(super) fn decode_neighbors(raw: &[u8], lenient: bool) -> Result<Vec<EntityId
 }
 
 pub(super) fn load_neighbors(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let Some(raw) = store.hnsw_neighbors().get(txn, id.as_bytes())? else {
+    let Some(raw) = store.index_neighbors().get(txn, id.as_bytes())? else {
         return Ok(Vec::new());
     };
 
@@ -163,11 +100,11 @@ pub(super) fn load_neighbors(
 }
 
 pub(super) fn load_neighbors_lenient(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let Some(raw) = store.hnsw_neighbors().get(txn, id.as_bytes())? else {
+    let Some(raw) = store.index_neighbors().get(txn, id.as_bytes())? else {
         return Ok(Vec::new());
     };
 
@@ -178,7 +115,7 @@ pub(super) fn load_neighbors_lenient(
 /// `neighbors` does not first loses `id` from its one-way exception record,
 /// in the same transaction.
 pub(super) fn write_neighbors(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     neighbors: &[EntityId],
@@ -192,7 +129,7 @@ pub(super) fn write_neighbors(
         bytes.extend_from_slice(neighbor.as_bytes());
     }
 
-    store.hnsw_neighbors().put(wtxn, id.as_bytes(), &bytes)?;
+    store.index_neighbors().put(wtxn, id.as_bytes(), &bytes)?;
     Ok(())
 }
 
@@ -200,12 +137,12 @@ pub(super) fn write_neighbors(
 /// the room's nodes added, so a node whose vector the room hides keeps
 /// base's vector here (`OverlayDb::get_unhidden`); search never returns it.
 pub(super) fn load_vector(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     dimensions: usize,
 ) -> Result<Option<Vec<f32>>> {
-    let Some(raw) = store.vectors().get_unhidden(txn, id.as_bytes())? else {
+    let Some(raw) = store.index_vectors().get_unhidden(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -216,13 +153,13 @@ pub(super) fn load_vector(
 
 /// [`load_vector`] into `scratch`.
 pub(super) fn load_vector_into<'a>(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     dimensions: usize,
     scratch: &'a mut Vec<f32>,
 ) -> Result<Option<&'a [f32]>> {
-    let Some(raw) = store.vectors().get_unhidden(txn, id.as_bytes())? else {
+    let Some(raw) = store.index_vectors().get_unhidden(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -230,7 +167,7 @@ pub(super) fn load_vector_into<'a>(
 }
 
 pub(super) fn load_required_vector(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     dimensions: usize,
@@ -242,7 +179,7 @@ pub(super) fn load_required_vector(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prune_neighbors_for_node(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     node_id: &EntityId,
     neighbors: &[EntityId],
@@ -306,13 +243,13 @@ pub(super) fn prune_neighbors_for_node(
 /// Legacy-only delete-time full scan. Symmetric-marker vaults never call
 /// this: their backlinks are exactly the node's own forward neighbor list.
 pub(super) fn collect_backlink_targets(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut targets = Vec::new();
-    for entry in store.hnsw_neighbors().iter(txn)? {
+    for entry in store.index_neighbors().iter(txn)? {
         *ops += 1;
         let (key, raw) = entry?;
         let node_id = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
@@ -332,7 +269,7 @@ pub(super) fn collect_backlink_targets(
 }
 
 pub(super) fn scrub_backlinks_in_place(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     targets: &[EntityId],
@@ -340,7 +277,7 @@ pub(super) fn scrub_backlinks_in_place(
 ) -> Result<()> {
     for node_id in targets {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, node_id.as_bytes())? else {
+        let Some(raw) = store.index_neighbors().get(&*wtxn, node_id.as_bytes())? else {
             continue;
         };
         let Some(scrubbed) = scrub_neighbor_bytes(&raw, id)? else {
@@ -349,7 +286,7 @@ pub(super) fn scrub_backlinks_in_place(
         // `node_id` no longer links to `id`: it leaves `id`'s exception record.
         reconcile_removed_one_way_links(store, wtxn, node_id, std::slice::from_ref(id), &[], ops)?;
         store
-            .hnsw_neighbors()
+            .index_neighbors()
             .put(wtxn, node_id.as_bytes(), &scrubbed)?;
         *ops += 1;
     }

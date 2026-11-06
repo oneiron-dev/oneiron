@@ -10,7 +10,8 @@ use crate::EntityId;
 use crate::dreamer_wake::SpanKind;
 use crate::dreamer_wake::follower::{CacheResidency, CallEvidence};
 use crate::dreamer_wake::sieve::follower::SpanReading;
-use crate::llm::{DurableStepError, FatalLlmError, LlmError, LlmResponse};
+use crate::model_step_error::DurableStepError;
+use oneiron_model::llm::{FatalLlmError, LlmError, LlmResponse};
 
 const CACHE_DOMAIN: &[u8] = b"oneiron:dreamer-follower:cache-identity:v1";
 

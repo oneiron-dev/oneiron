@@ -118,9 +118,9 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
-    let [holds, host_holds] = legal_hold::target_prefixes();
-    [retirement_prefix(), holds, host_holds]
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
+    let [holds] = legal_hold::target_prefixes();
+    [retirement_prefix(), holds]
 }
 
 /// Each claim, body instance and known-value history key-retirement intent
@@ -222,7 +222,10 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         // Read the effective trusted row in the SAME transaction that writes
         // the owner replacement; no policy override gets lost between reads.
-        let (current, id) = crate::gate::retention_edit_target(&self.store, &txn)?;
+        let (current, id) = self
+            .store
+            .gate_hooks
+            .retention_edit_target(&self.store, &txn)?;
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or(Error::CorruptedIndex("default policy manifest"))?;
         let manifest_body = raw
@@ -231,17 +234,17 @@ impl Vault {
         // A narrow edit MUST NOT authenticate any unrelated peer-authored
         // permissions carried at this ID. Prove the exact amended body is
         // trusted and not quarantined under this same LMDB writer snapshot.
-        if !crate::gate::manifest_authenticity::manifest_is_trusted(
-            &self.store,
-            &txn,
-            &id,
-            manifest_body,
-        )? || crate::gate::manifest_authenticity::manifest_is_quarantined(
-            &self.store,
-            &txn,
-            &id,
-            manifest_body,
-        )? {
+        if !self
+            .store
+            .gate_hooks
+            .manifest_is_trusted(&self.store, &txn, &id, manifest_body)?
+            || self.store.gate_hooks.manifest_is_quarantined(
+                &self.store,
+                &txn,
+                &id,
+                manifest_body,
+            )?
+        {
             return Err(Error::InvalidConfig(
                 "retention edit target is not trusted".into(),
             ));
@@ -279,12 +282,17 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("gate decision retention manifest encode"))?;
         let now = self.store.clock.now_recorded_at();
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
-        let expected = crate::gate::GateDecisionRetentionPolicy {
+        let expected = crate::store::GateDecisionRetentionPolicy {
             horizon_secs: horizon.unwrap_or(current.horizon_secs),
             max_sweep_rows: budget.unwrap_or(current.max_sweep_rows),
             ..current
         };
-        if crate::gate::resolve_gate_decision_retention(&self.store, &txn)? != Some(expected) {
+        if self
+            .store
+            .gate_hooks
+            .resolve_gate_decision_retention(&self.store, &txn)?
+            != Some(expected)
+        {
             return Err(Error::InvalidConfig(
                 "retention edit changed manifest precedence".into(),
             ));
@@ -298,10 +306,11 @@ impl Vault {
     /// Effective trusted-policy horizon. No horizon means NO age pruning.
     pub fn gate_decision_retention_secs(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
-        Ok(
-            crate::gate::resolve_gate_decision_retention(&self.store, &txn)?
-                .and_then(|policy| policy.horizon_secs),
-        )
+        Ok(self
+            .store
+            .gate_hooks
+            .resolve_gate_decision_retention(&self.store, &txn)?
+            .and_then(|policy| policy.horizon_secs))
     }
 
     /// Hold the entire exterior-key partition, not an individual decision.
@@ -472,9 +481,13 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         // Read the owner setting UNDER the same writer lock as pruning: an
         // owner who disables or lengthens retention before this pass wins.
-        let policy = crate::gate::resolve_gate_decision_retention(&self.store, &txn)?.ok_or(
-            Error::InvalidConfig("gate decision retention manifest missing".into()),
-        )?;
+        let policy = self
+            .store
+            .gate_hooks
+            .resolve_gate_decision_retention(&self.store, &txn)?
+            .ok_or(Error::InvalidConfig(
+                "gate decision retention manifest missing".into(),
+            ))?;
         let Some(seconds) = policy.horizon_secs else {
             return Ok(0);
         };
@@ -489,9 +502,11 @@ impl Vault {
         operational_refs.extend(crate::artifact_hosting::artifact_publish_gate_refs_in_txn(
             self, &txn,
         )?);
-        operational_refs.extend(crate::workspace_roster::project_mint_gate_refs_in_txn(
-            self, &txn,
-        )?);
+        operational_refs.extend(
+            self.store
+                .project_writes
+                .project_mint_gate_refs_in_txn(self, &txn)?,
+        );
         operational_refs.extend(crate::memory::claim_conflict_ruling_gate_refs_in_txn(
             &self.store,
             &txn,

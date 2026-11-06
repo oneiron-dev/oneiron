@@ -390,14 +390,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 }));
             }
             if verb == AgentVerb::Ask {
-                let request: crate::task_verb::sdk::TaskAskRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskAskRequest = decode(args.input)?;
                 let spec = request
                     .into_spec()
                     .map_err(|_| failure("invalid ask input"))?;
                 return Ok(SelfCall::TasksAsk(Box::new(spec)));
             }
             if verb == AgentVerb::Wait {
-                let request: crate::task_verb::sdk::TaskWaitRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskWaitRequest = decode(args.input)?;
                 return Ok(SelfCall::TasksWait(request.handle));
             }
             // A reader child's finding names one of its own results, which
@@ -408,7 +408,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                     .get("resultRef")
                     .is_some_and(|result| !result.is_null())
             {
-                let request: crate::task_verb::sdk::TaskUpdateRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskUpdateRequest = decode(args.input)?;
                 // A typed report sent beside the result would be dropped
                 // here, so the call is refused instead.
                 if request.report.is_some()
@@ -586,7 +586,9 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "IDENTITY_UNSETTLED",
     "BUDGET_SPENT",
     "MODEL_UNAVAILABLE",
+    "MODEL_PIN_UNAVAILABLE",
     "PENDING_ASK",
+    oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
 ];
 
 /// One dispatched call's reply body, before its budget envelope.
@@ -615,14 +617,23 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 replay: value.replay,
             }
         }),
-        SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
+        SelfDispatchOutcome::AgentVerb(answer) => answer.guest_reply(),
         SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(value) => {
-            if GUEST_FAILURE_CODES.contains(&value.error.as_str()) {
-                json!({"failed": true, "error": value.error})
+            let error = value
+                .code
+                .as_deref()
+                .filter(|code| GUEST_FAILURE_CODES.contains(code))
+                .or_else(|| {
+                    GUEST_FAILURE_CODES
+                        .contains(&value.error.as_str())
+                        .then_some(value.error.as_str())
+                });
+            if let Some(error) = error {
+                json!({"failed": true, "error": error})
             } else {
                 json!({"failed": true})
             }
@@ -685,6 +696,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({"receipt":receipt.to_hex()})
         }
         SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
+        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
         SelfDispatchOutcome::Fold(json) => {
             let output: Value =
                 serde_json::from_str(json).map_err(|_| failure("fold answer is not JSON"))?;
@@ -699,7 +711,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
             json!({ "output": output })
         }
-        SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
+        SelfDispatchOutcome::Team(result) => json!({ "output": result.answer }),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
@@ -758,7 +770,25 @@ struct OutputFile {
 /// store, or held for the step's outcome when the host keeps none. A file
 /// frame must name a file under `/mnt/outputs`.
 pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u8>) -> Result<u64> {
-    if frame.len() > bridge.message_bytes {
+    output_frame(
+        bridge.host,
+        &mut bridge.held,
+        bridge.message_bytes,
+        bridge.cancel,
+        target,
+        frame,
+    )
+}
+
+pub(super) fn output_frame(
+    host: &mut dyn crate::engine_executor::JsCodeModeHost,
+    held: &mut super::HeldOutput,
+    message_bytes: usize,
+    cancel: &StepCancellation,
+    target: StreamTarget,
+    frame: Vec<u8>,
+) -> Result<u64> {
+    if frame.len() > message_bytes {
         return Err(failure("streamed output frame exceeds the message limit"));
     }
     let target = match target {
@@ -772,9 +802,8 @@ pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u
         other => other,
     };
     let len = frame.len() as u64;
-    let cancel = bridge.cancel;
-    if !admitted(cancel, || bridge.host.write_output(target.stream(), &frame))? {
-        bridge.held.take(target, frame)?;
+    if !admitted(cancel, || host.write_output(target.stream(), &frame))? {
+        held.take(target, frame)?;
     }
     Ok(len)
 }

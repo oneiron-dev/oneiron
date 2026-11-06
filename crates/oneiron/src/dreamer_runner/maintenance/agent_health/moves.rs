@@ -21,10 +21,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::ask::ask_coach_in_txn;
+use super::steer::{SteerReceipt, SteerRequest, steer_linked};
 use super::{
     AgentHealthCard, AgentHealthCoachAsk, AgentHealthMove, CARDS, card_ref, forbidden, may_read,
     parse_card_ref,
 };
+use crate::attempt_queue::run_signal::RunSignalState;
 use crate::claim::{CallerLocality, ClaimReadStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::People;
@@ -32,8 +34,6 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     MessagePersonReceipt, MessagePersonRequest,
 };
-use crate::run_tree::RunSignalState;
-use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_linked};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 const BASIS_DOMAIN: &[u8] = b"oneiron.coach.agent_health.move_basis.v1";

@@ -3,6 +3,15 @@
 use crate::ports::EntityStoreRead;
 use serde_json::Value;
 
+use crate::edge::EdgeActorClass;
+use crate::gate::{
+    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
+};
+use crate::llm::decision::{
+    AnswerContract, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionRung, HolderKind,
+    HumanAskReason, HumanDecisionRequest, ProviderPin, catalogue::CAMPAIGN_COMPLAINT_PAUSE,
+};
+
 use super::codec_json::campaign_record_to_json;
 use super::parse::invalid;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
@@ -14,101 +23,12 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
-/// CAMPAIGN definition schema version.
-pub const CAMPAIGN_SCHEMA_VERSION: u32 = 1;
-
-/// Lifecycle state of a campaign.
-///
-/// Mirrors [`SavedQueryLifecycle`](crate::saved_query::SavedQueryLifecycle)'s archive-is-a-transition rule; a campaign
-/// has no paused state because it holds no evaluator to pause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CampaignLifecycle {
-    /// Addressable and mutable.
-    Active,
-    /// Retired. Still readable; never re-opened.
-    Archived,
-}
-
-impl CampaignLifecycle {
-    /// Wire token for this state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Archived => "archived",
-        }
-    }
-
-    /// Parses a wire token, rejecting anything outside the closed set.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "active" => Some(Self::Active),
-            "archived" => Some(Self::Archived),
-            _ => None,
-        }
-    }
-}
-
-/// A versioned campaign definition.
-///
-/// Not serde-derived for the same reason [`SavedQueryDefinition`](crate::saved_query::SavedQueryDefinition) is not:
-/// [`EntityId`] has no serde impl, so entity references cross the wire as
-/// canonical hex through [`campaign_record_to_json`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignDefinition {
-    /// Definition schema version.
-    pub schema_version: u32,
-    /// The principal that owns this campaign.
-    pub owner_actor: EntityId,
-    /// Operator-facing name.
-    pub name: String,
-    /// Monotonic version, incremented by every accepted write.
-    pub definition_version: u64,
-    /// Lifecycle state.
-    pub lifecycle: CampaignLifecycle,
-    /// The pause a positive-later reply takes (FIX 9667). Create stores the
-    /// shipped default when the request names none; the owner edits it, and
-    /// each reply reads the value stored when it arrives.
-    pub reply_snooze_policy: SnoozePolicyData,
-}
-
-/// A stored campaign.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignRecord {
-    /// Identity of the campaign.
-    pub campaign_ref: EntityId,
-    /// Current definition.
-    pub definition: CampaignDefinition,
-    /// Creation time.
-    pub created_at: u64,
-    /// Last accepted write.
-    pub updated_at: u64,
-}
-
-/// Create request. There is no owner field: the owner is bound from the
-/// authenticated principal at the write boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CreateCampaignRequest {
-    /// Definition schema version.
-    pub schema_version: u32,
-    /// Operator-facing name.
-    pub name: String,
-    /// The positive-later pause, as a loaded preset's `snooze_policy` or the
-    /// owner's own; absent takes the shipped default.
-    pub reply_snooze_policy: Option<SnoozePolicyData>,
-}
-
-/// Update request. Also carries no owner field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdateCampaignRequest {
-    /// Version the caller believes is current; the compare half of the CAS.
-    pub expected_definition_version: u64,
-    /// Replacement name.
-    pub name: String,
-    /// Replacement positive-later pause; absent keeps the stored one.
-    pub reply_snooze_policy: Option<SnoozePolicyData>,
-}
+pub use crate::memory::campaign_records::CAMPAIGN_SCHEMA_VERSION;
+pub use crate::memory::campaign_records::CampaignDefinition;
+pub use crate::memory::campaign_records::CampaignLifecycle;
+pub use crate::memory::campaign_records::CampaignRecord;
+pub use crate::memory::campaign_records::CreateCampaignRequest;
+pub use crate::memory::campaign_records::UpdateCampaignRequest;
 
 /// Creates a campaign owned by the authenticated principal.
 ///
@@ -137,7 +57,7 @@ pub fn create_campaign(
         owner_actor: authenticated_principal,
         name: request.name.clone(),
         definition_version: 1,
-        lifecycle: CampaignLifecycle::Active,
+        lifecycle: CampaignLifecycle::Draft,
         reply_snooze_policy,
     };
     validate_campaign_definition(&definition)?;
@@ -193,6 +113,9 @@ pub fn update_campaign(
         let mut record =
             owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
         require_expected_campaign_version(&record, request.expected_definition_version)?;
+        if record.definition.lifecycle == CampaignLifecycle::Archived {
+            return Err(invalid("an archived campaign is read-only"));
+        }
         let definition = CampaignDefinition {
             schema_version: record.definition.schema_version,
             owner_actor: record.definition.owner_actor,
@@ -212,8 +135,281 @@ pub fn update_campaign(
     })
 }
 
-/// Archives a campaign. A lifecycle transition, never a delete: the record stays
-/// readable, and its cohort's `campaign.member` claims keep resolving.
+/// Launches a Draft campaign, or resumes a Paused one, under its owner's
+/// actor class. A person who owns the campaign always can. An agent needs a
+/// live Grant naming `launch` in this campaign's brief. Moved programs bump
+/// their definition versions, so callers re-read them after this transition.
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] when the campaign is absent or owned by another
+/// principal, [`Error::ConcurrentWrite`] when the expected version is stale,
+/// and [`Error::InvalidConfig`] when an agent has no covering launch Grant or
+/// the campaign is Archived.
+pub fn launch_campaign(
+    vault: &Vault,
+    authenticated_principal: EntityId,
+    actor_class: EdgeActorClass,
+    campaign_ref: EntityId,
+    expected_definition_version: u64,
+    now: u64,
+) -> Result<CampaignRecord> {
+    let kind = campaign_type_byte(vault)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut record =
+            owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
+        require_expected_campaign_version(&record, expected_definition_version)?;
+        match actor_class {
+            EdgeActorClass::Human => {}
+            EdgeActorClass::Agent => {
+                let effect = ExternalEffectGateInput {
+                    actor: GateActor {
+                        actor_class: actor_class.gate_actor_class().to_owned(),
+                        actor_ref: Some(authenticated_principal.to_hex()),
+                        delegation_grant_ref: None,
+                    },
+                    provenance: GateProvenanceHandles {
+                        actor_entity_ref: Some(authenticated_principal),
+                        ..GateProvenanceHandles::default()
+                    },
+                    verb: "launch".to_owned(),
+                    channel: "campaign".to_owned(),
+                    channel_identity_ref: None,
+                    counterparty: None,
+                    brief_ref: Some(campaign_ref.to_hex()),
+                    send_ref: None,
+                    standing_grant_ref: None,
+                    scoped_mcp_call: None,
+                    counterparty_first_touch: None,
+                    counterparty_opted_out: false,
+                    counterparty_opt_out_receipt_reason: None,
+                    has_opted_in: false,
+                    has_permission: false,
+                    policy_risk: ExternalEffectPolicyRisk::Normal,
+                    send_autonomy: None,
+                };
+                let policy = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?;
+                if crate::gate::live_grant_covering_effect_in_txn(
+                    &vault.store,
+                    wtxn,
+                    &effect,
+                    &policy,
+                )?
+                .is_none()
+                {
+                    return Err(invalid(
+                        "campaign launch requires a grant naming campaign launch",
+                    ));
+                }
+            }
+            EdgeActorClass::System => {
+                return Err(invalid("campaign launch requires a person or an agent"));
+            }
+        }
+        match record.definition.lifecycle {
+            CampaignLifecycle::Active => return Ok(record),
+            CampaignLifecycle::Draft | CampaignLifecycle::Paused => {}
+            CampaignLifecycle::Archived => {
+                return Err(invalid("an archived campaign cannot launch"));
+            }
+        }
+        record.definition.definition_version =
+            next_campaign_version(record.definition.definition_version)?;
+        record.definition.lifecycle = CampaignLifecycle::Active;
+        record.updated_at = now;
+        store_campaign_in_txn(vault, wtxn, &record, kind)?;
+        crate::campaign::enrollment::transition_campaign_programs_in_txn(
+            vault,
+            wtxn,
+            campaign_ref,
+            CampaignLifecycle::Active,
+            now,
+        )?;
+        Ok(record)
+    })
+}
+
+/// The queue identity for complaint-pause questions. Its model string also
+/// keeps unrelated decision asks out of the resume hook below.
+pub(crate) const CAMPAIGN_COMPLAINT_PAUSE_QUEUE: &str = "campaign.complaint_pause";
+const CAMPAIGN_COMPLAINT_PAUSE_QUEUE_VERSION: &str = "1";
+
+fn complaint_pause_request(
+    record: &CampaignRecord,
+    identity_ref: EntityId,
+    evidence_ref: EntityId,
+    complaint_rate: f64,
+    threshold_ppm: u32,
+) -> Result<(HumanDecisionRequest, Value)> {
+    let campaign_ref = record.campaign_ref;
+    let campaign_hex = campaign_ref.to_hex();
+    let observed_ppm = (complaint_rate * 1_000_000.0).round() as u32;
+    // Fixed wording and stable evidence make repeated webhooks one ask. The
+    // first ask keeps its rate snapshot; later observations never change the key.
+    let question = CAMPAIGN_COMPLAINT_PAUSE.question(
+        &[campaign_hex.as_bytes()],
+        "This campaign reached its complaint threshold. Resume it?".to_owned(),
+        AnswerContract::Noul,
+    )?;
+    let state = serde_json::json!({
+        "campaign_ref": campaign_hex,
+        "identity_ref": identity_ref.to_hex(),
+        "evidence_ref": evidence_ref.to_hex(),
+        "complaint_rate_ppm": observed_ppm,
+        "threshold_ppm": threshold_ppm,
+    });
+    let request = HumanDecisionRequest {
+        question,
+        principal: record.definition.owner_actor,
+        evidence: vec![campaign_ref, identity_ref],
+        reason: HumanAskReason::OwnerSelected,
+        prior: None,
+        prior_provider: None,
+        queue_pin: ProviderPin {
+            rung: DecisionRung::Human,
+            model: CAMPAIGN_COMPLAINT_PAUSE_QUEUE.to_owned(),
+            version: CAMPAIGN_COMPLAINT_PAUSE_QUEUE_VERSION.to_owned(),
+        },
+        to: AskTo::owner(),
+        correlation: Some(campaign_ref),
+    };
+    Ok((request, state))
+}
+
+/// Pauses the Active campaign named by a webhook when its post-signal complaint
+/// rate reaches the active CRM/compliance pack's dial, and queues the one owner
+/// question in the same write. A Paused campaign keeps its existing open ask's
+/// sequence without another version bump; an erased answer permits a fresh ask.
+/// Programs moved by this transition bump their own definition versions.
+/// Draft, Archived and unknown campaigns do nothing. Other health caps stay unchanged.
+pub(crate) fn project_campaign_complaint_pause_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    campaign_ref: Option<EntityId>,
+    identity_ref: EntityId,
+    evidence_ref: EntityId,
+    complaint_rate: f64,
+) -> Result<Option<u64>> {
+    let Some(campaign_ref) = campaign_ref else {
+        return Ok(None);
+    };
+    let kind = campaign_type_byte(vault)?;
+    let Some(mut record) = load_campaign_in_txn(vault, wtxn, campaign_ref, kind)? else {
+        return Ok(None);
+    };
+    if matches!(
+        record.definition.lifecycle,
+        CampaignLifecycle::Draft | CampaignLifecycle::Archived
+    ) {
+        return Ok(None);
+    }
+    let threshold_ppm = crate::campaign::compliance::campaign_complaint_pause_threshold_ppm_in_txn(
+        &vault.store,
+        wtxn,
+    )?;
+    let (request, state) = complaint_pause_request(
+        &record,
+        identity_ref,
+        evidence_ref,
+        complaint_rate,
+        threshold_ppm,
+    )?;
+    if record.definition.lifecycle == CampaignLifecycle::Paused {
+        let Some(prior) = vault.decision_ask_for_in_txn(
+            wtxn,
+            &request.question,
+            request.principal,
+            &request.evidence,
+            &request.to,
+            request.correlation,
+        )?
+        else {
+            return Ok(None);
+        };
+        if prior.is_open() {
+            return Ok(Some(prior.seq));
+        }
+        if prior
+            .answer
+            .as_ref()
+            .is_some_and(|answer| answer.by.id().is_none())
+        {
+            return Ok(Some(vault.queue_decision_ask_in_txn(
+                wtxn,
+                &request,
+                Some(&state),
+            )?));
+        }
+        return Ok(None);
+    }
+    if complaint_rate < threshold_ppm as f64 / 1_000_000.0 {
+        return Ok(None);
+    }
+    record.definition.definition_version =
+        next_campaign_version(record.definition.definition_version)?;
+    record.definition.lifecycle = CampaignLifecycle::Paused;
+    record.updated_at = vault.store.clock.now_recorded_at();
+    store_campaign_in_txn(vault, wtxn, &record, kind)?;
+    crate::campaign::enrollment::transition_campaign_programs_in_txn(
+        vault,
+        wtxn,
+        campaign_ref,
+        CampaignLifecycle::Paused,
+        record.updated_at,
+    )?;
+    let ask_seq = vault.queue_decision_ask_in_txn(wtxn, &request, Some(&state))?;
+    Ok(Some(ask_seq))
+}
+
+/// Applies an answered complaint-pause question in the answer's own write:
+/// a live owner person's yes resumes that Paused campaign; no leaves it paused.
+/// Every other answerer, question family and lifecycle state is untouched.
+/// Programs moved by the resume bump their own definition versions.
+pub(crate) fn apply_campaign_complaint_answer_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ask: &DecisionAsk,
+) -> Result<()> {
+    if ask.queue_pin.model != CAMPAIGN_COMPLAINT_PAUSE_QUEUE {
+        return Ok(());
+    }
+    let Some(campaign_ref) = ask.correlation else {
+        return Ok(());
+    };
+    let Some(answer) = &ask.answer else {
+        return Ok(());
+    };
+    if answer.by.id().is_none()
+        || answer.role != AskRole::Owner
+        || answer.kind != HolderKind::Person
+        || !matches!(&answer.answer, DecisionAnswer::Noul(true))
+    {
+        return Ok(());
+    }
+    let kind = campaign_type_byte(vault)?;
+    let Some(mut record) = load_campaign_in_txn(vault, wtxn, campaign_ref, kind)? else {
+        return Ok(());
+    };
+    if record.definition.lifecycle != CampaignLifecycle::Paused {
+        return Ok(());
+    }
+    record.definition.definition_version =
+        next_campaign_version(record.definition.definition_version)?;
+    record.definition.lifecycle = CampaignLifecycle::Active;
+    record.updated_at = answer.answered_at;
+    store_campaign_in_txn(vault, wtxn, &record, kind)?;
+    crate::campaign::enrollment::transition_campaign_programs_in_txn(
+        vault,
+        wtxn,
+        campaign_ref,
+        CampaignLifecycle::Active,
+        answer.answered_at,
+    )
+}
+
+/// Archives a campaign and its authored programs. A lifecycle transition,
+/// never a delete: the records stay readable, the cohort's `campaign.member`
+/// claims keep resolving, and moved programs bump their definition versions.
 ///
 /// # Errors
 ///
@@ -231,11 +427,21 @@ pub fn archive_campaign(
         let mut record =
             owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
         require_expected_campaign_version(&record, expected_definition_version)?;
+        if record.definition.lifecycle == CampaignLifecycle::Archived {
+            return Err(invalid("an archived campaign cannot archive again"));
+        }
         record.definition.definition_version =
             next_campaign_version(record.definition.definition_version)?;
         record.definition.lifecycle = CampaignLifecycle::Archived;
         record.updated_at = now;
         store_campaign_in_txn(vault, wtxn, &record, kind)?;
+        crate::campaign::enrollment::transition_campaign_programs_in_txn(
+            vault,
+            wtxn,
+            campaign_ref,
+            CampaignLifecycle::Archived,
+            now,
+        )?;
         Ok(record)
     })
 }
@@ -363,6 +569,7 @@ fn store_campaign_in_txn(
                 end: record.updated_at,
             },
             learned_at: record.updated_at,
+            row_version: None,
             data: encode_campaign_record(record)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,

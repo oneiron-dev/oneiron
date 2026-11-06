@@ -20,6 +20,27 @@ pub fn promote_scoped_consolidation(
     write: ScopedConsolidationWrite,
     checker: Option<&BoundedAutoChecker>,
 ) -> Result<PromotionOutcome> {
+    promote_scoped_consolidation_inner(vault, run, write, checker, false)
+}
+
+/// The owned attempt sink co-commits materialized outputs with their claim or
+/// attachment. Custom sinks retain the public door's unrecorded behavior.
+pub(super) fn promote_scoped_consolidation_recording_outputs(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    write: ScopedConsolidationWrite,
+    checker: Option<&BoundedAutoChecker>,
+) -> Result<PromotionOutcome> {
+    promote_scoped_consolidation_inner(vault, run, write, checker, true)
+}
+
+fn promote_scoped_consolidation_inner(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    write: ScopedConsolidationWrite,
+    checker: Option<&BoundedAutoChecker>,
+    record_outputs: bool,
+) -> Result<PromotionOutcome> {
     write.fence.validate_run(run)?;
     if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
@@ -84,6 +105,7 @@ pub fn promote_scoped_consolidation(
             &evidence,
             checker,
             &bound,
+            record_outputs,
         ) {
             Ok(stored) => {
                 answers.extend(stored);
@@ -149,6 +171,7 @@ pub fn promote_scoped_consolidation(
             Some(&write.fence),
             Some(&evidence),
             &bound,
+            record_outputs,
         ) {
             Ok(ClaimApprovalStatus::Auto) => {
                 stood.insert(id, evidence_refs);
@@ -268,6 +291,7 @@ fn attach_evidence(
     evidence: &VerifiedEvidenceSet,
     checker: Option<&BoundedAutoChecker>,
     answers: &[ResolvedConflictOutput],
+    record_outputs: bool,
 ) -> Result<Vec<ResolvedConflictOutput>> {
     let source = evidence.meet();
     let envelope = WriteEnvelope::with_lineage(
@@ -299,6 +323,7 @@ fn attach_evidence(
     // (FIX 11439).
     let mut carried: Option<String> = None;
     let outcome = vault.with_write_txn_grouped(|txn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion attach");
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
@@ -331,6 +356,7 @@ fn attach_evidence(
                 defer_metrics_until_commit: false,
                 transition: None,
                 owner_authored: None,
+                pending_prompt: None,
             },
             &policy,
             crate::gate::GateWriteMode {
@@ -367,6 +393,14 @@ fn attach_evidence(
                 "evidence attachment altered its head",
             ));
         }
+        if record_outputs {
+            crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
+                vault,
+                txn,
+                run.attempt_id,
+                &[head],
+            )?;
+        }
         Ok(stored)
     });
     match outcome {
@@ -399,7 +433,7 @@ fn attach_ref(
     (head, source): (EntityId, EntityId),
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
-    auto_write_rate: crate::own_rate::OwnRate,
+    auto_write_rate: crate::store::own_rate_record::OwnRate,
 ) -> Result<Vec<ResolvedConflictOutput>> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
@@ -540,6 +574,7 @@ fn attach_ref(
         )?;
         return Ok(stored_answers);
     }
+    let at = run.now_ms / 1_000;
     if vault
         .store
         .port_edge_get(txn, &source, EdgeKind::Supports, &head)?
@@ -549,7 +584,7 @@ fn attach_ref(
         // Gate above; provenance policy and both edge indexes co-commit below.
         vault
             .batch_in()
-            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, run.now_ms)
+            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, at)
             .apply(txn)?;
     }
     vault.write_edge_provenance_in_txn(
@@ -559,8 +594,9 @@ fn attach_ref(
             subject: &edge,
             body: &record,
             actor_class: run.agent_actor.actor_class(),
-            learned_at: run.now_ms,
+            learned_at: at,
             explicit_prior: None,
+            scope_project: None,
             imported_evidence: None,
             generated_evidence: Some(super::resolved_outputs::with_answers(
                 derived_evidence,
@@ -574,7 +610,7 @@ fn attach_ref(
     crate::own_rate::count_in_txn(
         &vault.store,
         txn,
-        crate::own_rate::OwnRateKind::AutoWrite,
+        crate::store::own_rate_record::OwnRateKind::AutoWrite,
         run.agent_actor.entity_ref(),
         vault.store.clock.now_recorded_at(),
         auto_write_rate,

@@ -1,11 +1,12 @@
 //! Repo-scoped queue/batch rows; every transition is under the repo single writer.
+use super::batch_index::put_batch_index;
 use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrder};
 use crate::{
-    contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
     error::{Error, Result},
     git_wire::lock_repository,
     side_table::{self, Named, SideTable},
+    store::contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
 };
 
 /// One repo's queue state: a singleton row per repo, keyed by the repo's hex identity.
@@ -16,6 +17,11 @@ pub(super) const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
 /// One repo's batches are read by the `{repo_hex}:` prefix (`repo_batches_in_txn`).
 pub(super) const BATCHES: SideTable<String, MergeBatch, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_BATCH);
+/// Whether a masked copy of a `MERGE_QUEUE_BATCH` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_batch_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<MergeBatch, Named>(bytes)
+}
 
 impl MergeQueue<'_> {
     pub fn initialize(
@@ -130,6 +136,7 @@ impl MergeQueue<'_> {
         check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
+        let repo_hex = self.repo.identity().as_hex();
         for batch in batches {
             check_row_size(&BATCHES.encode_value(batch)?)?;
             BATCHES.put(
@@ -138,10 +145,12 @@ impl MergeQueue<'_> {
                 &self.batch_key(&batch.id),
                 batch,
             )?;
+            put_batch_index(&self.vault.store, &mut txn, &repo_hex, batch)?;
         }
         txn.commit()?;
-        // The queue driver wakes on a committed queue write (FIX 6868).
-        self.vault.store.notify_attempt_observers();
+        // The queue driver wakes on a committed queue write (FIX 6868), on
+        // its own wake (FIX 7306).
+        self.vault.wake_merge_queue();
         Ok(())
     }
     /// [`Self::save`] of one new batch whose writer's first act is `admit`
@@ -171,8 +180,14 @@ impl MergeQueue<'_> {
             &self.batch_key(&batch.id),
             batch,
         )?;
+        put_batch_index(
+            &self.vault.store,
+            &mut txn,
+            &self.repo.identity().as_hex(),
+            batch,
+        )?;
         txn.commit()?;
-        self.vault.store.notify_attempt_observers();
+        self.vault.wake_merge_queue();
         Ok(Ok(()))
     }
 

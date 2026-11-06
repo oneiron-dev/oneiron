@@ -35,12 +35,30 @@ const CURSORS: SideTable<(EntityId, [u8; 1]), CursorRow, Named> =
 /// The saved result of each run, by run key.
 pub(super) const MEMOS: SideTable<RunKey, HookRunRecord, Named> =
     SideTable::new(&side_table::HOOKS_MEMO);
+/// Whether a masked copy of a `HOOKS_MEMO` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_memo_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookRunRecord, Named>(bytes)
+}
+
 /// Queued work saved before the cursor moves, by run key.
 pub(super) const INTENTS: SideTable<RunKey, HookIntent, Named> =
     SideTable::new(&side_table::HOOKS_INTENT);
+/// Whether a masked copy of a `HOOKS_INTENT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_intent_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookIntent, Named>(bytes)
+}
+
 /// One Hook receipt per run, by run key.
 pub(super) const RECEIPTS: SideTable<RunKey, ReceiptRecord, Named> =
     SideTable::new(&side_table::HOOKS_RECEIPT);
+/// Whether a masked copy of a `HOOKS_RECEIPT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_receipt_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ReceiptRecord, Named>(bytes)
+}
+
 /// Each binding's runs in commit order: binding, commit time in Unix ms, run
 /// key. The last rows under a binding are its newest runs.
 pub(super) const RUN_INDEX: SideTable<(EntityId, u64, RunKey), HookRunRef, Named> =
@@ -602,6 +620,36 @@ fn hook_run_read_rows_in(
             .chain(evidence)
             .collect(),
     ))
+}
+
+/// The source rows of a room Hook receipt's run (FIX 5429): the rows its
+/// verb run read and the rows its input showed, sorted. `None` when that
+/// receipt's provenance is unknown, so a room tail withholds it: the run is
+/// not a saved verb run, its input also showed content no host names rows
+/// for, or it ran on a write, whose args and answer are its caller's own
+/// content and name no row another reader could be checked against.
+pub(super) fn hook_verb_run_source_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
+        return Ok(None);
+    };
+    if run.unattributed
+        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+    {
+        return Ok(None);
+    }
+    let mut rows: Vec<EntityId> = run
+        .reads
+        .into_iter()
+        .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+        .chain(run.dependencies)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(rows))
 }
 
 /// The Hook receipt projector: runs, newest first within the query's bound,

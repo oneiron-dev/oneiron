@@ -23,6 +23,7 @@ mod ask_world_hold;
 mod attendee_answer;
 mod board_task;
 mod comm_widen;
+mod contribution_pair;
 pub(crate) use board_task::board_task_for_id;
 pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
@@ -92,6 +93,7 @@ mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
+pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
@@ -108,6 +110,7 @@ pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
+pub(crate) use consult_fanout_store::erase_fanout_run_actor_in_txn;
 pub use task_actor::TaskActor;
 pub(crate) use task_actor::{erase_launch_actor_in_txn, erase_wait_actor_in_txn};
 mod task_continuation;
@@ -117,6 +120,12 @@ mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use contribution_pair::{
+    CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
+    contribution_pair_ask_permitted_in, contribution_pair_erase_targets_in_txn,
+    contribution_pair_question_permitted_in, is_contribution_pair_ask_intent,
+    retire_contribution_pair_asks_in,
+};
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
@@ -128,8 +137,9 @@ pub(crate) use training_swap_ask::{
 };
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
-    TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
-    task_is_blocked_in, task_stored_brief_in, task_text_with_source_in,
+    TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
+    leader_task_brief_in, task_binding, task_is_blocked_in, task_stored_brief_in,
+    task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -393,7 +403,7 @@ pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage}
 pub use linear_store::VaultLinearTaskStore;
 pub(crate) use linear_store::{
     drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
-    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+    mark_mirror_dirty_in, put_mirror_link_in,
 };
 pub(crate) use mirror_edit::prove_task_owner_in;
 
@@ -459,3 +469,75 @@ pub use ask_types::{
     TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
+
+use crate::memory::{MemoryError, MemoryResult};
+use serde::{Deserialize, Serialize};
+
+/// One SDK verb with two disjoint wire shapes. Rich fields cannot be
+/// reinterpreted as first-answer shorthand after Serde drops field presence.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum TaskAskRequest {
+    Rich(Box<TaskAskSpec>),
+    Short(Box<TaskAskShort>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskShort {
+    #[serde(default)]
+    pub who: Option<TaskAskTarget>,
+    pub what: TaskAskQuestion,
+    #[serde(default)]
+    pub until: Option<u64>,
+    #[serde(default)]
+    pub default: TaskAskDefault,
+}
+
+impl TaskAskRequest {
+    /// The ask spec this request names: a short call's retry key is derived
+    /// from exactly what it requested.
+    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
+        match self {
+            Self::Rich(spec) => Ok(*spec),
+            Self::Short(short) => {
+                // The key names the *requested* short call, never a cutoff
+                // derived from the current clock or the resolved electorate.
+                let bytes =
+                    rmp_serde::to_vec_named(&(&short.who, &short.what, short.until, short.default))
+                        .map_err(|_| MemoryError::bad_request("short ask encoding"))?;
+                let mut spec =
+                    TaskAskSpec::shorthand(short.who, short.what, short.until, short.default);
+                spec.intent_key = format!("short/v1/{}", blake3::hash(&bytes).to_hex());
+                Ok(spec)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaitRequest {
+    pub handle: TaskAskHandle,
+    pub step_key: String,
+}
+/// `tasks.update`: a typed report on a TASK (progress, blocked work, a
+/// durable result, a failure, a release or a brief revision) through the
+/// task highway under the caller's `report_key`, fenced by the `attempt` an
+/// accept returned when the caller holds one; without a report, the owner's
+/// acknowledgement of a failed TASK. `resultRef` is reserved for a code
+/// run's reader child: it names the finding one of that run's results
+/// holds, which only the run resolves, so a host door refuses it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUpdateRequest {
+    pub task_ref: String,
+    #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<crate::task_verb::TaskReportBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<crate::task_verb::AttemptHandle>,
+}

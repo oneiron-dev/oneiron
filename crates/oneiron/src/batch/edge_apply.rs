@@ -2,7 +2,6 @@ use super::*;
 
 use heed::RwTxn;
 
-use crate::affect::Vad;
 use crate::edge::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     EdgeKind, EdgeProvenanceFlags, encode_edge_value, validate_edge_weight,
@@ -11,6 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
 use crate::ports::EdgeStoreStaging;
 use crate::store::Store;
+use oneiron_contracts::affect::Vad;
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
 /// `Vault::put_edge`, `Vault::put_edge_with_vad`, and the `edge` /
@@ -230,8 +230,10 @@ pub(super) fn apply_delete_edge(
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
     crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
-    crate::task_authority::reject_fact_link_delete(store, wtxn, &src, kind)?;
-    crate::workspace_roster::reject_audience_edit_unlink(store, wtxn, &src, kind, &tgt)?;
+    crate::store::task_authority_guard::reject_fact_link_delete(store, wtxn, &src, kind)?;
+    store
+        .record_hooks
+        .reject_audience_edit_unlink(store, wtxn, &src, kind, &tgt)?;
     crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
     if matches!(
         kind,

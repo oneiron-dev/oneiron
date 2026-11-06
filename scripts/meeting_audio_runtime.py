@@ -139,11 +139,12 @@ def exclusive_tracks(items, duration_ms, error=RuntimeRefusal):
 
 
 class NoUnits:
-    """A runtime no host admits unit by unit: a process port's, whose whole
-    call its parent bridge admitted as one unit. Each call just runs."""
+    """A runtime no host admits unit by unit: standalone use, where each call
+    just runs. Process ports relay each window as one parent unit (FIX 11501)
+    through the parent bridge's own gate instead."""
 
     @staticmethod
-    def run(kind, audio_ms, call, usage=None):
+    def run(kind, audio_ms, call, usage=None, model=None):
         return call()
 
     @staticmethod
@@ -272,14 +273,51 @@ class LocalRuntime:
                     or result.get("model_execution") is not False):
                 raise self.error("InvalidProcessCapabilities")
             models = result.get("models_by_language")
-            if stage == "alignment" and (not isinstance(models, dict)
-                    or any((language not in LANGUAGES or model != ALIGNER) and (language != "Ukrainian" or model != UK_ALIGNER)
-                           for language, model in models.items())
-                    or result["available"] != bool(models)):
-                raise self.error("InvalidProcessCapabilities")
-            if stage == "diarization" and result["available"] and (result.get("model_id") != COMMUNITY
-                    or not hash_string(result.get("model_files_sha256"))):
-                raise self.error("InvalidProcessCapabilities")
+            unit_models = result.get("unit_models")
+            if stage == "alignment":
+                if (not isinstance(models, dict)
+                        or any((language not in LANGUAGES or model != ALIGNER) and (language != "Ukrainian" or model != UK_ALIGNER)
+                               for language, model in models.items())
+                        or result["available"] != bool(models)):
+                    raise self.error("InvalidProcessCapabilities")
+                if not isinstance(unit_models, dict) or set(unit_models) != {"alignment_window"}:
+                    raise self.error("InvalidProcessCapabilities")
+                window_list = unit_models["alignment_window"]
+                if not isinstance(window_list, list):
+                    raise self.error("InvalidProcessCapabilities")
+                if not result["available"]:
+                    if models != {} or window_list != [] or result.get("model_id") is not None or result.get("model_files_sha256") is not None:
+                        raise self.error("InvalidProcessCapabilities")
+                else:
+                    distinct = set(models.values())
+                    if len(window_list) != len(distinct):
+                        raise self.error("InvalidProcessCapabilities")
+                    seen = {}
+                    for entry in window_list:
+                        if not isinstance(entry, str) or "@" not in entry:
+                            raise self.error("InvalidProcessCapabilities")
+                        mid, _, dg = entry.rpartition("@")
+                        if mid not in distinct or not hash_string(dg) or mid in seen:
+                            raise self.error("InvalidProcessCapabilities")
+                        seen[mid] = dg
+                    singular_id = result.get("model_id")
+                    singular_hash = result.get("model_files_sha256")
+                    if singular_id not in distinct or not hash_string(singular_hash) or seen.get(singular_id) != singular_hash:
+                        raise self.error("InvalidProcessCapabilities")
+            if stage == "diarization":
+                if not isinstance(unit_models, dict) or set(unit_models) != {"diarization"}:
+                    raise self.error("InvalidProcessCapabilities")
+                dia_list = unit_models["diarization"]
+                if not isinstance(dia_list, list):
+                    raise self.error("InvalidProcessCapabilities")
+                if result["available"]:
+                    if result.get("model_id") != COMMUNITY or not hash_string(result.get("model_files_sha256")):
+                        raise self.error("InvalidProcessCapabilities")
+                    if dia_list != [COMMUNITY + "@" + result["model_files_sha256"]]:
+                        raise self.error("InvalidProcessCapabilities")
+                else:
+                    if dia_list != [] or result.get("model_id") is not None or result.get("model_files_sha256") is not None or models != {}:
+                        raise self.error("InvalidProcessCapabilities")
             self.process_capability_cache[stage] = result
         return self.process_capability_cache[stage]
 
@@ -304,6 +342,44 @@ class LocalRuntime:
             return result["model_id"], result["model_files_sha256"]
         files = json.dumps(spec["files"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         return spec["model_id"], digest(files)
+
+    def wire_model(self, stage):
+        """Real model_id@files-manifest-digest for a gated unit; never fabricated."""
+        model_id, files_sha = self.model_identity(stage)
+        return model_id + "@" + files_sha
+
+    def unit_models(self):
+        """Actual available model@digest per unit kind; unavailable empty.
+
+        Process alignment keeps the worker's complete list, never a singular
+        representative. No new caps; unavailable stages stay empty.
+        """
+        out = {"asr": [], "diarization": [], "alignment_window": [], "cleanup_group": []}
+        if self.profile.get("asr") is not None and self.available("asr"):
+            out["asr"] = [self.wire_model("asr")]
+        if self.profile.get("cleanup") is not None and self.available("cleanup"):
+            out["cleanup_group"] = [self.wire_model("cleanup")]
+        spec = self.profile.get("diarization")
+        if spec is not None:
+            if spec.get("backend") == "process":
+                caps = self.process_capabilities("diarization")
+                if caps["available"]:
+                    out["diarization"] = list(caps["unit_models"]["diarization"])
+            elif self.available("diarization"):
+                out["diarization"] = [self.wire_model("diarization")]
+        align_spec = self.profile.get("alignment")
+        if align_spec is not None and align_spec.get("backend") == "process":
+            caps = self.process_capabilities("alignment")
+            if caps["available"]:
+                out["alignment_window"] = list(caps["unit_models"]["alignment_window"])
+        else:
+            window = []
+            if self.profile.get("alignment") is not None and self.available("alignment"):
+                window.append(self.wire_model("alignment"))
+            if self.profile.get("uk_alignment") is not None and self.available("uk_alignment"):
+                window.append(self.wire_model("uk_alignment"))
+            out["alignment_window"] = window
+        return out
 
     def require(self, stage):
         if not self.available(stage):
@@ -349,15 +425,17 @@ class LocalRuntime:
             module_spec = importlib.util.spec_from_file_location("meeting_audio_ctc", path)
             module = importlib.util.module_from_spec(module_spec)
             module_spec.loader.exec_module(module)
-            return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error, self.units), transcript, duration_ms, self.error)
+            wire = self.wire_model("uk_alignment")
+            return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error, self.units, unit_model=wire), transcript, duration_ms, self.error)
         if external:
             body = process_pcm(audio, self.error)
-            # The port's whole call is one unit here: its process runs its
-            # windows itself.
-            result = self.units.run("alignment_window", duration_ms, lambda: process_module().call(
+            # Each window the port runs is one unit the host admits (FIX 11501):
+            # the worker relays its unit lines and the port relays each as one
+            # top-level unit; no outer unit wraps the port call itself.
+            result = process_module().call(
                 spec, "alignment", "align_words", body,
                 {"transcript": transcript, "language": language}, self.error, strict_json,
-                progress=self.units.progress))
+                units=self.units)
             model = self.alignment_model(language)
             provenance = checked_process_provenance(result, body, model, self.error)
             if (result.get("aligner_model") != model or provenance.get("language") != language
@@ -370,7 +448,8 @@ class LocalRuntime:
         from qwen_asr import Qwen3ForcedAligner
         model = Qwen3ForcedAligner.from_pretrained(spec["snapshot"], dtype=torch.float32, device_map="cpu", local_files_only=True)
         output = self.units.run("alignment_window", duration_ms,
-                                lambda: model.align(audio=(audio, 16000), text=transcript, language=language))
+                                lambda: model.align(audio=(audio, 16000), text=transcript, language=language),
+                                model=self.wire_model("alignment"))
         if len(output) != 1:
             raise self.error("InvalidAlignmentOutput")
         return aligned_words(output[0], transcript, duration_ms, self.error)
@@ -379,9 +458,11 @@ class LocalRuntime:
         spec = self.require("diarization")
         if spec.get("backend") == "process":
             body = process_pcm(audio, self.error)
-            result = self.units.run("diarization", duration_ms, lambda: process_module().call(
+            # Each unit the port runs is relayed as one top-level unit the host
+            # admits (FIX 11501); no outer unit wraps the port call itself.
+            result = process_module().call(
                 spec, "diarization", "diarize_full_file", body, {}, self.error, strict_json,
-                progress=self.units.progress))
+                units=self.units)
             provenance = checked_process_provenance(result, body, COMMUNITY, self.error)
             if provenance.get("full_file_samples") != len(audio):
                 raise self.error("ProcessDiarizationBindingMismatch")
@@ -396,7 +477,7 @@ class LocalRuntime:
         # long as its steps move.
         output = self.units.run("diarization", duration_ms, lambda: pipeline(
             {"waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000},
-            hook=lambda *step, **counts: self.units.progress()))
+            hook=lambda *step, **counts: self.units.progress()), model=self.wire_model("diarization"))
         exclusive = getattr(output, "exclusive_speaker_diarization", None)
         if exclusive is None:
             raise self.error("ExclusiveDiarizationUnavailable")
@@ -460,7 +541,8 @@ class LocalRuntime:
                 model, tokenizer, prompt=prompt, max_tokens=spec["max_tokens"],
                 sampler=make_sampler(temp=0.0), verbose=False),
                 usage=lambda text: {"input_tokens": prompt_tokens,
-                                    "output_tokens": len(tokenizer.encode(text))})
+                                    "output_tokens": len(tokenizer.encode(text))},
+                model=self.wire_model("cleanup"))
             if len(tokenizer.encode(text)) >= spec["max_tokens"]:
                 if len(group) > 1:
                     half = len(group) // 2

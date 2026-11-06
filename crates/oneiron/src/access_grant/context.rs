@@ -12,20 +12,27 @@ use std::collections::BTreeSet;
 /// Resolved authority, not caller-provided hints. Identity fields never imply membership.
 #[derive(Clone)]
 pub struct AccessContext<'v> {
+    snapshot: AccessContextSnapshot,
+    vault: &'v Vault,
+}
+
+/// Relationship authority resolved for one serving snapshot. Only the
+/// refreshable public context needs a vault borrow.
+#[derive(Clone)]
+pub(crate) struct AccessContextSnapshot {
     principal: Option<EntityId>,
     relationships: BTreeSet<EntityId>,
     grants: Vec<AccessGrant>,
-    vault: &'v Vault,
     observed_at: u64,
 }
 
 impl std::fmt::Debug for AccessContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AccessContext")
-            .field("principal", &self.principal)
-            .field("relationships", &self.relationships)
-            .field("grants", &self.grants)
-            .field("observed_at", &self.observed_at)
+            .field("principal", &self.snapshot.principal)
+            .field("relationships", &self.snapshot.relationships)
+            .field("grants", &self.snapshot.grants)
+            .field("observed_at", &self.snapshot.observed_at)
             .finish_non_exhaustive()
     }
 }
@@ -58,15 +65,15 @@ pub(crate) fn principal_reach_ids_in(
         return crate::claim::claim_ids_for_predicate_in_txn(
             &vault.store,
             txn,
-            crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+            crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF,
         );
     }
     crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?.collect()
 }
 
-impl<'v> AccessContext<'v> {
+impl AccessContextSnapshot {
     pub(crate) fn load(
-        vault: &'v Vault,
+        vault: &Vault,
         txn: &heed::RoTxn<'_>,
         principal: Option<EntityId>,
     ) -> Result<Self> {
@@ -75,7 +82,6 @@ impl<'v> AccessContext<'v> {
             principal,
             relationships: BTreeSet::new(),
             grants: Vec::new(),
-            vault,
             observed_at: now,
         };
         if principal.is_none() {
@@ -112,7 +118,8 @@ impl<'v> AccessContext<'v> {
                     }
                 } else if raw.len() > ENTITY_METADATA_HEADER_LEN {
                     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                    if body.predicate == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF
+                    if body.predicate
+                        == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                         && claim_surfaceable(&body)
                         && crate::gate::claim_critical_confirm_settled_in_txn(
                             &vault.store,
@@ -142,6 +149,19 @@ impl<'v> AccessContext<'v> {
         }
         Ok(context)
     }
+}
+
+impl<'v> AccessContext<'v> {
+    pub(crate) fn load(
+        vault: &'v Vault,
+        txn: &heed::RoTxn<'_>,
+        principal: Option<EntityId>,
+    ) -> Result<Self> {
+        Ok(Self {
+            snapshot: AccessContextSnapshot::load(vault, txn, principal)?,
+            vault,
+        })
+    }
 
     /// Applies the C1-C3 matrix. Private rows cannot be shared by an AccessGrant.
     pub fn allows(
@@ -149,7 +169,7 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         // A retained context answers for now: authority is resolved again in a
         // fresh snapshot, so a later expiry, revocation or relationship delete
@@ -162,7 +182,7 @@ impl<'v> AccessContext<'v> {
                 .env
                 .read_txn()
                 .ok()
-                .and_then(|txn| Self::load(self.vault, &txn, self.principal).ok())
+                .and_then(|txn| Self::load(self.vault, &txn, self.snapshot.principal).ok())
                 .is_some_and(|current| {
                     current.allows_at_snapshot(entity_type, space, private, record)
                 })
@@ -173,7 +193,37 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
+    ) -> bool {
+        self.snapshot
+            .allows_at_snapshot(entity_type, space, private, record)
+    }
+
+    pub(crate) fn holds_conversation_grants(&self) -> bool {
+        self.snapshot.holds_conversation_grants()
+    }
+
+    pub(crate) fn allows_conversation_message_at_snapshot(
+        &self,
+        conversation: EntityId,
+        record: &oneiron_authority::federation::Scope,
+    ) -> bool {
+        self.snapshot
+            .allows_conversation_message_at_snapshot(conversation, record)
+    }
+
+    pub(crate) fn snapshot(&self) -> &AccessContextSnapshot {
+        &self.snapshot
+    }
+}
+
+impl AccessContextSnapshot {
+    pub(crate) fn allows_at_snapshot(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         self.allows_at(entity_type, space, private, record, self.observed_at)
     }
@@ -196,7 +246,7 @@ impl<'v> AccessContext<'v> {
     pub(crate) fn allows_conversation_message_at_snapshot(
         &self,
         conversation: EntityId,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         let Some(principal) = self.principal else {
             return false;
@@ -216,7 +266,7 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
         now: u64,
     ) -> bool {
         if private {

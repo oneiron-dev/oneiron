@@ -15,7 +15,10 @@ use crate::consent::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::run_bound::reveal_run_admission;
-use crate::secret_custody::{SecretCustodyFloor, read_secret_custody_admission_in_txn};
+use crate::secret_custody::{
+    SecretCustodyFloor, read_secret_custody_admission_in_txn, secret_handle_label_in_txn,
+    suggested_secret_handle_label_in_txn,
+};
 use crate::vault::Vault;
 
 impl Vault {
@@ -236,7 +239,15 @@ impl Vault {
                 row.state = SecretRevealState::Delivered;
                 row.delivered_at = Some(now);
                 row.lease = Some(self.store.clock.entity_id()?);
-                row.collected = Some(RevealCollection::person(asker, now));
+                let print = match asker.exec_run {
+                    Some(_) => crate::store::known_value_index::PersonValuePrint::delivered_in_txn(
+                        &self.store,
+                        txn,
+                        &value,
+                    )?,
+                    None => None,
+                };
+                row.collected = Some(RevealCollection::person(asker, now, print));
                 REVEALS.put(&self.store, txn, reveal, &row)?;
                 Ok(SecretRevealWait {
                     decision: SecretRevealDecision::Granted,
@@ -295,9 +306,12 @@ impl Vault {
                 }
             },
         };
+        let label = secret_handle_label_in_txn(&self.store, &txn, &secret)?;
+        let suggested_label = suggested_secret_handle_label_in_txn(&self.store, &txn, &secret)?;
         Ok(SecretHandleCard {
             handle,
-            label: rec.name,
+            label: label.map_or(rec.name, |label| label.label),
+            suggested_label,
             class: rec.class,
             status: rec.status,
             provenance,

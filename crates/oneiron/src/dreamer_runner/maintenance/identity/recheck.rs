@@ -11,7 +11,7 @@ use super::admission::{Admit, admitted_in_txn, dreamer_reader};
 use super::{
     ASKS, Answer, CURSOR, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason, MAX_OPEN_ASKS,
     MAX_TERMS, MIN_TERM_CHARS, SCAN_TURNS, STOP_WORDS, ask_key, dreamer_seal,
-    entity_of_kind_in_txn, hinted_in_txn, settle_undo,
+    entity_of_kind_in_txn, hinted_in_txn, index, settle_undo,
 };
 use crate::claim::ClaimSource;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
@@ -110,8 +110,8 @@ fn uncertain_in_txn(
 fn same_question(left: &IdentityAsk, right: &IdentityAsk) -> bool {
     let set = |ask: &IdentityAsk| ask.candidates.iter().copied().collect::<BTreeSet<_>>();
     left.kind == right.kind
-        && crate::ingest::identity_hint_digest(&left.name)
-            == crate::ingest::identity_hint_digest(&right.name)
+        && crate::store::identity_hints::identity_hint_digest(&left.name)
+            == crate::store::identity_hints::identity_hint_digest(&right.name)
         && set(left) == set(right)
 }
 
@@ -204,6 +204,7 @@ fn recheck_turn_in_txn(
                 && fresh.candidates != held.candidates
             {
                 measure_ask(vault, &fresh);
+                index::sync_ask_membership(&vault.store, txn, &key, Some(&*held), Some(&fresh))?;
                 ASKS.put(&vault.store, txn, &key, &fresh)?;
                 *held = fresh;
             }
@@ -255,6 +256,7 @@ fn recheck_turn_in_txn(
             return Ok(false);
         }
         measure_ask(vault, &ask);
+        index::sync_ask_membership(&vault.store, txn, &key, None, Some(&ask))?;
         ASKS.put(&vault.store, txn, &key, &ask)?;
         open.push((key, ask));
     }
@@ -272,7 +274,7 @@ impl DreamerRunnerStore<'_> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<()> {
-        if self.vault.config.tagging.is_none() {
+        if self.vault.tagging_marker_config().is_none() {
             return Ok(());
         }
         self.enqueue_kind_in_txn(

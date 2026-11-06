@@ -1,8 +1,10 @@
 //! Host-signed capability slips with holder-signed offline narrowing and proof.
-use super::{AuthorityFold, MAX_WIRE_BYTES, SlipClaims, canonical, invalid_authority};
+use super::{
+    AuthorityFold, MAX_WIRE_BYTES, SeatClaimSlipBinding, SlipClaims, canonical, invalid_authority,
+};
 use crate::error::Result as EngineResult;
-use crate::federation::Scope;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use oneiron_authority::federation::Scope;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -28,8 +30,11 @@ pub struct SlipCaveat {
         serialize_with = "serialize_pact",
         deserialize_with = "deserialize_pact"
     )]
-    #[schemars(with = "Option<(crate::federation::ScopeId, Vec<u8>)>")]
-    pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    #[schemars(with = "Option<(oneiron_authority::federation::ScopeId, Vec<u8>)>")]
+    pub pact: Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     /// A lower comm reach (FIX 3899): the verifier meets it with the slip's,
     /// so a caveat only lowers whom the holder may message. A wider reach is
     /// a new owner mint.
@@ -70,7 +75,11 @@ impl std::fmt::Debug for CapabilitySlip {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSlip {
     claims: SlipClaims,
-    pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    explicit_revocation_ancestry: Vec<[u8; 32]>,
+    pact: Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     // Only the verifier can prove that no offline narrowing caveat was present.
     unattenuated: bool,
     // Only the verifier knows whether a caveat moved the binding key off the
@@ -79,7 +88,12 @@ pub struct VerifiedSlip {
 }
 impl VerifiedSlip {
     #[must_use]
-    pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
+    pub fn pact(
+        &self,
+    ) -> Option<&(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )> {
         self.pact.as_ref()
     }
     /// This view met with its guest grant's current effective scope (FIX
@@ -87,9 +101,15 @@ impl VerifiedSlip {
     /// asks for it.
     pub(in crate::authority) fn meet_current_scope(
         mut self,
-        current: &crate::federation::FederationDirectionScope,
+        current: &oneiron_authority::federation::FederationDirectionScope,
     ) -> Self {
         self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
+        self
+    }
+    /// Meets an authenticated effective view with all six current membership
+    /// axes. The mint's signed claims and caveat provenance stay unchanged.
+    pub(in crate::authority) fn meet_scope(mut self, current: &Scope) -> Self {
+        self.claims.scope = self.claims.scope.meet(current);
         self
     }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
@@ -103,6 +123,9 @@ impl VerifiedSlip {
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
     }
+    pub(super) fn explicit_revocation_ancestry(&self) -> &[[u8; 32]] {
+        &self.explicit_revocation_ancestry
+    }
     /// Whether the slip is its mint, with no caveat narrowing it (a scope,
     /// a pact bound, a shorter lifetime, another key).
     #[must_use]
@@ -114,13 +137,7 @@ impl VerifiedSlip {
     /// (FIX 3899): it could otherwise mint itself a wider reach.
     #[must_use]
     pub fn is_full_vault_owner_grade(&self) -> bool {
-        self.unattenuated
-            && self.comm() == super::CommReach::Vault
-            && self.claims.scope == Scope::top()
-            && self.claims.org_ref.is_none()
-            && self.claims.records.is_empty()
-            && self.claims.channels.is_empty()
-            && !self.claims.single_use
+        self.unattenuated && self.claims.is_full_vault_owner_grade()
     }
     /// A caveat handed the slip to another key (`attenuate_to`): whoever
     /// proves it now is not the holder the mint names, whatever
@@ -143,6 +160,136 @@ impl VerifiedSlip {
     #[must_use]
     pub fn allows_verb(&self, verb: &str) -> bool {
         self.claims.scope.verbs.contains(&verb.to_owned())
+    }
+}
+
+/// Which verifier purpose a slip's authority check serves (FIX 4325): the
+/// general one, which never admits a contact-bound or seat-child slip, the
+/// contact one, which admits only a contact-bound slip, or the seat-child
+/// one (FIX 10624), which admits only a seat-child slip. One shared
+/// algorithm; the purpose is the only branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlipPurpose {
+    General,
+    TrustedContact,
+    SeatChild,
+}
+
+/// A verified seat-child presentation (FIX 10624): the opaque purpose proof
+/// a seat-child slip's own verifier mints, for the official CLI a seat host
+/// runs under one claim. The inner verified view is private and never
+/// escapes: no `Deref`, no conversion to [`VerifiedSlip`]. Only the seat
+/// child's own doors take it, and they recheck the claim in their acting
+/// transaction.
+#[derive(Debug, Clone)]
+pub struct SeatChildCredential {
+    inner: VerifiedSlip,
+}
+
+impl SeatChildCredential {
+    fn binding(&self) -> &SeatClaimSlipBinding {
+        self.inner
+            .claims
+            .seat_claim
+            .as_ref()
+            .expect("a verified seat-child credential carries its claim")
+    }
+    /// The claimed attempt's id bytes.
+    #[must_use]
+    pub fn attempt(&self) -> [u8; 16] {
+        self.binding().attempt
+    }
+    /// The lease owner that holds the claim.
+    #[must_use]
+    pub fn lease_owner(&self) -> &str {
+        &self.binding().lease_owner
+    }
+    /// The lease generation the claim was taken at.
+    #[must_use]
+    pub fn attempt_count(&self) -> u32 {
+        self.binding().attempt_count
+    }
+    /// The per-claim holder PERSON the claims name, as hex.
+    #[must_use]
+    pub fn holder_ref(&self) -> &str {
+        &self.inner.claims.holder_ref
+    }
+    /// The secret names the run may ask for, exactly as signed.
+    #[must_use]
+    pub fn records(&self) -> &BTreeSet<String> {
+        &self.inner.claims.records
+    }
+    /// Whether the slip carries the model door's channel (FIX 15702): the
+    /// run's model calls through its host's loopback door. A slip minted for
+    /// the credential helper alone does not.
+    #[must_use]
+    pub fn admits_model_door(&self) -> bool {
+        self.inner
+            .claims
+            .channels
+            .contains(oneiron_authority::authority::SEAT_MODEL_CHANNEL)
+    }
+    /// When the slip ends, on the vault's clock.
+    #[must_use]
+    pub fn expires_at(&self) -> u64 {
+        self.inner.claims.expires_at
+    }
+    /// The slip id, for liveness and revocation reads.
+    #[must_use]
+    pub fn slip_id(&self) -> [u8; 32] {
+        self.inner.claims.slip_id
+    }
+    /// The claims, for the vault's own liveness reads. Claims alone carry no
+    /// authority; only this credential's own doors take them.
+    pub(crate) fn claims(&self) -> &SlipClaims {
+        &self.inner.claims
+    }
+}
+
+/// A verified trusted-contact presentation (FIX 4325): the opaque purpose
+/// proof a contact-bound slip's own verifier mints. The inner verified view
+/// is private and never escapes: no `Deref`, no `claims()`, no conversion to
+/// [`VerifiedSlip`]. Only the contact's own native doors take it.
+#[derive(Debug, Clone)]
+pub struct TrustedContactCredential {
+    inner: VerifiedSlip,
+}
+
+impl TrustedContactCredential {
+    /// The namer PERSON the binding names.
+    #[must_use]
+    pub fn person(&self) -> crate::EntityId {
+        self.inner
+            .claims
+            .trusted_contact
+            .as_ref()
+            .expect("a verified contact credential carries its binding")
+            .person
+    }
+    /// The exact relation version bound.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.inner
+            .claims
+            .trusted_contact
+            .as_ref()
+            .expect("a verified contact credential carries its binding")
+            .version
+    }
+    /// The holder (contact) the claims name, as hex.
+    #[must_use]
+    pub fn holder_ref(&self) -> &str {
+        &self.inner.claims.holder_ref
+    }
+    /// The slip id, for liveness and revocation reads.
+    #[must_use]
+    pub fn slip_id(&self) -> [u8; 32] {
+        self.inner.claims.slip_id
+    }
+    /// The claims, for the vault's own liveness and relation reads. Claims
+    /// alone carry no authority; only this credential's own doors take them.
+    pub(crate) fn claims(&self) -> &SlipClaims {
+        &self.inner.claims
     }
 }
 
@@ -267,9 +414,72 @@ impl CapabilitySlip {
         challenge: &[u8],
         holder_signature: &[u8],
     ) -> EngineResult<VerifiedSlip> {
-        let verified = self.verify_authority_with(host_public_key, fold, signed_at, true)?;
+        let verified = self.verify_authority_with(
+            host_public_key,
+            fold,
+            signed_at,
+            true,
+            SlipPurpose::General,
+        )?;
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
+    }
+    /// Checks a contact-bound slip's host and caveat signatures, authority
+    /// ancestry and holder possession (FIX 4325): the same algorithm,
+    /// transcripts and holder proof as [`Self::verify`], but admitting only
+    /// a contact-bound slip and minting only the opaque
+    /// [`TrustedContactCredential`]. `challenge` is supplied by the receiving
+    /// door, never taken from the slip.
+    pub(super) fn verify_trusted_contact(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> EngineResult<TrustedContactCredential> {
+        let verified = self.verify_trusted_contact_authority(host_public_key, fold, now)?;
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(TrustedContactCredential { inner: verified })
+    }
+    fn verify_trusted_contact_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<VerifiedSlip> {
+        self.verify_authority_with(
+            host_public_key,
+            fold,
+            now,
+            false,
+            SlipPurpose::TrustedContact,
+        )
+    }
+    /// Checks a seat-child slip's host signature, authority ancestry and
+    /// holder possession (FIX 10624): the same algorithm, transcripts and
+    /// holder proof as [`Self::verify`], but admitting only a seat-child slip
+    /// and minting only the opaque [`SeatChildCredential`]. `challenge` is
+    /// supplied by the receiving door, never taken from the slip.
+    pub(super) fn verify_seat_child(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> EngineResult<SeatChildCredential> {
+        let verified = self.verify_seat_child_authority(host_public_key, fold, now)?;
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(SeatChildCredential { inner: verified })
+    }
+    fn verify_seat_child_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<VerifiedSlip> {
+        self.verify_authority_with(host_public_key, fold, now, false, SlipPurpose::SeatChild)
     }
     /// Checks what a proof's bytes fix for good: the mint's claims equal this
     /// slip's, the host signed them, every caveat transfer is signed by the
@@ -283,6 +493,12 @@ impl CapabilitySlip {
         holder_signature: &[u8],
     ) -> EngineResult<()> {
         self.claims.validate()?;
+        // FIX 4325: a contact-bound slip never stands as a general origin;
+        // its own verifier is the only one that admits it. A seat-child slip
+        // (FIX 10624) neither.
+        if self.claims.trusted_contact.is_some() || self.claims.seat_claim.is_some() {
+            return Err(invalid_authority());
+        }
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
             || canonical(self)?.len() > MAX_WIRE_BYTES
@@ -333,13 +549,31 @@ impl CapabilitySlip {
         key.verify_strict(&self.binding_transcript(challenge)?, &signature)
             .map_err(|_| invalid_authority())
     }
+    /// Checks a just-logged mint under its own purpose, without proving a
+    /// holder presentation or returning a generally usable credential.
+    pub(super) fn verify_mint_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<()> {
+        if self.claims.trusted_contact.is_some() {
+            self.verify_trusted_contact_authority(host_public_key, fold, now)
+                .map(drop)
+        } else if self.claims.seat_claim.is_some() {
+            self.verify_seat_child_authority(host_public_key, fold, now)
+                .map(drop)
+        } else {
+            self.verify_authority(host_public_key, fold, now).map(drop)
+        }
+    }
     pub(super) fn verify_authority(
         &self,
         host_public_key: &super::AuthorityKey,
         fold: &AuthorityFold,
         now: u64,
     ) -> EngineResult<VerifiedSlip> {
-        self.verify_authority_with(host_public_key, fold, now, false)
+        self.verify_authority_with(host_public_key, fold, now, false, SlipPurpose::General)
     }
     fn verify_authority_with(
         &self,
@@ -347,8 +581,26 @@ impl CapabilitySlip {
         fold: &AuthorityFold,
         now: u64,
         history: bool,
+        purpose: SlipPurpose,
     ) -> EngineResult<VerifiedSlip> {
         self.claims.validate()?;
+        // FIX 4325: one shared algorithm, one purpose branch. General
+        // verification never admits a contact-bound or seat-child slip;
+        // each purpose's own verification admits only its own kind (FIX
+        // 10624). Old `None` slips are unaffected.
+        let contact = self.claims.trusted_contact.is_some();
+        let seat = self.claims.seat_claim.is_some();
+        let admitted = match purpose {
+            SlipPurpose::General => !contact && !seat,
+            SlipPurpose::TrustedContact => contact,
+            SlipPurpose::SeatChild => seat,
+        };
+        // A seat-child slip is presented as the host minted it: a caveat
+        // could only widen its signed records, never narrow them usefully,
+        // so it carries none (FIX 10624).
+        if !admitted || (seat && !self.caveats.is_empty()) {
+            return Err(invalid_authority());
+        }
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
             || canonical(self)?.len() > MAX_WIRE_BYTES
@@ -386,7 +638,10 @@ impl CapabilitySlip {
         };
         let mut binding_key = self.claims.binding_key;
         let mut effective = self.claims.clone();
-        let mut pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)> = None;
+        let mut pact: Option<(
+            crate::EntityId,
+            oneiron_authority::federation::FederationDirectionScope,
+        )> = None;
         // An absent named-record bound is universal on generic record reads.
         // Once a caveat supplies a set, its empty meet is Bottom, never universal.
         let mut records_constrained =
@@ -417,6 +672,9 @@ impl CapabilitySlip {
         effective.binding_key = binding_key;
         let verified = VerifiedSlip {
             claims: effective,
+            explicit_revocation_ancestry: fold
+                .slips
+                .explicit_revocation_ancestry(&self.claims.slip_id),
             pact,
             unattenuated: self.caveats.is_empty(),
             transferred: binding_key != self.claims.binding_key,
@@ -428,7 +686,10 @@ impl CapabilitySlip {
 
 /// A pact bound the caveats carry, as the meet folds it: one grant, its
 /// bounds intersected.
-type PactBound = Option<(crate::EntityId, crate::federation::FederationDirectionScope)>;
+type PactBound = Option<(
+    crate::EntityId,
+    oneiron_authority::federation::FederationDirectionScope,
+)>;
 
 /// Meets one authenticated caveat into `effective`: the one meet live
 /// verification and a transferred removal archive's bounds (FIX-LIST 8224)
@@ -440,7 +701,7 @@ fn meet_caveat(
     caveat: &SlipCaveat,
 ) -> EngineResult<()> {
     if caveat.scope.as_ref().is_some_and(|scope| {
-        matches!(&scope.verbs, crate::federation::ScopeAxis::Some(verbs)
+        matches!(&scope.verbs, oneiron_authority::federation::ScopeAxis::Some(verbs)
             if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
     }) || caveat
         .records
@@ -502,8 +763,8 @@ fn meet_caveat(
 fn witnessed_pact_scope(
     fold: &AuthorityFold,
     grant: &crate::EntityId,
-    requested: &crate::federation::FederationDirectionScope,
-) -> EngineResult<crate::federation::FederationDirectionScope> {
+    requested: &oneiron_authority::federation::FederationDirectionScope,
+) -> EngineResult<oneiron_authority::federation::FederationDirectionScope> {
     let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
     let effective = requested.intersect(&pact.effective_scope);
     if pact.status != super::FederationPactStatus::Active
@@ -511,8 +772,9 @@ fn witnessed_pact_scope(
             .federation_grant_bindings
             .get(grant)
             .is_none_or(|ids| ids.len() != 1)
-        || !crate::federation::Ceiling::new(requested.clone())
-            .is_within(&crate::federation::Ceiling::new(effective.clone()))
+        || !oneiron_authority::federation::Ceiling::new(requested.clone()).is_within(
+            &oneiron_authority::federation::Ceiling::new(effective.clone()),
+        )
         || effective.worlds.is_bottom()
         || effective.facets.is_bottom()
         || effective.bands.is_bottom()
@@ -565,7 +827,7 @@ impl TransferredBounds {
         id: crate::EntityId,
         position: Option<&Scope>,
         now: u64,
-        served_pact: Option<&crate::federation::FederationDirectionScope>,
+        served_pact: Option<&oneiron_authority::federation::FederationDirectionScope>,
     ) -> bool {
         if now >= self.deadline || self.channel_bound {
             return false;
@@ -588,7 +850,7 @@ impl TransferredBounds {
             position.unwrap_or(&top),
             &self.scope.worlds,
         );
-        record.verbs = crate::federation::ScopeAxis::Some(BTreeSet::from([
+        record.verbs = oneiron_authority::federation::ScopeAxis::Some(BTreeSet::from([
             REMOVAL_ARCHIVE_TRANSFER_VERB.to_owned(),
         ]));
         record.facets.is_narrowing_of(&self.scope.facets)
@@ -619,7 +881,7 @@ impl TransferredBounds {
     pub(crate) fn served_pact_scope(
         &self,
         fold: &AuthorityFold,
-    ) -> Option<crate::federation::FederationDirectionScope> {
+    ) -> Option<oneiron_authority::federation::FederationDirectionScope> {
         let (grant, requested) = self.pact.as_ref()?;
         witnessed_pact_scope(fold, grant, requested).ok()
     }
@@ -673,7 +935,10 @@ pub(crate) struct SignedBounds {
     /// here admits no record at all.
     pub(crate) records_bound: bool,
     /// The pact bound a caveat set: its grant and the scope it requested.
-    pub(crate) pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pub(crate) pact: Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
 }
 
 impl CapabilitySlip {
@@ -740,13 +1005,18 @@ pub(super) fn unhex(value: &str) -> EngineResult<Vec<u8>> {
 mod tests;
 
 fn serialize_pact<S: serde::Serializer>(
-    pact: &Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pact: &Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
     pact.as_ref()
         .map(|(grant, bound)| {
-            super::encode_value(&crate::federation::federation_direction_scope_value(bound))
-                .map(|bytes| (*grant, bytes))
+            super::encode_value(
+                &oneiron_authority::federation::federation_direction_scope_value(bound),
+            )
+            .map(|bytes| (*grant, bytes))
         })
         .transpose()
         .map_err(serde::ser::Error::custom)?
@@ -756,18 +1026,23 @@ fn serialize_pact<S: serde::Serializer>(
 fn deserialize_pact<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<
-    Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     D::Error,
 > {
-    let wire = Option::<(crate::federation::ScopeId, Vec<u8>)>::deserialize(deserializer)?;
+    let wire =
+        Option::<(oneiron_authority::federation::ScopeId, Vec<u8>)>::deserialize(deserializer)?;
     wire.map(|(grant, bytes)| {
         let mut cursor = std::io::Cursor::new(&bytes);
         let value = rmpv::decode::read_value(&mut cursor).map_err(serde::de::Error::custom)?;
-        let scope = crate::federation::decode_federation_direction_scope_value(&value)
+        let scope = oneiron_authority::federation::decode_federation_direction_scope_value(&value)
             .map_err(serde::de::Error::custom)?;
-        let canonical =
-            super::encode_value(&crate::federation::federation_direction_scope_value(&scope))
-                .map_err(serde::de::Error::custom)?;
+        let canonical = super::encode_value(
+            &oneiron_authority::federation::federation_direction_scope_value(&scope),
+        )
+        .map_err(serde::de::Error::custom)?;
         if canonical != bytes {
             return Err(serde::de::Error::custom("noncanonical pact bound"));
         }

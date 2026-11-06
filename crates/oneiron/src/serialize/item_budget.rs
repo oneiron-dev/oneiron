@@ -1,28 +1,29 @@
-//! Per-item token-budget enforcement and value truncation.
+//! Core half of `serialize::item_budget`: its store-layer items live in `oneiron_store::serialize::item_budget` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde_json::Value;
-
-use crate::context_pack::PackStats;
-use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
+pub(crate) use oneiron_store::serialize::item_budget::*;
 
 use super::pack_entry::PreparedEntity;
 use super::token_budget::{
     estimate_entity_tokens_with_depth_limit, estimate_value_chars_with_depth_limit,
 };
 use super::types::ValueDepthLimit;
+use crate::context_pack::PackStats;
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::tokenizer::PackTokenizer;
+use serde_json::Value;
 
 pub(super) fn apply_item_budget_with_depth_limit(
     entity: &mut PreparedEntity,
     max_item_tokens: usize,
     stats: &mut PackStats,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     if max_item_tokens == 0 {
         return true;
     }
 
-    let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
     if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
         <= max_item_tokens
     {
@@ -43,7 +44,8 @@ pub(super) fn apply_item_budget_with_depth_limit(
         }
         true
     } else {
-        stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.reason =
+            crate::serialize::pack_accounting::PackItemAccountingReason::ItemBudget;
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
         false
     }
@@ -238,10 +240,6 @@ fn retain_structural_item_budget_fields(entity: &mut PreparedEntity) -> bool {
     changed
 }
 
-fn is_structural_item_budget_field(key: &str) -> bool {
-    key == "pred"
-}
-
 fn field_index(entity: &PreparedEntity, key: &str) -> Option<usize> {
     entity
         .fields
@@ -269,15 +267,6 @@ fn largest_truncatable_top_level_string_field(
         })
         .max_by_key(|(_, chars)| *chars)
         .map(|(index, _)| index)
-}
-
-fn truncate_with_suffix_prefix(text: &str, prefix_chars: usize, suffix: &str) -> String {
-    let prefix: String = text.chars().take(prefix_chars).collect();
-    format!("{prefix}{suffix}")
-}
-
-fn truncation_suffix(original_chars: usize) -> String {
-    format!("...(truncated, {original_chars} chars total)")
 }
 
 pub(super) fn is_critical_predicate_claim(entity: &PreparedEntity) -> bool {

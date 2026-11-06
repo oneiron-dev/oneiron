@@ -38,6 +38,64 @@ pub(super) fn read_entity_metadata(
     }))
 }
 
+/// [`read_entity_metadata`] carrying what its reads already fetched: the
+/// decoded record (its body feeds the claim-status gate's decode, so the
+/// row is read once) and the archive bit from the same deletion-state
+/// read. `archived` is `None` only on the legal-hold arm, which returns
+/// before the deletion state is read, exactly as above. `row` is `Some`
+/// exactly when `meta` is.
+pub(super) struct RowRead {
+    pub(super) meta: Option<EntityMetadata>,
+    pub(super) row: Option<crate::ports::EntityRecord>,
+    pub(super) archived: Option<bool>,
+}
+
+pub(super) fn read_entity_metadata_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<RowRead> {
+    // A legal hold's use limit denies every ordinary read, the owner's included (OF-470 C6).
+    if crate::store::legal_hold::use_limit_in_txn(store.base(), rtxn, id)?.is_some() {
+        return Ok(RowRead {
+            meta: None,
+            row: None,
+            archived: None,
+        });
+    }
+    let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+    // An archived row is refused from this read, before its record is
+    // read, so a corrupt archived row stays a refusal, never an abort.
+    if visibility.deleted || visibility.stale {
+        return Ok(RowRead {
+            meta: None,
+            row: None,
+            archived: Some(visibility.archived),
+        });
+    }
+
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(RowRead {
+            meta: None,
+            row: None,
+            archived: Some(visibility.archived),
+        });
+    };
+
+    let (occurred_start, occurred_end) = normalize_range(raw.occurred.start, raw.occurred.end);
+
+    Ok(RowRead {
+        meta: Some(EntityMetadata {
+            entity_type: raw.entity_type,
+            occurred_start,
+            occurred_end,
+            learned_at: raw.learned_at,
+        }),
+        row: Some(raw),
+        archived: Some(visibility.archived),
+    })
+}
+
 pub(super) fn normalize_range(start: u64, end: u64) -> (u64, u64) {
     if start <= end {
         (start, end)

@@ -13,6 +13,7 @@ use super::runner::{
 use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
+use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{
@@ -83,17 +84,20 @@ pub(super) enum CampaignEnvelopeBytes {
     BodyUnpinned,
 }
 
-/// Derives the v1 envelope bytes the outward leg freezes: exactly these
-/// five keys, never the raw body (FIX 11513). Both resolutions are
-/// read-only fns of `(vault, event, step)`, so the membership leg calls
-/// this too and `enrollment_intent_id` hashes the bytes the leg freezes
-/// (FIX 11670).
+/// Derives the v1 envelope bytes the outward leg freezes: the five base
+/// keys, never the raw body (FIX 11513), plus the three email keys
+/// (`subject`, `composed_at`, `sender_ref`) iff the step's channel is
+/// email (FIX 11641). Both resolutions are read-only fns of `(vault,
+/// event, step)`, so the membership leg calls this too and
+/// `enrollment_intent_id` hashes the bytes the leg freezes (FIX 11670).
 ///
 /// # Errors
 ///
 /// Storage errors propagate; every unresolvable shape is a variant,
-/// never an error. JSON encoding of the envelope cannot fail in
-/// practice and surfaces as [`Error::InvalidConfig`].
+/// never an error. A row that violates the checked doors' subject rule
+/// (an email step with no subject) is corrupt and errors as
+/// [`Error::InvalidConfig`]. JSON encoding of the envelope cannot fail
+/// in practice and surfaces the same way.
 pub(super) fn campaign_envelope_bytes(
     vault: &Vault,
     event: &CampaignEnrollmentEvent,
@@ -115,15 +119,34 @@ pub(super) fn campaign_envelope_bytes(
         return Ok(CampaignEnvelopeBytes::BodyUnpinned);
     };
     // The wire payload is the v1 envelope the channel sender decodes with
-    // `deny_unknown_fields`, never the raw body: exactly these five keys,
-    // none of the chokepoint-sniffed ones (FIX 11513).
-    let envelope = serde_json::json!({
-        "target": target.target,
-        "content_ref": content_ref,
-        "counterparty_ref": target.party_key,
-        "actor": event.owner_actor.to_hex(),
-        "trigger_ref": event.event_ref.to_hex(),
-    });
+    // `deny_unknown_fields`, never the raw body: the five base keys, none
+    // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
+    // the step's channel is email (FIX 11641). `composed_at` is the
+    // event's detection time, never now(): a redrive must freeze the same
+    // bytes, or the ledger would mint a fresh intent — a second send.
+    let envelope = if step.channel == EMAIL_CHANNEL {
+        let Some(subject) = outbound.subject.as_ref() else {
+            return Err(invalid("a campaign email step's subject is absent"));
+        };
+        serde_json::json!({
+            "target": target.target,
+            "content_ref": content_ref,
+            "counterparty_ref": target.party_key,
+            "actor": event.owner_actor.to_hex(),
+            "trigger_ref": event.event_ref.to_hex(),
+            "subject": subject,
+            "composed_at": event.detected_at,
+            "sender_ref": step.sender_ref.to_hex(),
+        })
+    } else {
+        serde_json::json!({
+            "target": target.target,
+            "content_ref": content_ref,
+            "counterparty_ref": target.party_key,
+            "actor": event.owner_actor.to_hex(),
+            "trigger_ref": event.event_ref.to_hex(),
+        })
+    };
     let envelope_bytes = serde_json::to_vec(&envelope)
         .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
     Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
@@ -264,6 +287,14 @@ pub enum EnrollmentLegDrive {
         /// The digest the press names, 64 lower-hex.
         approval_digest: String,
     },
+    /// The chokepoint paced the call: nothing was recorded, charged, or
+    /// sent; bring the leg back at `retry_at` (FIX 12176). Engine
+    /// seconds (Unix seconds), not the drive's `now_ms` wall
+    /// milliseconds: pass through with no conversion.
+    Paced {
+        /// Engine instant the windows open again, Unix seconds.
+        retry_at: u64,
+    },
     /// Nothing is owed outward: the step declares no outward leg, the
     /// member's own state holds the send, or the send does not resolve
     /// (an unresolvable member or an unpinned body, FIX 11513 K11/K12).
@@ -272,6 +303,31 @@ pub enum EnrollmentLegDrive {
     NotHomeNode(CampaignHomeNodeDesignation),
     /// No node holds it; nothing was sent.
     NoHomeNode,
+}
+
+impl Vault {
+    /// Drives the claimed enrollment attempt through this vault's record hooks.
+    ///
+    /// Uses the same native outward leg as [`drive_enrollment_outbound_leg`].
+    ///
+    /// # Errors
+    ///
+    /// Gate, budget, ledger and storage failures, as the leg returns them.
+    pub fn drive_enrollment_outbound_leg(
+        &self,
+        local_node_id: u64,
+        attempt: &AttemptRecord,
+        sender: &mut (dyn OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<EnrollmentLegDrive, IntentLedgerError> {
+        self.store.record_hooks.drive_enrollment_outbound_leg(
+            self,
+            local_node_id,
+            attempt,
+            sender,
+            now_ms,
+        )
+    }
 }
 
 /// Drives the outward leg of the claimed enrollment `attempt` through the
@@ -285,7 +341,7 @@ pub enum EnrollmentLegDrive {
 /// # Errors
 ///
 /// Gate, budget, ledger and storage failures, as the leg returns them.
-pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
+pub fn drive_enrollment_outbound_leg<S: OutboundResultSender + ?Sized>(
     vault: &Vault,
     local_node_id: u64,
     attempt: &AttemptRecord,
@@ -303,9 +359,16 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
             &mut transport,
             now_ms,
         )? {
-            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.approval_digest {
-                Some(approval_digest) => EnrollmentLegDrive::AwaitingApproval { approval_digest },
-                None => EnrollmentLegDrive::Dispatched,
+            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.paced_until {
+                // FIX 12176: a paced result sent nothing; re-arm the leg at
+                // retry_at instead of completing the attempt.
+                Some(retry_at) => EnrollmentLegDrive::Paced { retry_at },
+                None => match dispatch.effect.approval_digest {
+                    Some(approval_digest) => {
+                        EnrollmentLegDrive::AwaitingApproval { approval_digest }
+                    }
+                    None => EnrollmentLegDrive::Dispatched,
+                },
             },
             EnrollmentOutboundLeg::NoOutboundStep
             | EnrollmentOutboundLeg::MembershipNotReady
@@ -322,9 +385,9 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
 /// The host's result sender as the chokepoint's transport. The leg keeps no
 /// result body, so only the send's outcome, its remote task, and its
 /// provider wait pass through.
-struct SenderTransport<'a, S>(&'a mut S);
+struct SenderTransport<'a, S: ?Sized>(&'a mut S);
 
-impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
+impl<S: OutboundResultSender + ?Sized> OutboundTransport for SenderTransport<'_, S> {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
         self.0.send(call).outcome
     }
@@ -335,6 +398,18 @@ impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
 
     fn provider_wait(&self) -> Option<ProviderWait> {
         self.0.provider_wait()
+    }
+
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        self.0.reported_cost()
+    }
+
+    /// The leg reads a paced result as [`EnrollmentLegDrive::Paced`] and the
+    /// host re-arms the attempt at its `retry_at` (FIX 12176), so a send
+    /// that meets only full count windows waits for them instead of being
+    /// denied (FIX 8753, ARCH-0044 C5: a hold is a queue, never a drop).
+    fn waits_for_paced_window(&self) -> bool {
+        true
     }
 }
 
@@ -391,6 +466,13 @@ fn enrollment_gate_input(
         },
         verb: outbound.verb.clone(),
         channel: step.channel.clone(),
+        // FIX 11641 (L06-A ruling 30 Oct): email legs leave this unset,
+        // exactly as slack/line do. Populating it hard-errors every
+        // campaign email send in the gate's may-send check (the bound
+        // agent never equals the asserted sender identity), before any
+        // hold logic. The cold-recipient hold stays skipped for campaign
+        // mail: a named policy gap for FIX 11514 / a campaign
+        // actor-assertion redesign, not this pack.
         channel_identity_ref: None,
         counterparty: Some(event.entity_ref.to_hex()),
         brief_ref: Some(event.campaign_ref.to_hex()),

@@ -12,7 +12,7 @@
 //! store failures stay errors. The caller's credential, sight and Grant
 //! are judged above it, at the door (`memory::origin_doors::preview`).
 mod handles;
-mod types;
+use oneiron_store::origin::export_preview::types;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,15 +27,21 @@ pub use self::types::{
 use self::handles::PreviewIdentity;
 use super::export_input::{ExportGap, ExportPromotion, export_message};
 use super::tree::OriginTreeFile;
-use crate::code_revision::{
-    CodeImportManifest, CodeRevision, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK, manifest_id,
-    materialize_code_revision_tree,
-};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::merge_queue::QueueTestedTarget;
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::{EntityId, Vault};
+use crate::{
+    code_revision::materialize_code_revision_tree,
+    store::{
+        code_import_manifest::CodeImportManifest,
+        code_import_manifest::manifest_id,
+        code_revision_record::{CodeRevision, CodeTreeInventory},
+    },
+};
 
 /// One pinned leaf: its captured identity and its exact raw bytes.
 #[derive(Debug, Clone)]
@@ -170,6 +176,16 @@ impl Vault {
                 "engine commit belongs to another object store or inventory",
             ));
         }
+        // Its ancestors and its Baseline's import approval are sources too,
+        // listed for the caller's credential, never judged again (FIX 8270).
+        pinned.sources.extend(
+            self.code_revision_ancestry_sources(revision.revision_id)?
+                .into_iter()
+                .map(|entity| PreviewSource {
+                    entity,
+                    required: false,
+                }),
+        );
         let manifest = self.resolve_code_revision_import_anchor(revision.revision_id)?;
         let anchor_repo = manifest
             .as_ref()
@@ -397,11 +413,18 @@ fn gap_blocker(revision: EntityId, gap: &ExportGap) -> CodeExportPreviewBlocker 
             "Restore the revision's provenance claim; a revision without active provenance \
              does not export.",
         ),
-        ExportGap::Author(author) => CodeExportPreviewBlocker::new(
+        ExportGap::Author(Some(author)) => CodeExportPreviewBlocker::new(
             entity(*author),
             CodeExportPreviewBlockReason::Unavailable,
             "this revision's author record is gone",
             "Restore the author's record; the export names its author.",
+        ),
+        ExportGap::Author(None) => CodeExportPreviewBlocker::new(
+            entity(revision),
+            CodeExportPreviewBlockReason::Unavailable,
+            "this revision's author was erased before it was sealed",
+            "Land the same change again as a fresh combined proposal under a live author; the \
+             export names its author.",
         ),
     }
 }
@@ -550,3 +573,5 @@ fn changed_files(
     }
     files
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

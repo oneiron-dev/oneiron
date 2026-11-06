@@ -21,15 +21,26 @@ use crate::sync::asset_body::references::{AssetBodyRef, bound_in};
 use crate::sync::client::ImportTier;
 use crate::temporal::TimeRange;
 
+/// A body a transfer received for the carrier of `id`, and the tier its
+/// transfer's lane lands it at (FIX 12118).
+#[derive(Clone, Copy)]
+pub(super) struct ReceivedBody<'a> {
+    id: EntityId,
+    staged: &'a StagedAssetBody,
+    tier: ImportTier,
+}
+
 impl<'a> IngestCtx<'a> {
     /// Lands `staged`, the body a transfer received for the carrier of `id`
-    /// its window binds, where the ladder would leave that carrier pending.
+    /// its window binds, where the ladder would leave that carrier pending,
+    /// at `tier`.
     pub(in crate::sync) fn with_asset_body(
         mut self,
         id: EntityId,
         staged: &'a StagedAssetBody,
+        tier: ImportTier,
     ) -> Self {
-        self.asset_body = Some((id, staged));
+        self.asset_body = Some(ReceivedBody { id, staged, tier });
         self
     }
 
@@ -41,10 +52,9 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// The staged body for `id`, when it is the one `body` names.
-    fn staged_for(&self, id: &EntityId, body: &AssetBodyRef) -> Option<&'a StagedAssetBody> {
+    fn staged_for(&self, id: &EntityId, body: &AssetBodyRef) -> Option<ReceivedBody<'a>> {
         self.asset_body
-            .filter(|(staged_id, staged)| staged_id == id && staged.facts() == body.facts())
-            .map(|(_, staged)| staged)
+            .filter(|received| received.id == *id && received.staged.facts() == body.facts())
     }
 }
 
@@ -57,18 +67,19 @@ pub(super) fn bound(ctx: &IngestCtx<'_>, id: &EntityId, blob: &[u8]) -> Option<A
 
 /// H125 for a body that moves by reference: the fence a release left on `id`
 /// lifts only for the body a transfer staged and verified, never for the
-/// digest a peer offered. The staged body is read whole only under a fence.
+/// digest a peer offered. Its facts were measured while staging the complete
+/// body; readmission does not read the staged bytes again.
 ///
 /// # Errors
 ///
-/// Storage errors, and the staged body's read error.
+/// Storage errors.
 pub(super) fn readmit_staged(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     body: &AssetBodyRef,
 ) -> Result<()> {
-    let Some(staged) = ctx.staged_for(id, body) else {
+    let Some(ReceivedBody { staged, .. }) = ctx.staged_for(id, body) else {
         return Ok(());
     };
     if !ctx
@@ -78,7 +89,12 @@ pub(super) fn readmit_staged(
     {
         return Ok(());
     }
-    crate::blob_artifact::readmit_held_asset_in_txn(&ctx.vault.store, wtxn, id, &staged.to_vec()?)
+    crate::blob_artifact::readmit_held_asset_with_facts_in_txn(
+        &ctx.vault.store,
+        wtxn,
+        id,
+        staged.facts(),
+    )
 }
 
 /// Whether `local`, the row stored at `id`, is the body `body` names under
@@ -102,8 +118,9 @@ pub(super) fn echo(
 }
 
 /// The carrier's last rung: the staged body lands as `id`'s row under the
-/// carrier's header, through the replicated door at the tier every window
-/// put takes; with no staged body the carrier waits, pending.
+/// carrier's header, through the replicated door at the tier its transfer's
+/// lane lands it at (FIX 12118); with no staged body the carrier waits,
+/// pending.
 ///
 /// # Errors
 ///
@@ -115,7 +132,7 @@ pub(super) fn land(
     header: &EntityMetadataHeader,
     body: &AssetBodyRef,
 ) -> Result<EntityStep> {
-    let Some(staged) = ctx.staged_for(&id, body) else {
+    let Some(ReceivedBody { staged, tier, .. }) = ctx.staged_for(&id, body) else {
         return Ok(EntityStep::Pending);
     };
     let occurred = TimeRange {
@@ -128,8 +145,9 @@ pub(super) fn land(
         &id,
         occurred,
         header.learned_at,
+        header.row_version,
         staged,
-        ImportTier::OwnDevice,
+        tier,
         None,
     )?;
     Ok(EntityStep::Materialized(id))

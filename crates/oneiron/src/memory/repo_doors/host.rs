@@ -11,10 +11,10 @@
 
 use super::{REPO_PROVENANCE_REQUIRED, RepoRunBinding, refusal_error};
 use crate::claim::ScopedReadActorKey;
-use crate::federation::RepoAccessRefusal;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
+use oneiron_authority::federation::RepoAccessRefusal;
 
 impl RepoRunBinding {
     /// The binding of the live run `lease` seals, as `actor`, reading on

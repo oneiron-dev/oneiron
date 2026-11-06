@@ -1,9 +1,10 @@
 //! Account-local learned retrieval state, rebuilt only by the Coach at sleep.
 
 use crate::error::{Error, Result};
-use crate::pipeline::retrieval_policy::{RetrievalPolicyAction, RetrievalPolicyPosterior};
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::EngineScan;
+use crate::store::retrieval_policy::{RetrievalPolicyAction, RetrievalPolicyPosterior};
+use crate::store::scan_count::ScanCount;
 use crate::store::{Store, active_write_txn_depth};
 
 use super::run_store::{
@@ -32,6 +33,8 @@ impl Store {
                 "retrieval policy update skipped inside active write transaction",
             ));
         }
+        // The runs' rows may still be queued detached writes (FIX 12023).
+        self.wait_for_deferred_commits();
         let _guard = self
             .retrieval_blend_tuning_lock
             .lock()

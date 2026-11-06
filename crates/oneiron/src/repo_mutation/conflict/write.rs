@@ -13,7 +13,6 @@
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, encode_claim_body};
 use crate::codebase::RepoRef;
@@ -27,6 +26,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::repo_mutation::RepoConflictClaim;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
+use oneiron_contracts::affect::Vad;
 
 use super::super::conflict_value::{
     RepoConflictOpenValue, decode_repo_conflict_open_value, normalize_repo_conflict_paths,
@@ -197,6 +197,7 @@ fn put_claim_in_txn(
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
@@ -289,8 +290,8 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
             (id, true)
         }
     };
-    let task = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
-        Some(task) => Some(task),
+    let (task, held) = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
+        Some(task) => (Some(task), None),
         None if open => {
             let conflict = RepoConflictClaim {
                 claim_id,
@@ -303,16 +304,19 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
                 conflicted_paths: value.conflicted_paths,
                 proposals: value.proposals,
             };
-            vault.create_queue_reconciliation_task_in_txn(
+            match vault.create_queue_reconciliation_task_in_txn(
                 &mut wtxn, &conflict, admission, learned_at,
-            )?
+            )? {
+                Ok(task) => (Some(task), None),
+                Err(held) => (None, Some(held)),
+            }
         }
-        None => None,
+        None => (None, None),
     };
     let link = QueueConflictLink {
         conflict: claim_id,
         branch_subject: subject,
-        held: (task.is_none() && open).then(|| QueueReconciliationAdmission::TASK_HELD.to_owned()),
+        held,
         task,
         sources: overlap.sources.clone(),
         batches: overlap.batches.clone(),
@@ -322,13 +326,16 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     attach(&mut wtxn, &link)?;
     wtxn.commit()?;
     vault.store.notify_attempt_observers();
+    vault.wake_merge_queue();
     Ok(link)
 }
 
 impl Vault {
     /// Asks again for the TASK of a held queue handoff, under its admission
     /// as current policy reads it now: the same open claim and the same
-    /// index, never a second claim. Nothing is written while it stays held.
+    /// index, never a second claim. Nothing is written while it stays held
+    /// for the same reason; a hold whose reason moved (a Grant that no
+    /// longer covers it, FIX 7308) is written on every batch's link.
     ///
     /// # Errors
     /// A store failure or an admission that no longer answers the overlap.
@@ -340,7 +347,24 @@ impl Vault {
         attach: impl FnOnce(&mut heed::RwTxn<'_>, &QueueConflictLink) -> Result<()>,
     ) -> Result<QueueConflictLink> {
         let mut wtxn = self.store.env.write_txn()?;
-        if link.task.is_some() || !admission.holds_in_txn(self, &wtxn, overlap)? {
+        if link.task.is_some() {
+            return Ok(link.clone());
+        }
+        if !admission.holds_in_txn(self, &wtxn, overlap)? {
+            if let Some((creator, _)) = admission.creator()
+                && !EntityStoreRead::port_entity_present(&self.store, &wtxn, &creator)?
+            {
+                const CREATOR_ERASED: &str = "queue.reconciliation.creator_erased";
+                if link.held.as_deref() == Some(CREATOR_ERASED) {
+                    return Ok(link.clone());
+                }
+                let mut moved = link.clone();
+                moved.held = Some(CREATOR_ERASED.to_owned());
+                attach(&mut wtxn, &moved)?;
+                wtxn.commit()?;
+                self.store.notify_attempt_observers();
+                return Ok(moved);
+            }
             return Ok(link.clone());
         }
         let Some(claim) = self.get_claim_in_txn(&wtxn, &link.conflict)? else {
@@ -363,14 +387,22 @@ impl Vault {
             conflicted_paths: value.conflicted_paths,
             proposals: value.proposals,
         };
-        let Some(task) = self.create_queue_reconciliation_task_in_txn(
+        let task = match self.create_queue_reconciliation_task_in_txn(
             &mut wtxn,
             &conflict,
             admission,
             now_secs(),
-        )?
-        else {
-            return Ok(link.clone());
+        )? {
+            Ok(task) => task,
+            Err(held) if link.held.as_deref() == Some(held.as_str()) => return Ok(link.clone()),
+            Err(held) => {
+                let mut moved = link.clone();
+                moved.held = Some(held);
+                attach(&mut wtxn, &moved)?;
+                wtxn.commit()?;
+                self.store.notify_attempt_observers();
+                return Ok(moved);
+            }
         };
         let mut retried = link.clone();
         retried.task = Some(task);
@@ -378,6 +410,7 @@ impl Vault {
         attach(&mut wtxn, &retried)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        self.wake_merge_queue();
         Ok(retried)
     }
 }

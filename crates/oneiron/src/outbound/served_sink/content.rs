@@ -2,8 +2,8 @@
 //! typed content-family loaders this engine has. A ref no loader claims
 //! resolves to nothing; a bare entity id is never dumped as text.
 
-use crate::campaign::step_body::CAMPAIGN_STEP_BODY_PREFIX;
-use crate::dreamer_runner::maintenance::representation::REPRESENTATION_CONTENT_PREFIX;
+use crate::attempt_queue::maintenance_predicate::REPRESENTATION_CONTENT_PREFIX;
+use crate::blob_artifact::body_tags::CAMPAIGN_STEP_BODY_PREFIX;
 use crate::error::{Error, Result};
 use crate::outbound::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
 use crate::task_verb::TaskAskSoftConfirmNotice;
@@ -57,7 +57,10 @@ impl Vault {
             return self.connector_reply_body_text(content_ref);
         }
         if content_ref.starts_with(CAMPAIGN_STEP_BODY_PREFIX) {
-            return self.campaign_step_body_text(content_ref);
+            return self
+                .store
+                .record_hooks
+                .campaign_step_body_text(self, content_ref);
         }
         // The approved content as approved, its approval and sources
         // revalidated by the representation loader itself.

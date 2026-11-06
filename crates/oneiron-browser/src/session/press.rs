@@ -22,10 +22,11 @@ pub trait PressGrants: Send {
     fn current(&self) -> SendPolicy;
 
     /// The press each effect class runs under for a send that reports
-    /// `audience` as its counterparty (FIX 11907): the origin of the page
-    /// the send acted on, or none where the send names none. The host's
-    /// read may then count only the grants whose audience names it; a read
-    /// that checks no audience answers as [`Self::current`].
+    /// `audience` as its counterparty (FIX 11907, 12395): the origin of
+    /// the page the send acted on, or for a mailto:/tel: link its href's
+    /// protocol-level recipient, or none where the send names none. The
+    /// host's read may then count only the grants whose audience names
+    /// it; a read that checks no audience answers as [`Self::current`].
     fn current_for(&self, audience: Option<&str>) -> SendPolicy {
         let _ = audience;
         self.current()

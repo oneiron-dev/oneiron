@@ -52,7 +52,7 @@ pub struct RecallResidence {
     #[cfg(feature = "sync")]
     #[serde(skip)]
     #[schemars(skip)]
-    selection: Option<crate::sync::residence::ResolvedRecallSelection>,
+    selection: Option<crate::memory::resolved_recall_scope::ResolvedRecallSelection>,
 }
 
 /// One reference the home holds that the local pack does not.
@@ -282,6 +282,7 @@ impl HomeRecallCaller {
 #[derive(Debug, Clone)]
 pub struct HomeRecallAsk {
     query: String,
+    as_of: Option<u64>,
     /// The limit the request asked for, or recall's default.
     limit: usize,
     /// Whether the home can take the request (`home_answers`).
@@ -292,9 +293,10 @@ pub struct HomeRecallAsk {
 impl HomeRecallAsk {
     /// The ask for `request`; `room_turn` says it runs inside a room's turn.
     #[must_use]
-    pub fn new(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool) -> Self {
+    pub fn new(request: &crate::memory::RecallRequest, room_turn: bool) -> Self {
         Self {
             query: request.query.clone(),
+            as_of: request.as_of,
             limit: request
                 .limit
                 .unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
@@ -305,12 +307,12 @@ impl HomeRecallAsk {
 
 /// Whether the home can take `request` (FIX 2905): its search carries the
 /// query, a limit and the recall's resolved scope (worlds, the actor's
-/// default included, projects, facet and kinds), but no `as_of`, no media
-/// and no room's turn. A recall naming any of those keeps its local answer,
+/// default included, projects, facet and kinds) and its `as_of` clock pin,
+/// but no media or room's turn. Those recalls keep their local answer,
 /// marked incomplete.
 #[cfg(feature = "sync")]
-fn home_answers(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool) -> bool {
-    request.as_of.is_none() && request.media.is_none() && !room_turn
+fn home_answers(request: &crate::memory::RecallRequest, room_turn: bool) -> bool {
+    request.media.is_none() && !room_turn
 }
 
 /// Completes a recall answer on a device known to run Opened with its
@@ -356,7 +358,7 @@ pub async fn complete_with_home(
 async fn ask_home(
     vault: &Vault,
     search: &crate::sync::HomeSearch,
-    selection: &crate::sync::residence::ResolvedRecallSelection,
+    selection: &crate::memory::resolved_recall_scope::ResolvedRecallSelection,
     local: &[MemoryItem],
     ask: &HomeRecallAsk,
     caller: &HomeRecallCaller,
@@ -374,13 +376,13 @@ async fn ask_home(
         std::time::Instant::now() + std::time::Duration::from_millis(budgets.rpc_timeout_ms);
     let bound = due.map_or(bound, |due| due.min(bound));
     let forwarded = forwarded.map(|proof| (proof, caller.locality));
-    let asked = search.search_recall(&ask.query, limit, selection, forwarded);
+    let asked = search.search_recall(&ask.query, limit, selection, ask.as_of, forwarded);
     let found = tokio::time::timeout_at(bound.into(), asked)
         .await
         .ok()?
         .ok()?;
     // A scoped search takes no local fallback; only the home's answer counts.
-    if found.source != crate::sync::SearchSource::Home {
+    if found.source != crate::memory::residence_item::SearchSource::Home {
         return None;
     }
     let hits = found.hits.into_iter().map(|hit| RecallResidenceHit {

@@ -25,12 +25,15 @@ use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
 use crate::provenance::birth::row_birth_in_txn;
 use crate::provenance::made_by::{MadeBy, MadeByInputRole};
-use crate::share_travel::{BornWith, BornWithField, GrantTravel, TravelChoice};
+use crate::share_travel::GrantTravel;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
 use crate::sync::window::Withhold;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_authority::share_travel::BornWith;
+use oneiron_authority::share_travel::BornWithField;
+use oneiron_authority::share_travel::TravelChoice;
 
 /// The window map that carries born-with text beside the row births.
 const ROW_BORN_WITH_MAP: &str = "row_born_with";

@@ -1,0 +1,675 @@
+//! Per-model-call evidence and replay records (FIX 12516).
+//!
+//! A record is a side-table row, never an entity, so BM25, vector recall and
+//! Dreamer mining skip it by construction. Message occurrences own their bytes;
+//! this row references them. Only a call that writes no message owns its
+//! Reasoning bytes here, until the agent is erased.
+
+use oneiron_model::llm::{LlmEndpointFlavor, ReasoningPartKind};
+use serde::{Deserialize, Serialize};
+
+use super::replay_capsule::{CapsuleRungBinding, ReplayRoutePin};
+use super::storage::ReadWorldUnknown;
+use crate::compaction::output::OutputRef;
+use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
+use crate::{EntityId, Error, ModelLocality, Result, Vault};
+
+mod signed_reasoning;
+
+pub const MODEL_CALL_SCHEMA: u8 = 2;
+const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
+    SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
+
+/// Where a model output part is owned. A code-run output and a witnessed
+/// MESSAGE are distinct stores; neither reference is synthesized from the other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelCallPartRef {
+    Output { occurrence: OutputRef },
+    Message { message: EntityId, part_index: u64 },
+    Custody { handle: String },
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCallReasoningPart {
+    pub kind: ReasoningPartKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<ModelCallPartRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produced_row: Option<EntityId>,
+    /// The exact captured part before the record's display representation is
+    /// selected. Only the writer may use it, and no serializer persists it.
+    #[serde(skip)]
+    pub(crate) terminal_part: Option<crate::ContentPart>,
+}
+
+impl std::fmt::Debug for ModelCallReasoningPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelCallReasoningPart")
+            .field("kind", &self.kind)
+            .field("text", &self.text.as_ref().map(|_| "<redacted>"))
+            .field("bytes", &self.bytes.as_ref().map(Vec::len))
+            .field("signature", &self.signature.as_ref().map(|_| "<redacted>"))
+            .field("occurrence", &self.occurrence)
+            .field("produced_row", &self.produced_row)
+            .field(
+                "terminal_part",
+                &self.terminal_part.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+impl ModelCallReasoningPart {
+    /// The terminal part, either by reference to its message occurrence or as
+    /// new bytes owned by a messageless call. Summary is an explicit provider
+    /// tag, never inferred from text length or content.
+    pub fn from_terminal(
+        part: &crate::ContentPart,
+        occurrence: Option<OutputRef>,
+        produced_row: Option<EntityId>,
+    ) -> Option<Self> {
+        let crate::ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind,
+            data,
+        } = part
+        else {
+            return None;
+        };
+        let kind = match reasoning_kind {
+            ReasoningPartKind::Full
+                if text.is_empty() && (signature.is_some() || data.is_some()) =>
+            {
+                ReasoningPartKind::Encrypted
+            }
+            other => *other,
+        };
+        if occurrence.is_some() {
+            return Some(Self {
+                kind,
+                text: None,
+                bytes: None,
+                signature: None,
+                occurrence: occurrence.map(|occurrence| ModelCallPartRef::Output { occurrence }),
+                produced_row,
+                terminal_part: None,
+            });
+        }
+        match kind {
+            ReasoningPartKind::Count => Some(Self {
+                kind,
+                text: None,
+                bytes: None,
+                signature: None,
+                occurrence: None,
+                produced_row,
+                terminal_part: Some(part.clone()),
+            }),
+            ReasoningPartKind::Encrypted => {
+                let (bytes, signature) = if let Some(data) = data {
+                    (Some(data.as_bytes().to_vec()), signature.clone())
+                } else {
+                    (
+                        signature.as_ref().map(|value| value.as_bytes().to_vec()),
+                        None,
+                    )
+                };
+                Some(Self {
+                    kind,
+                    text: None,
+                    bytes,
+                    signature,
+                    occurrence: None,
+                    produced_row,
+                    terminal_part: Some(part.clone()),
+                })
+            }
+            ReasoningPartKind::Full | ReasoningPartKind::Summary => Some(Self {
+                kind,
+                text: Some(text.clone()),
+                bytes: None,
+                signature: signature.clone(),
+                occurrence: None,
+                produced_row,
+                terminal_part: Some(part.clone()),
+            }),
+        }
+    }
+
+    /// References the ordered part of a MESSAGE that the terminal already
+    /// committed. The MESSAGE owns every byte, including opaque signatures.
+    pub fn from_message_terminal(
+        part: &crate::ContentPart,
+        message: EntityId,
+        part_index: u64,
+    ) -> Option<Self> {
+        let crate::ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind,
+            data,
+        } = part
+        else {
+            return None;
+        };
+        let kind = match reasoning_kind {
+            ReasoningPartKind::Full
+                if text.is_empty() && (signature.is_some() || data.is_some()) =>
+            {
+                ReasoningPartKind::Encrypted
+            }
+            other => *other,
+        };
+        Some(Self {
+            kind,
+            text: None,
+            bytes: None,
+            signature: None,
+            occurrence: Some(ModelCallPartRef::Message {
+                message,
+                part_index,
+            }),
+            produced_row: Some(message),
+            terminal_part: None,
+        })
+    }
+
+    fn validate(&self) -> Result<()> {
+        let bodies = usize::from(self.text.is_some()) + usize::from(self.bytes.is_some());
+        let references = usize::from(self.occurrence.is_some());
+        match self.kind {
+            ReasoningPartKind::Count if bodies != 0 || self.signature.is_some() => {
+                Err(invalid("count-only reasoning carries no body"))
+            }
+            ReasoningPartKind::Count => Ok(()),
+            _ if bodies + references != 1 => Err(invalid(
+                "a reasoning part needs exactly one body or reference",
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelCallInputPart {
+    Reference {
+        row: EntityId,
+        occurrence: OutputRef,
+    },
+    NewBytes {
+        body: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+    },
+    Unknown {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCallDigests {
+    pub request_hash: [u8; 32],
+    pub messages_digest: [u8; 32],
+    pub system_digest: [u8; 32],
+    pub tools_digest: [u8; 32],
+}
+
+/// Canonical request and prefix fingerprints used by replay admission.
+pub fn model_call_digests(request: &crate::LlmRequest) -> Result<ModelCallDigests> {
+    let invalid = || Error::InvalidConfig("model call request did not canonicalize".to_owned());
+    let request_hash = request.canonical_hash().map_err(|_| invalid())?;
+    let messages_digest =
+        *blake3::hash(&crate::llm::canonical_json_bytes(&request.messages).map_err(|_| invalid())?)
+            .as_bytes();
+    let system = request
+        .messages
+        .iter()
+        .filter(|message| message.role == crate::LlmMessageRole::System)
+        .collect::<Vec<_>>();
+    let system_digest =
+        *blake3::hash(&crate::llm::canonical_json_bytes(&system).map_err(|_| invalid())?)
+            .as_bytes();
+    let tools_digest =
+        *blake3::hash(&crate::llm::canonical_json_bytes(&request.tools).map_err(|_| invalid())?)
+            .as_bytes();
+    Ok(ModelCallDigests {
+        request_hash,
+        messages_digest,
+        system_digest,
+        tools_digest,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeReadDigests {
+    pub request_hash: [u8; 32],
+}
+
+#[derive(Serialize)]
+enum NativeLabels {
+    Noul,
+    Choice(Vec<String>),
+}
+
+#[derive(Serialize)]
+struct NativeReadCanonical<'a> {
+    state: &'a serde_json::Value,
+    questions: Vec<(String, NativeLabels, Option<String>)>,
+}
+
+/// Canonical fingerprint of the actual reader-bound label-read pack.
+pub fn native_read_digests(
+    state: &serde_json::Value,
+    questions: &[crate::llm::LabelReadout<'_>],
+) -> Result<NativeReadDigests> {
+    let invalid = || Error::InvalidConfig("native read request did not canonicalize".to_owned());
+    let questions = questions
+        .iter()
+        .map(|question| {
+            let labels = match question.labels {
+                crate::llm::LabelSet::Noul => NativeLabels::Noul,
+                crate::llm::LabelSet::Choice(options) => NativeLabels::Choice(options.to_vec()),
+            };
+            (
+                question.text.to_owned(),
+                labels,
+                question.paired.map(|paired| paired.to_owned()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let canonical = NativeReadCanonical { state, questions };
+    let request_hash =
+        *blake3::hash(&crate::llm::canonical_json_bytes(&canonical).map_err(|_| invalid())?)
+            .as_bytes();
+    Ok(NativeReadDigests { request_hash })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeReadFailure {
+    InvalidRequest,
+    Auth,
+    RateLimited,
+    Timeout,
+    ServerError,
+    LabelRead(crate::llm::LabelReadFailure),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeReadOutcome {
+    Completed {
+        usage: crate::LlmUsage,
+    },
+    Failed {
+        failure: NativeReadFailure,
+        usage: Option<crate::LlmUsage>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelCallKind {
+    Generate {
+        digests: ModelCallDigests,
+        usage: crate::LlmUsage,
+        finish_reason: crate::FinishReason,
+    },
+    LabelRead {
+        digests: NativeReadDigests,
+        revision: String,
+        outcome: NativeReadOutcome,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCallRecord {
+    pub schema: u8,
+    pub attempt: EntityId,
+    pub lease_generation: u64,
+    pub call_index: u64,
+    pub kind: ModelCallKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<ReplayRoutePin>,
+    pub rung: CapsuleRungBinding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuing_login: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<LlmEndpointFlavor>,
+    pub captured_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<EntityId>,
+    #[serde(default)]
+    pub produced_pending: bool,
+    #[serde(default)]
+    pub tool_rounds: bool,
+    #[serde(default)]
+    pub rounds_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_of: Option<(EntityId, u64)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_rows: Vec<EntityId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub produced_rows: Vec<EntityId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_parts: Vec<ModelCallInputPart>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning: Vec<ModelCallReasoningPart>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_world_epoch: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_worlds: Option<Vec<EntityId>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_world_unknown: Vec<ReadWorldUnknown>,
+    pub tools_present: bool,
+    pub summary_requested: bool,
+    #[serde(default)]
+    pub erased: bool,
+}
+
+impl ModelCallRecord {
+    pub fn key(&self) -> (EntityId, u64, u64) {
+        (self.attempt, self.lease_generation, self.call_index)
+    }
+
+    pub fn locality(&self) -> ModelLocality {
+        self.rung.locality
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.schema != MODEL_CALL_SCHEMA {
+            return Err(invalid("unknown model-call record schema"));
+        }
+        if self.erased {
+            return Err(invalid("a new model-call record cannot be erased"));
+        }
+        for part in &self.input_parts {
+            match part {
+                ModelCallInputPart::NewBytes { body, .. } if body.is_empty() => {
+                    return Err(invalid("a new input body cannot be empty"));
+                }
+                ModelCallInputPart::Unknown { reason } if reason.trim().is_empty() => {
+                    return Err(invalid("an unknown input needs a reason"));
+                }
+                _ => {}
+            }
+        }
+        if self.produced_pending && !self.produced_rows.is_empty() {
+            return Err(invalid("produced refs cannot be both pending and present"));
+        }
+        for part in &self.reasoning {
+            part.validate()?;
+        }
+        if let ModelCallKind::LabelRead { revision, .. } = &self.kind {
+            if revision.trim().is_empty() {
+                return Err(invalid("a native read needs a revision"));
+            }
+        }
+        match (
+            &self.read_world_epoch,
+            &self.read_worlds,
+            self.read_world_unknown.is_empty(),
+        ) {
+            (Some(_), Some(_), true) => Ok(()),
+            (_, None, false) => Ok(()),
+            _ => Err(invalid(
+                "read-world evidence needs a complete snapshot or explicit causes",
+            )),
+        }
+    }
+}
+
+impl ErasedForm for ModelCallRecord {
+    fn into_erased(mut self) -> Result<Self> {
+        self.erased = true;
+        self.issuing_login = None;
+        self.organization = None;
+        self.project = None;
+        self.credential_id = None;
+        self.response_id = None;
+        self.thread_id = None;
+        self.previous_response_id = None;
+        self.store = None;
+        self.endpoint = None;
+        self.rung.prompt = None;
+        self.actor = None;
+        self.produced_pending = false;
+        self.input_parts
+            .retain(|part| !matches!(part, ModelCallInputPart::NewBytes { .. }));
+        for part in &mut self.reasoning {
+            part.text = None;
+            part.bytes = None;
+            part.signature = None;
+            part.terminal_part = None;
+            if matches!(&part.occurrence, Some(ModelCallPartRef::Custody { .. })) {
+                part.occurrence = None;
+            }
+        }
+        match &mut self.kind {
+            ModelCallKind::Generate {
+                usage,
+                finish_reason,
+                ..
+            } => {
+                // The OpenAI-compatible adapter passes arbitrary upstream usage
+                // members and finish text through; an erased row keeps neither, only
+                // the typed counters and a known reason shape.
+                usage.raw_provider = Default::default();
+                usage.call_metadata = None;
+                if matches!(&*finish_reason, crate::FinishReason::Other { .. }) {
+                    *finish_reason = crate::FinishReason::Other {
+                        name: String::new(),
+                    };
+                }
+            }
+            // A native row keeps its hash, revision and failure; only provider
+            // usage is scrubbed, and unknown stays unknown.
+            ModelCallKind::LabelRead { outcome, .. } => match outcome {
+                NativeReadOutcome::Completed { usage } => {
+                    usage.raw_provider = Default::default();
+                    usage.call_metadata = None;
+                }
+                NativeReadOutcome::Failed {
+                    usage: Some(usage), ..
+                } => {
+                    usage.raw_provider = Default::default();
+                    usage.call_metadata = None;
+                }
+                NativeReadOutcome::Failed { usage: None, .. } => {}
+            },
+        }
+        Ok(self)
+    }
+}
+
+/// Erases every model-call record stamped to `actor`. Message occurrences
+/// belong to their MESSAGE and are not released here; inline reasoning and
+/// replay-binding bytes are scrubbed. Undecodable rows stay unchanged.
+pub(crate) fn erase_model_call_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    erase_model_call_actor_as_in_txn(vault, wtxn, actor, None)
+}
+
+/// Carries the live actor scrub's custody revokes under the erase's actual owner act.
+/// The declared scrub and restore/replay paths retain the local-only wrapper.
+pub(crate) fn erase_model_call_actor_as_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    // The scan holds only a read borrow of the transaction; the
+    // erasures land after it is gone.
+    let mut stale = Vec::new();
+    for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(record) = MODEL_CALLS.decode_value(&bytes)
+            && record.actor == Some(*actor)
+            && !record.erased
+        {
+            stale.push((key, Erased::of(record)?));
+        }
+    }
+    for (key, erased) in stale {
+        // The Authored row's mask may have minted custody under the side-row
+        // origin (FIX 6710); the erase revokes it before the row goes erased.
+        let place = format!("side:{}", MODEL_CALLS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
+        MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
+    }
+    Ok(())
+}
+
+/// Scrubs a call record whose reasoning is owned by the erased MESSAGE.
+/// The typed occurrence, not a code-run output or an inferred source relation,
+/// is the link. Custody minted by the row leaves before the tombstone lands.
+pub(crate) fn erase_message_model_calls_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let mut stale = Vec::new();
+    for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(record) = MODEL_CALLS.decode_value(&bytes)
+            && !record.erased
+            && record.reasoning.iter().any(|part| {
+                matches!(
+                    &part.occurrence,
+                    Some(ModelCallPartRef::Message { message: owner, .. }) if owner == message
+                )
+            })
+        {
+            stale.push((key, Erased::of(record)?));
+        }
+    }
+    for (key, erased) in stale {
+        let place = format!("side:{}", MODEL_CALLS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
+        MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
+    }
+    Ok(())
+}
+
+fn invalid(message: &str) -> Error {
+    Error::InvalidConfig(message.to_owned())
+}
+
+/// Writes one immutable call record. A retry must name a new call index; an
+/// existing key is never overwritten.
+pub fn record_model_call_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &ModelCallRecord,
+) -> Result<()> {
+    if record
+        .actor
+        .is_some_and(|actor| super::storage::actor_gone_in_txn(vault, &*txn, &actor))
+    {
+        return Ok(());
+    }
+    record.validate()?;
+    let key = record.key();
+    if MODEL_CALLS.get(&vault.store, txn, &key)?.is_some() {
+        return Err(invalid("model-call record already exists"));
+    }
+    // The whole-part custody and its sole reference commit together, even if
+    // an enclosing writer catches a failed evidence write and keeps working.
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let mut stored = record.clone();
+    signed_reasoning::seal_signed_reasoning_in_txn(vault, &mut savepoint, &mut stored)?;
+    for part in &mut stored.reasoning {
+        part.terminal_part = None;
+    }
+    MODEL_CALLS.put(vault, &mut savepoint, &key, &stored)?;
+    savepoint.commit()?;
+    Ok(())
+}
+
+pub fn model_call_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+) -> Result<Option<ModelCallRecord>> {
+    MODEL_CALLS.get(&vault.store, txn, key)
+}
+
+/// Reads a record only when its stamped actor matches. Replay never reads
+/// another actor's no-message reasoning (L07-A condition 6).
+pub fn model_call_for_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+    actor: EntityId,
+) -> Result<Option<ModelCallRecord>> {
+    Ok(model_call_in_txn(vault, txn, key)?.filter(|record| record.actor == Some(actor)))
+}
+
+pub fn model_calls_for_attempt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: EntityId,
+) -> Result<Vec<ModelCallRecord>> {
+    let mut records = Vec::new();
+    let mut undecodable = 0_usize;
+    for row in MODEL_CALLS.iter_raw_from(&vault.store, txn, attempt.as_bytes())? {
+        let (_, bytes) = row?;
+        match MODEL_CALLS.decode_value(&bytes) {
+            Ok(record) => records.push(record),
+            Err(_) => undecodable += 1,
+        }
+    }
+    if undecodable > 0 {
+        tracing::warn!(
+            undecodable,
+            "model-call rows that do not decode read as none"
+        );
+    }
+    Ok(records)
+}

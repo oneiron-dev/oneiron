@@ -3,7 +3,6 @@
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use rmpv::Value;
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{
     COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
@@ -16,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::affect::Vad;
 
 mod consolidated;
 pub use consolidated::unlink_consolidated_same_as;
@@ -558,6 +558,7 @@ fn coreference_claim_ops(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,

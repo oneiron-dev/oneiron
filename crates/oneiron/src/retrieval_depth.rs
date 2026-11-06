@@ -30,19 +30,21 @@
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::BudgetLease;
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
-use crate::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
 use crate::retrieval_quality::{RetrievalDiagnostics, RetrievalQualityReport};
 use crate::store::RetrievalSignal;
 use crate::vault::Vault;
+use oneiron_model::llm::BudgetLease;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod accumulation;
 mod controls;
-pub use controls::{RecallExecution, RecallMediaSeed, RecallQueryVectors, RetrievalDeadline};
+pub use controls::{
+    RecallExecution, RecallMediaSeed, RecallQueryVectors, RecallTelemetry, RetrievalDeadline,
+};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use controls::{SlowRetrievalStage, still_deadline_clock_for_test};
 mod session_scope;
@@ -124,7 +126,7 @@ pub enum SearchProbe {
         /// The declared space's id.
         space: String,
         /// The tower that encoded the query.
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         /// Query embedding, at the space's width.
         embedding: Vec<f32>,
         /// As for [`Self::Vector`].
@@ -458,7 +460,8 @@ fn run_direct_channel(
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text_revisioned(query, request.channel_limit(), None)?;
+            let hits =
+                scoped.search_text_revisioned(query, request.limit, None, request.session_scope)?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -469,7 +472,12 @@ fn run_direct_channel(
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
             acc.attempt(RetrievalSignal::Vector);
-            let hits = scoped.search_vector_revisioned(embedding, request.channel_limit(), None)?;
+            let hits = scoped.search_vector_revisioned(
+                embedding,
+                request.limit,
+                None,
+                request.session_scope,
+            )?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -491,8 +499,9 @@ fn run_direct_channel(
                 space,
                 *query_kind,
                 embedding,
-                request.channel_limit(),
+                request.limit,
                 None,
+                request.session_scope,
             )?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
@@ -527,7 +536,8 @@ fn run_subquery_channels(
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
         acc.attempt(RetrievalSignal::Text);
-        let hits = scoped.search_text_revisioned(&subquery, request.channel_limit(), None)?;
+        let hits =
+            scoped.search_text_revisioned(&subquery, request.limit, None, request.session_scope)?;
         acc.narrowing.push(hits.receipt);
         let narrowed =
             request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -626,7 +636,12 @@ fn run_deep_rounds(
                 break;
             }
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text_revisioned(&subquery, request.channel_limit(), None)?;
+            let hits = scoped.search_text_revisioned(
+                &subquery,
+                request.limit,
+                None,
+                request.session_scope,
+            )?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;

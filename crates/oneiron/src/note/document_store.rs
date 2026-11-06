@@ -4,8 +4,7 @@ use super::document::{
     NoteDocument, NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome,
     NoteSpanResolution, frontier, invalid,
 };
-use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
-use super::side_keys::HexHexHash;
+use super::pin_index::NOTE_PIN_SOURCE;
 use super::{NoteBody, NoteKind, encode_note_body};
 use crate::batch::secret_scan::{
     Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
@@ -19,7 +18,6 @@ use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
-use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
 /// The snapshot row's key, for a test that plants one by hand.
@@ -72,6 +70,17 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A selected room NOTE, admitted by the save's closed replay capability.
+pub(super) fn persist_saved_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    grant: &crate::off_record::PromoteReplayGrant,
+) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, true, Some(grant))?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
 /// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
 /// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
@@ -102,6 +111,16 @@ fn persist_structural(
     doc: &NoteDocument,
     masks: bool,
 ) -> Result<()> {
+    persist_structural_with_origin(vault, txn, doc, masks, None)
+}
+
+fn persist_structural_with_origin(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    masks: bool,
+    grant: Option<&crate::off_record::PromoteReplayGrant>,
+) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Each citation's quote, which the pin rows below keep, is scanned as the
@@ -117,34 +136,23 @@ fn persist_structural(
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
     super::validate_markdown(&markdown)?;
-    if markdown.len() > super::document::MAX_NOTE_BYTES {
-        return Err(invalid("NOTE body exceeds bound"));
-    }
-    if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
-        return Err(invalid("NOTE snapshot exceeds wire bound"));
-    }
+    // Preserve snapshot validation here; document delivery splits the logical
+    // payload into bounded wire frames (FIX 12244), without a NOTE length cap.
+    let _ = doc.snapshot()?;
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    vault
-        .batch_in()
+    let batch = match grant {
+        Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),
+        None => vault.batch_in(),
+    };
+    batch
         .text(&doc.id, &[("markdown", markdown.as_str())])
         .apply(txn)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
-    for pin in doc.pins()? {
-        let value = NOTE_PIN_SOURCE.encode_value(&pin)?;
-        let hash = blake3::hash(&value).to_hex().to_string();
-        let index = HexHexHash(HexId(pin.document), HexId(doc.id), hash.clone());
-        let index_bytes = NOTE_PIN_SOURCE.key_bytes(&index);
-        NOTE_PIN_SOURCE.put(&vault.store, txn, &index, &pin)?;
-        let claim_index = HexHexHash(HexId(pin.claim), HexId(doc.id), hash.clone());
-        NOTE_PIN_CLAIM.put(&vault.store, txn, &claim_index, &index_bytes)?;
-        let citing = HexHexHash(HexId(doc.id), HexId(pin.document), hash);
-        NOTE_PIN_CITING.put(&vault.store, txn, &citing, &index_bytes)?;
-    }
-    Ok(())
+    super::pin_index::index_pins(&vault.store, txn, doc.id, &doc.pins()?)
 }
 
 /// The live text and title as the NOTE stores them (OF-067; ARCH-0069
@@ -220,7 +228,8 @@ impl Vault {
     /// Viewer-facing code must use the scope-checked brief/lens render doors.
     pub fn note_document(&self, id: EntityId) -> Result<NoteDocumentView> {
         let txn = self.store.env.read_txn()?;
-        load(self, &txn, id)?.view()
+        // Its authorship's stamp tokens read as their actors (FIX 11964).
+        super::operations::resolved_view_in_txn(self, &txn, load(self, &txn, id)?.view()?)
     }
 
     /// [`Self::note_document`] with the keys the lift marked in its texts
@@ -235,6 +244,7 @@ impl Vault {
     ) -> Result<(NoteDocumentView, crate::batch::secret_scan::LiftedKeys)> {
         let txn = self.store.env.read_txn()?;
         let view = load(self, &txn, id)?.view()?;
+        let view = super::operations::resolved_view_in_txn(self, &txn, view)?;
         let mut texts = vec![view.markdown.as_str()];
         texts.extend(view.title.as_deref());
         for pin in &view.pins {
@@ -388,7 +398,7 @@ impl Memory<'_> {
                     &doc,
                     &super::NoteAuthorship {
                         operation: self.vault().new_entity_id()?,
-                        actor: super::NoteActor::Actor(self.actor()),
+                        actor: super::NoteActor::Actor(stamp.token),
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
@@ -467,11 +477,11 @@ impl Memory<'_> {
     }
 
     /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
-    /// transaction that commits. Without `through` it erases up to the oldest
-    /// pin, or up to the head when nothing pins the note. The receipt lands
-    /// beside the entity-text purge receipts. A legal hold on the note refuses
-    /// it (OF-470); with two or more live Owners it runs only through the
-    /// vault's `erase` veto window ([`Vault::start_text_history_erase`],
+    /// transaction that commits. Without `through` it erases up to the causal
+    /// floor shared by every pin, or up to the head when nothing pins the note.
+    /// The receipt lands beside the entity-text purge receipts. A legal hold on
+    /// the note refuses it (OF-470); with two or more live Owners it runs only
+    /// through the vault's `erase` veto window ([`Vault::start_text_history_erase`],
     /// Docs Q05).
     pub fn purge_note_history_as(
         &self,
@@ -554,13 +564,25 @@ impl Memory<'_> {
                 let through = match requested {
                     Some(bytes) => frontier(bytes)?,
                     None if pins.is_empty() => doc.doc.oplog_frontiers(),
-                    None => pins
-                        .iter()
-                        .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)))
-                        .cloned()
-                        .ok_or_else(|| {
-                            invalid("NOTE pins are causally incomparable; name a frontier")
-                        })?,
+                    None => {
+                        let oldest = pins
+                            .iter()
+                            .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
+                        match oldest {
+                            Some(oldest) => oldest.clone(),
+                            None => {
+                                let mut allowed = doc.doc.oplog_vv();
+                                for pin in &pins {
+                                    let vv = doc
+                                        .doc
+                                        .frontiers_to_vv(pin)
+                                        .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
+                                    allowed = allowed.intersection(&vv);
+                                }
+                                doc.doc.vv_to_frontiers(&allowed)
+                            }
+                        }
+                    }
                 };
                 if !pins.iter().all(|pin| at_or_before(&through, pin)) {
                     return Err(invalid("NOTE purge would pass a cited frontier").into());
@@ -571,6 +593,11 @@ impl Memory<'_> {
                     .export(loro::ExportMode::shallow_snapshot(&through))
                     .map_err(|_| invalid("NOTE history purge failed"))?;
                 let shallow = NoteDocument::load(note, &snapshot)?;
+                let selected = doc
+                    .doc
+                    .frontiers_to_vv(&through)
+                    .ok_or(invalid("NOTE purge frontier unavailable"))?;
+                super::proposals::purge_stored_history(self.vault(), txn, note, &selected)?;
                 super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
                 let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
                 self.vault().store.port_document_shallow_since_put(
@@ -591,6 +618,9 @@ impl Memory<'_> {
                 };
                 self.vault()
                     .put_text_purge_receipt_in_txn(txn, &note, receipt_id, &receipt)?;
+                self.vault()
+                    .store
+                    .roll_checkpoint_payload_for_purge_in_txn(txn, &note)?;
                 Ok(receipt)
             })
         })
@@ -672,7 +702,13 @@ pub(crate) fn deck_outline_document_in_txn(
     if body.kind != NoteKind::Plugin("brief".to_owned()) {
         return Err(invalid("a deck outline is a brief NOTE"));
     }
-    load(vault, txn, note)?.view()
+    let mut view = load(vault, txn, note)?.view()?;
+    for record in &mut view.authorship {
+        if record.operation == note && record.actor == super::NoteActor::Erased {
+            record.actor = body.author_ref.erased_here(vault, txn)?;
+        }
+    }
+    Ok(view)
 }
 
 pub(crate) fn resolve_deck_pin_in_txn(

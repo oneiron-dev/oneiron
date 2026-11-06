@@ -91,7 +91,7 @@ pub(super) fn validate_put_type(
         && allow_reserved_predicate
         && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
-        return Err(crate::secret_custody::reject_secret_custody_byte());
+        return Err(crate::secret_record::reject_secret_custody_byte());
     }
     if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
         store.validate_pack_handle_in_txn(wtxn, entity_type)?;
@@ -111,12 +111,14 @@ pub(super) fn validate_put_type(
     Ok(entity_type)
 }
 
-/// The FACET a NOTE or ASSET put at `id` is born under: the batch mask, else
-/// the vault default. An ASSET_TEXT put with the `sources` it was written
-/// from is born under the one facet they were born under (facet rule C).
-/// `None` when the put births nothing that carries a stamp — a put over a
-/// stored row, another kind, a text bound to no source, or a replicated put,
-/// whose origin's `FacetOf` edge arrives in the same window.
+/// The FACET a NOTE, ASSET, CLAIM, EVENT or TURN put at `id` is born under.
+/// A CLAIM carries its facet in its body, so its birth edge follows the body's
+/// `scopeFacetId` (FIX 7757); a NOTE, ASSET, EVENT or TURN uses the batch mask,
+/// else the vault default (FIX 7774 keeps the TASK exception). An ASSET_TEXT put
+/// with the `sources` it was written from is born under the one facet they were
+/// born under (facet rule C). `None` when the put births nothing that carries a
+/// stamp — a put over a stored row, another kind, a text bound to no source, or
+/// a replicated put, whose origin's `FacetOf` edge arrives in the same window.
 pub(super) fn birth_stamp_target(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -124,13 +126,18 @@ pub(super) fn birth_stamp_target(
     entity_type: u8,
     replicated: bool,
     (mask, sources): (Option<EntityId>, Option<&[EntityId]>),
+    data: &[u8],
 ) -> Result<Option<EntityId>> {
     let sources = sources.filter(|_| entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT);
     if replicated
         || !(sources.is_some()
             || matches!(
                 entity_type,
-                crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+                crate::registry::ENTITY_TYPE_NOTE
+                    | crate::registry::ENTITY_TYPE_ASSET
+                    | crate::registry::ENTITY_TYPE_CLAIM
+                    | crate::registry::ENTITY_TYPE_EVENT
+                    | crate::registry::ENTITY_TYPE_TURN
             ))
         || crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
     {
@@ -141,6 +148,10 @@ pub(super) fn birth_stamp_target(
             store, txn, sources,
         )
         .map(Some);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        let body = crate::claim::decode_claim_body(data, true)?;
+        return Ok(Some(body.scope_facet));
     }
     match mask {
         Some(mask) => Ok(Some(mask)),

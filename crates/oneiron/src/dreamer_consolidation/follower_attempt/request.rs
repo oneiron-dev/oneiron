@@ -17,7 +17,7 @@ use crate::code_run::{CacheBoundary, mark_cache_boundary};
 use crate::dreamer_wake::follower::{AskWork, Asked, Pin};
 use crate::dreamer_wake::{SpanBand, SpanKind, SpanOrigin};
 use crate::error::{Error, Result};
-use crate::llm::{
+use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, Scope, ScopeResource, TierPrecedence,
 };

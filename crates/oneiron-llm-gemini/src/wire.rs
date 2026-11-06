@@ -6,7 +6,7 @@ use oneiron::{
     LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Value, json};
-pub(super) fn build_request(
+pub fn build_request(
     entry: &LlmCatalogEntry,
     request: &LlmRequest,
     stream: bool,
@@ -31,13 +31,16 @@ pub(super) fn build_request(
         })
         .collect();
     let mut contents = Vec::new();
-    let mut system = Vec::new();
+    let mut system: Vec<Value> = Vec::new();
     for message in &request.messages {
-        let parts = message
+        let parts: Vec<Value> = message
             .content
             .iter()
             .map(|part| encode_part(part, &calls))
-            .collect::<LlmResult<Vec<_>>>()?;
+            .collect::<LlmResult<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
         if message.role == LlmMessageRole::System {
             system.extend(parts);
         } else {
@@ -140,42 +143,48 @@ pub(super) fn build_request(
 fn encode_part(
     part: &ContentPart,
     calls: &std::collections::BTreeMap<&str, &str>,
-) -> LlmResult<Value> {
+) -> LlmResult<Option<Value>> {
     Ok(match part {
-        ContentPart::Text { text } => json!({"text":text}),
-        ContentPart::Reasoning { text, signature } => {
+        ContentPart::Text { text } => Some(json!({"text":text})),
+        ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind: oneiron::ReasoningPartKind::Full,
+            ..
+        } => {
             let mut v = json!({"text":text,"thought":true});
             if let Some(s) = signature {
                 v["thoughtSignature"] = json!(s);
             }
-            v
+            Some(v)
         }
+        ContentPart::Reasoning { .. } => None,
         ContentPart::ToolCall {
             call_id,
             name,
             input,
-        } => json!({"functionCall":{"id":call_id,"name":name,"args":input}}),
+        } => Some(json!({"functionCall":{"id":call_id,"name":name,"args":input}})),
         ContentPart::ToolResult {
             call_id,
             output,
             is_error,
-        } => {
-            json!({"functionResponse":{"id":call_id,"name":calls.get(call_id.as_str()).ok_or(FatalLlmError::InvalidRequest)?,"response":{"output":output,"is_error":is_error}}})
-        }
+        } => Some(
+            json!({"functionResponse":{"id":call_id,"name":calls.get(call_id.as_str()).ok_or(FatalLlmError::InvalidRequest)?,"response":{"output":output,"is_error":is_error}}}),
+        ),
         ContentPart::Image {
             media_type,
             image: ImageContent::Base64 { data },
-        } => json!({"inlineData":{"mimeType":media_type,"data":data}}),
+        } => Some(json!({"inlineData":{"mimeType":media_type,"data":data}})),
         ContentPart::Image {
             media_type,
             image: ImageContent::Url { url },
-        } => json!({"fileData":{"mimeType":media_type,"fileUri":url}}),
+        } => Some(json!({"fileData":{"mimeType":media_type,"fileUri":url}})),
         ContentPart::Audio { media_type, data } => {
-            json!({"inlineData":{"mimeType":media_type,"data":data}})
+            Some(json!({"inlineData":{"mimeType":media_type,"data":data}}))
         }
     })
 }
-pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
+pub fn parse_response(body: Value) -> LlmResult<LlmResponse> {
     let events = GeminiAccumulator::default().push(body)?;
     events
         .into_iter()
@@ -196,7 +205,7 @@ pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
         })
         .ok_or_else(|| FatalLlmError::EmptyResponse.into())
 }
-pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
+pub fn classify_status(status: u16, body: &Value) -> LlmError {
     // Spent prepaid credit parks the offer until the owner tops up (OF-305).
     if status == 402
         || body.pointer("/error/status").and_then(Value::as_str) == Some("BUDGET_EXCEEDED")

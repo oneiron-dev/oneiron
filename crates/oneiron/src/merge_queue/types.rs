@@ -1,64 +1,24 @@
-//! Persisted queue records and sealed landing/check boundaries.
+//! Core half of `merge_queue::types`: its store-layer items live in `oneiron_store::merge_queue::types` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::merge_queue::types::*;
+
+use crate::store::repo_fork::RepoForkHash;
 use crate::{
-    contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     error::Result,
-    repo_mutation::{RepoForkHash, RepoMutationOutcome},
+    store::contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
+    store::repo_mutation_record::RepoMutationOutcome,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeFile {
-    pub path: String,
-    /// Exact previously reviewed bytes. Absence means a new path, not a wildcard.
-    pub expected: Option<Vec<u8>>,
-    /// None deletes a file.
-    pub content: Option<Vec<u8>>,
-    /// A received bundle's reviewed exact Git state change of this path
-    /// (G4 PR2); `None` on every ordinary file, which stages as before.
-    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeProposal {
-    pub id: String,
-    pub base_green: String,
-    pub files: Vec<MergeFile>,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BatchState {
-    Queued,
-    Staged,
-    Ready,
-    Landing,
-    HeadAdvanced,
-    GreenAdvanced,
-    Quarantined,
-    RollingBack,
-    RolledBack,
-    Cancelled,
-}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CheckPhase {
     Fast,
     Slow,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpeculativePath {
-    /// Bitset of included proposals. All nonempty subsets are tested before land.
-    pub mask: u64,
-    pub worktree: PathBuf,
-    pub commit: String,
-    pub tree: String,
-    pub verdict: Option<String>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Quarantine {
-    pub proposal_ids: Vec<String>,
-    /// A minimal failing group; interactions are not falsely blamed on one member.
-    pub failing_mask: u64,
-    pub verdict: String,
-}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeBatch {
     pub schema_version: u8,
@@ -81,36 +41,6 @@ pub struct MergeBatch {
     /// until the driver acts on it. An owner's call needs none.
     pub drive: Option<super::QueueBatchDrive>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeQueuePointers {
-    pub head: String,
-    pub green: String,
-    pub pending_slow: Vec<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct QueueRecord {
-    pub schema_version: u8,
-    pub sequence: u64,
-    pub baseline_id: String,
-    pub graph: WorkspaceGraph,
-    pub pointers: MergeQueuePointers,
-    pub intent: Option<EffectIntent>,
-    /// A served import's queue: its binding init work's full key, saved
-    /// with the initial pointers (FIX 6869). `None` for a native queue.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_init_work: Option<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) enum EffectIntent {
-    Landing {
-        batch: String,
-        after_seq: u64,
-    },
-    Rollback {
-        snapshot: RepoForkHash,
-        expected_head: String,
-    },
-}
 
 #[derive(Debug, Clone)]
 pub struct CheckInvocation {
@@ -121,40 +51,12 @@ pub struct CheckInvocation {
     pub phase: CheckPhase,
     pub selected_tests: AffectedTests,
 }
-#[derive(Debug, Clone, Default)]
-pub struct CheckReport {
-    pub tests_passed: bool,
-    pub outputs: BTreeMap<String, CommandOutput>,
-}
-
-/// Queue-issued capability. No public constructor or deserializer exists. It is
-/// issued only while the repo lock is held after rechecking the expected HEAD.
-/// This proves queue readiness, NOT gate approval: the host adapter must still
-/// route every proposed edit through its per-operation gate before mutation.
-pub struct LandingPermit {
-    pub(super) batch_id: String,
-    pub(super) repo_identity: String,
-    pub(super) expected_head: String,
-}
-impl LandingPermit {
-    #[must_use]
-    pub fn batch_id(&self) -> &str {
-        &self.batch_id
-    }
-    #[must_use]
-    pub fn repo_identity(&self) -> &str {
-        &self.repo_identity
-    }
-    #[must_use]
-    pub fn expected_head(&self) -> &str {
-        &self.expected_head
-    }
-}
 
 /// Immutable, all-path-tested input. Hosts cannot manufacture this capability.
 pub struct TestedBatch {
     pub(super) batch: MergeBatch,
 }
+
 impl TestedBatch {
     #[must_use]
     pub fn batch(&self) -> &MergeBatch {

@@ -31,6 +31,7 @@ pub(super) struct StagedPut {
     id: EntityId,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: Vec<u8>,
 }
 
@@ -58,6 +59,7 @@ pub(super) fn put_or_stage(
             id,
             occurred,
             learned_at: header.learned_at,
+            row_version: header.row_version,
             data: data.to_vec(),
         });
         return Ok(());
@@ -71,6 +73,7 @@ pub(super) fn put_or_stage(
         header.entity_type,
         occurred,
         header.learned_at,
+        Some(header.row_version),
         data,
     );
     match &ctx.authority_beside {
@@ -172,7 +175,10 @@ fn role_changes(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId, blob: &[u8
         EntityMetadataHeader::parse(row)
             .filter(|header| header.entity_type == ENTITY_TYPE_TASK)
             .and_then(|_| {
-                crate::habit::task_role_from_body_bytes(&row[ENTITY_METADATA_HEADER_LEN..]).ok()
+                crate::write_envelope::task_body::task_role_from_body_bytes(
+                    &row[ENTITY_METADATA_HEADER_LEN..],
+                )
+                .ok()
             })
     };
     let Some(new) = role(blob) else {
@@ -205,6 +211,7 @@ pub(in crate::sync) fn ingest_rows_in_savepoint(
                     ENTITY_TYPE_TASK,
                     put.occurred,
                     put.learned_at,
+                    Some(put.row_version),
                     &put.data,
                 );
             }

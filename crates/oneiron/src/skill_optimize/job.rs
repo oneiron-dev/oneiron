@@ -20,7 +20,7 @@ use super::brief::{
     optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
-use super::gate::SkillEditCycle;
+use super::gate::{SKILL_EDIT_CYCLE_MAX_BYTES, SkillEditCycle};
 use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
 use super::{GOAL_ID_KEY, SkillGoalId};
@@ -59,14 +59,7 @@ pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
 /// second slot.
 pub const PROVENANCE_OPTIMIZE_CYCLE_KEY: &str = "cycle";
 
-/// The label prefix [`proven_cycle`] names a RUN-proven cycle with.
-///
-/// Pinned here because two modules have to agree on it: this one BUILDS the
-/// label, and the attempt queue's run-id validator
-/// (`crate::attempt_queue::validate`) sizes its own bound by subtracting this
-/// prefix from [`SKILL_EDIT_CYCLE_MAX_BYTES`]. Spelling it twice is how a run
-/// id the queue accepted became a cycle label nobody could name.
-pub(crate) const SKILL_EDIT_CYCLE_RUN_PREFIX: &str = "run:";
+pub(crate) use crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_RUN_PREFIX;
 
 /// Version prefix of a drafted revision.
 const OPTIMIZE_VERSION_PREFIX: &str = "opt-";
@@ -119,7 +112,9 @@ pub fn run_skill_optimize(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
-    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None, None)
+    run_skill_optimize_bound(
+        vault, attempt, author, occurred, learned_at, None, None, None,
+    )
 }
 
 /// An optimizer job with an explicit host-authenticated preference audience.
@@ -144,6 +139,7 @@ pub fn run_skill_optimize_as(
         learned_at,
         Some(owner),
         None,
+        None,
     )
 }
 
@@ -166,6 +162,22 @@ pub fn run_skill_optimize_for_resident(
         learned_at,
         None,
         Some(resident),
+        None,
+    )
+}
+
+/// The wake worker carries selectors from its actual admitted attempt input.
+pub(crate) fn run_skill_optimize_targeted(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+    resident: Option<EntityId>,
+    target: Option<EntityId>,
+) -> Result<SkillOptimizeOutcome> {
+    run_skill_optimize_bound(
+        vault, attempt, author, occurred, learned_at, None, resident, target,
     )
 }
 
@@ -177,11 +189,12 @@ fn run_skill_optimize_bound(
     learned_at: u64,
     owner: Option<crate::write_envelope::WriteActor>,
     resident: Option<EntityId>,
+    target: Option<EntityId>,
 ) -> Result<SkillOptimizeOutcome> {
     let authority = vault.dreamer_attempt_authority(attempt)?.ok_or(invalid(
         "skill optimization requires an admitted Coach attempt",
     ))?;
-    if authority.facet != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+    if authority.facet != crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || authority.actor != vault.coach_authority()?.entity_ref()
     {
         return Err(invalid(
@@ -192,8 +205,11 @@ fn run_skill_optimize_bound(
         Some(resident) => super::selection::optimize_candidates_for_resident(vault, &resident)?,
         None => optimize_candidates(vault)?,
     };
-    let Some(candidate) = candidates.into_iter().next() else {
-        return affirm_healthy_skill(vault, resident);
+    let Some(candidate) = candidates
+        .into_iter()
+        .find(|candidate| target.is_none_or(|target| candidate.skill == target))
+    else {
+        return affirm_healthy_skill(vault, resident, target);
     };
     let brief = optimize_brief_bound_at(
         vault,
@@ -227,7 +243,7 @@ fn run_skill_optimize_bound(
     let drafted_in = proven_cycle(vault, attempt)?;
     let stamp = SkillRepairStamp {
         actor: vault.dreamer_actor_for_attempt(attempt)?,
-        facet: crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+        facet: crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
         attempt,
         cycle: &drafted_in,
         owner,
@@ -443,7 +459,7 @@ fn issues_draft_of_other_target(
     provenance: &Value,
     target: &EntityId,
 ) -> bool {
-    use crate::dreamer_runner::maintenance::coach::COACH_ISSUES_FACET;
+    use crate::claim::maintenance_kind::COACH_ISSUES_FACET;
     let Value::Map(fields) = provenance else {
         return false;
     };
@@ -499,7 +515,7 @@ pub(crate) fn propose_skill_edit_as_owner(
             .ok_or(invalid(
                 "a submitted candidate needs a stored optimize attempt",
             ))?;
-        if queued.kind != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
+        if queued.kind != crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
             return Err(invalid(
                 "a submitted candidate needs a skill_optimize attempt",
             ));
@@ -536,8 +552,15 @@ pub(crate) fn propose_skill_edit_as_owner(
 
 /// Healthy skills do not buy an LLM call or a revision. They still produce a
 /// named no-op with the receipts that support keeping the current instructions.
-fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<SkillOptimizeOutcome> {
-    let Some(candidate) = affirm_candidates(vault, resident)?.into_iter().next() else {
+fn affirm_healthy_skill(
+    vault: &Vault,
+    resident: Option<EntityId>,
+    target: Option<EntityId>,
+) -> Result<SkillOptimizeOutcome> {
+    let Some(candidate) = affirm_candidates(vault, resident)?
+        .into_iter()
+        .find(|candidate| target.is_none_or(|target| candidate.skill == target))
+    else {
         return Ok(SkillOptimizeOutcome {
             skill: None,
             proposal: None,
@@ -569,7 +592,8 @@ fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<Ski
 ///
 /// | queue row | label |
 /// |---|---|
-/// | present, names a run | [`SKILL_EDIT_CYCLE_RUN_PREFIX`]`<id>` |
+/// | present, names a fitting run | [`SKILL_EDIT_CYCLE_RUN_PREFIX`]`<id>` |
+/// | present, names a longer run | `run-hash:<BLAKE3 of the full id>` |
 /// | present, no run | `attempt:<hex>` |
 /// | ABSENT (pruned, or never enqueued) | typed error, no label |
 ///
@@ -586,12 +610,11 @@ fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<Ski
 /// reason: a cap that quietly degrades when the queue cannot be read is a cap
 /// that stops binding exactly when it is most needed.
 ///
-/// Every label this can build FITS: the queue's own run-id bound is
-/// [`SKILL_EDIT_CYCLE_MAX_BYTES`] minus [`SKILL_EDIT_CYCLE_RUN_PREFIX`]
-/// (`crate::attempt_queue::validate`), so a run id the queue admitted always
-/// has room for the prefix, and the attempt spelling is a fixed 40 bytes. A
-/// producer that could enqueue a run nobody could name a cycle for would have
-/// stranded every proposal that run drafted — after the author had been paid.
+/// Every label fits [`SKILL_EDIT_CYCLE_MAX_BYTES`]: a run id that fits
+/// after [`SKILL_EDIT_CYCLE_RUN_PREFIX`] keeps its literal spelling; longer
+/// ids use the full id's BLAKE3 digest in the distinct `run-hash:` namespace.
+/// The hashed label is 73 bytes and the run-less attempt label is 40 bytes.
+/// Run identifiers themselves have no byte cap, and no id is truncated.
 ///
 /// # Errors
 ///
@@ -613,7 +636,15 @@ fn proven_cycle_in_txn(
         ));
     };
     match record.run_id {
-        Some(run_id) => SkillEditCycle::new(format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{run_id}")),
+        Some(run_id) => {
+            let label =
+                if run_id.len() <= SKILL_EDIT_CYCLE_MAX_BYTES - SKILL_EDIT_CYCLE_RUN_PREFIX.len() {
+                    format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{run_id}")
+                } else {
+                    format!("run-hash:{}", blake3::hash(run_id.as_bytes()).to_hex())
+                };
+            SkillEditCycle::new(label)
+        }
         None => SkillEditCycle::new(format!(
             "attempt:{}",
             bytes_to_hex_lower(attempt.as_bytes())

@@ -31,7 +31,19 @@ mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
 mod authorship;
+pub(crate) mod checkout_access;
+pub mod conversation_membership;
+pub(crate) mod conversation_preview;
 mod critical_confirm;
+#[cfg(feature = "sync")]
+pub mod message_presence;
+#[cfg(feature = "sync")]
+pub mod residence_item;
+pub mod result_facet;
+pub mod retrieval_defaults;
+pub mod speculative_limits;
+pub(crate) mod vault_standing;
+pub mod wake_observation;
 pub use critical_confirm::{
     CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
     CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
@@ -39,6 +51,7 @@ pub use critical_confirm::{
 };
 mod birth_position;
 mod booking;
+pub mod browser_capture;
 mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
@@ -49,6 +62,7 @@ mod conflict_settle;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod core_write_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
@@ -64,6 +78,7 @@ pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
+pub mod campaign_records;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -85,6 +100,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
 mod export_transfer_read;
 mod expression_preference;
@@ -99,6 +115,7 @@ mod lifted_view;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
+mod message_parts;
 mod message_result;
 mod note_tombstone;
 mod notes;
@@ -106,10 +123,15 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+mod proactivity_digest;
+pub(crate) mod read_capture;
+pub use proactivity_digest::ProactivityDigestRequest;
+
 mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
 mod report;
@@ -121,15 +143,20 @@ mod search_hybrid;
 mod search_temporal;
 mod search_vector;
 mod session_reads;
+pub use session_reads::{CreateNoteRequest, EntityRequest, HydrateRequest, QueryBm25Request};
+mod secret_sight;
 mod session_writes;
 mod shape_card_doors;
 mod shape_doors;
+pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
+pub use shape_doors::DescribeRequest;
 mod signal_extraction;
 mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
 pub mod usage_repair;
+pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
 mod witness;
 
@@ -154,7 +181,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, discard_asset_blob_reference_in_txn,
+    land_asset_blob_in_txn, release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -237,14 +265,15 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
-    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
-    MemoryWrongRoot,
+    MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
+pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
-    PeoplePage, PersonRequest,
+    GrantAskedRow, GrantRequestedScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
@@ -274,6 +303,8 @@ pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
 pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,
@@ -281,11 +312,12 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
-pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub use reads::{
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
+};
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
-pub(crate) use recall::conversation_candidate_admits;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
@@ -294,11 +326,13 @@ pub use recall::{
     RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
     resolve_recall_dial,
 };
+pub(crate) use recall::{ConversationGate, conversation_candidate_admits};
 #[cfg(feature = "sync")]
 pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
+pub(crate) use result_attachment::{retire_message_result_in_row, retire_message_results_in_rows};
 pub use room_turn::RoomTurnHandle;
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest,
@@ -324,18 +358,21 @@ pub use shape_card_doors::{
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
+pub(crate) use structural::append_dissent_in_txn;
 pub use structural::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
-    HabitCheckinInput, ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode,
-    ProductivityRole, ProductivityTree, ProductivityTreeRequest, StructuralEdgeSpec,
-    StructuralPutInput, TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    EntityRefReceipt, EntityView, HabitCheckinInput, ProductivityCreateRequest,
+    ProductivityCreateRole, ProductivityNode, ProductivityRole, ProductivityTree,
+    ProductivityTreeRequest, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
+pub use support::{
+    HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
+    resolve_entity_ref,
+};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
-pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -348,6 +385,10 @@ pub use witness::{
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
     StreamSyncVisibility,
+};
+pub use witness::{
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
+    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
@@ -370,6 +411,10 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
+    archived_message_body,
+};
+pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
     witness_message_body,
 };
@@ -386,3 +431,11 @@ pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+
+pub mod state_index;
+pub mod voice_actor;
+
+#[cfg(feature = "sync")]
+pub(crate) mod resolved_recall_scope;
+
+pub mod claim_cluster;

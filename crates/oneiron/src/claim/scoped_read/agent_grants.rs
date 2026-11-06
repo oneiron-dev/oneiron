@@ -16,6 +16,7 @@
 //! clock failure, admits nothing and leaves B's answer, counted in a warning
 //! that names no content.
 
+use crate::claim::ClaimRecordScope;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -23,8 +24,8 @@ use std::rc::Rc;
 use super::access_gate::HeldAuthority;
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::federation::Scope;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_SECRET_CUSTODY};
+use oneiron_authority::federation::Scope;
 
 /// One reader's live Grants, each id with its Scope.
 type ReaderGrants = Rc<[(EntityId, Scope)]>;
@@ -87,7 +88,7 @@ impl HeldGrants {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// A for the row `raw` of `id`, tried only once B refused it: whether one
     /// of the reader's own live Grants admits it alone. `filter` is the one B
     /// judged it under, `asked` what the read asked beyond its key's floor.
@@ -102,7 +103,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> bool {
         let Some(reader) = self.grant_reader() else {
@@ -139,6 +140,43 @@ impl<'v> ScopedRead<'v> {
         false
     }
 
+    /// The candidates a search under `filter` may rank (FIX 7528): the rows
+    /// `filter` (B, resolved from `requested`) reads and, for a reader A may
+    /// stand for, the rows each of its own live Grants reads alone under
+    /// `requested`, as one envelope (`union_envelope`). It is only the
+    /// search's prefilter: every candidate still takes the row gate, B first
+    /// and then A under each Grant alone, so it admits no row by itself. A
+    /// Grant floor that cannot be judged adds nothing and is counted, as A
+    /// counts it; the envelope is then B's alone.
+    pub(super) fn candidate_filter_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+    ) -> ResolvedRetrievalFilter {
+        let Some(reader) = self.grant_reader() else {
+            return filter.clone();
+        };
+        let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
+            warn_grant_errors(1, &[], Some(error.kind()));
+            Vec::new()
+        });
+        let mut candidates = filter.clone();
+        for (grant, scope) in &grants {
+            let floor =
+                policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
+            match crate::gate::narrow_retrieval_filter(&floor, requested) {
+                Ok(under) => {
+                    candidates =
+                        candidates.union_envelope(&under.under_credential_of(&self.actor_key));
+                }
+                Err(error) => warn_grant_errors(1, &[*grant], Some(error.kind())),
+            }
+        }
+        candidates
+    }
+
     /// The reader A may stand for: this key's own actor, while the key
     /// supplies no proof, carries no Scope and is not the owner's. A narrowed
     /// key (`read_nothing` among them) stays exactly as it is.
@@ -165,7 +203,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         request: Option<&RetrievalFilter>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: &Scope,
     ) -> Result<bool> {
         if !self.grant_admits_position_in(rtxn, id, raw, grant)? {

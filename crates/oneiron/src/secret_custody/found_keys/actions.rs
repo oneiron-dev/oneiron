@@ -1,7 +1,7 @@
-//! The owner's four answers to a found key: rotate (the rotate door settles
-//! it), delete, grant and not a secret. Each is owner-only, checked at the
-//! owner tier in the transaction that acts, and each leaves its receipt on
-//! the key.
+//! The owner's five answers to a found key: rotate (the rotate door settles
+//! it), delete, grant, not a secret and kept as text. Each is owner-only,
+//! checked at the owner tier in the transaction that acts, and each leaves its
+//! receipt on the key.
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -10,10 +10,10 @@ use zeroize::{Zeroize, Zeroizing};
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{MemoryResult, SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
@@ -26,9 +26,12 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, Vault, entity_revision, live_entity_row_in_txn};
+use oneiron_contracts::memory::MemoryResult;
 
 /// Gate reason code: the owner ruled a found key no secret.
 pub const FOUND_KEY_REASON_NOT_A_SECRET: &str = "gate.secret.found_key.not_a_secret";
+/// Gate reason code: the owner kept a found key as text by choice.
+pub const FOUND_KEY_REASON_KEPT_AS_TEXT: &str = "gate.secret.found_key.kept_as_text";
 
 /// The Gate content kind of a found-key ruling.
 const FOUND_KEY_CONTENT_KIND: &str = "secret_found_key";
@@ -38,9 +41,7 @@ const FOUND_KEY_CONTENT_KIND: &str = "secret_found_key";
 /// names no tier; a record that held a key keeps no shell of it.
 const FOUND_KEY_DELETE: SafeDeleteReason = SafeDeleteReason::UserHardDelete;
 
-/// The text form a mask leaves in a span, `[secret sc12]`, before the
-/// handle.
-const HANDLE_TEXT_OPEN: &str = "[secret ";
+pub(crate) use crate::file_secret_marks::HANDLE_TEXT_OPEN;
 
 /// The text each record was indexed with, by field.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
@@ -58,7 +59,7 @@ impl Vault {
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive)
     /// for a key no longer active. [`GateError::InvalidConsentBound`] for a
-    /// key the owner ruled no secret.
+    /// key the owner ruled no secret or kept as text.
     pub fn grant_found_key(
         &self,
         owner: &AuthenticatedOwner,
@@ -98,7 +99,7 @@ impl Vault {
     /// What the delete door returns; [`GateError::ConsentOwnerNotAuthenticated`]
     /// when the proof is not the live owner's; [`Error::EntityNotFound`] for a
     /// handle no notice names; [`GateError::InvalidConsentBound`] for a key
-    /// found outside any record (a side row), or one ruled no secret.
+    /// found outside any record (a side row), or one ruled no secret or kept as text.
     pub fn delete_found_key_record(
         &self,
         owner: &AuthenticatedOwner,
@@ -131,7 +132,7 @@ impl Vault {
         };
         self.with_write_txn_grouped(|txn| {
             if let Some(mut found) = FOUND.get(&self.store, txn, &record)? {
-                for key in found.keys.iter_mut().filter(|key| !key.ruled_no_secret()) {
+                for key in found.keys.iter_mut().filter(|key| !key.kept_by_owner()) {
                     key.settled = Some(settled.clone());
                 }
                 FOUND.put(&self.store, txn, &record, &found)?;
@@ -147,14 +148,20 @@ impl Vault {
     /// revoked with its value kept, which that screen reads (CALLS
     /// CUSTODY_REVOKE_ERASE), the record's body or text field gets the value
     /// back where the mask left its handle, or the file's mark drops the key,
-    /// and a Gate record keeps the ruling. A portable record's revocation
+    /// and a Gate record keeps the ruling. For a repository finding, the ruling
+    /// leaves its exact bytes, history and marks unchanged; the publication
+    /// gate reads the custody-bound ruling. A portable record's revocation
     /// reaches the owner's other machines as a custody revoke request this
     /// install carries and enacts, with its revoked transition (WILL L04 row
     /// 04).
     ///
-    /// Only a key found in a record's body, in one of its text fields (FIX
-    /// 2649) or in a file is ruled here; one in a claim or a row outside the
-    /// entity tables keeps its handle. The revoke's owner act records
+    /// A key found in a record's body, in one of its text fields, in a claim
+    /// (FIX 2649, FIX 11882), in a file or by a repository receive is ruled
+    /// here; other rows outside the entity tables keep their handles. A
+    /// repository finding supports only the not-a-secret ruling, not keeping
+    /// a live secret as text. A MACHINE claim whose
+    /// signed history owns its body keeps its handle too: no door re-signs
+    /// a stored claim. The revoke's owner act records
     /// `surface`, where his request reached this install: audit only (FIX
     /// 4650). The install key loads as the revoke door's does: when it is not
     /// available here the ruling still stands, and its revoke's carry waits
@@ -175,6 +182,55 @@ impl Vault {
         surface: crate::authority::ActSurface,
         handle: &str,
     ) -> Result<FoundKeySettled> {
+        self.rule_found_key_text(owner, surface, handle, FoundKeyAction::NotASecret)
+    }
+
+    /// Keeps a found key's span as text by the owner's explicit choice. The
+    /// value stays a secret: this is not a false-hit ruling. The marked
+    /// record's value is restored and screened from later sweeps exactly as
+    /// [`Self::rule_found_key_not_a_secret`] does, while the distinct action,
+    /// revoke cause and Gate reason record the owner's different intent.
+    pub fn keep_found_key_as_text(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
+        handle: &str,
+    ) -> Result<FoundKeySettled> {
+        self.rule_found_key_text(owner, surface, handle, FoundKeyAction::KeptAsText)
+    }
+
+    fn rule_found_key_text(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
+        handle: &str,
+        action: FoundKeyAction,
+    ) -> Result<FoundKeySettled> {
+        let (reason, cause, erased) = match action {
+            FoundKeyAction::NotASecret => (
+                FOUND_KEY_REASON_NOT_A_SECRET,
+                crate::secret_rotation::RevokeCause::RuledNoSecret,
+                concat!(
+                    "this key's value was erased by an earlier revoke, so it can't be marked ",
+                    "not-a-secret; if the value appears again, the scanner's new finding can be ",
+                    "marked not-a-secret"
+                ),
+            ),
+            FoundKeyAction::KeptAsText => (
+                FOUND_KEY_REASON_KEPT_AS_TEXT,
+                crate::secret_rotation::RevokeCause::KeptAsText,
+                concat!(
+                    "this key's value was erased by an earlier revoke, so it can't be kept as ",
+                    "text; if the value appears again, the scanner's new finding can be kept as ",
+                    "text"
+                ),
+            ),
+            _ => {
+                return Err(Error::InvariantViolation(
+                    "a found-key text ruling names neither kept-text action",
+                ));
+            }
+        };
         self.load_signing_for_revoke()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
@@ -182,9 +238,17 @@ impl Vault {
             found.refuse_ruled()?;
             let place = found.key().place.clone();
             let field = place.strip_prefix("text:");
-            if place != "body" && place != "file" && field.is_none() {
+            let repo_false_positive =
+                place == "repo:receive-pack" && action == FoundKeyAction::NotASecret;
+            if place != "body"
+                && place != "file"
+                && place != "claim"
+                && field.is_none()
+                && !repo_false_positive
+            {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "only a key found in a record's body, its text or a file takes its value back",
+                    "only a key found in a record's body, its text, a claim or a file takes \
+                     its value back",
                 )));
             }
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
@@ -195,22 +259,13 @@ impl Vault {
             // is none to put back or to screen. The ruling stays open on the
             // next finding of the same value.
             if rec.status == SecretCustodyStatus::Revoked && value.is_empty() {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "this key's value was erased by an earlier revoke, so it can't be marked \
-                     not-a-secret; if the value appears again, the scanner's new finding can be \
-                     marked not-a-secret",
-                )));
+                return Err(Error::Gate(GateError::InvalidConsentBound(erased)));
             }
-            let revoked = self.revoke_secret_in_txn(
-                txn,
-                &rec.name,
-                crate::secret_rotation::RevokeCause::RuledNoSecret,
-                at,
-            )?;
+            let revoked = self.revoke_secret_in_txn(txn, &rec.name, cause, at)?;
             let decision =
-                append_ruling_in_txn(self, txn, actor, &found, &place, revoked.receipt_id)?;
+                append_ruling_in_txn(self, txn, actor, &found, &place, reason, revoked.receipt_id)?;
             let settled = FoundKeySettled {
-                action: FoundKeyAction::NotASecret,
+                action,
                 by: Some(actor),
                 at,
                 receipt: gate_ref(decision),
@@ -220,9 +275,11 @@ impl Vault {
             found.settle(&self.store, txn, settled.clone())?;
             if place == "file" {
                 drop_file_key_in_txn(self, txn, &found.record, &found.custody)?;
+            } else if place == "claim" {
+                restore_claim_in_txn(self, txn, &found.record, &found.handle, &value)?;
             } else if let Some(field) = field {
                 restore_text_in_txn(self, txn, &found.record, field, &found.handle, &value)?;
-            } else {
+            } else if place == "body" {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
             // The ruling's surface is where the request reached this
@@ -234,8 +291,8 @@ impl Vault {
         Ok(settled)
     }
 
-    /// Re-enters the kept value of a found key the owner ruled no secret,
-    /// the way out of `credential_leaf_unreadable` for it (FIX 7404): while
+    /// Re-enters the kept value of a found key the owner ruled no secret or
+    /// kept as text, the way out of `credential_leaf_unreadable` for it (FIX 7404): while
     /// its custody key does not open the value, every batch write to the
     /// record it was found in answers that, and no other door reaches a
     /// revoked record's value. `value` is sealed again at the record's
@@ -250,7 +307,7 @@ impl Vault {
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`GateError::InvalidConsentBound`] for an empty value, or a key the
-    /// owner has not ruled no secret. `credential_custody_unavailable` when
+    /// owner has not ruled no secret or kept as text. `credential_custody_unavailable` when
     /// custody cannot take the value's key. What the custody write returns.
     pub fn reenter_found_key_value(
         &self,
@@ -272,11 +329,18 @@ impl Vault {
             )?;
             let found = Located::find_in_txn(&self.store, txn, handle)?;
             let settled = match &found.key().settled {
-                Some(settled) if settled.action == FoundKeyAction::NotASecret => settled.clone(),
+                Some(settled)
+                    if matches!(
+                        settled.action,
+                        FoundKeyAction::NotASecret | FoundKeyAction::KeptAsText
+                    ) =>
+                {
+                    settled.clone()
+                }
                 _ => {
                     return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "only a key the owner ruled no secret re-enters its kept value here; \
-                         rotate any other key to re-enter or reissue it",
+                        "only a key the owner ruled no secret or kept as text re-enters its \
+                         kept value here; rotate any other key to re-enter or reissue it",
                     )));
                 }
             };
@@ -293,7 +357,7 @@ impl Vault {
 }
 
 /// Settles the found key `custody` holds, if a mask found it and the owner
-/// has not ruled it no secret: the rotate door's seam.
+/// has not chosen a kept-text outcome: the rotate door's seam.
 pub(crate) fn settle_found_key_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -309,7 +373,7 @@ pub(crate) fn settle_found_key_in_txn(
     let Some(key) = found
         .keys
         .iter_mut()
-        .find(|key| key.custody == *custody && !key.ruled_no_secret())
+        .find(|key| key.custody == *custody && !key.kept_by_owner())
     else {
         return Ok(());
     };
@@ -325,14 +389,36 @@ pub(crate) fn ruled_no_secret_in_txn(
     txn: &RoTxn<'_>,
     custody: &EntityId,
 ) -> Result<bool> {
+    kept_action_in_txn(store, txn, custody, FoundKeyAction::NotASecret)
+}
+
+/// Whether the owner kept this found key as text by choice: its revoke also
+/// leaves the value for the found-key screen.
+pub(crate) fn kept_as_text_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    kept_action_in_txn(store, txn, custody, FoundKeyAction::KeptAsText)
+}
+
+fn kept_action_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+    action: FoundKeyAction,
+) -> Result<bool> {
     let Some(origin) = crate::batch::secret_scan::mask_origin_in_txn(store, txn, custody)? else {
         return Ok(false);
     };
     Ok(FOUND.get(store, txn, &origin.record)?.is_some_and(|found| {
-        found
-            .keys
-            .iter()
-            .any(|key| key.custody == *custody && key.ruled_no_secret())
+        found.keys.iter().any(|key| {
+            key.custody == *custody
+                && key
+                    .settled
+                    .as_ref()
+                    .is_some_and(|settled| settled.action == action)
+        })
     }))
 }
 
@@ -345,7 +431,7 @@ pub(super) fn card_in_txn(
 ) -> Result<FoundKeyCard> {
     let rec = read_secret_custody_admission_in_txn(&vault.store, txn, &key.custody)?;
     let mut actions = Vec::new();
-    if !key.ruled_no_secret() {
+    if !key.kept_by_owner() {
         let status = rec.as_ref().map(|rec| rec.status);
         if status == Some(SecretCustodyStatus::Active) {
             actions.extend([FoundKeyAction::Rotate, FoundKeyAction::Grant]);
@@ -355,15 +441,29 @@ pub(super) fn card_in_txn(
         {
             actions.push(FoundKeyAction::Delete);
         }
-        if (matches!(key.place.as_str(), "body" | "file") || key.place.starts_with("text:"))
+        if (matches!(key.place.as_str(), "body" | "file" | "claim")
+            || key.place.starts_with("text:"))
+            && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
+        {
+            actions.extend([FoundKeyAction::NotASecret, FoundKeyAction::KeptAsText]);
+        } else if key.place == "repo:receive-pack"
             && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
         {
             actions.push(FoundKeyAction::NotASecret);
         }
     }
+    let label = crate::secret_custody::secret_handle_label_in_txn(&vault.store, txn, &key.custody)?
+        .map(|label| label.label);
+    let suggested_label = crate::secret_custody::suggested_secret_handle_label_in_txn(
+        &vault.store,
+        txn,
+        &key.custody,
+    )?;
     Ok(FoundKeyCard {
         handle: key.handle.clone(),
         name: rec.map(|rec| rec.name).unwrap_or_default(),
+        label,
+        suggested_label,
         kind: key.kind().to_owned(),
         place: key.place.clone(),
         found_at: key.found_at,
@@ -414,6 +514,11 @@ impl Located {
                 "the owner ruled this key no secret; its custody record is revoked",
             )));
         }
+        if self.key().kept_as_text() {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "the owner kept this key as text; its custody record is revoked",
+            )));
+        }
         Ok(())
     }
 
@@ -462,6 +567,7 @@ fn append_ruling_in_txn(
     actor: EntityId,
     found: &Located,
     place: &str,
+    reason: &'static str,
     revocation: EntityId,
 ) -> Result<GateDecisionId> {
     let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
@@ -470,7 +576,7 @@ fn append_ruling_in_txn(
         decision_id,
         created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
         outcome: "approved".into(),
-        reason_codes: vec![FOUND_KEY_REASON_NOT_A_SECRET.into()],
+        reason_codes: vec![reason.into()],
         receipt_reasons: Vec::new(),
         system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
             FOUND_KEY_CONTENT_KIND,
@@ -582,12 +688,98 @@ fn restore_text_in_txn(
         return Ok(());
     };
     *text = text.replace(&text_form, as_text(value)?);
-    crate::bm25::deindex_text(&vault.store, txn, record)?;
+    crate::store::text_index::deindex_text(&vault.store, txn, record)?;
     let fields = fields
         .iter()
         .map(|(name, text)| (name.as_str(), text.as_str()))
         .collect::<Vec<_>>();
     vault.batch_in().text(record, &fields).apply(txn)
+}
+
+/// Writes the claim `record` again with `value` back where the mask left
+/// `handle` in its value, evidence or scope, through the sealed
+/// owner-restore transition (FIX 11882): a stored claim body rewrites only
+/// under that proof. The ruling already stands, so the write door reads
+/// the value as no hit. A MACHINE claim whose signed history owns its
+/// body refuses: its proof would fail over the restored body and no door
+/// re-signs a stored claim, so the ruling does not stand for it yet.
+fn restore_claim_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+    handle: &str,
+    value: &[u8],
+) -> Result<()> {
+    if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
+        return Ok(());
+    }
+    let Some(raw) = vault.get_raw_in(txn, record)? else {
+        return Ok(());
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("found key record header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(());
+    }
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(());
+    };
+    let prior = crate::claim::decode_claim_body(body, false)?;
+    if crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)? {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "a key found in a MACHINE claim cannot take its value back yet: the claim's \
+             signed history owns its body, and no door re-signs a stored claim",
+        )));
+    }
+    let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
+    let mut next = prior;
+    let mut changed = false;
+    for part in [
+        Some(&mut next.value),
+        next.evidence.as_mut(),
+        next.scope.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        changed |= unmask_value(part, handle, &text_form, value)?;
+    }
+    if !changed {
+        return Ok(());
+    }
+    let op = crate::batch::BatchOp::Put {
+        id: *record,
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred: TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        learned_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        row_version: None,
+        data: crate::claim::encode_claim_body(&next)?,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    };
+    let transition = crate::batch::VerifiedClaimTransition::after_owner_restore(
+        &vault.store,
+        txn,
+        &op,
+        handle,
+        value,
+    )?;
+    crate::batch::apply_ops_with_gate_mode(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        vec![op],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        crate::batch::ApplyOpsGateMode::new(false, true)
+            .with_verified_claim_transitions(vec![transition]),
+    )
 }
 
 /// `body` with `value` back where the mask left `handle`, read as the mask
@@ -624,61 +816,6 @@ fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u
     }
 }
 
-/// [`unmasked_body`] over one decoded value: whether anything changed.
-fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8]) -> Result<bool> {
-    let restored = match &*tree {
-        Value::String(text) => match text.as_str() {
-            Some(text) => unmasked_text(text, handle, text_form, value)?,
-            None => None,
-        },
-        Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => unmasked_text(text, handle, text_form, value)?,
-            Err(_) => None,
-        },
-        _ => None,
-    };
-    if let Some(restored) = restored {
-        *tree = restored;
-        return Ok(true);
-    }
-    let mut changed = false;
-    match tree {
-        Value::Array(items) => {
-            for item in items {
-                changed |= unmask_value(item, handle, text_form, value)?;
-            }
-        }
-        Value::Map(fields) => {
-            for (key, member) in fields.iter_mut() {
-                changed |= unmask_value(key, handle, text_form, value)?;
-                changed |= unmask_value(member, handle, text_form, value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(changed)
-}
+pub(crate) use crate::file_secret_marks::unmask_value;
 
-/// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field keeps, each span's text form within it
-/// otherwise.
-fn unmasked_text(text: &str, handle: &str, text_form: &str, value: &[u8]) -> Result<Option<Value>> {
-    if text == handle {
-        return Ok(Some(match std::str::from_utf8(value) {
-            Ok(value) => Value::from(value),
-            Err(_) => Value::Binary(value.to_vec()),
-        }));
-    }
-    if text.contains(text_form) {
-        return Ok(Some(Value::from(text.replace(text_form, as_text(value)?))));
-    }
-    Ok(None)
-}
-
-fn as_text(value: &[u8]) -> Result<&str> {
-    std::str::from_utf8(value).map_err(|_| {
-        Error::Gate(GateError::InvalidConsentBound(
-            "the key is not text, so it cannot go back into the record's text",
-        ))
-    })
-}
+use crate::file_secret_marks::as_text;

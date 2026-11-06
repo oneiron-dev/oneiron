@@ -19,6 +19,7 @@ mod keys;
 mod proposals;
 mod queue;
 mod queue_promotion;
+mod queue_root;
 mod storage;
 mod tree_codec;
 mod tree_inventory;
@@ -43,7 +44,7 @@ pub use self::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 pub(crate) use self::queue::{queue_aggregation_session, queue_provenance_id, queue_revision_id};
 pub(crate) use self::queue_promotion::QueuePromotionGap;
 pub(crate) use self::tree_inventory::MODE_GITLINK;
-pub use self::tree_inventory::{CodeTreeBlob, CodeTreeInventory};
+pub use self::tree_inventory::{CodeTreeBlob, CodeTreeInventory, CodeTreeInventoryRuntime};
 // The reviewed import and its untouched-byte promotion (FIX 6869, G4 PR1).
 pub(crate) use self::import_anchor::import_snapshot_custody_in_txn;
 pub use self::import_anchor::{materialize_code_revision_tree, read_code_revision_blobs};

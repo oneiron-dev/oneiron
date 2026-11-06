@@ -6,10 +6,10 @@ use super::ceiling::{
 use super::definition_ceiling::definition_only_ceiling_for_actor;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::{GateOutcome, PolicyCriticality, resolve_policy_manifest};
-use crate::agent_def::AgentCeiling;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::agent_record::AgentCeiling;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
@@ -298,9 +298,10 @@ impl Vault {
             return Err(Error::InvalidClaimBody("foreign principal identity"));
         }
         crate::consent::ActorBound::new(principal)?;
-        let mut scope = crate::federation::Scope::top();
-        scope.verbs =
-            crate::federation::ScopeAxis::Some(["read".to_owned(), "propose".to_owned()].into());
+        let mut scope = oneiron_authority::federation::Scope::top();
+        scope.verbs = oneiron_authority::federation::ScopeAxis::Some(
+            ["read".to_owned(), "propose".to_owned()].into(),
+        );
         let grant = Value::Map(vec![
             (ACTOR_REF_KEY.into(), principal.into()),
             (
@@ -309,7 +310,7 @@ impl Vault {
             ),
             (
                 GRANT_SCOPE_KEY.into(),
-                crate::federation::scope_codec::encode_scope_value(&scope)?,
+                oneiron_authority::federation::scope_codec::encode_scope_value(&scope)?,
             ),
             (GRANT_RECEIPT_REQUIRED_KEY.into(), false.into()),
         ]);
@@ -394,6 +395,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

@@ -34,6 +34,7 @@ mod authority;
 mod dispatch;
 mod inputs;
 mod lifecycle;
+mod mirror_lfs;
 mod mirror_plan;
 mod mirror_plan_dispatch;
 mod mirror_plan_pins;
@@ -78,11 +79,11 @@ use reconcile::remote_of;
 use store::{ORIGIN_PUBLISH_MAX_KEY_BYTES, keyed_request_id};
 
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::origin::smart_http::origin_repo_dir;
+use crate::store::code_snapshot::RepoRef;
 
 /// The branch namespace a request may name.
 const BRANCH_PREFIX: &str = "refs/heads/";

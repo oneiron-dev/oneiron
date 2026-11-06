@@ -48,7 +48,9 @@ pub(crate) fn private_threads_readable_raw_in(
 /// TURN, or a TURN of a thread it opened, meets that thread's audience
 /// (FIX 3122). Both the row base holds now and the one the view composes
 /// are walked, so an overlay row never stands in for a base restriction.
-/// Task bindings, summary covers and the audience itself read base.
+/// Base source obligations are walked independently; only roots absent on
+/// base resolve through the composed view. Summary covers validate through
+/// each walk's content view; task bindings and audience authority read base.
 pub(crate) fn private_threads_readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -58,10 +60,51 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
-    let Some(ThreadWalk { placed, reached }) = thread_walk_in(vault, dbs, txn, id, raw)? else {
+    // A row a mail source's audience binds, or whose words came from one,
+    // reads only to that source's people, the owner's read included
+    // (FIX 12559, owner MAIL-SHARE = A). A vault with no source binds none.
+    if !crate::source_audience::readable_with_read_in(vault, dbs, txn, id, raw, viewers)? {
+        return Ok(false);
+    }
+    if crate::store::ManifestDbs::is_union(dbs) {
+        let base = vault.store.read();
+        let Some(walk) = thread_walk_kept(vault, &base, txn, id, raw)? else {
+            return Ok(false);
+        };
+        if !thread_walk_readable_in(vault, dbs, txn, walk, viewers, current, Some(&base))? {
+            return Ok(false);
+        }
+    }
+    let Some(walk) = thread_walk_kept(vault, dbs, txn, id, raw)? else {
         return Ok(false);
     };
+    thread_walk_readable_in(vault, dbs, txn, walk, viewers, current, None)
+}
+
+fn thread_walk_readable_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    ThreadWalk { placed, reached }: ThreadWalk,
+    viewers: &[EntityId],
+    current: bool,
+    base: Option<&crate::store::StoreRead<'_>>,
+) -> Result<bool> {
+    let read_for_root = |root| -> Result<_> {
+        // A base walk can reach a TURN staged only in a stretch. Existing
+        // roots, including deleted shells, keep their base restriction.
+        if let Some(base) = base
+            && !matches!(
+                crate::vault::live_entity_row_in_txn(base, txn, &root)?,
+                crate::vault::LiveEntityRow::Absent
+            )
+        {
+            return Ok(base);
+        }
+        Ok(dbs)
+    };
     for (root, turn) in placed {
+        let dbs = read_for_root(root)?;
         let readable = if current {
             crate::workspace_roster::thread_root_readable_with_read_in(
                 vault, dbs, txn, root, viewers,
@@ -77,7 +120,11 @@ pub(crate) fn private_threads_readable_with_read_in(
     }
     for root in reached {
         if !crate::workspace_roster::thread_root_readable_with_read_in(
-            vault, dbs, txn, root, viewers,
+            vault,
+            read_for_root(root)?,
+            txn,
+            root,
+            viewers,
         )? {
             return Ok(false);
         }
@@ -103,9 +150,65 @@ pub(crate) fn private_thread_word_turns_in(
 
 /// What one walk of a record's ancestry found: each private thread turn
 /// read for its words, by its root, and each root reached as a place alone.
+#[derive(Clone)]
 struct ThreadWalk {
     placed: BTreeSet<(EntityId, EntityId)>,
     reached: BTreeSet<EntityId>,
+}
+
+thread_local! {
+    /// The walks one recall on this thread has made ([`thread_walk_kept`]).
+    static WALK_MEMO: std::cell::RefCell<WalkMemo> = std::cell::RefCell::new(WalkMemo::default());
+}
+
+/// Walks kept for one recall's committed snapshot ([`crate::ports::recall_memo_key`]),
+/// per record and BLAKE3 of the revision walked. A walk is topology alone,
+/// read from that snapshot through a base view, never a clock; each viewer
+/// is still judged against it afresh.
+#[derive(Default)]
+struct WalkMemo {
+    at: Option<(u64, usize, usize)>,
+    walks: std::collections::HashMap<(EntityId, [u8; 32]), Option<ThreadWalk>>,
+}
+
+/// [`thread_walk_in`], read back when this recall walked the same revision
+/// of `id` in the same committed snapshot (a later stage judging the row
+/// again). An error is never kept.
+fn thread_walk_kept(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<ThreadWalk>> {
+    let Some(key) = crate::ports::recall_memo_key(dbs, txn) else {
+        return thread_walk_in(vault, dbs, txn, id, raw);
+    };
+    let row = (id, *blake3::hash(raw).as_bytes());
+    let kept = WALK_MEMO.with(|memo| {
+        let memo = memo.borrow();
+        (memo.at == Some(key))
+            .then(|| memo.walks.get(&row).cloned())
+            .flatten()
+    });
+    if let Some(walk) = kept {
+        return Ok(walk);
+    }
+    let walk = thread_walk_in(vault, dbs, txn, id, raw)?;
+    // A walk that denies every viewer may come from sources that did not
+    // read: only a found walk is kept (L09 11-04 14:02).
+    if walk.is_none() {
+        return Ok(walk);
+    }
+    WALK_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some(key) {
+            memo.at = Some(key);
+            memo.walks.clear();
+        }
+        memo.walks.insert(row, walk.clone());
+    });
+    Ok(walk)
 }
 
 /// The walk [`private_threads_readable_with_read_in`] judges, through
@@ -225,8 +328,9 @@ fn thread_walk_seen_in(
             let next = counted_edge_ids(dbs, txn, &id, *kind, false)?;
             pending.extend(next.into_iter().map(|id| (id, None, source)));
         }
-        let mut covers = vec![crate::scope_summary::body_covers_in_txn(
+        let mut covers = vec![crate::scope_summary::body_covers_through_in(
             vault,
+            dbs,
             txn,
             &id,
             h.entity_type,
@@ -239,16 +343,27 @@ fn thread_walk_seen_in(
                 pending.push((*subject, None, source));
             }
             covers.extend([
-                crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim),
+                crate::scope_summary::merge_word_sources_through_in(vault, dbs, txn, &claim),
                 conversation_summary_covers(&claim),
                 reaction_covers(&claim),
             ]);
+            if claim.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
+                && matches!(&claim.value, rmpv::Value::String(_))
+            {
+                match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
+                    Ok(crate::scope_summary::WordSources::From(sources)) => {
+                        pending.extend(sources.into_iter().map(|id| (id, None, source)));
+                    }
+                    Ok(crate::scope_summary::WordSources::Unresolved) | Err(_) => return Ok(None),
+                    Ok(crate::scope_summary::WordSources::Own) => {}
+                }
+            }
         }
         // FIX 6409: an epoch summary's words are its `DerivedFrom` sources',
         // each walked as a scope summary's covers are; one whose sources do
         // not resolve names no root here, as a cover does not.
         if h.entity_type == ENTITY_TYPE_SUMMARY {
-            match crate::scope_summary::word_sources_in(vault, txn, &id, &bytes) {
+            match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                 Ok(crate::scope_summary::WordSources::From(sources)) => {
                     pending.extend(sources.into_iter().map(|id| (id, None, source)));
                 }

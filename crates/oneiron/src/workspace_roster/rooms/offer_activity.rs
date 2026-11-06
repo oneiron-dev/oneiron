@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::TURNS;
+use super::offer_history::{OFFER_ROWS, OfferRow, live_offer};
 use super::offer_settle::OfferAnswer;
 use super::offers::{
     OFFER_CURRENT, OFFERS, OfferBallot, OfferCard, OfferState, StoredOffer, current_key,
@@ -31,9 +32,7 @@ use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault, WriteActor};
 
-/// How long a room-wide card with no fixed deadline stays open after its
-/// last engagement: a day (OF-530 ruling A).
-pub(crate) const ROOM_OFFER_IDLE_SECS: u64 = 24 * 60 * 60;
+pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
 
 /// The field a message's metadata, or a DAG record's body, names the
 /// room-wide cards it mentions in: an array of offer ids.
@@ -268,14 +267,19 @@ fn engage_in_txn(
     let room_wide = |stored: &StoredOffer| stored.card.room == room && stored.card.branch.is_none();
     let mut cards = Vec::new();
     for offer_id in named {
-        let stored = OFFERS
-            .get(&vault.store, txn, offer_id)?
+        let stored = live_offer(&vault.store, txn, offer_id)?
             .filter(room_wide)
             .ok_or_else(bad_refs)?;
         cards.push(stored);
     }
     for offer_id in inherited.difference(named) {
-        cards.extend(OFFERS.get(&vault.store, txn, offer_id)?.filter(room_wide));
+        // An inherited ref to a card that turned history engages nothing: a
+        // history card is settled, never open (FIX 4869).
+        if let Some(OfferRow::Live(stored)) = OFFER_ROWS.get(&vault.store, txn, offer_id)?
+            && room_wide(&stored)
+        {
+            cards.push(stored);
+        }
     }
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     for mut stored in cards {
@@ -407,8 +411,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let room = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            OFFERS
-                .get(&vault.store, &txn, &request.offer_id)?
+            live_offer(&vault.store, &txn, &request.offer_id)?
                 .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?
                 .card
                 .room
@@ -418,8 +421,7 @@ impl Memory<'_> {
         let card = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
-            let mut stored = OFFERS
-                .get(&vault.store, txn, &request.offer_id)?
+            let mut stored = live_offer(&vault.store, txn, &request.offer_id)?
                 .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?;
             if stored.card.branch.is_some() {
                 return Err(MemoryError::bad_request(

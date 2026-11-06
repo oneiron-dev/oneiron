@@ -20,9 +20,9 @@ use std::cell::Cell;
 
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::OwnerAuthoredWrite;
+use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::error::{Error, GateDenialOutcome, GateError, Result};
 use crate::gate::GateReasonCode;
-use crate::run_tree::GateConsentBundleAction;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 

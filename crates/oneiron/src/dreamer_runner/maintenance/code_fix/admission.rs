@@ -15,15 +15,25 @@
 //! engine pair of it is kept not run, and an instruction's replay rebuilds
 //! the call from the failure's own text, as when no copy was kept. A capture
 //! whose rows are unknown has no position to prove, and is not replayed.
+//!
+//! Engine pairs additionally require the step-bound proof (FIX 7027): with
+//! the pair's captured step, one Grant must also admit every Scope that
+//! step was served; instruction replay passes no capsule and keeps this gate
+//! alone.
 
 use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, EnginePairState};
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::shadow_runner::ShadowSourceAdmission;
+use crate::code_run::{captured_step_read_scopes_in_txn, step_replay_capsules_in_txn};
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
+use crate::dreamer_runner::step_replay::CapsuleHost;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
     CodeFixSource, CodeFixVerdict, CodeFixWithheld, ReplayFidelity, code_fix_subject_in,
 };
-use crate::federation::ScopeId;
+use crate::federation::{Scope, ScopeId};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -104,7 +114,7 @@ impl CoachReplayAdmission {
     ) -> Result<std::result::Result<Self, EngineAdmission>> {
         let txn = vault.store.env.read_txn()?;
         Ok(
-            admitting_grant_in(vault, &txn, coach, &refs, None)?.map(|grant| Self {
+            admitting_grant_in(vault, &txn, coach, &refs, None, None)?.map(|grant| Self {
                 coach,
                 grant,
                 source: source.clone(),
@@ -134,7 +144,71 @@ impl CoachReplayAdmission {
             return Ok(Err(EngineAdmission::Lapsed));
         }
         Ok(
-            match admitting_grant_in(vault, &txn, self.coach, &self.refs, Some(self.grant))? {
+            match admitting_grant_in(vault, &txn, self.coach, &self.refs, Some(self.grant), None)? {
+                Ok(_) => Ok(()),
+                Err(EngineAdmission::PactStandingLapsed) => {
+                    Err(EngineAdmission::PactStandingLapsed)
+                }
+                Err(_) => Err(EngineAdmission::Lapsed),
+            },
+        )
+    }
+
+    /// The first Grant in id order that admits the capture and every Scope
+    /// `capsule`'s step was served, as [`admitting_grant_in`] judges them
+    /// (FIX 7027): the Grant an engine pair of that step runs under, before
+    /// any engine source, body or arm read or send. Selection time: a
+    /// producer `None` is [`EngineAdmission::ScopeUnproved`], no Grant
+    /// covering the step is [`EngineAdmission::NoGrant`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn take_engine_pair(
+        &self,
+        vault: &Vault,
+        capsule: &StepReplayCapsule,
+    ) -> Result<std::result::Result<Self, EngineAdmission>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(
+            admitting_grant_in(vault, &txn, self.coach, &self.refs, None, Some(capsule))?.map(
+                |grant| Self {
+                    coach: self.coach,
+                    grant,
+                    source: self.source.clone(),
+                    refs: self.refs.clone(),
+                },
+            ),
+        )
+    }
+
+    /// Whether the pair's Grant still admits the capture alone, and still
+    /// admits every Scope `capsule`'s step was served (FIX 7027): the
+    /// recheck before every engine source, body or arm read or send, and
+    /// before the write that keeps the pair. Any lapse but pact is
+    /// [`EngineAdmission::Lapsed`]; pact keeps its own reason (FIX 7548).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn still_admits_capsule(
+        &self,
+        vault: &Vault,
+        capsule: &StepReplayCapsule,
+    ) -> Result<std::result::Result<(), EngineAdmission>> {
+        let txn = vault.store.env.read_txn()?;
+        if capture_refs_in(vault, &txn, &self.source)?.as_ref() != Some(&self.refs) {
+            return Ok(Err(EngineAdmission::Lapsed));
+        }
+        Ok(
+            match admitting_grant_in(
+                vault,
+                &txn,
+                self.coach,
+                &self.refs,
+                Some(self.grant),
+                Some(capsule),
+            )? {
                 Ok(_) => Ok(()),
                 Err(EngineAdmission::PactStandingLapsed) => {
                     Err(EngineAdmission::PactStandingLapsed)
@@ -151,16 +225,73 @@ impl ShadowSourceAdmission for CoachReplayAdmission {
     }
 }
 
+/// One engine pair's recheck gate (FIX 7027): the pair's [`StepReplayCapsule`]
+/// held with the admission that runs under it, so every engine source, body
+/// or arm read rechecks the same captured-step proof the pair was selected
+/// with, never another.
+pub(crate) struct EngineStepGate<'a> {
+    admission: &'a CoachReplayAdmission,
+    capsule: &'a StepReplayCapsule,
+}
+
+impl<'a> EngineStepGate<'a> {
+    /// The gate for a pair running under `admission` from `capsule`.
+    pub(crate) fn of(admission: &'a CoachReplayAdmission, capsule: &'a StepReplayCapsule) -> Self {
+        Self { admission, capsule }
+    }
+
+    /// Whether the pair may keep reading: [`CoachReplayAdmission::still_admits_capsule`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn check(&self, vault: &Vault) -> Result<std::result::Result<(), EngineAdmission>> {
+        self.admission.still_admits_capsule(vault, self.capsule)
+    }
+}
+
+impl ShadowSourceAdmission for EngineStepGate<'_> {
+    fn admits_now(&self, vault: &Vault) -> Result<bool> {
+        Ok(self.check(vault)?.is_ok())
+    }
+}
+
+/// The capsule waiting engine pair `engine` kept its step from, read again
+/// in `txn` under that step's identity, never chosen again: its kept step's
+/// identity and host, and its kept request digest where one is stored (FIX
+/// 7027). `None` with no kept step, or once it no longer reads.
+fn waiting_run_capsule_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    engine: &EngineCandidateRun,
+) -> Result<Option<StepReplayCapsule>> {
+    let Some(step) = engine.step else {
+        return Ok(None);
+    };
+    Ok(step_replay_capsules_in_txn(vault, txn, step.attempt)?
+        .into_iter()
+        .find(|capsule| {
+            capsule.host == CapsuleHost::EngineStep
+                && ShadowStepIdentity::of(capsule) == step
+                && engine
+                    .request_digest
+                    .is_none_or(|digest| ShadowRequestDigest::of_capsule(capsule) == Some(digest))
+        }))
+}
+
 /// The first Grant in id order, or `only` alone when it names one, that
 /// admits the capture at `refs` for `coach` in `txn`; or why none does. The
 /// Coach's scoped read must read every row of the capture, and one Grant
-/// must hold every world of the run and every row's record position.
+/// must hold every world of the run and every row's record position. With
+/// `capsule`, that same Grant must also admit every Scope the captured step
+/// was served (FIX 7027); `None` keeps the instruction-replay gate alone.
 fn admitting_grant_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     coach: EntityId,
     refs: &CaptureRefs,
     only: Option<EntityId>,
+    capsule: Option<&StepReplayCapsule>,
 ) -> Result<std::result::Result<EntityId, EngineAdmission>> {
     let Some(rows) = refs.rows.as_deref() else {
         return Ok(Err(EngineAdmission::ScopeUnproved));
@@ -173,6 +304,14 @@ fn admitting_grant_in(
         };
         raws.push((*id, raw));
     }
+    // An unproved captured step admits no Grant, whatever the rows prove.
+    let scopes = match capsule {
+        None => None,
+        Some(capsule) => match captured_step_read_scopes_in_txn(vault, txn, capsule)? {
+            None => return Ok(Err(EngineAdmission::ScopeUnproved)),
+            scopes => scopes,
+        },
+    };
     let key = ScopedReadActorKey::with_actor_class(coach.to_hex(), "system")
         .ok_or_else(|| Error::InvalidConfig("invalid Coach read key".into()))?
         .require_relationship_grants(Some(coach));
@@ -204,6 +343,13 @@ fn admitting_grant_in(
                 continue 'grants;
             }
         }
+        if let Some(scopes) = scopes.as_deref() {
+            for scope in scopes {
+                if !grant.authority_scope.admits("read", scope, &Scope::top()) {
+                    continue 'grants;
+                }
+            }
+        }
         if standing.pact_standing_lapsed_in_txn(vault, txn) {
             lapsed = true;
             continue;
@@ -220,7 +366,10 @@ fn admitting_grant_in(
 /// Whether the Coach's Grant now admits a pair of `settled`, the failure
 /// `source`'s runs, that was kept not run for want of one (FIX 7031): the
 /// same admission as the pair's own, read in `txn` only when such a pair is
-/// there; `false` otherwise.
+/// there; `false` otherwise. Each waiting pair is held to the captured-step
+/// scopes of the capsule it kept its step from (FIX 7027); with no kept
+/// step, or its capsule no longer reading, the outer gate alone wakes it
+/// and the retry enforces the proof.
 pub(super) fn read_granted_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -228,25 +377,34 @@ pub(super) fn read_granted_in_txn(
     source: &CodeFixSource,
     coach: EntityId,
 ) -> Result<bool> {
-    let waits = settled.candidates.iter().any(|run| {
-        run.engine
-            .as_ref()
-            .is_some_and(EngineCandidateRun::waits_on_grant)
-    });
-    if !waits {
+    let waiting: Vec<&EngineCandidateRun> = settled
+        .candidates
+        .iter()
+        .filter_map(|run| run.engine.as_ref())
+        .filter(|engine| engine.waits_on_grant())
+        .collect();
+    if waiting.is_empty() {
         return Ok(false);
     }
     let Some(refs) = capture_refs_in(vault, txn, source)? else {
         return Ok(false);
     };
-    Ok(admitting_grant_in(vault, txn, coach, &refs, None)?.is_ok())
+    for engine in waiting {
+        let capsule = waiting_run_capsule_in(vault, txn, engine)?;
+        if admitting_grant_in(vault, txn, coach, &refs, None, capsule.as_ref())?.is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `run`, the failure `source`'s, as the write `txn` that keeps it may keep
 /// it (FIX 8704): a judged engine pair, or an instruction's replay of the
 /// kept request, while the Grant it read under still admits the capture
-/// alone (FIX 9448). Otherwise its verdict is dropped unsent, and a pair is
-/// kept not run: its Grant lapsed. Any other run is kept as it is.
+/// alone (FIX 9448). A judged pair is additionally held to the captured-step
+/// scopes of the capsule it ran from (FIX 7027). Otherwise its verdict is
+/// dropped unsent, and a pair is kept not run: its Grant lapsed. Any other
+/// run is kept as it is.
 ///
 /// # Errors
 ///
@@ -256,7 +414,7 @@ pub(super) fn settle_in_txn(
     txn: &heed::RoTxn<'_>,
     source: &CodeFixSource,
     coach: EntityId,
-    (mut run, sealed): SealedRun,
+    (mut run, sealed, capsule): SealedRun,
 ) -> Result<SealedRun> {
     let (only, instruction) = match &run.engine {
         Some(engine) if matches!(engine.state, EnginePairState::Judged) => (engine.grant, false),
@@ -267,17 +425,29 @@ pub(super) fn settle_in_txn(
         {
             (run.grant, true)
         }
-        _ => return Ok((run, sealed)),
+        _ => return Ok((run, sealed, capsule)),
     };
     let admits = match capture_refs_in(vault, txn, source)? {
         // An instruction's replay that names no Grant read under none this
         // recheck can hold it to.
         Some(_) if instruction && only.is_none() => Err(EngineAdmission::Lapsed),
-        Some(refs) => admitting_grant_in(vault, txn, coach, &refs, only)?,
+        Some(refs) => {
+            if instruction {
+                admitting_grant_in(vault, txn, coach, &refs, only, None)?
+            } else {
+                // Without the capsule the pair ran from, its keep lapses.
+                match capsule.as_ref() {
+                    None => Err(EngineAdmission::Lapsed),
+                    Some(capsule) => {
+                        admitting_grant_in(vault, txn, coach, &refs, only, Some(capsule))?
+                    }
+                }
+            }
+        }
         None => Err(EngineAdmission::Lapsed),
     };
     let reason = match admits {
-        Ok(_) => return Ok((run, sealed)),
+        Ok(_) => return Ok((run, sealed, capsule)),
         Err(EngineAdmission::PactStandingLapsed) => EngineAdmission::PactStandingLapsed,
         Err(_) => EngineAdmission::Lapsed,
     };
@@ -292,5 +462,5 @@ pub(super) fn settle_in_txn(
             reason: EngineNotRun::Admission(reason),
         };
     }
-    Ok((run, None))
+    Ok((run, None, capsule))
 }

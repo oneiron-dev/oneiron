@@ -7,45 +7,20 @@ use super::codec::{
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::communication::{
+    COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL, COMM_OPT_OUT_REASON_STOP,
+    COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+};
 use rmpv::Value;
 
 /// Current CounterpartyContactRecord body schema version.
 pub const COUNTERPARTY_CONTACT_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned on-disk MessagePack key set for CounterpartyContactRecord bodies.
-pub const COUNTERPARTY_CONTACT_BODY_KEYS: [&str; 11] = [
-    "schema_version",
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "created_at",
-    "updated_at",
-    "revoked_at",
-    "opt_out",
-    "promo_consent",
-    "notes",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_MINIMAL: &[&str] = &[
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "opt_out",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_STANDARD: &[&str] = &[
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "updated_at",
-    "opt_out",
-    "promo_consent",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_FULL: &[&str] = &COUNTERPARTY_CONTACT_BODY_KEYS;
+pub use crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_BODY_KEYS;
+pub(crate) use crate::write_envelope::counterparty_fields::{
+    COUNTERPARTY_CONTACT_FIELDS_FULL, COUNTERPARTY_CONTACT_FIELDS_MINIMAL,
+    COUNTERPARTY_CONTACT_FIELDS_STANDARD,
+};
 
 pub(super) const KEY_SCHEMA_VERSION: &str = COUNTERPARTY_CONTACT_BODY_KEYS[0];
 
@@ -76,10 +51,6 @@ pub(super) const KEY_OPT_OUT_REASON: &str = OPT_OUT_KEYS[0];
 pub(super) const KEY_OPT_OUT_RECORDED_AT: &str = OPT_OUT_KEYS[1];
 
 pub(super) const KEY_OPT_OUT_RECEIPT_REASON: &str = OPT_OUT_KEYS[2];
-
-pub(super) const MAX_COUNTERPARTY_BYTES: usize = 512;
-
-pub(super) const MAX_NOTES: usize = 32;
 
 pub(super) const MAX_NOTE_BYTES: usize = 2_048;
 
@@ -209,9 +180,9 @@ impl CounterpartyOptOutReason {
     #[must_use]
     pub const fn receipt_reason(self) -> &'static str {
         match self {
-            Self::Stop => "counterparty_opt_out_stop",
-            Self::Unsubscribe => "counterparty_opt_out_unsubscribe",
-            Self::BlockOrFriendRemoval => "counterparty_opt_out_block_or_friend_removal",
+            Self::Stop => COMM_OPT_OUT_REASON_STOP,
+            Self::Unsubscribe => COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+            Self::BlockOrFriendRemoval => COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
         }
     }
 
@@ -233,9 +204,9 @@ impl CounterpartyOptOutReason {
     #[must_use]
     pub(crate) fn from_receipt_reason(token: &str) -> Option<Self> {
         match token {
-            "counterparty_opt_out_stop" => Some(Self::Stop),
-            "counterparty_opt_out_unsubscribe" => Some(Self::Unsubscribe),
-            "counterparty_opt_out_block_or_friend_removal" => Some(Self::BlockOrFriendRemoval),
+            COMM_OPT_OUT_REASON_STOP => Some(Self::Stop),
+            COMM_OPT_OUT_REASON_UNSUBSCRIBE => Some(Self::Unsubscribe),
+            COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL => Some(Self::BlockOrFriendRemoval),
             _ => None,
         }
     }

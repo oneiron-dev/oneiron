@@ -14,6 +14,9 @@
 
 use std::collections::BTreeSet;
 
+mod unbound;
+pub use unbound::UnboundMediaSample;
+
 use super::space::{
     EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
     has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
@@ -43,87 +46,9 @@ const TEXT_DOCUMENT_TYPES: [u8; 4] = [
     ENTITY_TYPE_ASSET,
 ];
 
-/// One stored media item handed to a media embedder.
-#[derive(Debug, Clone, Copy)]
-pub struct MediaEmbeddingInput<'a> {
-    pub entity_id: EntityId,
-    pub kind: InputKind,
-    pub media_type: &'a str,
-    pub bytes: &'a [u8],
-    /// The rows `bytes` are read from (FIX 7001): an ASSET's own row, or a
-    /// text document's record and the messages a TURN's text joins. `None`
-    /// when they are not known whole.
-    pub source_rows: Option<&'a [EntityId]>,
-}
-
-/// One document's answer from a media model: its vector with the device and runtime that
-/// computed it, stored beside the vector outside the space identity (FIX 7796), or why the
-/// model refused that document by its content.
-pub type MediaOutcome = std::result::Result<(Vec<f32>, EmbeddingProvenance), String>;
-
-/// A host model that embeds image and audio documents, and on the one-space preset text
-/// documents, into one declared space.
-pub trait MediaEmbedder: Send + Sync {
-    /// The declared space this model's vectors belong to.
-    fn space_id(&self) -> &str;
-    /// The vector width the model emits; it must equal the space's.
-    fn dimensions(&self) -> usize;
-    /// Where the model runs. Media bytes leave for a third party from this door only as the
-    /// host's egress gate admits each document ([`Vault::reconcile_media_embeddings_admitted`]).
-    fn locality(&self) -> EmbedderLocality;
-    /// One vector per input, in input order.
-    fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<Vec<f32>>>;
-    /// One outcome per input, in input order: its vector with the device and runtime its
-    /// answer names, or why the model refused that document by its content (a format it
-    /// cannot read, a content filter), so the backfill skips it until its bytes change. An
-    /// error refuses the whole call. The default refuses no single document and marks each
-    /// vector unknown; a model whose answers name their device overrides it.
-    fn embed_each(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<MediaOutcome>> {
-        Ok(self
-            .embed_media(inputs)?
-            .into_iter()
-            .map(|vector| Ok((vector, EmbeddingProvenance::unknown())))
-            .collect())
-    }
-
-    /// [`Self::embed_each`] for a model at a third party: `release` judges the documents of
-    /// each request right before that request leaves, and a refusal sends nothing more and
-    /// fails the call. One that sends a single request needs no more than this default; one
-    /// that sends a request per document asks for each.
-    fn embed_each_released(
-        &self,
-        inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
-    ) -> Result<Vec<MediaOutcome>> {
-        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
-        release(&rows)?;
-        self.embed_each(inputs)
-    }
-}
-
-/// What one media backfill pass did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MediaEmbedReport {
-    /// ASSETs and text documents read.
-    pub scanned: usize,
-    /// Vectors stored this pass.
-    pub embedded: usize,
-    /// Items that already had a vector in the space, a text document one of its current text.
-    pub already_embedded: usize,
-    /// ASSETs whose media kind is not bound to the embedder's space.
-    pub unbound: usize,
-    /// ASSETs holding no inline image or audio bytes, and text documents holding no text to
-    /// embed.
-    pub no_media: usize,
-    /// Items deleted, or text documents whose text moved, before their vector landed.
-    pub vanished: usize,
-    /// Documents the space's model refused by their content, this pass or before at the same
-    /// bytes; the backfill skips them until their bytes change.
-    pub refused: usize,
-    /// Documents a third-party model was not sent: the host's egress gate gave no `Allow`, or
-    /// a device-local world keeps them (FIX 382). They stay unsent, for a later pass.
-    pub withheld: usize,
-}
+pub use crate::store::embedding::{
+    MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome,
+};
 
 /// One stored document a scan read: an ASSET's media, or a record's text.
 pub(super) struct PendingMedia {
@@ -160,19 +85,16 @@ pub(super) struct MediaEgressGate<'a> {
 }
 
 impl<'a> MediaEgressGate<'a> {
-    /// The gate for a scan in `txn`.
+    /// The gate for a scan in `txn`, of documents read toward `destination`.
     pub(super) fn read(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         egress: &'a dyn EgressPredicate,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Self> {
         Ok(Self {
             egress,
-            flagged: crate::settings::device_local_worlds_at(
-                vault,
-                txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?,
+            flagged: crate::settings::device_local_worlds_for(vault, txn, destination)?,
         })
     }
 
@@ -184,11 +106,14 @@ impl<'a> MediaEgressGate<'a> {
         txn: &heed::RoTxn<'_>,
         document: &PendingMedia,
     ) -> Result<bool> {
-        if self.egress.decide_media(&document.input()) != EgressDecision::Allow {
+        let input = document.input();
+        if self.egress.decide_media(&input) != EgressDecision::Allow {
             return Ok(false);
         }
-        Ok(self.flagged.is_empty()
-            || !crate::settings::device_local_keeps_among(store, txn, &self.flagged, &document.id)?)
+        Ok(
+            self.flagged.is_empty()
+                || !any_kept_in(store, txn, &self.flagged, input.source_rows())?,
+        )
     }
 }
 
@@ -222,8 +147,8 @@ impl Vault {
     /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
     /// asked again right before its bytes leave ([`MediaEmbedder::embed_each_released`]); the
     /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on the
-    /// owner's server reads through `egress` when the host gives one (FIX 9830), and one on
-    /// this device reads as it does without a gate.
+    /// owner's server with a gate reads through `egress` (FIX 9830), at scan and again at
+    /// send; with none, and one on this device, reads as it does without a gate.
     ///
     /// # Errors
     ///
@@ -236,9 +161,11 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<MediaEmbedReport> {
         let egress = media_egress_for(embedder, egress)?;
+        let destination = embedder.endpoint();
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, space_id)? else {
                 return Err(Error::InvalidConfig(format!(
@@ -258,7 +185,7 @@ impl Vault {
                 )));
             }
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
                 .transpose()?;
             let pending = self.media_backlog_where_in_txn(
                 &rtxn,
@@ -274,7 +201,7 @@ impl Vault {
             return Ok(report);
         }
 
-        let outcomes = self.embed_documents(embedder, &pending, None)?;
+        let outcomes = self.embed_documents(embedder, &pending, None, egress, &destination)?;
         // A model that has embedded nothing here may be refusing them all for a reason of its
         // own; no document is blamed for that.
         if report.already_embedded == 0
@@ -404,21 +331,34 @@ impl Vault {
     }
 
     /// Each pending document's outcome from `embedder`, in order, read outside any
-    /// transaction. A model at a third party is sent each request only once the vault
-    /// releases its documents, as `session`'s room reads them or base with none: none is one
-    /// a device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
+    /// transaction. A model at a third party, or on the owner's server with a gate, is sent
+    /// each request only once the vault releases its documents: the gate allows each one
+    /// again and, as `session`'s room reads them or base with none, none is one a
+    /// device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
     /// Each vector keeps the mark of the answer that carried it (FIX 7796).
     pub(super) fn embed_documents(
         &self,
         embedder: &dyn MediaEmbedder,
         pending: &[PendingMedia],
         session: Option<&OffRecordSession<'_>>,
+        egress: Option<&dyn EgressPredicate>,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Vec<MediaOutcome>> {
         let inputs: Vec<MediaEmbeddingInput<'_>> =
             pending.iter().map(PendingMedia::input).collect();
-        let outcomes = if embedder.locality() == EmbedderLocality::ThirdParty {
+        let outcomes = if let Some(egress) = egress {
             embedder.embed_each_released(&inputs, &|rows| {
-                if self.media_rows_may_leave(session, rows)? {
+                for input in &inputs {
+                    if rows.contains(&input.entity_id)
+                        && egress.decide_media(input) != EgressDecision::Allow
+                    {
+                        return Err(Error::UpstreamToolFailure {
+                            tool: "media-embedder-remote",
+                            code: "media_egress".to_owned(),
+                        });
+                    }
+                }
+                if self.media_rows_may_leave(session, rows, destination)? {
                     Ok(())
                 } else {
                     Err(Error::UpstreamToolFailure {
@@ -475,7 +415,7 @@ impl Vault {
         if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
-        self.media_rows_may_leave(None, &[input.entity_id])
+        self.media_rows_may_leave(None, input.source_rows(), &embedder.endpoint())
     }
 
     /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,
@@ -486,15 +426,12 @@ impl Vault {
         &self,
         session: Option<&OffRecordSession<'_>>,
         rows: &[EntityId],
+        destination: &crate::settings::ReadDestination,
     ) -> Result<bool> {
         #[cfg(feature = "sync")]
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(
-            self,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?;
+        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, destination)?;
         if flagged.is_empty() {
             return Ok(true);
         }
@@ -594,6 +531,7 @@ pub(super) fn media_held_in(
 /// of `kinds`. `report` counts an ASSET holding no inline image or audio, and one of another
 /// kind; a gone one is `None` uncounted.
 pub(super) fn asset_document_in(
+    vault: &Vault,
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -606,9 +544,11 @@ pub(super) fn asset_document_in(
     let learned_at = row.learned_at;
     let raw = row.encode();
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    let filed = super::repo_projection::repo_file_body_in(vault, store, txn, &id, body)?;
+    let body = filed.as_deref().unwrap_or(body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
     let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
-        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+        super::repo_projection::repo_blob_body_in(vault, store, txn, blob)
     })?
     else {
         report.no_media += 1;
@@ -692,6 +632,23 @@ pub(super) fn text_document_in_txn(
     text_document_in(vault, &vault.store, txn, id)
 }
 
+/// The actual current text input and every native row it reads.
+#[cfg(feature = "sync")]
+pub(crate) fn text_vector_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<([u8; 32], Vec<EntityId>)>> {
+    Ok(
+        text_row_in(vault, &vault.store, txn, id)?.map(|(text, _, mut rows)| {
+            rows.push(*id);
+            rows.sort_unstable();
+            rows.dedup();
+            (text_hash(&text), rows)
+        }),
+    )
+}
+
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
 /// turns compose with base.
 pub(super) fn text_document_in(
@@ -751,4 +708,24 @@ pub(super) fn asset_text(
     Ok(String::from_utf8(bytes)
         .ok()
         .filter(|text| text.chars().any(|c| !c.is_whitespace() && !c.is_control())))
+}
+
+impl Vault {
+    /// Reuses one batch of the opened device's home's current text media vectors.
+    /// Missing home rows leave the existing local backfill unchanged.
+    pub async fn reuse_home_text_media_vectors(
+        &self,
+        space_id: &str,
+        max_items: usize,
+    ) -> Result<usize> {
+        #[cfg(feature = "sync")]
+        {
+            super::space::reuse_home_text_media_vectors(self, space_id, max_items).await
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            let _ = (space_id, max_items);
+            Ok(0)
+        }
+    }
 }

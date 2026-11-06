@@ -1,5 +1,7 @@
 //! Node-local frozen fan-out plans and transaction-owned surface sink.
 
+use super::fanout_launch::{FanoutRecipientScrub, scrub_pathology_for, scrub_statement_for};
+use super::task_actor::names_no_actor;
 use super::{
     ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutReceipt,
     ConsultFanOutScope, ConsultFanOutSpec, ConsultPayloadRef,
@@ -8,12 +10,14 @@ use crate::Vault;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::decision::DecisionReceipt;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
-    FanoutWidthCheck, FanoutWidthClass,
+    FanoutWidthCheck, FanoutWidthClass, fanout_estimate, fanout_plan_digest,
 };
-use crate::receipt::ReceiptRecord;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::receipt::{ERASED_CALL_IDENTITY, ReceiptRecord};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use serde::{Deserialize, Serialize};
@@ -135,6 +139,16 @@ pub(super) struct StoredFanout {
     /// as empty.
     #[serde(default)]
     pub(super) shipped_policy_rows: Vec<String>,
+    /// Truthful erasure-scrub marker (FIX 4699): what recipient erasures
+    /// scrubbed from this run; `None` when never scrubbed. Old rows read
+    /// as none.
+    #[serde(default)]
+    pub(super) recipient_scrub: Option<FanoutRecipientScrub>,
+    /// The AUTO ladder's receipt on the ask that admitted this run, when the
+    /// ladder decided it (FIX 333). Runs stored before this field read as
+    /// none.
+    #[serde(default)]
+    pub(super) decision_receipt: Option<DecisionReceipt>,
 }
 
 impl StoredFanout {
@@ -181,12 +195,174 @@ impl StoredFanout {
     }
 }
 
+impl StoredFanout {
+    /// Scrubs `actor` as a recipient (FIX 4699): frozen assignees, plan
+    /// edges into one `"erased"` bucket, rebuilt estimate, statement,
+    /// pause/check rows and the marker. Consult runs record only the erased
+    /// bucket (no wave/ask payload). `true` when the row named the recipient
+    /// and was rewritten; held runs stay under the new digest,
+    /// dispatched+unanswered checks retire.
+    pub(super) fn scrub_recipient_in(&mut self, actor: &EntityId, now: u64) -> Result<bool> {
+        let hex = actor.to_hex();
+        let before = self.input.assignees.len();
+        self.input.assignees.retain(|assignee| assignee != &hex);
+        if self.input.assignees.len() == before {
+            return Ok(false);
+        }
+        let mut newly_erased: u32 = 0;
+        for edge in &self.plan.edges {
+            if edge.to_peer_ref == hex {
+                newly_erased = newly_erased.saturating_add(edge.count);
+            }
+        }
+        let prior = self.recipient_scrub.clone();
+        let total_erased = prior.as_ref().map_or(newly_erased, |marker| {
+            marker.erased_peer_count.saturating_add(newly_erased)
+        });
+        let old_digest = self.estimate.plan_digest;
+        let correlation = EntityId::from_hex(&self.correlation)?;
+        let scrubbed = scrubbed_run_plan_for(&self.input, correlation, &self.plan, total_erased)?;
+        let estimate = fanout_estimate(&scrubbed)?;
+        self.plan = scrubbed;
+        self.estimate = estimate.clone();
+        scrub_statement_for(&mut self.statement, actor);
+        if let Some(row) = self.pause.as_mut() {
+            row.plan_digest = estimate.plan_digest;
+            row.estimate = estimate.clone();
+            row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
+        }
+        if let Some(row) = self.check_row.as_mut() {
+            row.plan_digest = estimate.plan_digest;
+            row.estimate = estimate.clone();
+            row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
+        }
+        let retired = prior
+            .as_ref()
+            .and_then(|marker| marker.retired_check_row.clone())
+            .or_else(|| {
+                (self.dispatched_at.is_some()
+                    && self.check_row.is_some()
+                    && self.choice_receipt_ref.is_none())
+                .then(|| self.check_row.as_ref().map(|row| row.row_ref.clone()))
+                .flatten()
+            });
+        self.recipient_scrub = Some(FanoutRecipientScrub {
+            scrubbed_at: now,
+            prior_digest: prior
+                .as_ref()
+                .map_or(old_digest, |marker| marker.prior_digest),
+            wave_assignees: prior.as_ref().map_or(0, |marker| marker.wave_assignees),
+            ask_holders: prior.as_ref().map_or(0, |marker| marker.ask_holders),
+            ask_recipients: prior.as_ref().map_or(0, |marker| marker.ask_recipients),
+            erased_peer_count: total_erased,
+            retired_check_row: retired,
+        });
+        Ok(true)
+    }
+}
+
+/// Rebuilds the scrubbed run plan from the scrubbed input plus the total
+/// `"erased"` bucket count (FIX 4699): the single implementation the scrub
+/// transaction and the resume re-proof share. `stored` supplies the actor,
+/// brief and mode the scrub never touches; the input supplies the ref hash
+/// and the fresh edges, with `total_erased` added as one `"erased"` edge
+/// restoring the judged total.
+fn scrubbed_run_plan_for(
+    input: &FrozenInput,
+    correlation: EntityId,
+    stored: &FanoutPlan,
+    total_erased: u32,
+) -> Result<FanoutPlan> {
+    // Dummy actor: overwritten with `stored` below; the request hash and the
+    // fresh edges never depend on it.
+    let frozen_policy = ConsultFanOutPolicy {
+        mode: stored.mode,
+        ..ConsultFanOutPolicy::default()
+    };
+    let mut plan = input.plan(correlation, correlation, &frozen_policy)?;
+    plan.actor_ref = stored.actor_ref.clone();
+    plan.brief_ref = stored.brief_ref.clone();
+    // Fresh `from` is the dummy; the run's actor never moves.
+    for edge in &mut plan.edges {
+        edge.from_peer_ref = stored.actor_ref.clone();
+    }
+    if total_erased == 0 {
+        return Ok(plan);
+    }
+    plan.edges.push(FanoutPlanEdge {
+        from_peer_ref: stored.actor_ref.clone(),
+        to_peer_ref: ERASED_CALL_IDENTITY.to_owned(),
+        count: total_erased,
+    });
+    Ok(plan)
+}
+
+/// Re-proves a scrubbed run against its scrubbed state (FIX 4699): the scrub
+/// transaction's rebuild, compared to the stored row. Returns the stored
+/// scrubbed plan for the existing resume doors.
+pub(super) fn verify_scrubbed_run(run: &StoredFanout) -> Result<FanoutPlan> {
+    let marker = run
+        .recipient_scrub
+        .as_ref()
+        .ok_or(Error::CorruptedIndex("fan-out scrub marker missing"))?;
+    let correlation = EntityId::from_hex(&run.correlation)?;
+    let rebuild =
+        scrubbed_run_plan_for(&run.input, correlation, &run.plan, marker.erased_peer_count)?;
+    if rebuild != run.plan {
+        return Err(Error::CorruptedIndex("fan-out scrubbed plan mismatch"));
+    }
+    if fanout_plan_digest(&rebuild)? != run.estimate.plan_digest {
+        return Err(Error::CorruptedIndex("fan-out scrubbed digest mismatch"));
+    }
+    let request_hash = blake3::hash(&encode(&run.input)?).to_hex().to_string();
+    let expected_ref = format!("{}:{request_hash}", run.correlation);
+    if run.plan.plan_ref != expected_ref {
+        return Err(Error::CorruptedIndex("fan-out scrubbed plan ref mismatch"));
+    }
+    Ok(run.plan.clone())
+}
+
+/// Erases `actor` as a recipient from every consult fan-out run: the run pass
+/// of `erase_launch_actor_in_txn` (FIX 4699). One scan; each touched row is
+/// scrubbed and rewritten in the same transaction.
+pub(super) fn erase_fanout_run_recipient_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let now = vault.now_recorded_at();
+    let mut touched = Vec::new();
+    for (key, mut run) in FANOUT_RUNS.scan(&vault.store, wtxn)? {
+        if run.scrub_recipient_in(actor, now)? {
+            touched.push((key, run));
+        }
+    }
+    for (key, run) in touched {
+        FANOUT_RUNS.put(&vault.store, wtxn, &key, &run)?;
+    }
+    Ok(())
+}
+
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::InvariantViolation("fanout encoding"))
 }
 
 pub(super) fn save_run(vault: &Vault, txn: &mut heed::RwTxn<'_>, run: &StoredFanout) -> Result<()> {
     let correlation = EntityId::from_hex(&run.correlation)?;
+    // REVIEW-4366 round 4: the ladder's receipt was decided outside the
+    // writer, and its principal can differ from the launcher, so a
+    // principal erased in flight would otherwise be restored here.
+    if let Some(receipt) = &run.decision_receipt
+        && vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::HardDelete, &receipt.principal)?
+    {
+        let mut scrubbed = run.clone();
+        scrubbed.decision_receipt = None;
+        return FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), &scrubbed);
+    }
     FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), run)
 }
 
@@ -206,6 +382,40 @@ pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Stored
         .into_iter()
         .map(|(_, run)| run)
         .collect())
+}
+
+/// Erasing `actor` from the consult fan-out runs (REVIEW-4366 round 4):
+/// each run whose ladder decision was for it keeps its plan, tasks and
+/// rows, and its receipt goes, since a receipt's principal has no erased
+/// form. One-way, in the erase's own transaction. An id whose entity is
+/// no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a run row that cannot be read.
+pub(crate) fn erase_fanout_run_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut runs = Vec::new();
+    for (key, mut run) in FANOUT_RUNS.scan(&vault.store, wtxn)? {
+        if run
+            .decision_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.principal == *actor)
+        {
+            run.decision_receipt = None;
+            runs.push((key, run));
+        }
+    }
+    for (key, run) in runs {
+        FANOUT_RUNS.put(&vault.store, wtxn, &key, &run)?;
+    }
+    Ok(())
 }
 
 pub(super) fn policy_in(

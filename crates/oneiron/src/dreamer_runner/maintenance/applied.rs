@@ -752,6 +752,9 @@ impl Vault {
                 .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
             out.receipt_ref = format!("gate:{}", receipt.decision_id.to_hex());
             row.reverted = Some(out.clone());
+            // No inverse-membership sync (FIX 10376): a revert stamps the
+            // row's `reverted` mark only; the inverse it files under is
+            // unchanged.
             APPLIED.put(&self.store, txn, &target, &row)?;
             Ok(out)
         })?;

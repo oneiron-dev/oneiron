@@ -9,9 +9,25 @@ use super::{
     EntityStoreRead, Error, Result, Vault, artifact_family_kind_of, decode_code_artifact_body,
     snapshot_file_entry, validate_artifact_id, validate_artifact_path,
 };
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 
 impl Vault {
+    /// Every stored published pointer id in one read snapshot, sorted and
+    /// deduplicated. Preview pointers are not publications. This inventory
+    /// grants no read scope and does not claim the export is currently live.
+    pub fn published_artifact_ids(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        let keys = ARTIFACT_POINTERS.scan_keys(
+            &self.store,
+            &txn,
+            &[ArtifactPointerChannel::Published.key_byte()],
+        )?;
+        let mut ids: Vec<String> = keys.into_iter().map(|key| key.artifact).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     pub fn artifact_pointer(
         &self,
         artifact: &str,
@@ -170,6 +186,7 @@ impl Vault {
                     .read_serving_blob_in_txn(&rtxn, &artifact_id, &record, SecretSight::Owner)?
                     .ok_or(Error::EntityNotFound)?;
                 let bytes = self.resolve_docx_authors_in_txn(&rtxn, bytes)?; // FIX 4513
+                let content_hash = *blake3::hash(&bytes).as_bytes(); // the copy's (FIX 5491)
                 let size_bytes = u64::try_from(bytes.len())
                     .map_err(|_| Error::ArithmeticOverflow("blob export length"))?;
                 Ok(Some(ArtifactServedFile {
@@ -179,7 +196,7 @@ impl Vault {
                     export,
                     path: path.to_owned(),
                     media_type: Some(record.export_media_type),
-                    content_hash: record.content_hash,
+                    content_hash,
                     size_bytes,
                     bytes,
                 }))

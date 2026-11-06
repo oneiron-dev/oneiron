@@ -5,12 +5,12 @@
 // The checked claim writer, shared with the merge queue's overlap handoff.
 mod write;
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
@@ -22,6 +22,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
+use oneiron_contracts::affect::Vad;
 
 use super::conflict_value::{
     RepoConflictOpenValue, RepoConflictResolutionValue, decode_repo_conflict_open_value,
@@ -500,10 +501,70 @@ fn supersede_repo_conflict_claim(
         )));
     }
     if old_body.lifecycle != ClaimLifecycleStatus::Active {
+        if old_body.lifecycle == ClaimLifecycleStatus::Superseded {
+            for edge in vault.port_edges(
+                &wtxn,
+                &new_id,
+                EdgeDirection::Out,
+                Some(EdgeKind::Supersedes),
+                None,
+            )? {
+                if edge?.target == old_id {
+                    return Ok(());
+                }
+            }
+        }
         return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
             status: old_body.lifecycle,
         }));
     }
+    let open = decode_repo_conflict_open_value(&old_body.value)?;
+    let resolution = decode_repo_conflict_resolution_value(&new_body.value)?;
+    if new_body.subject != old_body.subject
+        || resolution.open_conflict_claim_id != old_id
+        || !same_repository(&resolution.repo_ref, &open.repo_ref)
+        || resolution.branch != open.branch
+    {
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "resolution claim does not match the open conflict",
+        )));
+    }
+    let ClaimSubject::Entity(subject) = old_body.subject else {
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "open conflict must have an entity subject",
+        )));
+    };
+    let mut remaining: BTreeSet<_> = open.conflicted_paths.into_iter().collect();
+    let mut resolution_ids = Vec::new();
+    for id in vault.claims_for_subject_in_txn(&wtxn, &subject)? {
+        let Some(body) = vault.get_claim_in_txn(&wtxn, &id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_CONFLICT_RESOLVED
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.subject != ClaimSubject::Entity(subject)
+        {
+            continue;
+        }
+        let Ok(value) = decode_repo_conflict_resolution_value(&body.value) else {
+            continue;
+        };
+        if value.open_conflict_claim_id != old_id
+            || !same_repository(&value.repo_ref, &open.repo_ref)
+            || value.branch != open.branch
+        {
+            continue;
+        }
+        for path in value.resolved_paths {
+            remaining.remove(&path);
+        }
+        resolution_ids.push(id);
+    }
+    if !remaining.is_empty() {
+        return Ok(());
+    }
+    // Coverage and closure share this writer. Link every per-file receipt so
+    // recovery of an earlier partial resolution also succeeds after closure.
     old_body.lifecycle = ClaimLifecycleStatus::Superseded;
     old_body.valid_to = Some(now);
     let data = encode_claim_body(&old_body)?;
@@ -513,35 +574,39 @@ fn supersede_repo_conflict_claim(
             .ok_or(Error::InvariantViolation(
                 "Supersedes edge missing default weight",
             ))?;
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        &mut wtxn,
-        vec![
-            BatchOp::Put {
-                id: old_id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: old_header.occurred_start,
-                    end: now,
-                },
-                learned_at: old_header.learned_at,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: true,
-                hub_sync_imported: false,
-            },
-            BatchOp::EdgeWithCreatedAt {
-                src: new_id,
+    let mut ops = vec![BatchOp::Put {
+        id: old_id,
+        entity_type: ENTITY_TYPE_CLAIM,
+        occurred: TimeRange {
+            start: old_header.occurred_start,
+            end: now,
+        },
+        learned_at: old_header.learned_at,
+        row_version: None,
+        data,
+        allow_maintenance: true,
+        allow_reserved_predicate: true,
+        hub_sync_imported: false,
+    }];
+    ops.extend(
+        resolution_ids
+            .into_iter()
+            .map(|id| BatchOp::EdgeWithCreatedAt {
+                src: id,
                 kind: EdgeKind::Supersedes,
                 tgt: old_id,
                 weight: supersedes_weight,
                 created_at: now,
                 vad: Vad::NEUTRAL,
                 provenance: None,
-            },
-        ],
+            }),
+    );
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        ops,
         vault.text_index_trusted.load(Ordering::Acquire),
         false,
         true,

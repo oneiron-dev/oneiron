@@ -4,7 +4,7 @@
 //! Every read takes the whole room again under the caller's current read:
 //! the whole roster gives the terms, every admitted rule folds into the
 //! posture, and only then is a page cut, so a later restrictive rule is never
-//! hidden behind an earlier page. Scope, posture, host and offers ride every
+//! hidden behind an earlier page. Stretches, scope, posture, host and offers ride every
 //! page whole. No count of members or rules refuses a room. The page sizes
 //! pace the output and the rule scan, and a caller asking for more gets it by
 //! continuing (CALLS "256-row room pages, 1000-row loop pages, continuing to
@@ -12,7 +12,7 @@
 
 use super::super::paging::{BoardPageCursor, decode_page_cursor, encode_page_cursor, page_binding};
 use super::super::people::PeopleView;
-use super::super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection};
+use super::super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch};
 use super::super::{BoardFrameError, BoardSection};
 use crate::EntityId;
 use crate::claim::{
@@ -63,6 +63,29 @@ impl RoomSectionPage {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
+        self.board_section_inviting(people, super::super::room::ROOM_INVITE_CAP)
+    }
+
+    /// [`Self::board_section`] on a board whose layout gives ROOM a share:
+    /// the `invite?:` hint names as many persons as the share allots,
+    /// never fewer than the fixed cap (BOARD-LAYOUT).
+    pub fn board_section_laid_out(
+        &self,
+        people: &PeopleView<'_>,
+        layout: &crate::context_board::BoardLayout,
+        cap_tok: usize,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
+        self.board_section_inviting(
+            people,
+            layout.row_allotment("room", cap_tok, super::super::room::ROOM_INVITE_CAP),
+        )
+    }
+
+    fn board_section_inviting(
+        &self,
+        people: &PeopleView<'_>,
+        invite_cap: usize,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut page = format!(
             "page: members={} rules={} end={}",
             self.roster_total, self.rules_total, self.end
@@ -72,7 +95,7 @@ impl RoomSectionPage {
             page.push_str(cursor);
         }
         self.section
-            .board_section_page(people, &self.members, Some(page))
+            .board_section_page(people, &self.members, Some(page), invite_cap)
     }
 }
 
@@ -102,6 +125,17 @@ impl Memory<'_> {
         let invitable = self.room_invitable(room, &read)?;
         Ok(RoomSection {
             room,
+            stretches: self
+                .vault()
+                .off_record_session_vault()
+                .room_stretches_for(room, self.actor())?
+                .into_iter()
+                .map(|(session_ref, instance_ref, mode)| RoomStretch {
+                    session_ref,
+                    instance_ref,
+                    mode,
+                })
+                .collect(),
             roster,
             scope,
             posture: rules.posture,
@@ -109,6 +143,7 @@ impl Memory<'_> {
             offers: self.rooms_open_offers(room)?,
             receipt: rules.receipt,
             host: None,
+            speaking: self.room_speaking_claims(room)?,
             invitable,
         })
     }
@@ -258,7 +293,7 @@ impl Memory<'_> {
                         || !terms
                             .worlds
                             .worlds
-                            .contains(&crate::federation::ScopeId(world))
+                            .contains(&oneiron_authority::federation::ScopeId(world))
                     {
                         continue;
                     }

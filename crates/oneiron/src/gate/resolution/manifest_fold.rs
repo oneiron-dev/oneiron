@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 
 use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
 use super::manifest_types::{AuthoredMin, ConnectorClassPrecedence};
 use super::manifest_types::{
@@ -63,10 +63,10 @@ pub(crate) fn resolve_credential_lifetimes(
 }
 
 /// The stored manifests [`resolve_policy_manifest`] folds on `txn`, by id:
-/// each row it reads into the resolution, trusted or not, and each one whose
-/// shape only sets a diagnostic. A quarantined manifest and a project-depth
-/// row its own causal fold resolves contribute nothing, so they are left
-/// out. A listing door names these as the rows a resolved frontier is read
+/// each trusted row it reads into the resolution, and each one whose shape
+/// only sets a diagnostic. A quarantined or untrusted manifest (a proposal,
+/// FIX 8780) and a project-depth row its own causal fold resolves contribute
+/// nothing, so they are left out. A listing door names these as the rows a resolved frontier is read
 /// from; the frontier's hash is no row.
 ///
 /// # Errors
@@ -100,6 +100,8 @@ pub(crate) fn policy_manifest_contributors(
                     continue;
                 }
             } else if crate::gate::manifest_authenticity::manifest_is_quarantined(
+                store, txn, &id, &raw.body,
+            )? || !crate::gate::manifest_authenticity::manifest_is_trusted(
                 store, txn, &id, &raw.body,
             )? {
                 continue;

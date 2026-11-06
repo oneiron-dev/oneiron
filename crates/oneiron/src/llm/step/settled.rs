@@ -6,9 +6,9 @@
 //! row or a completed queue row.
 use std::ops::Bound;
 
-use serde::{Deserialize, Serialize};
+pub use crate::model_step_record::{SettledStepRequest, SettledStepView};
 
-use super::super::{LlmResponse, LlmUsage, ModelId};
+use super::super::{LlmResponse, LlmUsage};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
     DecodedStepClaim, STEP_INDEX_FORWARD, StepIndexKey, decode_step_claim_value,
@@ -23,42 +23,6 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
-
-/// One step of one attempt, by the attempt's job ref and the step's
-/// canonical request hash.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SettledStepRequest {
-    /// 32-hex attempt id (`job:` prefix allowed), as the consolidation
-    /// status read names it.
-    pub job_ref: String,
-    /// 64-hex canonical request hash of the step.
-    pub step_hash: String,
-}
-
-/// A committed model step: the completion claim, the identity it was
-/// recorded for, and the stored response it settled with.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SettledStepView {
-    /// 32-hex attempt id.
-    pub job_ref: String,
-    /// The run correlation id the completion claim's write envelope
-    /// recorded at the step's commit; absent when the attempt had none.
-    pub run_id: Option<String>,
-    /// 32-hex id of the terminal `dreamer.step` claim.
-    pub claim_ref: String,
-    /// 64-hex canonical request hash.
-    pub step_hash: String,
-    /// The fully revisioned model the step was recorded for.
-    pub model: ModelId,
-    /// The call purpose the step was recorded for.
-    pub purpose: String,
-    /// BLAKE3 of the request's canonical params JSON, lowercase hex.
-    pub params_hash: String,
-    /// The stored response: inline, or the exact artifact version the
-    /// step appended, checked against its pin.
-    pub response: LlmResponse,
-}
 
 /// Reads one settled step for the vault's owner. The completion claim and
 /// any response artifact it pins are read through `memory`'s own read lane
@@ -108,15 +72,7 @@ pub fn settled_step_as_owner(
     }))
 }
 
-/// One settled step as a caller's own lane reads it (DOOR-141 PR3a).
-pub(crate) enum CallerSettledStep {
-    /// The terminal claim, and the response artifact it pins, read on the
-    /// caller's lane: the step as stored.
-    Readable(Box<SettledStepView>),
-    /// The terminal claim stands; it, or the artifact it pins, does not read
-    /// on the caller's lane.
-    Withheld { claim: EntityId },
-}
+pub(crate) use crate::model_step_record::CallerSettledStep;
 
 /// Reads one settled step of `attempt` for `memory`'s own caller, with no
 /// owner proof (DOOR-141 PR3a): the terminal claim and any response artifact
@@ -297,7 +253,7 @@ fn recorded_run_id(body: &ClaimBody) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn step_error(error: DurableStepError) -> MemoryError {
+pub(super) fn step_error(error: DurableStepError) -> MemoryError {
     match error {
         DurableStepError::Engine(error) => error.into(),
         _ => Error::InvalidClaimBody("dreamer step response did not decode").into(),

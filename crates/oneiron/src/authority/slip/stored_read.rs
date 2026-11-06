@@ -12,18 +12,22 @@ use serde::{Deserialize, Serialize};
 
 use super::{SlipClaims, VerifiedSlip};
 
-/// The four facts of a [`VerifiedSlip`]: its effective claims (every caveat
-/// met, the current scope included), its pact bound, and the verifier's two
-/// flags.
+/// The facts of a [`VerifiedSlip`]: its effective claims (every caveat met,
+/// the current scope included), its admitted delegation ancestry, its pact
+/// bound, and the verifier's two flags.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoredReadProof {
     claims: SlipClaims,
+    explicit_revocation_ancestry: Vec<[u8; 32]>,
     #[serde(
         serialize_with = "super::serialize_pact",
         deserialize_with = "super::deserialize_pact"
     )]
-    pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pact: Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     unattenuated: bool,
     transferred: bool,
 }
@@ -33,6 +37,7 @@ impl StoredReadProof {
     pub(crate) fn of(proof: &VerifiedSlip) -> Self {
         Self {
             claims: proof.claims.clone(),
+            explicit_revocation_ancestry: proof.explicit_revocation_ancestry.clone(),
             pact: proof.pact.clone(),
             unattenuated: proof.unattenuated,
             transferred: proof.transferred,
@@ -43,6 +48,7 @@ impl StoredReadProof {
     pub(crate) fn restore(&self) -> VerifiedSlip {
         VerifiedSlip {
             claims: self.claims.clone(),
+            explicit_revocation_ancestry: self.explicit_revocation_ancestry.clone(),
             pact: self.pact.clone(),
             unattenuated: self.unattenuated,
             transferred: self.transferred,

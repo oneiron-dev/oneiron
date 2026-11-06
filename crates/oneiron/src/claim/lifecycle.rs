@@ -10,19 +10,27 @@ use std::collections::HashSet;
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
+use oneiron_contracts::affect::Vad;
 
 mod materialization;
+
+/// Validity endpoints cannot precede either admitted start. The transition,
+/// edge and receipt still record the actual operation time separately.
+fn lifecycle_effective_end(body: &ClaimBody, header: &EntityMetadataHeader, now: u64) -> u64 {
+    now.max(header.occurred_start)
+        .max(body.valid_from.unwrap_or(header.occurred_start))
+}
 
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
@@ -365,12 +373,16 @@ impl Vault {
         if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
             return Ok(());
         }
-        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if new_body.predicate
+            == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE
+        {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated code revision claim cannot supersede user-stated truth",
             )));
         }
-        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if old_body.predicate
+            == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE
+        {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated claim cannot supersede user-stated code revision truth",
             )));
@@ -384,10 +396,14 @@ impl Vault {
     /// general ARCH-0003 claim lifecycle mechanics, in ONE write
     /// transaction:
     ///
-    /// * the old claim's body is closed: `life` = `superseded`, `to` = `now`;
-    /// * the old claim's envelope `occurred_end` is refreshed to `now` (the
-    ///   envelope copy mirrors the body's validity window for temporal
-    ///   index-key derivation, per the D15 principle);
+    /// `now` is the actual operation time in Unix seconds. An admitted claim
+    /// may start later: its effective close is no earlier than either its
+    /// envelope start or its body's `valid_from`.
+    ///
+    /// * the old claim's body is closed: `life` = `superseded`, `to` = that
+    ///   effective close;
+    /// * the old claim's envelope `occurred_end` mirrors `to` for temporal
+    ///   index-key derivation (D15);
     /// * a `supersedes` edge (u8 = 3, structural 12 B, weight 0.3) is
     ///   written `new_id` → `old_id` — the edge is canonical; no
     ///   `supersedesId` body field is stored (D11).
@@ -515,13 +531,11 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
-        // A claim superseded before its occurred start closes at that start
-        // (FIX 9726); the supersession itself keeps the real `now`.
-        let closed_end = now.max(old_header.occurred_start);
+        let closed_end = lifecycle_effective_end(&old_body, &old_header, now);
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
-        old_body.valid_to = Some(now);
+        old_body.valid_to = Some(closed_end);
         let old_body = super::transition::close_machine_claim_in_txn(
             self,
             wtxn,
@@ -542,6 +556,7 @@ impl Vault {
                     end: closed_end,
                 },
                 learned_at: old_header.learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -620,6 +635,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: old_header.learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
@@ -651,10 +667,11 @@ impl Vault {
     }
 
     /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
-    /// general claim lifecycle), in ONE write transaction: the body is
-    /// closed (`life` = `retracted`, `to` = `now`) and the envelope
-    /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
-    /// principle). A parked consent is atomically closed with a terminal
+    /// general claim lifecycle), in ONE write transaction. `now` is the actual
+    /// operation time in Unix seconds. The body closes (`life` = `retracted`)
+    /// with `to` no earlier than either admitted start, mirrored by the
+    /// envelope's `occurred_end` (D15). A parked consent is atomically closed
+    /// at the actual operation time with a terminal
     /// retraction receipt while preserving the consent's original binding.
     /// The record is PRESERVED — retraction never deletes.
     ///
@@ -721,12 +738,7 @@ impl Vault {
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
         let (mut body, header) = self.guarded_claim_target_parts_in(&*wtxn, id)?;
-        if now < header.occurred_start {
-            return Err(Error::InvalidTimeRange {
-                start: header.occurred_start,
-                end: now,
-            });
-        }
+        let closed_end = lifecycle_effective_end(&body, &header, now);
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
         let consent_receipt = self.store.close_pending_gate_consent_as_in_txn(
@@ -739,7 +751,7 @@ impl Vault {
             crate::store::TrayRemoval::Silent,
         )?;
         body.lifecycle = ClaimLifecycleStatus::Retracted;
-        body.valid_to = Some(now);
+        body.valid_to = Some(closed_end);
         let body = super::transition::close_machine_claim_in_txn(
             self,
             wtxn,
@@ -756,9 +768,10 @@ impl Vault {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred: TimeRange {
                 start: header.occurred_start,
-                end: now,
+                end: closed_end,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -792,9 +805,10 @@ impl Vault {
                     defer_metrics_until_commit: false,
                     transition: Some(&transition),
                     owner_authored: None,
+                    pending_prompt: None,
                 },
                 &policy,
-                crate::gate::GateWriteMode {
+                crate::store::GateWriteMode {
                     record_decision: true,
                     persist_pending_consent: false,
                     resolve_pending: true,
@@ -851,6 +865,7 @@ impl Vault {
             return Ok(false);
         }
         crate::batch::queue_proactivity_change(self, wtxn);
+        let restored_end = lifecycle_effective_end(&body, &header, now);
         body.lifecycle = ClaimLifecycleStatus::Active;
         body.valid_to = None;
         let ops = vec![
@@ -864,9 +879,10 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
                     start: header.occurred_start,
-                    end: now,
+                    end: restored_end,
                 },
                 learned_at: header.learned_at,
+                row_version: None,
                 data: encode_claim_body(&body)?,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

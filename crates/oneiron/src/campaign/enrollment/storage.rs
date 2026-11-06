@@ -13,8 +13,7 @@ use crate::error::{Error, Result};
 /// primitive, no second kind for the outward leg.
 pub const CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND: &str = "campaign.enrollment.macro";
 
-/// Schema version shared by every campaign-local row this module persists.
-pub const CAMPAIGN_ENROLLMENT_SCHEMA_VERSION: u32 = 1;
+pub use crate::memory::campaign_records::program_definition::CAMPAIGN_ENROLLMENT_SCHEMA_VERSION;
 
 /// Generic JSON encode, used where the value crosses a non-`vault_meta` wire
 /// (the attempt-queue payload in `runner.rs`); the five `vault_meta` rows

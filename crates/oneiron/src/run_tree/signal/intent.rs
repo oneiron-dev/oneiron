@@ -3,19 +3,13 @@
 //! and a changed one does not. Only the fingerprint is stored, under a key
 //! derived from the vault's known-value master; the raw intent never is.
 
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::RunSignalInput;
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
 
-/// One masked signal's intent fingerprint, by the signal's key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SignalIntent {
-    pub(crate) key: String,
-    pub(crate) fingerprint: [u8; 32],
-}
+pub(crate) use crate::attempt_queue::run_signal::SignalIntent;
 
 /// The exact intent `input` states, as the bytes its fingerprint keys: its
 /// branch, run, key, actor and kind, as given. Wiped when dropped. `None`

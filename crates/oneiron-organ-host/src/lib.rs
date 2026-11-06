@@ -70,7 +70,7 @@ pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 #[cfg(unix)]
-pub use host::{CallMeasure, CallSize, OrganHost};
+pub use host::{CallMeasure, CallSize, LentRegion, OrganHost};
 pub use isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 pub use landing::propose_organ_outputs;
 #[cfg(unix)]
@@ -82,10 +82,12 @@ pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };
-pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
+pub use resource_memory::{FloorLease, FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
+#[cfg(unix)]
+pub use sandbox::filesystem_confined;
 pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};

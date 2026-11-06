@@ -54,9 +54,9 @@ use crate::channel_identity::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::{ApprovalTarget, ChannelIdentityLifecycleFacts, ExternalEffectGateInput};
-use crate::runtime_hooks::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::verb_invocation::InvocationId;
 
 /// The derivation domain of a request ref its host's invocation fixes.
 const LIFECYCLE_REQUEST_REF_DOMAIN: &[u8] = b"oneiron:channel-identity-lifecycle-request-ref:v1";
@@ -362,6 +362,7 @@ impl KeptLifecycleRequest {
             identity_retiring: done.identity_retiring,
             approval_digest: None,
             request_ref: Some(request_ref),
+            paced_until: None,
         };
         Some(LifecycleApplied::Replayed(result, done.view))
     }

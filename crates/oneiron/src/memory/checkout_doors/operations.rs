@@ -8,7 +8,7 @@ use crate::checkout::lease::teardown::{TeardownStep, prepare_teardown_in_txn, te
 use crate::checkout::lease::transactions as transition;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::codebase::RepoRef;
-use crate::task_verb::CheckoutTaskAccess;
+use crate::memory::checkout_access::CheckoutTaskAccess;
 
 impl Memory<'_> {
     fn checkout_readable_in(

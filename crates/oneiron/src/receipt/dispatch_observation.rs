@@ -3,12 +3,20 @@ use super::kernel::{ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
-use crate::outbound::{FrozenDispatchIdentity, OutboundDispatchOutcome, OutboundDispatchResult};
+use crate::outbound::OutboundDispatchResult;
+use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use serde::{Deserialize, Serialize};
 
 const OBSERVATIONS: SideTable<DispatchObservationKey, DispatchObservation, Raw> =
     SideTable::new(&side_table::DISPATCH_OBSERVATION);
+/// Whether a masked copy of a `DISPATCH_OBSERVATION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dispatch_observation_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DispatchObservation, Raw>(bytes)
+}
+
 /// Where the side-row wall says it found a secret in an observation (OF-067).
 const OBSERVATION_PLACE: &str = "side:DISPATCH_OBSERVATION";
 
@@ -78,7 +86,7 @@ impl DispatchObservation {
             approval_digest: self
                 .receipt
                 .fields
-                .get(crate::outbound::APPROVAL_DIGEST_FIELD)
+                .get(crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD)
                 .cloned(),
             approval_actor: None,
             receipt: self.receipt.clone(),

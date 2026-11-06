@@ -6,6 +6,7 @@
 //! of the reply (1b) stay three separate facts.
 
 use crate::Vault;
+use crate::code_run::ConnectorCallReply;
 use crate::consent::{
     AuthenticatedOwner, CodeWaitReceiptLinks, ConsentOwnerStamp, ConsentReceipt, EffectDigest,
 };
@@ -13,9 +14,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::outbound_consent::ConnectorCallOutcome;
 use crate::store::GateDecisionId;
-use crate::task_verb::sdk::ConnectorCallReply;
 
 use super::binding::{put_code_consent_wait_in_txn, read_code_consent_wait_in_txn};
+use super::browser::{CODE_WAIT_TARGET_CHANGED, browser_facts_match_row};
 use super::ledger::{LedgerLinks, ledger_links_in_txn};
 use super::types::{
     CodeConsentAnswerInput, CodeConsentAnswerStamp, CodeConsentBinding, CodeConsentChoice,
@@ -31,10 +32,7 @@ pub(crate) const CODE_WAIT_HOST_UNBOUND: &str = "code_wait_host_unbound";
 /// The reason a wait the owner denied settles with.
 pub(crate) const CODE_WAIT_DENIED: &str = "code_wait_denied";
 
-/// The reason a wait settles with when its original caller's own credential
-/// no longer stands. No answer revives it.
-pub(crate) const CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED: &str =
-    "code_wait_original_authority_refused";
+pub(crate) use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 
 /// The wall clock, in unix ms, as the connector call's own rows keep it.
 pub(crate) fn now_ms() -> u64 {
@@ -215,10 +213,13 @@ fn answer_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
+    let remember_asking_lineage =
+        input.choice == CodeConsentChoice::ApproveAndStopAsking && input.remember_asking_lineage;
     if let Some(first) = &row.answer {
         let same = first.choice == input.choice
             && first.word_ref == input.word_ref
-            && first.answerer == answerer;
+            && first.answerer == answerer
+            && first.remember_asking_lineage == remember_asking_lineage;
         return Ok(Answered {
             drive: false,
             already_answered: !same,
@@ -246,6 +247,16 @@ fn answer_in_txn(
         )),
         other => other,
     })?;
+    // A browser wait's marker is minted only for the digest its kept
+    // facts still compose (FIX 11908); a row they no longer name settles
+    // refused under any answer.
+    if row.binding.pending.browser_action().is_some() && !browser_facts_match_row(&row.binding) {
+        refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
+        return Ok(Answered {
+            drive: false,
+            already_answered: true,
+        });
+    }
     let digest = EffectDigest::from_bytes(row.binding.effect_digest);
     let (decision, remembered) = match input.choice {
         CodeConsentChoice::Deny => (vault.deny_consent_in_txn(txn, owner, digest)?, None),
@@ -258,22 +269,50 @@ fn answer_in_txn(
                 .ok_or(Error::ConcurrentWrite(
                     "this code consent wait offers no stop asking",
                 ))?;
-            let revision = crate::connector_key::stop_asking_tool_in_txn(
-                vault,
+            let call = row
+                .binding
+                .pending
+                .connector_call()
+                .ok_or(Error::ConcurrentWrite(
+                    "this code consent wait binds no connector call",
+                ))?;
+            let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &call.key_ref)?
+                .ok_or(Error::EntityNotFound)?;
+            let remember_context = call.remember_context.ok_or(Error::ConcurrentWrite(
+                "this code consent wait binds no remember context",
+            ))?;
+            if remember_asking_lineage && remember_context.lineage.is_none() {
+                return Err(Error::InvalidConfig(
+                    "asking-lineage remember needs a delegation lineage".to_owned(),
+                ));
+            }
+            let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
+                server: call.server.clone(),
+                tool: call.tool.clone(),
+                resolved_endpoint: call.endpoint.clone(),
+                payload_data_class: call.payload_data_class,
+            };
+            let (_, bound) = crate::connector_key::connector_tool_remember_bound_in_txn(
+                &vault.store,
                 txn,
-                owner,
-                offer.slate_ref,
-                offer.slate_revision,
-                &offer.tool,
-            )?;
+                &call.key_ref,
+                &key,
+                &scoped_call,
+                remember_context,
+                remember_asking_lineage,
+            )?
+            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+            let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
             (
                 vault.approve_once_in_txn(txn, owner, digest)?,
-                Some((offer.slate_ref, revision)),
+                remembered.grant_ref(),
             )
         }
     };
     row.answer = Some(CodeConsentAnswerStamp {
         choice: input.choice,
+        remember_asking_lineage,
         word_ref: input.word_ref,
         answerer,
         principal_ref: owner.principal_ref_in_txn(vault, txn)?.to_owned(),
@@ -480,6 +519,14 @@ pub(super) fn settle_with_reply_in_txn(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
     let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
+    let external_reply = row.binding.pending.connector_call().is_some()
+        && matches!(
+            serde_json::from_str::<ConnectorCallReply>(&delivered),
+            Ok(ConnectorCallReply::Delivered {
+                result: Some(_),
+                ..
+            } | ConnectorCallReply::AwaitingInput { .. })
+        );
     // A settle after an erase of the bound run's actor keeps its outcome,
     // receipt and digest, and no copy of the reply (FIX 5718).
     crate::code_run::erase_settled_reply_of_erased_run_in_txn(
@@ -493,7 +540,13 @@ pub(super) fn settle_with_reply_in_txn(
         wait_id,
         word_ref: row.answer.as_ref().map(|answer| answer.word_ref),
         prior_receipt: row.answer.as_ref().map(|answer| answer.decision),
-        facts_digest: settlement_facts_digest(&row, settled, &reasons, &reply_digest),
+        facts_digest: settlement_facts_digest(
+            &row,
+            settled,
+            &reasons,
+            &reply_digest,
+            external_reply,
+        ),
     };
     let receipt = ConsentReceipt::CodeWaitSettled {
         decision_id: receipt_id,
@@ -511,6 +564,7 @@ pub(super) fn settle_with_reply_in_txn(
         outcome: settled,
         reason_codes: reasons,
         reply_digest,
+        external_reply,
         settled_at_ms: now,
     });
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
@@ -541,15 +595,17 @@ fn settled_outcome(
 }
 
 /// BLAKE3 of the immutable facts a settlement receipt closes: the binding,
-/// the answer's act, the admission, the outcome, its reasons and the reply.
+/// the answer's act, the admission, the outcome, its reasons, the reply and
+/// whether that actual reply carried foreign data.
 fn settlement_facts_digest(
     row: &CodeConsentWaitRow,
     settled: CodeConsentSettleOutcome,
     reasons: &[String],
     reply_digest: &[u8; 32],
+    external_reply: bool,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:code-consent-settled:v1");
+    hasher.update(b"oneiron:code-consent-settled:v2");
     hasher.update(&row.binding.binding_digest);
     hasher.update(&row.binding.effect_digest);
     hasher.update(
@@ -568,6 +624,7 @@ fn settlement_facts_digest(
         hasher.update(reason.as_bytes());
     }
     hasher.update(reply_digest);
+    hasher.update(&[u8::from(external_reply)]);
     *hasher.finalize().as_bytes()
 }
 
@@ -633,6 +690,14 @@ fn view_of(
         result_handle: consumed.map(|consumed| consumed.result_handle.clone()),
         consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
         consumption_links: ledger.consumed,
+        remember_asking_lineage: row.answer.as_ref().and_then(|answer| {
+            (answer.choice == CodeConsentChoice::ApproveAndStopAsking)
+                .then_some(answer.remember_asking_lineage)
+        }),
+        remembered: row
+            .answer
+            .as_ref()
+            .and_then(|answer| answer.remembered.clone()),
         already_answered,
     }
 }

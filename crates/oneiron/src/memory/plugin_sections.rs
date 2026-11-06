@@ -33,8 +33,9 @@ use crate::dreamer_plugin_suggest::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::skill_hub::pack_catalog::PackSection;
-use crate::skill_hub::{HubRef, RefFetch, pinned_tracking};
+use crate::skill_hub::{RefFetch, pinned_tracking};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::skill_source::HubRef;
 
 mod install;
 mod pages;

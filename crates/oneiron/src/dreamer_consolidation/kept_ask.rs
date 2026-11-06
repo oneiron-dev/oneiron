@@ -7,10 +7,10 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::llm::decision::{
-    AnswerActor, AskAct, AskAnswer, AskRole, AskTo, DecisionAnswer, DecisionAsk, HolderKind,
-    HostRuleRef, RoleRank,
-};
+use crate::llm::decision::{AskAnswer, AskRole, AskTo, DecisionAsk};
+use crate::model_decision::AnswerActor;
+use crate::model_decision::HostRuleRef;
+use crate::model_decision::{AskAct, DecisionAnswer, HolderKind, RoleRank};
 
 /// A role on an ask's route as a write keeps it: where it sits on the chain
 /// and the project whose boards it walks, never the actor it names.

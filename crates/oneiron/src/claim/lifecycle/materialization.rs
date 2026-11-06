@@ -34,9 +34,10 @@ impl Vault {
                 defer_metrics_until_commit: true,
                 transition: Some(&transition),
                 owner_authored: None,
+                pending_prompt: None,
             },
             &policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,

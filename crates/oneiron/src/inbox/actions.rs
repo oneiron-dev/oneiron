@@ -10,7 +10,7 @@ use super::notification::NotificationKind;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
 use crate::memory::Memory;
-use crate::workspace_roster::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
+use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
 
 /// The owner's answer to a proposed digest settings change.
 const WEAVE_SETTING_ANSWER_VERB: &str = "vault.weave.setting_changes.answer";

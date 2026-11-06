@@ -9,7 +9,7 @@
 use serde_json::json;
 
 use crate::error::Result;
-use crate::llm::{
+use oneiron_model::llm::{
     ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse, RetryableLlmError,
 };
 

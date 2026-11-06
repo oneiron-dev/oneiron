@@ -55,6 +55,13 @@ impl RoomReach {
         &self.placed
     }
 
+    /// The ids among [`Self::placed`] held back from this reader (FIX 5658):
+    /// the set the thread fold skips for activity, so a bare place reads no
+    /// activity explicitly rather than only through its zero time.
+    pub(super) fn held(&self) -> &BTreeSet<String> {
+        &self.held
+    }
+
     /// The turns this reader reads, in order: all a read may serve.
     pub(super) fn read(&self) -> impl Iterator<Item = &RoomTurn> {
         self.placed

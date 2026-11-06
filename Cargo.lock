@@ -265,6 +265,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -586,17 +592,6 @@ dependencies = [
  "compression-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "async-lock"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
-dependencies = [
- "event-listener",
- "event-listener-strategy",
- "pin-project-lite",
 ]
 
 [[package]]
@@ -1561,6 +1556,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2440,7 +2441,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 3.0.6",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2670,7 +2671,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3093,7 +3094,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3107,26 +3108,6 @@ name = "escape-simd"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "120339709b24832c07464b0838828361b735d793c409b8ca3147db0dae601542"
-
-[[package]]
-name = "event-listener"
-version = "5.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
-dependencies = [
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
-]
 
 [[package]]
 name = "expat-sys"
@@ -3198,9 +3179,12 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-dependencies = [
- "getrandom 0.4.3",
-]
+
+[[package]]
+name = "fax"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
 
 [[package]]
 name = "fdeflate"
@@ -3332,6 +3316,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "font-types"
+version = "0.12.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "835ae9d781464a79026cde387f9cbc650c9a4909d7cf7e658b127e3c35d2f35d"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3370,7 +3363,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "chrono",
 ]
@@ -3378,7 +3371,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3405,7 +3398,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3416,7 +3409,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3426,7 +3419,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "calamine",
  "chrono",
@@ -3925,7 +3918,7 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
+ "windows-link 0.1.3",
  "windows-result 0.4.1",
 ]
 
@@ -4011,6 +4004,16 @@ checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval 0.7.3",
  "zeroize",
+]
+
+[[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl 0.1.12",
 ]
 
 [[package]]
@@ -4847,6 +4850,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "h2"
+version = "0.4.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap 2.14.2",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4859,6 +4881,19 @@ dependencies = [
  "rand 0.9.5",
  "rand_distr 0.5.1",
  "zerocopy",
+]
+
+[[package]]
+name = "harfrust"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "865dcc4105d51c323d8fedbb2d75b5e9c8ecddf5613f74c82f851d0afbc97114"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytemuck",
+ "read-fonts",
+ "smallvec",
+ "yoke 0.8.3",
 ]
 
 [[package]]
@@ -5145,6 +5180,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "httparse",
@@ -5457,10 +5493,13 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
+ "tiff",
  "zune-core",
  "zune-jpeg",
 ]
@@ -5711,7 +5750,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6401,7 +6440,7 @@ dependencies = [
  "sha2 0.11.0",
  "stringprep",
  "thiserror 2.0.20",
- "weezl",
+ "weezl 0.2.1",
 ]
 
 [[package]]
@@ -7363,7 +7402,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7747,6 +7786,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-local-authentication"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48e0b8b339e0d9d2ed4416b7f93f9d4daadff7d4dd797f89867cde11aeac607"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-metal"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7919,10 +7969,12 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gix",
+ "gix-quote",
  "half",
  "heed",
  "icalendar",
  "icu_normalizer",
+ "im",
  "image",
  "jiff-tzdb",
  "jsonschema",
@@ -7934,19 +7986,29 @@ dependencies = [
  "ocrs",
  "oneiron",
  "oneiron-authority",
+ "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-code-source",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
+ "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -7965,6 +8027,7 @@ dependencies = [
  "rand_distr 0.4.3",
  "regex",
  "reqwest 0.12.28",
+ "rmp",
  "rmp-serde",
  "rmpv",
  "rrule",
@@ -7975,10 +8038,10 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2 0.10.9",
+ "similar",
  "tar",
  "tempfile",
  "thiserror 2.0.20",
- "tiktoken-rs",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
@@ -7995,7 +8058,6 @@ dependencies = [
  "whichlang",
  "windows-sys 0.61.2",
  "xxhash-rust",
- "yrs",
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
@@ -8010,6 +8072,7 @@ dependencies = [
  "oneiron",
  "oneiron-server",
  "oneiron-vault-contract",
+ "serde_json",
  "tempfile",
  "zeroize",
 ]
@@ -8030,6 +8093,24 @@ dependencies = [
  "serde",
  "serde_json",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-base"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "oneiron-model",
+ "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tiktoken-rs",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -8072,18 +8153,23 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "flate2",
+ "futures-util",
  "libc",
  "memchr",
  "oneiron-spawn",
  "rcgen",
  "reqwest 0.12.28",
  "rustix",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.26.2",
+ "webpki-roots 1.0.9",
  "zeroize",
 ]
 
@@ -8093,6 +8179,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
+ "bytes",
  "image",
  "oneiron-container",
  "schemars 0.8.22",
@@ -8120,16 +8207,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-code-source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-base",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "bytes",
  "libc",
  "oneiron-spawn",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "tracing",
  "uuid",
 ]
 
@@ -8170,6 +8276,7 @@ dependencies = [
  "proptest",
  "rand_core 0.10.1",
  "rmp-serde",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -8181,6 +8288,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-docedit"
 version = "0.1.0"
 dependencies = [
@@ -8188,7 +8304,9 @@ dependencies = [
  "crc32fast",
  "expat-sys",
  "flate2",
+ "harfrust",
  "oneiron-contracts",
+ "png 0.18.1",
  "proptest",
  "quick-xml 0.42.0",
  "roxmltree",
@@ -8199,6 +8317,9 @@ dependencies = [
  "similar",
  "stemma",
  "thiserror 2.0.20",
+ "tiny-skia",
+ "unicode-bidi",
+ "unicode-script",
  "zip 0.6.6",
 ]
 
@@ -8295,6 +8416,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-linear"
 version = "0.1.0"
 dependencies = [
@@ -8307,6 +8440,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
@@ -8389,13 +8530,16 @@ dependencies = [
 name = "oneiron-macos"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "cpal",
  "hound",
  "objc2",
+ "objc2-app-kit",
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-foundation",
+ "objc2-local-authentication",
  "oneiron",
  "oneiron-server",
  "oneiron-spawn",
@@ -8406,6 +8550,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -8438,6 +8583,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -8451,6 +8597,7 @@ dependencies = [
  "oneiron",
  "oneiron-remote",
  "oneiron-server",
+ "serde",
  "serde_json",
 ]
 
@@ -8466,6 +8613,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-container",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
@@ -8499,6 +8647,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-py"
 version = "1.0.0"
 dependencies = [
@@ -8525,6 +8687,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -8552,6 +8715,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-sandbox-contract"
 version = "0.1.0"
 
@@ -8564,6 +8737,8 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
+ "encoding_rs",
+ "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
@@ -8573,6 +8748,7 @@ dependencies = [
  "p256",
  "pkix-chain",
  "proptest",
+ "qrcode",
  "rcgen",
  "reqwest 0.12.28",
  "rmp-serde",
@@ -8600,6 +8776,7 @@ name = "oneiron-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "axum",
  "base64 0.22.1",
  "blake3",
@@ -8660,6 +8837,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokenizers",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite 0.26.2",
  "tokio-tungstenite 0.29.0",
  "toml 0.9.12+spec-1.1.0",
@@ -8668,10 +8846,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+ "webpki-roots 1.0.9",
  "windows-sys 0.61.2",
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
 ]
 
 [[package]]
@@ -8680,6 +8866,52 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "oneiron-store"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "base64 0.22.1",
+ "blake3",
+ "chrono",
+ "flate2",
+ "getrandom 0.4.3",
+ "half",
+ "heed",
+ "libc",
+ "lopdf",
+ "loro",
+ "lzma-rust2",
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-docedit",
+ "oneiron-model",
+ "oneiron-skill-attribution",
+ "oneiron-vault-contract",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
+ "rmp-serde",
+ "rmpv",
+ "rustix",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+ "uuid",
+ "windows-sys 0.61.2",
+ "xxhash-rust",
+ "zeroize",
+ "zip 0.6.6",
 ]
 
 [[package]]
@@ -8712,6 +8944,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -10215,7 +10462,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10438,6 +10685,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "read-fonts"
+version = "0.46.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdaa4fffe9ff3ca2c353fa9729792805b9b3e324695ff5a081f860612e81b330"
+dependencies = [
+ "bytemuck",
+ "foldhash",
+ "font-types",
+ "once_cell",
+ "smallvec",
+ "yoke 0.8.3",
+]
+
+[[package]]
 name = "reborrow"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10561,6 +10822,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -10903,7 +11165,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10961,7 +11223,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11703,15 +11965,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "smallstr"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "862077b1e764f04c251fe82a2ef562fd78d7cadaeb072ca7c2bcaf7217b1ff3b"
-dependencies = [
- "smallvec",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11892,6 +12145,12 @@ name = "streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
+
+[[package]]
+name = "strict-num"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 
 [[package]]
 name = "string_cache"
@@ -12415,10 +12674,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12500,6 +12759,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiff"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
+dependencies = [
+ "fax",
+ "flate2",
+ "half",
+ "quick-error 2.0.1",
+ "weezl 0.1.12",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "tiktoken-rs"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12552,6 +12825,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
+]
+
+[[package]]
+name = "tiny-skia"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "bytemuck",
+ "cfg-if",
+ "log",
+ "tiny-skia-path",
+]
+
+[[package]]
+name = "tiny-skia-path"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edca365c3faccca67d06593c5980fa6c57687de727a03131735bb85f01fdeeb9"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "strict-num",
 ]
 
 [[package]]
@@ -14171,6 +14469,12 @@ dependencies = [
 
 [[package]]
 name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "weezl"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
@@ -14209,7 +14513,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14951,24 +15255,6 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "synstructure 0.14.0",
-]
-
-[[package]]
-name = "yrs"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6893d39bc55d014e4a1d0e71d06c0c41590d5cdeac35c126be44998bc320cff"
-dependencies = [
- "arc-swap",
- "async-lock",
- "async-trait",
- "dashmap",
- "fastrand",
- "serde",
- "serde_json",
- "smallstr",
- "smallvec",
- "thiserror 2.0.20",
 ]
 
 [[package]]

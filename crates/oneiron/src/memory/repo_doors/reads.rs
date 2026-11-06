@@ -22,11 +22,11 @@ use crate::code_view::CodeViewSet;
 use crate::codebase::{CodebaseSnapshotMount, snapshot_asset_entity_id};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::reveal::RepoReadDoor;
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 impl Memory<'_> {
     /// `self.code.snapshots.get` for a run: the manifest of the named
@@ -292,12 +292,12 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let queue = resolve_repo_queue_target(
             self.vault,
+            own.stamp.repo,
             &own.admitted.membership.repo_ref,
             &own.stamp.git_ref,
         )?
         .map_err(refusal_error)?;
-        let (entries, blockers) =
-            self.repo_queue_entries(binding, &own.admitted.membership.repo_ref, input.work)?;
+        let (entries, blockers) = self.repo_queue_entries(binding, &queue.queue, input.work)?;
         let mut rows = vec![own.stamp.repo];
         rows.extend(blockers);
         Ok(RepoRunAnswer {

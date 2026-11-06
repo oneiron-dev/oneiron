@@ -24,9 +24,8 @@ use super::{
 use crate::Vault;
 use crate::error::Result;
 use crate::origin::secret_marks::RepoBlobMarks;
-use crate::secret_custody::{
-    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight,
-};
+use crate::secret_custody::{RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight};
+use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
 
 /// CALL 4: what a text door names when the bytes a grant would open are not
 /// text. The byte-valued doors deliver granted bytes with their receipts.
@@ -116,8 +115,10 @@ where
     }
     let bytes = read_exact()?;
     let masked = |bytes: Vec<u8>| -> Result<RepoBodyProjection> {
-        let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, marks, bytes)
+        vault.with_known_values(|known| {
+            let txn = vault.store.env.read_txn()?;
+            project_repo_bytes_in_txn(vault, &txn, marks, bytes, known)
+        })
     };
     let raw_blake3 = *blake3::hash(&bytes).as_bytes();
     // Bytes the marks were not kept under are no file this check names.

@@ -16,7 +16,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::secret_custody::FoundKeyAction;
+use crate::secret_record::FoundKeyAction;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
 /// The reasons the owner's close takes (CALLS, open): what the sweep found is
@@ -41,10 +41,11 @@ const AUTO_CLOSE: [LiftCloseReason; 3] = [
 
 /// The found-key answers that settle a key for good, part of the auto-close
 /// call: a grant leaves the value live where the record keeps it.
-const ANSWERS: [FoundKeyAction; 3] = [
+const ANSWERS: [FoundKeyAction; 4] = [
     FoundKeyAction::Rotate,
     FoundKeyAction::Delete,
     FoundKeyAction::NotASecret,
+    FoundKeyAction::KeptAsText,
 ];
 
 /// `closed_by` of a proposal that closed on its own.
@@ -191,7 +192,7 @@ pub(super) fn review(vault: &Vault) -> Result<()> {
 /// row as it stands: a known-value pass marks nothing more in that row (FIX
 /// 2781). A close for a rotation, or one the sweep made, leaves it open to
 /// marking.
-pub(super) fn owner_kept_in_txn(
+pub(in crate::batch::secret_scan) fn owner_kept_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     family: LiftFamily,
@@ -371,7 +372,7 @@ fn receipt_in_txn(
         actor_class: "human".into(),
         actor_ref: Some(actor.to_hex()),
         content_kind: CLOSE_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+        policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,
         grant_ref: None,
         diff_handle: blake3::hash(row_key).as_bytes().to_vec(),
@@ -384,7 +385,7 @@ fn receipt_in_txn(
 }
 
 /// Lowercase or uppercase hex as bytes; `None` for anything else.
-fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.is_empty() || text.len() % 2 != 0 {
         return None;
     }

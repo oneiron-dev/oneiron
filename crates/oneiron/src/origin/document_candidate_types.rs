@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::ReceivedFileOperation;
 use crate::EntityId;
-use crate::code_document::{CodeDocumentFrontier, CodeFileMetadataEdit};
-use crate::code_revision::CodeTreeBlob;
+use crate::store::code_document_values::{CodeDocumentFrontier, CodeFileMetadataEdit};
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 /// The validated ref update a receive-pack landed: the proven object store,
 /// the full ref and the old and new tips, never a request's own values.
@@ -60,7 +60,8 @@ pub enum CodePushCandidateState {
     /// No owner review catalog for this repository.
     HeldReviewPolicy,
     /// A shape the reviewed path does not carry: no change, a deleted or
-    /// non-commit ref, a non-fast-forward, binary or submodule entries.
+    /// non-commit ref, a non-fast-forward, or binary entries.
+    /// Gitlinks stay opaque; linked repositories are not traversed.
     HeldShape,
     /// One all-files proposal awaits review and an owner enqueue.
     Proposed,

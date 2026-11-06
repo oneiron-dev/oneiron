@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use super::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
+use crate::access_grant::AccessGrantScope;
 use crate::agent_dispatch::{
     AddressDecision, AddressRefusal, AgentDispatchInput, CommReach, SenderDispatch,
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonRow};
-use crate::conversation::{ConversationBody, ConversationKind};
+use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::{EdgeActorClass, EntityId};
 
 mod grants;
@@ -220,6 +221,46 @@ pub struct GrantAskedRequest {
     pub limit: Option<u32>,
 }
 
+/// What an answered request asked for.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GrantRequestedScope {
+    Messages {
+        space_ref: EntityId,
+    },
+    Summaries {
+        space_ref: EntityId,
+    },
+    RelationshipClaims {
+        space_ref: EntityId,
+    },
+    CompanionProfile {
+        person_ref: EntityId,
+        facet_ref: Option<EntityId>,
+    },
+}
+
+/// What an access request's `scope` asks for, as its answer and the asked
+/// one's list (`self.grants.asked`) name it; `None` for a scope no access
+/// request carries.
+pub(crate) fn grant_requested_scope(scope: &AccessGrantScope) -> Option<GrantRequestedScope> {
+    Some(match *scope {
+        AccessGrantScope::Messages { space_ref } => GrantRequestedScope::Messages { space_ref },
+        AccessGrantScope::Summaries { space_ref } => GrantRequestedScope::Summaries { space_ref },
+        AccessGrantScope::RelationshipClaims { space_ref } => {
+            GrantRequestedScope::RelationshipClaims { space_ref }
+        }
+        AccessGrantScope::CompanionProfile {
+            person_ref,
+            facet_ref,
+        } => GrantRequestedScope::CompanionProfile {
+            person_ref,
+            facet_ref,
+        },
+        _ => return None,
+    })
+}
+
 /// One pending access request that asks the caller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantAskedRow {
@@ -228,7 +269,7 @@ pub struct GrantAskedRow {
     /// 32-hex id of the actor who asked; the grant would be theirs.
     pub asker: String,
     pub capability: String,
-    pub scope: crate::task_verb::sdk::GrantRequestedScope,
+    pub scope: GrantRequestedScope,
     /// When the request was filed, in unix seconds.
     pub created_at: u64,
     /// When the requested grant would end, in unix seconds; none when it
@@ -273,7 +314,7 @@ impl Memory<'_> {
         })?;
         let applied = read.read_receipt(None, 0)?.applied;
         let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-        people.set_about(&mut |person| self.vault.person_about(person, ceiling))?;
+        people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
         Ok(people)
     }
@@ -407,6 +448,7 @@ impl Memory<'_> {
                     author,
                     message_type: "text".to_owned(),
                     content: text.to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,

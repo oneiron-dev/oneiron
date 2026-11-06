@@ -6,14 +6,17 @@ use crate::codebase::RepoRef;
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::pipeline::{PipelineBuilder, Signal, WorldScope};
-use crate::psych_profile::PsychProfileKey;
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
+use crate::write_envelope::profile_snapshot::PsychProfileKey;
+
+use oneiron_model::llm::ModelId;
 
 use super::super::types::{
-    ContextPackRetrievalBudget, DEFAULT_MAX_FIELD_CHARS, DEFAULT_MAX_NEIGHBORS,
-    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET, FieldProfile,
-    MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat, TokenAllocation,
+    ContextPackRetrievalBudget, DEFAULT_CONTEXT_FRACTION, DEFAULT_MAX_FIELD_CHARS,
+    DEFAULT_MAX_NEIGHBORS, DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET,
+    FieldProfile, PackFormat, TokenAllocation,
 };
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -36,7 +39,19 @@ pub struct ContextPackBuilder<'a> {
     pub(super) merge_neighbors: bool,
     pub(super) format: PackFormat,
     pub(super) field_profile: FieldProfile,
-    pub(super) token_budget: usize,
+    /// The explicit token ceiling ([`Self::token_budget`]); `None` = unset.
+    pub(super) token_budget: Option<usize>,
+    /// The pack tokenizer for every serialization budget gate
+    /// ([`Self::pack_tokenizer`]); selected before any gate runs.
+    pub(super) tokenizer: PackTokenizer,
+    /// The stored profile's window budget ([`Self::memory_profile`]).
+    pub(super) profile_token_budget: Option<usize>,
+    /// The declared share of the active model's window the default budget
+    /// resolves from ([`Self::context_fraction`]).
+    pub(super) context_fraction: f32,
+    /// The active model's context window, when a call site named one
+    /// ([`Self::model_window_tokens`] / [`Self::model_window`]).
+    pub(super) model_window_tokens: Option<u64>,
     pub(super) token_allocation: TokenAllocation,
     pub(super) max_field_chars: usize,
     pub(super) max_item_tokens: usize,
@@ -79,14 +94,20 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self
     }
+    /// Account for this pack's copied media queries on the host's memory line.
+    pub fn media_query_memory(mut self, memory: &crate::host_memory::MachineMemory) -> Self {
+        self.pipeline = self.pipeline.media_query_memory(memory);
+        self
+    }
+
     /// Adds one typed media-space list to this pack's retrieval (OF-370); see
     /// [`crate::pipeline::PipelineBuilder::search_media`].
     pub fn search_media(
         mut self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         vector: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
     ) -> Self {
         self.pipeline = self
@@ -119,13 +140,16 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Replaces the vault's affect retrieval policy for this pack (OF-423).
-    pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
+    pub fn affect_policy(
+        mut self,
+        policy: crate::config::retrieval_affect::AffectRetrievalPolicy,
+    ) -> Self {
         self.pipeline = self.pipeline.affect_policy(policy);
         self
     }
 
     /// The current turn's VAD, the query side of emotion congruence.
-    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+    pub fn query_affect(mut self, vad: oneiron_contracts::affect::Vad) -> Self {
         self.pipeline = self.pipeline.query_affect(vad);
         self
     }
@@ -166,7 +190,11 @@ impl<'a> ContextPackBuilder<'a> {
             merge_neighbors: true,
             format: PackFormat::default(),
             field_profile: FieldProfile::default(),
-            token_budget: DEFAULT_WINDOW_TOKEN_BUDGET,
+            token_budget: None,
+            tokenizer: DEFAULT_CONTEXT_PACK_TOKENIZER,
+            profile_token_budget: None,
+            context_fraction: DEFAULT_CONTEXT_FRACTION,
+            model_window_tokens: None,
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
             max_item_tokens: 0,
@@ -411,7 +439,10 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
     /// [`PipelineBuilder::fold_messages_into_turns`].
-    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::pipeline::TurnFold) -> Self {
+    pub(crate) fn fold_messages_into_turns(
+        mut self,
+        fold: crate::context_pack::turn_fold::TurnFold,
+    ) -> Self {
         self.pipeline = self.pipeline.fold_messages_into_turns(fold);
         self
     }
@@ -552,7 +583,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn edge_hop(mut self, depth: u32) -> Self {
-        self.edge_hop = depth.min(MAX_EDGE_HOP);
+        self.edge_hop = depth;
         self
     }
 
@@ -562,7 +593,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn selected_edge_budget(mut self, n: usize) -> Self {
-        self.selected_edge_budget = n.min(MAX_CONTEXT_NEIGHBORS);
+        self.selected_edge_budget = n;
         if let Some(budget) = self.retrieval_budget.as_mut() {
             budget.selected_edges = self.selected_edge_budget;
         }
@@ -595,7 +626,64 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn token_budget(mut self, budget: usize) -> Self {
-        self.token_budget = budget;
+        self.token_budget = Some(budget);
+        self
+    }
+
+    /// Selects the pack tokenizer for every serialization budget gate
+    /// (opt-in reader measurement). The default is the engine-normalized
+    /// `o200k` counter; selection never changes authority, ranking, or row
+    /// order.
+    pub fn pack_tokenizer(mut self, tokenizer: PackTokenizer) -> Self {
+        self.tokenizer = tokenizer;
+        self
+    }
+
+    /// Declares the share of the active model's context window the default
+    /// budget resolves from (ARCH-0004 #budget-unit, `{ contextFraction }`).
+    /// Consulted only when neither an explicit [`Self::token_budget`] nor a
+    /// memory profile set the budget, and only with a known model window
+    /// ([`Self::model_window_tokens`] / [`Self::model_window`]). A fraction
+    /// outside `(0, 1]` disables the derivation; above `1` counts as `1`.
+    pub fn context_fraction(mut self, fraction: f32) -> Self {
+        self.context_fraction = fraction;
+        self
+    }
+
+    /// Names the active model's context window in tokens, for the
+    /// window-relative default (see [`Self::context_fraction`]). `0` means
+    /// unknown, like never calling this.
+    pub fn model_window_tokens(mut self, window_tokens: u64) -> Self {
+        self.model_window_tokens = (window_tokens > 0).then_some(window_tokens);
+        self
+    }
+
+    /// Names the active model and resolves its context window from the
+    /// vault's model registry, for the window-relative default (see
+    /// [`Self::context_fraction`]). Best-effort: a model id that does not
+    /// parse, has no registry row, or whose row does not read leaves the
+    /// window unknown, and the budget falls back exactly as it did before
+    /// this call existed. The catalog window is taken whole; the fraction
+    /// is what leaves room for the prompt and the answer.
+    pub fn model_window(mut self, model: &str) -> Self {
+        self.model_window_tokens = None;
+        let Ok(model) = model.parse::<ModelId>() else {
+            return self;
+        };
+        match self.vault.model_registry_row(&model) {
+            Ok(Some(row)) => {
+                let window = row.catalog.context_window_tokens;
+                self.model_window_tokens = (window > 0).then_some(window);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %model,
+                    %error,
+                    "a context pack's model row did not read; its window is unknown"
+                );
+            }
+        }
         self
     }
 
@@ -603,16 +691,18 @@ impl<'a> ContextPackBuilder<'a> {
     /// (ONE-1687): the window budget and, when present, the per-class split.
     ///
     /// `None` is a NO-OP — today's defaults hold and the assembled pack is
-    /// byte-for-byte what it was before the profile existed. Call order is
-    /// deliberate: a later explicit [`Self::token_budget`] or
-    /// [`Self::token_allocation`] overrides these profile defaults, so a
-    /// per-request override always wins over the stored profile.
+    /// byte-for-byte what it was before the profile existed. An explicit
+    /// [`Self::token_budget`] always wins over the profile's window budget,
+    /// in either call order, so a per-request override always wins over the
+    /// stored profile; [`Self::token_allocation`] still applies in call
+    /// order.
     pub fn memory_profile(mut self, profile: Option<&MemoryProfile>) -> Self {
         let Some(profile) = profile else {
             return self;
         };
-        self.token_budget =
-            usize::try_from(profile.window_token_budget).unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET);
+        self.profile_token_budget = Some(
+            usize::try_from(profile.window_token_budget).unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET),
+        );
         if let Some(split) = profile.budget_split {
             self.token_allocation = TokenAllocation {
                 claims: split.claims,
@@ -640,12 +730,33 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// The effective window budget after defaults and profile application.
     ///
-    /// The ONE public read of the assembled budget. A default builder answers
-    /// the engine default through the same machinery a profiled builder uses,
-    /// so a cross-read never re-spells the constant.
+    /// The ONE public read of the assembled budget, resolved at call time
+    /// (ARCH-0004 #budget-unit): an explicit [`Self::token_budget`] wins,
+    /// then a memory profile's window budget, then the declared
+    /// [`Self::context_fraction`] of the active model's known window, and
+    /// only when no window is known the fixed engine fallback — so a pack
+    /// whose call site names no model assembles exactly as it did before
+    /// the window-relative default existed. An explicit budget of `0`
+    /// keeps its "no limit" meaning; a derived budget never resolves
+    /// to `0`.
     #[must_use]
-    pub const fn effective_token_budget(&self) -> usize {
-        self.token_budget
+    pub fn effective_token_budget(&self) -> usize {
+        if let Some(budget) = self.token_budget {
+            return budget;
+        }
+        if let Some(budget) = self.profile_token_budget {
+            return budget;
+        }
+        if let Some(window) = self.model_window_tokens
+            && self.context_fraction.is_finite()
+            && self.context_fraction > 0.0
+        {
+            let fraction = f64::from(self.context_fraction.min(1.0));
+            #[allow(clippy::cast_precision_loss)]
+            let derived = (window as f64 * fraction) as usize;
+            return derived.max(1);
+        }
+        DEFAULT_WINDOW_TOKEN_BUDGET
     }
 
     pub fn token_allocation(mut self, allocation: TokenAllocation) -> Self {
@@ -654,7 +765,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn retrieval_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
-        let selected_edges = budget.selected_edges.min(MAX_CONTEXT_NEIGHBORS);
+        let selected_edges = budget.selected_edges;
         self.selected_edge_budget = selected_edges;
         self.retrieval_budget = Some(ContextPackRetrievalBudget {
             selected_edges,

@@ -38,13 +38,11 @@ use crate::runtime_hooks::verb::{
     VerbHookStorage,
 };
 use crate::runtime_hooks::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
 };
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{
-    AgentVerb, CUSTODY_VALUE_ROWS, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view,
-    validate_input,
-};
+use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
+use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 
@@ -257,11 +255,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     mut args: Value,
     check: VerbArgsCheck<'_>,
     run: impl FnOnce(Value) -> Result<Value, E>,
+    is_storage_error: &dyn Fn(&E) -> bool,
 ) -> Result<Result<Value, VerbHookStop>, E> {
     let secret = CustodySecret::lift(&call.verb, &mut args);
     let run = move |args| run(CustodySecret::restored(secret.as_ref(), args));
     let Some(session) = session else {
-        return vault.verb_hooks(call, args, check, run);
+        return vault.verb_hooks(call, args, check, run, is_storage_error);
     };
     let pre = match session_pre(vault, call, args, check, session, None)? {
         Ok(pre) => pre,
@@ -271,6 +270,9 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     let result = match run(pre.args.clone()) {
         Ok(result) => result,
         Err(error) => {
+            if is_storage_error(&error) {
+                vault.reopen_resumed_ask(&pre);
+            }
             abort(vault, pre);
             return Err(error);
         }
@@ -380,7 +382,7 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
     let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
     call.scope = memory
         .room_turn()
-        .map(|turn| format!("room:{}", turn.room.to_hex()));
+        .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
     Ok(call)
 }
 
@@ -460,6 +462,21 @@ fn row_pre_resumable(
     validate: fn(&str, &Value) -> MemoryResult<()>,
     session: Option<&HookSession>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
+    row_pre_with_saved(
+        memory, verb, args, resume, credential, validate, session, false,
+    )
+}
+
+fn row_pre_with_saved(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    resume: Option<VerbResume>,
+    credential: Option<VerbAskCredential>,
+    validate: fn(&str, &Value) -> MemoryResult<()>,
+    session: Option<&HookSession>,
+    require_saved: bool,
+) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
         memory.embedded_owner(verb)?.revalidate(memory.vault())?;
         crate::runtime_hooks::host_doors::admit_trigger(memory.vault(), verb, &args)?;
@@ -473,15 +490,31 @@ fn row_pre_resumable(
     let vault = memory.vault();
     let call = row_call(memory, verb)?;
     let turn = memory.task_work_turn();
-    let mut ended = match (session, credential) {
-        (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
-        (None, Some(credential)) => {
-            vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
+    let mut ended = if require_saved {
+        match session {
+            Some(session) => session.with_storage(vault, |storage| {
+                vault.pre_verb_hooks_retained_in(storage, call, args, &check, turn)
+            })?,
+            None => vault.pre_verb_hooks_retained_in(
+                VerbHookStorage::Canonical,
+                call,
+                args,
+                &check,
+                turn,
+            )?,
         }
-        (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
+    } else {
+        match (session, credential) {
+            (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
+            (None, Some(credential)) => {
+                vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
+            }
+            (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
+        }
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
+        pre.with_read_capture(memory.read_capture());
     }
     Ok(ended)
 }
@@ -553,8 +586,110 @@ fn chain_post(
 pub fn row(
     memory: &Memory<'_>,
     verb: &str,
+    args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+) -> MemoryResult<Value> {
+    row_with_saved(memory, verb, args, run, false)
+}
+
+/// A workflow's caller-only retry from its retained tool checkpoint. The
+/// caller rebuilds its current task host and authority as on a first call;
+/// the native pre chain must also find the saved call before the body runs.
+/// A missing or nested saved invocation never becomes a fresh call.
+///
+/// # Errors
+///
+/// As [`row`], including an unavailable saved hook call.
+pub fn row_retained(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+) -> MemoryResult<Value> {
+    row_with_saved(memory, verb, args, run, true)
+}
+
+fn row_with_saved(
+    memory: &Memory<'_>,
+    verb: &str,
     mut args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
+    require_saved: bool,
+) -> MemoryResult<Value> {
+    // A call a budget window paced answers from its held row until its turn
+    // ran (FIX 8753), before any hook runs on it again.
+    if !require_saved
+        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
+    {
+        return reply;
+    }
+    let secret = CustodySecret::lift(verb, &mut args);
+    // Bound on every call: a retry of a call an ask parked meets its saved
+    // reference whether or not a hook takes the verb now. A credential
+    // caller's reference comes first; else a handle the drain can rebuild is
+    // its plain target; else only the caller's retry resumes it.
+    let (credential, resume) = if require_saved {
+        // Workflow task-host calls are caller-only; never rebind a drain target.
+        (None, None)
+    } else {
+        let credential = memory.verb_ask_credential();
+        let resume = memory
+            .plain_resume()
+            .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+            .map(VerbResume::Row);
+        (credential, resume)
+    };
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let pre = match row_pre_with_saved(
+        memory,
+        verb,
+        args,
+        resume,
+        credential,
+        validate_input,
+        session.as_ref(),
+        require_saved,
+    )? {
+        Ok(pre) => pre,
+        Err(stop) => return completed(verb, stop, session.as_ref()),
+    };
+    drop(pre_restriction);
+    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+    let restriction = pre
+        .landing
+        .is_some()
+        .then(crate::authority::restriction_only_clock);
+    let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
+    drop(restriction);
+    let result = match ran {
+        Ok(result) => result,
+        Err(error) => {
+            if crate::runtime_hooks::verb::run_failed_transient(&error) {
+                memory.vault().reopen_resumed_ask(&pre);
+            }
+            abort(memory.vault(), pre);
+            return Err(error);
+        }
+    };
+    row_post(memory.vault(), pre, result)
+}
+
+/// [`row`] for a caller that must observe the committed engine result before
+/// post-hook redaction (P1 REVIEW-4395): `tap` sees `result` exactly as `run`
+/// committed it, after the call's records settle and BEFORE [`row_post`]
+/// applies post-hook redactions, so a valid Redact of `/receipt` (or a
+/// hook variant rewrite of the args) can neither suppress nor fabricate what
+/// the tap observed. The tap runs only when `run` returned `Ok`; an `Err`
+/// aborts exactly as in [`row`] and the tap never fires. No other behavior
+/// differs from [`row`]: same secret lift, resume, pre chain, restriction
+/// clock and abort path.
+pub fn row_tapped(
+    memory: &Memory<'_>,
+    verb: &str,
+    mut args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+    tap: impl FnOnce(&Value),
 ) -> MemoryResult<Value> {
     let secret = CustodySecret::lift(verb, &mut args);
     // Bound on every call: a retry of a call an ask parked meets its saved
@@ -595,6 +730,7 @@ pub fn row(
             return Err(error);
         }
     };
+    tap(&result);
     row_post(memory.vault(), pre, result)
 }
 
@@ -680,6 +816,9 @@ where
     let (output, result) = match ran {
         Ok(ran) => ran,
         Err(error) => {
+            if crate::runtime_hooks::verb::run_failed_transient(&error) {
+                memory.vault().reopen_resumed_ask(&pre);
+            }
             abort(memory.vault(), pre);
             return Err(error);
         }
@@ -792,5 +931,82 @@ fn completed<O: DeserializeOwned>(
             }
             Err(error)
         }
+    }
+}
+
+/// A reply to `verb` as a call receipt digests it and a verb hook reads it
+/// (OF-560): a `reveal.wait` reply, in whatever envelope its door wraps it,
+/// with each value replaced by its secret's handle, as a structured field
+/// keeps a masked secret. `None` for any other verb's reply, which is read as
+/// it is. A digest of the value itself would let a short secret be guessed
+/// offline.
+#[must_use]
+pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
+    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
+        return None;
+    }
+    let mut masked = reply.clone();
+    mask_reveal_values(&mut masked);
+    Some(masked)
+}
+
+/// The caller's view of a `reveal.wait` reply once its hooks read the masked
+/// form: where the view still holds the handle the mask left, the value goes
+/// back; a field a hook changed or dropped stays as the hook left it.
+#[must_use]
+pub fn revealed_hook_view(
+    mut view: serde_json::Value,
+    masked: &serde_json::Value,
+    reply: &serde_json::Value,
+) -> serde_json::Value {
+    if let (Some(fields), Some(masked), Some(reply)) =
+        (view.as_object_mut(), masked.as_object(), reply.as_object())
+    {
+        for key in REVEALED_FIELDS {
+            if let (Some(slot), Some(stand_in), Some(value)) =
+                (fields.get_mut(key), masked.get(key), reply.get(key))
+                && slot == stand_in
+            {
+                *slot = value.clone();
+            }
+        }
+    }
+    view
+}
+
+/// The fields of a `reveal.wait` answer that carry the value.
+const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
+
+/// Each value field in `value`, at any depth, replaced by the handle its
+/// answer's receipt names, or by null when none does. A JSON text an
+/// envelope carries (an MCP text content) is read the same way.
+fn mask_reveal_values(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            let handle = fields
+                .get("receipt")
+                .and_then(|receipt| receipt.get("handle"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            for key in REVEALED_FIELDS {
+                if let Some(slot) = fields.get_mut(key) {
+                    *slot = handle
+                        .clone()
+                        .map_or(serde_json::Value::Null, serde_json::Value::String);
+                }
+            }
+            fields.values_mut().for_each(mask_reveal_values);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(mask_reveal_values),
+        serde_json::Value::String(text) if text.starts_with(['{', '[']) => {
+            if let Ok(mut inner) = serde_json::from_str::<serde_json::Value>(text) {
+                let before = inner.clone();
+                mask_reveal_values(&mut inner);
+                if inner != before {
+                    *text = inner.to_string();
+                }
+            }
+        }
+        _ => {}
     }
 }

@@ -16,7 +16,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use zeroize::Zeroizing;
 
 use crate::vault::Vault;
@@ -77,7 +77,7 @@ impl Vault {
     ) -> Result<DoorInjectionReceipt> {
         let wtxn = self.store.env.write_txn()?;
         let rec =
-            crate::secret_custody::read_secret_custody_admission_in_txn(&self.store, &wtxn, id)?
+            crate::secret_record::read_secret_custody_admission_in_txn(&self.store, &wtxn, id)?
                 .ok_or_else(|| {
                     Error::Secret(SecretError::SecretRefNotFound { name: id.to_hex() })
                 })?;
@@ -107,7 +107,7 @@ impl Vault {
         &self,
         wtxn: heed::RwTxn<'_>,
         id: &EntityId,
-        rec: &crate::secret_custody::SecretCustodyAdmission,
+        rec: &crate::secret_record::SecretCustodyAdmission,
         secret_ref: &str,
         effector: &str,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -129,7 +129,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
-        rec: &crate::secret_custody::SecretCustodyAdmission,
+        rec: &crate::secret_record::SecretCustodyAdmission,
         effector: &str,
     ) -> Result<(u32, Zeroizing<Vec<u8>>)> {
         let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
@@ -138,6 +138,33 @@ impl Vault {
         let generation = rec.rotation_generation;
         let value = read_value_for_ref_in_txn(self, txn, id, effector)?;
         Ok((generation, value))
+    }
+
+    /// The revoke-only value copy for an accepted local hard erase. The
+    /// native cloud binding supplied this exact slot and generation in the
+    /// same writer; no owner or general token-use grant is minted here.
+    pub(crate) fn cloud_registration_revoke_value_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slot: &EntityId,
+        generation: u32,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let Some(rec) =
+            crate::secret_record::read_secret_custody_admission_in_txn(&self.store, txn, slot)?
+        else {
+            return Ok(None);
+        };
+        let name = format!("{}{}", crate::secret_record::SLOT_PREFIX, slot.to_hex());
+        if rec.name != name || rec.rotation_generation != generation {
+            return Ok(None);
+        }
+        let (_, value) = self.admit_t0_value_in_txn(
+            txn,
+            slot,
+            &rec,
+            crate::secret_custody::CloudRegistrationTokenUse::Revoke.effector(),
+        )?;
+        Ok(Some(value))
     }
 
     /// The return token of a T0 door: name, effector, time, generation and

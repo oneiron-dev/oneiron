@@ -8,13 +8,13 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::federation::scope_codec::{
-    decode_scope_value, effect_preset, encode_scope_value, legacy_read_scope,
-};
 use crate::gate::constants::{
     GRANT_EFFECTOR_KEY, GRANT_SCOPE_KEY, GRANT_SELECTORS_KEY, LEGACY_POLICY_SCOPE_SCHEMA_VERSION,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
     SCOPED_READ_EFFECTOR_CORE_READ, SCOPED_READ_EFFECTOR_ONEIRON_READ,
+};
+use oneiron_authority::federation::scope_codec::{
+    decode_scope_value, effect_preset, encode_scope_value, legacy_read_scope,
 };
 
 use super::decode_manifest::decode_policy_manifest;
@@ -73,7 +73,7 @@ pub(crate) fn normalize_policy_manifest_scope(data: &[u8]) -> Option<Vec<u8>> {
         }
     }
     let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &Value::Map(entries)).ok()?;
+    crate::gate::value_encoding::write_value(&mut out, &Value::Map(entries)).ok()?;
     decode_policy_manifest(&out)?;
     (out != data).then_some(out)
 }

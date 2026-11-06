@@ -9,7 +9,6 @@ use crate::claim::transition::{
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::COMMITMENT_LAPSE_SUCCESSOR;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
@@ -37,23 +36,7 @@ pub(crate) struct PendingCommitmentLapse {
     pub(crate) occurred: TimeRange,
 }
 
-/// The claim a batched lapse of `commitment` writes: with
-/// [`STATUS_CHANGE_MINTS_SUCCESSOR`], its successor, derived from the
-/// commitment so the gate preflight and the apply name the same new claim;
-/// otherwise the commitment itself. A commitment lapses once, so its one
-/// derived successor is its own.
-pub(crate) fn lapse_claim_id(commitment: &EntityId) -> Result<EntityId> {
-    if !STATUS_CHANGE_MINTS_SUCCESSOR {
-        return Ok(*commitment);
-    }
-    EntityId::derive(COMMITMENT_LAPSE_SUCCESSOR, &[commitment.as_bytes()])
-}
-
-/// [`lapse_claim_id`] for each selected commitment, in order: the ids the
-/// batch preflight records its decisions under.
-pub(crate) fn lapse_claim_ids(commitments: &[EntityId]) -> Result<Vec<EntityId>> {
-    commitments.iter().map(lapse_claim_id).collect()
-}
+pub(crate) use crate::write_envelope::commitment_transition::{lapse_claim_id, lapse_claim_ids};
 
 /// Grounds every named commitment and derives its post-transition Lapsed
 /// candidate, in the caller's transaction.
@@ -338,6 +321,7 @@ fn supersede_with_successor_in_txn(
                 end: closed_end,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&body)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -349,7 +333,7 @@ fn supersede_with_successor_in_txn(
             tgt: predecessor,
             weight: crate::vault::SUPERSEDES_DEFAULT_WEIGHT,
             created_at: now,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
             provenance: None,
         },
     ];

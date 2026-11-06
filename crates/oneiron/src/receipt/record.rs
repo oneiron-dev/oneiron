@@ -15,11 +15,12 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result, StoreError};
-use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
+use crate::receipt::intent_id::IntentId;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -384,6 +385,7 @@ fn put_carrier_in_txn(
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -444,7 +446,7 @@ pub(super) fn put_reference_refusal_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     facts: &ReferenceRefusalFacts,
-    reason: crate::memory::RefusalReason,
+    reason: crate::receipt::RefusalReason,
     at: u64,
 ) -> Result<()> {
     if vault.store.port_entity_record(txn, &id)?.is_some() {

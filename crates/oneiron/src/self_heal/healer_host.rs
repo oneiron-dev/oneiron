@@ -139,6 +139,12 @@ const COUNT: SideTable<EntityId, ActorCount, Named> =
 /// An external healer's repair proposal record and its review state. Key: id16.
 const PROPOSAL: SideTable<EntityId, HealerProposalRecord, Named> =
     SideTable::new(&side_table::SELF_HEAL_HEALER_PROPOSAL);
+/// Whether a masked copy of a `SELF_HEAL_HEALER_PROPOSAL` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn self_heal_healer_proposal_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HealerProposalRecord, Named>(bytes)
+}
+
 /// A human-ratified patch pull-request record for a released healer proposal. Key: id16.
 const RELEASE: SideTable<EntityId, PatchPullRequest, Named> =
     SideTable::new(&side_table::SELF_HEAL_HEALER_RELEASE);
@@ -146,6 +152,11 @@ const RELEASE: SideTable<EntityId, PatchPullRequest, Named> =
 /// Key: id16 (actor) + bytes32 (blake3 hash of the run name).
 const RUN: SideTable<(EntityId, [u8; 32]), HealerRunReceipt, Named> =
     SideTable::new(&side_table::SELF_HEAL_HEALER_RUN);
+/// Whether a masked copy of a `SELF_HEAL_HEALER_RUN` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn self_heal_healer_run_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HealerRunReceipt, Named>(bytes)
+}
 
 /// The digest half of a run receipt's key: a run name is unbounded text, so
 /// only its blake3 hash is stored.

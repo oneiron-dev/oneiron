@@ -22,11 +22,13 @@ mod classify;
 mod custom_review;
 mod drill;
 mod healer_case;
+pub mod healer_dispatch;
 mod impact;
 mod ladder;
 mod lineage;
 pub mod oversight;
 mod scope;
+pub mod task_terminal;
 mod transitions;
 
 pub use self::blocked_reports::{BlockedReportRef, FailureIssueEntry, ingest_report_blocked};

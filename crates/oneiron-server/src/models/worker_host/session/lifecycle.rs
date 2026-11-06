@@ -79,7 +79,7 @@ struct Counts {
     imports: AtomicU64,
     replays: AtomicU64,
     restores_cold: AtomicU64,
-    skips: [AtomicU64; 7],
+    skips: [AtomicU64; 8],
 }
 
 /// One park or restore event, as the status counts it.
@@ -116,6 +116,9 @@ pub(super) enum Skip {
     Oversize,
     /// What it was computed with is not named whole.
     Unsupported,
+    /// Its dependency set is imprecise (a world or author did not read),
+    /// so a park cannot tell it from a row with no producer at all.
+    Imprecise,
     /// Its checkpoint restores slower than it recomputes: too short to
     /// pay back its transfer.
     Short,
@@ -177,6 +180,28 @@ pub(in crate::models::worker_host) fn set_policy(policy: &SnapshotPolicy) {
 /// The port every served vault attaches.
 struct HostPort;
 
+struct SnapshotReleaseTask(tokio::task::AbortHandle);
+
+impl Drop for SnapshotReleaseTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn release_vault_and_record(vault: VaultRef, bound: Duration) -> SnapshotRelease {
+    let release = lock_vault(vault, bound).await;
+    *guard(&snapshots().last_lock) = Some(SnapshotReceipt {
+        bound_ms: u64::try_from(bound.as_millis()).unwrap_or(u64::MAX),
+        released: release.released,
+        aborted: release.aborted.clone(),
+        timed_out: release.timed_out,
+        elapsed_ms: release.elapsed_ms,
+        host_copies: release.host_copies,
+        host_copies_left: release.host_copies_left,
+    });
+    release
+}
+
 impl SnapshotRuntime for HostPort {
     fn release_bound(&self, vault: VaultRef) -> Duration {
         policy().for_vault(&vault.0).lock_release_timeout
@@ -184,18 +209,25 @@ impl SnapshotRuntime for HostPort {
 
     fn release_vault(&self, vault: VaultRef, _closed: u64) -> SnapshotFuture<'_, SnapshotRelease> {
         let bound = self.release_bound(vault);
+        let started = Instant::now();
+        let current = Handle::try_current().ok();
+        let inline = current.is_some();
+        let runtime = current.or_else(|| snapshots().runtime.get().cloned());
         Box::pin(async move {
-            let release = lock_vault(vault, bound).await;
-            *guard(&snapshots().last_lock) = Some(SnapshotReceipt {
-                bound_ms: u64::try_from(bound.as_millis()).unwrap_or(u64::MAX),
-                released: release.released,
-                aborted: release.aborted.clone(),
-                timed_out: release.timed_out,
-                elapsed_ms: release.elapsed_ms,
-                host_copies: release.host_copies,
-                host_copies_left: release.host_copies_left,
-            });
-            release
+            if inline {
+                return release_vault_and_record(vault, bound).await;
+            }
+            let timed_out = || SnapshotRelease {
+                timed_out: true,
+                elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ..SnapshotRelease::default()
+            };
+            let Some(runtime) = runtime else {
+                return timed_out();
+            };
+            let task = runtime.spawn(release_vault_and_record(vault, bound));
+            let _abort = SnapshotReleaseTask(task.abort_handle());
+            task.await.unwrap_or_else(|_| timed_out())
         })
     }
 
@@ -286,7 +318,8 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
             .or_insert_with(|| (place.worker.clone(), 0))
             .1 += 1;
         releases.spawn(async move {
-            let acked = registry::release_acked(target, place, SessionInvalidation::Evicted).await;
+            let acked =
+                registry::release_acked(target, place, SessionInvalidation::VaultLocked).await;
             (key, acked)
         });
     }
@@ -314,8 +347,14 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
     }
     releases.abort_all();
     // The releases cut every export or import in flight; their owners drop
-    // what they hold, inside the same bound.
+    // what they hold, inside the same bound. A seal's blocking publish is
+    // not cut mid-write, only bounded by the same deadline; its copy drops
+    // when the write lands.
     registry::copies_dropped(&vault, deadline).await;
+    // What the graceful path left: read before the abort storm, whose
+    // incarnation kills drop every copy and would mask whether the wait
+    // above finished the work (FIX 11288).
+    let host_copies_left = registry::host_copies(&vault);
     // Every abort starts at once, each on a task of its own that also does
     // its cleanup, so it finishes even when the engine stops waiting.
     let aborts: Vec<_> = owed
@@ -350,7 +389,7 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
         timed_out,
         elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         host_copies,
-        host_copies_left: registry::host_copies(&vault),
+        host_copies_left,
     }
 }
 
@@ -437,6 +476,7 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
             kept_local: skip(Skip::KeptLocal),
             oversize: skip(Skip::Oversize),
             unsupported: skip(Skip::Unsupported),
+            imprecise: skip(Skip::Imprecise),
             short: skip(Skip::Short),
         },
     };

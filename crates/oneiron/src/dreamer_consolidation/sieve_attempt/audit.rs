@@ -24,12 +24,14 @@ use crate::dreamer_wake::{
     DreamerAttemptExecution, SieveAuditDiscovery, SieveAuditWindow, SieveUnlocatedCause,
     SieveUnlocatedDiscovery, SpanKind, WakeAttemptContext,
 };
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Result};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 /// A finding as the model writes it: each span it found, by the window's
 /// label and words copied from it, never an id or an offset.
@@ -71,7 +73,7 @@ impl CallSources for WindowShown<'_> {
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_sieve_window_audit(
-        &mut self,
+        &self,
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,
@@ -88,6 +90,13 @@ impl ConsolidationExecutor<'_> {
             .now_ms
             .div_ceil(1_000)
             .saturating_add(input.policy.rung_retry_secs);
+        // As with a rung: excluded work parks before any source read.
+        if ctx.vault.dreamer_turn_excluded(&input.window.turn)? {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "conversation excluded from Dreamer passes".to_owned(),
+                cause: DreamerParkCause::Retry,
+            });
+        }
         let evidence = match sieve::window_read(ctx.vault, &input)? {
             WindowRead::Ready(evidence) => evidence,
             WindowRead::Superseded => {
@@ -265,7 +274,14 @@ impl ConsolidationExecutor<'_> {
                 ));
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+            // A failed call's paid usage has no terminal step: it is handed
+            // to the driver's settlement with the park (FIX 11554).
             Err(error) => {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
+                    charges.record_usage(usage);
+                }
                 return Ok(charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)));
             }
         };

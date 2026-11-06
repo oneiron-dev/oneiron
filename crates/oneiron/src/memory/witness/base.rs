@@ -50,7 +50,7 @@ pub(super) enum BaseGuards {
         quoted: Option<crate::conversation_dag::QuotedReply>,
         /// The thread binding the room guard proved (FIX 2951): a minted
         /// TURN is born with it; a stored one already holds it.
-        thread: Option<crate::workspace_roster::ThreadBinding>,
+        thread: Option<crate::store::conversation_body::ThreadBinding>,
     },
 }
 

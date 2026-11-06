@@ -1,9 +1,9 @@
 //! Per-agent file views over codebase blobs, with one owned shared service set.
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
-use crate::checkout::CheckoutTaskClass;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
+use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -58,6 +58,10 @@ pub struct ViewReceipt {
     /// The run this view is the work of (FIX 6867), bound in its first
     /// write; `None` for an owner's or trusted caller's view.
     pub run: Option<crate::memory::repo_doors::RepoRunStamp>,
+    /// How each file a masked reader's copy holds differs from the stored
+    /// blob it stands in for (FIX 8965): absent for the stored bytes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub projections: BTreeMap<String, crate::origin::secret_projection::RepoFileProjectionView>,
 }
 /// Owns a private host directory. Working files never share writable inodes
 /// with canonical blobs or other views. Durable edits use the code document door.
@@ -129,11 +133,17 @@ impl<'a> CodeViewSet<'a> {
         contents: &BTreeMap<String, Vec<u8>>,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<ViewReceipt> {
-        let materialized =
-            self.materialize_checked(actor, fork_hash, base, contents, |txn, _| {
+        let materialized = self.materialize_checked(
+            actor,
+            fork_hash,
+            base,
+            contents,
+            BTreeMap::new(),
+            |txn, _| {
                 admit(txn)?;
                 Ok(Ok::<_, std::convert::Infallible>(None))
-            })?;
+            },
+        )?;
         match materialized {
             Ok(receipt) => Ok(receipt),
             Err(never) => match never {},

@@ -4,15 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::claim::learning_estimate::Estimate;
+use crate::claim::learning_estimate::EstimateValue;
+use crate::claim::learning_estimate::PriorOrigin;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::learning::project::StoredEstimateClaim;
-use crate::learning::{
-    Estimate, EstimateValue, LearningCell, LearningPredicate, LearningRead, PriorOrigin, TypeRef,
-};
+use crate::learning::{LearningCell, LearningRead};
 use crate::ports::EntityStoreRead;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
@@ -103,6 +106,27 @@ pub fn read_skill_reliability(
     read_cell_in_txn(vault, &txn, &cell, &query.type_parents)
 }
 
+/// A person's measured fit for `query`: the (task-type, person) cell fed by
+/// the runs the person drove, for L05 (FIX 8968). Model-agnostic: the cell's
+/// executor is the person, not the model.
+pub fn person_skill_fit(
+    vault: &Vault,
+    person: &EntityId,
+    query: &SkillReliabilityQuery,
+) -> Result<LearningRead> {
+    query.validate()?;
+    let cell = LearningCell::new(LearningPredicate::Reliability, *person)
+        .executor(person.to_hex())
+        .type_ref(query.type_ref.clone())
+        .axis(query.axis.clone())
+        .project(query.project);
+    cell.validate()?;
+    let txn = vault.store.env.read_txn()?;
+    // Persons start from the shared borrowed/shipped prior, never a skill's
+    // provenance trust: the skill reader's fallback names a SKILL only.
+    crate::learning::read::read_learning_in_txn(vault, &txn, &cell, &query.type_parents)
+}
+
 /// Diagnostic unqualified read: the richest cell, never a pooled posterior.
 /// Selection for a task uses read_skill_reliability instead.
 pub fn skill_reliability_posterior(
@@ -190,7 +214,7 @@ pub(super) fn resolved_estimate_in_txn(
             continue;
         }
         let estimate = StoredEstimateClaim::from_value(&body.value)?.estimate;
-        if estimate.ver != crate::learning::ESTIMATOR_VERSION {
+        if estimate.ver != crate::claim::learning_estimate::ESTIMATOR_VERSION {
             continue;
         }
         if resolved

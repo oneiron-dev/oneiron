@@ -1,13 +1,18 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
+use super::sieve_ports::SliceStep;
+use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::{LlmResponse, LlmUsage, Vault};
+use crate::model_step_context::StepOutcome;
+use crate::model_step_error::{DurableStepError, DurableStepResult};
+use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
 /// unbilled memo (for example, after a trap refunded its reservation) still
@@ -195,7 +200,7 @@ pub(super) fn reply_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            crate::llm::ContentPart::Text { text } => Some(text.as_str()),
+            oneiron_model::llm::ContentPart::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -212,4 +217,83 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
         DreamerParkCause::of_response(response),
         DreamerParkCause::Retry
     )
+}
+
+/// What one slice's terminal step left, once its spend is accounted:
+/// the single classification the serial finish and the window arms
+/// that never reach a finish both tally by, so a paid extraction
+/// settles identically whichever arm accounts it (FIX 12487 round 1).
+pub(super) enum SliceFate {
+    Finished {
+        response: LlmResponse,
+        failure_policy: Option<DreamerFailureDecision>,
+    },
+    Trapped,
+    Checkpoint,
+    Refused(String),
+}
+
+/// Accounts one slice step's outcome into `charges` and reports its
+/// fate. `record_terminal` and `record_usage` are the only charge
+/// sources for a partition (it registers no metered run line), so
+/// every paid outcome must pass here exactly once.
+pub(super) fn tally_slice_outcome(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: [u8; 32],
+    outcome: DurableStepResult<StepOutcome>,
+    charges: &mut StepChargeTally,
+) -> Result<SliceFate> {
+    Ok(match outcome {
+        Ok(StepOutcome::Finished {
+            response,
+            failure_policy,
+            ..
+        }) => {
+            charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+            SliceFate::Finished {
+                response,
+                failure_policy,
+            }
+        }
+        Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
+        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+            charges.record_usage(&usage);
+            SliceFate::Checkpoint
+        }
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            SliceFate::Refused(format!("extraction reply refused: {}", errors.join("; ")))
+        }
+        Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
+            SliceFate::Checkpoint
+        }
+        Err(error) => SliceFate::Refused(error.to_string()),
+    })
+}
+
+/// Accounts an extracted prefix whose finish never tallies it (a
+/// window slot whose branch would not re-open, or whose extraction a
+/// changed prior set discards for a fresh run): the finish loop's own
+/// classification, so the paid steps settle beside their receipts
+/// instead of refunding at zero. Reports whether any slice trapped:
+/// that step already parked the attempt under its durable trap, so
+/// the caller must settle the trapped exit, never extract past it
+/// (FIX 12487 round 2).
+pub(super) fn tally_extracted_outcomes(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    extracted: ExtractedPartition,
+    charges: &mut StepChargeTally,
+) -> Result<bool> {
+    let mut trapped = false;
+    for SliceStep { step_hash, outcome } in extracted.steps {
+        if matches!(
+            tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?,
+            SliceFate::Trapped
+        ) {
+            trapped = true;
+        }
+    }
+    Ok(trapped)
 }

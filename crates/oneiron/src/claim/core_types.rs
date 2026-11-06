@@ -10,113 +10,27 @@
 use rmpv::Value;
 
 use super::*;
-use crate::affect::{
-    AFFECT_TRIGGER_PREDICATE,
-    coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
-    validate_affect_trigger_claim_structure,
-};
-use crate::context_pack::FieldProfile;
-use crate::edge::EdgeKind;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::serialize::pack_format::FieldProfile;
+#[cfg(test)]
 use crate::temporal::TimeRange;
-
-mod codec;
-mod evidence_refs;
-mod relationship_scope;
-
-pub use codec::decode_claim_body;
-pub(crate) use codec::encode_claim_body;
-pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
-pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
-pub use relationship_scope::{
-    RelationshipScope, meet_relationship_scopes, relationship_scope_includes,
-    relationship_scope_of, relationship_scope_transcript,
+use crate::write_envelope::{
+    affect_trigger::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure},
+    coping_outcome::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
 };
-pub(crate) use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
 
-/// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
-///
-/// Order is canonical: the engine's encoder emits present fields in this
-/// order. The context-pack field profiles are drawn from this list (Minimal
-/// = its first 2; Standard and Full add the confidence band and basis, so a
-/// profile that carries `conf` carries what it means; the lifecycle keys
-/// `appr`/`life`/`stale` and optional session tag `sess` are excluded from
-/// every serialization profile).
-pub const CLAIM_BODY_KEYS: [&str; 21] = [
-    "pred",
-    "val",
-    "conf",
-    "sal",
-    "evid",
-    "from",
-    "to",
-    "src",
-    "worldId",
-    "scopeRelationshipId",
-    "subj",
-    "scope",
-    "appr",
-    "life",
-    "stale",
-    "sess",
-    "scopeFacetId",
-    "scopeProjectId",
-    "scopeVersion",
-    "confBand",
-    "confBasis",
-];
-
-const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
-const KEY_VAL: &str = CLAIM_BODY_KEYS[1];
-pub(crate) const KEY_CONF: &str = CLAIM_BODY_KEYS[2];
-pub(crate) const KEY_SAL: &str = CLAIM_BODY_KEYS[3];
-const KEY_EVID: &str = CLAIM_BODY_KEYS[4];
-const KEY_FROM: &str = CLAIM_BODY_KEYS[5];
-const KEY_TO: &str = CLAIM_BODY_KEYS[6];
-const KEY_SRC: &str = CLAIM_BODY_KEYS[7];
-pub(crate) const KEY_WORLD: &str = CLAIM_BODY_KEYS[8];
-const KEY_REL: &str = CLAIM_BODY_KEYS[9];
-const KEY_SUBJ: &str = CLAIM_BODY_KEYS[10];
-pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[11];
-const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
-const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
-const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
-pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
-const KEY_CONF_BAND: &str = CLAIM_BODY_KEYS[19];
-const KEY_CONF_BASIS: &str = CLAIM_BODY_KEYS[20];
-
-/// Context-pack CLAIM field profiles, derived from [`CLAIM_BODY_KEYS`] so the
-/// serializer cannot drift from the storage ABI.
-pub(crate) const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
-pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = &[
-    "pred",
-    "val",
-    "conf",
-    "sal",
-    "evid",
-    KEY_CONF_BAND,
-    KEY_CONF_BASIS,
-];
-pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
-    "pred",
-    "val",
-    "conf",
-    "sal",
-    "evid",
-    "from",
-    "to",
-    "src",
-    "worldId",
-    "scopeRelationshipId",
-    "subj",
-    "scope",
-    "scopeFacetId",
-    "scopeProjectId",
-    "scopeVersion",
-    KEY_CONF_BAND,
-    KEY_CONF_BASIS,
-];
+pub use crate::write_envelope::claim_body::{
+    CLAIM_BODY_KEYS, ClaimBody, ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef,
+    RelationshipScope, SessionClaimBundle, SessionClaimBundleClaim, decode_claim_body,
+    meet_relationship_scopes, relationship_scope_includes, relationship_scope_of,
+    relationship_scope_transcript,
+};
+pub(crate) use crate::write_envelope::claim_body::{
+    CLAIM_FIELDS_FULL, CLAIM_FIELDS_MINIMAL, CLAIM_FIELDS_STANDARD, EDGE_REF_LEN,
+    EVIDENCE_REFS_KEY, KEY_CONF, KEY_SAL, KEY_SCOPE, KEY_SESSION, KEY_WORLD,
+    SessionClaimBundleMember, decode_relationship_scope, encode_claim_body,
+    encode_relationship_scope, public_evidence_refs, public_evidence_value,
+};
 
 /// The CLAIM fields `profile` reads: the same lists the serializer
 /// projects, so a host projection cannot drift from them (FIX 11037).
@@ -125,245 +39,6 @@ pub fn claim_fields(profile: FieldProfile) -> &'static [&'static str] {
         FieldProfile::Minimal => CLAIM_FIELDS_MINIMAL,
         FieldProfile::Standard => CLAIM_FIELDS_STANDARD,
         FieldProfile::Full => CLAIM_FIELDS_FULL,
-    }
-}
-
-const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
-    let whole: &[&str] = &CLAIM_BODY_KEYS;
-    whole.split_at(len).0
-}
-
-/// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
-pub(crate) const EDGE_REF_LEN: usize = 33;
-
-/// A claim's subject reference (`subj`). Two pinned encodings:
-///
-/// * 16 bytes — an entity UUID;
-/// * 33 bytes — an EdgeRef `(source_id 16 B ‖ edge_kind u8 ‖ target_id 16 B)`
-///   addressing an edge (used by `edge.provenance` Claims; the kind byte must
-///   parse as a registered [`EdgeKind`]).
-///
-/// Anything else fails validation with [`Error::InvalidClaimBody`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClaimSubject {
-    /// Subject is an entity (16-byte UUID).
-    Entity(EntityId),
-    /// Subject is an edge, addressed as a 33-byte EdgeRef.
-    Edge {
-        source: EntityId,
-        kind: EdgeKind,
-        target: EntityId,
-    },
-}
-
-impl ClaimSubject {
-    pub(crate) fn encode(&self) -> Vec<u8> {
-        match self {
-            Self::Entity(id) => id.as_bytes().to_vec(),
-            Self::Edge {
-                source,
-                kind,
-                target,
-            } => {
-                let mut out = Vec::with_capacity(EDGE_REF_LEN);
-                out.extend_from_slice(source.as_bytes());
-                out.push(*kind as u8);
-                out.extend_from_slice(target.as_bytes());
-                out
-            }
-        }
-    }
-
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
-        match bytes.len() {
-            ENTITY_ID_LEN => {
-                let arr: [u8; ENTITY_ID_LEN] = bytes
-                    .try_into()
-                    .map_err(|_| Error::InvalidClaimBody("subj entity id is malformed"))?;
-                let id = EntityId::from_bytes(arr)
-                    .map_err(|_| Error::InvalidClaimBody("subj entity id is reserved"))?;
-                Ok(Self::Entity(id))
-            }
-            EDGE_REF_LEN => {
-                let source = entity_id_from(&bytes[..ENTITY_ID_LEN], "subj EdgeRef source id")?;
-                let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN]).ok_or(
-                    Error::InvalidClaimBody("subj EdgeRef kind byte is not a registered EdgeKind"),
-                )?;
-                let target = entity_id_from(&bytes[ENTITY_ID_LEN + 1..], "subj EdgeRef target id")?;
-                Ok(Self::Edge {
-                    source,
-                    kind,
-                    target,
-                })
-            }
-            _ => Err(Error::InvalidClaimBody(
-                "subj must be a 16-byte entity id or a 33-byte EdgeRef",
-            )),
-        }
-    }
-}
-
-fn entity_id_from(bytes: &[u8], context: &'static str) -> Result<EntityId> {
-    let arr: [u8; ENTITY_ID_LEN] = bytes
-        .try_into()
-        .map_err(|_| Error::InvalidClaimBody(context))?;
-    EntityId::from_bytes(arr).map_err(|_| Error::InvalidClaimBody(context))
-}
-
-/// Decoded type-0 (CLAIM) body — the engine-pinned structural fields only.
-///
-/// Per-predicate columns (ARCH-0003 §G.1) are NOT modeled here: the typed
-/// `val` payload is an opaque MessagePack value the crate never interprets.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ClaimBody {
-    /// `pred` — predicate string, validated against the D17 grammar. Crate
-    /// well-known predicates use the first-segment layer convention
-    /// documented by [`PREDICATE_LAYER_NAMESPACES`].
-    pub predicate: String,
-    /// `subj` — subject reference (entity UUID or EdgeRef).
-    pub subject: ClaimSubject,
-    /// `val` — typed claim value; opaque MessagePack at the storage layer.
-    pub value: Value,
-    /// `conf` — confidence, finite in `[0, 1]`.
-    pub confidence: f32,
-    /// `confBand` — the band `conf` is read in, as its producer gave it or
-    /// the house table put it (FIX 7761). Readers hedge and compare by this
-    /// band, never by a fixed cutoff over `conf`.
-    pub confidence_band: ConfidenceBand,
-    /// `confBasis` — where `confBand` came from: a calibrated decider, or
-    /// the house table for a confidence given as a number alone.
-    pub confidence_basis: VerdictBasis,
-    /// `appr` — approval status.
-    pub approval: ClaimApprovalStatus,
-    /// `life` — lifecycle status.
-    pub lifecycle: ClaimLifecycleStatus,
-    /// `sal` — optional salience, finite in `[0, 1]`.
-    pub salience: Option<f32>,
-    /// `evid` — optional evidence payload (opaque MessagePack).
-    pub evidence: Option<Value>,
-    /// `from` — optional valid-time start (Unix seconds).
-    pub valid_from: Option<u64>,
-    /// `to` — optional valid-time end (Unix seconds).
-    pub valid_to: Option<u64>,
-    /// `src` — optional provenance source.
-    pub source: Option<ClaimSource>,
-    /// `worldId` — the 16-byte WORLD scope member. The wire always stamps it.
-    /// The in-memory `None` convenience encodes the reserved base id, never absence.
-    /// The WORLD entity id this claim
-    /// is scoped to (ARCH-0004 claim world filter; ARCH-0022 world model).
-    /// On disk it is exactly 16 MessagePack-binary bytes;
-    /// any other shape is rejected fail-closed with [`Error::InvalidClaimBody`].
-    /// The referenced WORLD entity is NOT required to exist at write time —
-    /// extraction may create claims before their world; the read side groups
-    /// by id regardless.
-    pub world: Option<EntityId>,
-    /// `scopeRelationshipId` holds `all` or a set of 16-byte ids.
-    /// The in-memory `None` convenience encodes `all`; `Some(empty)` is the
-    /// explicit empty set; `Some(ids)` is every RELATIONSHIP [`EntityId`] the
-    /// writer named. The claim codec validates this on-disk shape only and
-    /// does not require the referenced relationships to exist at write time,
-    /// matching `world`. Retrieval validates the active relationship's
-    /// existence and type when relationship filtering executes.
-    pub rel: RelationshipScope,
-    /// `scope` — optional relationship/facet scope (opaque MessagePack).
-    pub scope: Option<Value>,
-    /// Required provenance mask id. A mask does not grant authority.
-    pub scope_facet: EntityId,
-    /// Required project audience id.
-    pub scope_project: EntityId,
-    /// `sess` — optional agent-session tag. Proposed claims sharing a tag
-    /// form a review bundle; the tag remains as provenance after approval.
-    pub session_tag: Option<String>,
-    /// `stale` — derived-data staleness marker; absent on disk means `false`.
-    pub stale: bool,
-}
-
-/// One session-tagged claim returned for bundle review or merge.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SessionClaimBundleClaim {
-    /// Durable CLAIM entity id.
-    pub id: EntityId,
-    /// Current typed claim body.
-    pub body: ClaimBody,
-}
-
-/// Coherent proposed-claim bundle for one agent session.
-///
-/// A bundle is a data-native projection over CLAIM rows sharing `sess` and
-/// the envelope-stamped producer actor; it does not introduce an independent
-/// branch record or storage table.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SessionClaimBundle {
-    /// Stable tag supplied by the writing agent session.
-    pub session_tag: String,
-    /// Active proposed claims currently belonging to the session.
-    pub claims: Vec<SessionClaimBundleClaim>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SessionClaimBundleMember {
-    pub(crate) id: EntityId,
-    pub(crate) body: ClaimBody,
-    pub(crate) occurred: TimeRange,
-    pub(crate) learned_at: u64,
-}
-
-impl ClaimBody {
-    /// Creates a claim body from the six required fields; all optional
-    /// fields start absent and `stale` starts `false`. The confidence starts
-    /// in its house band ([`Self::set_confidence`]). The scope facet starts
-    /// as the subject's `substrate` FACET, a derived id, so construction
-    /// refuses with an error where that derivation does.
-    pub fn new(
-        predicate: impl Into<String>,
-        subject: ClaimSubject,
-        value: Value,
-        confidence: f32,
-        approval: ClaimApprovalStatus,
-        lifecycle: ClaimLifecycleStatus,
-    ) -> Result<Self> {
-        Ok(Self {
-            predicate: predicate.into(),
-            subject,
-            value,
-            confidence,
-            confidence_band: ConfidenceBand::house(confidence),
-            confidence_basis: VerdictBasis::DeterministicFallback,
-            approval,
-            lifecycle,
-            salience: None,
-            evidence: None,
-            valid_from: None,
-            valid_to: None,
-            source: None,
-            world: None,
-            rel: None,
-            scope: None,
-            scope_facet: super::scope_stamp::subject_facet(subject)?,
-            scope_project: super::default_project_id(),
-            session_tag: None,
-            stale: false,
-        })
-    }
-
-    /// The band and basis kept beside `confidence`.
-    #[must_use]
-    pub const fn confidence_details(&self) -> ConfidenceDetails {
-        ConfidenceDetails {
-            band: self.confidence_band,
-            basis: self.confidence_basis,
-        }
-    }
-
-    /// Sets `confidence` with the band and basis its producer gave, or the
-    /// house band for a number given alone: a changed number never keeps
-    /// another number's band (FIX 7761).
-    pub fn set_confidence(&mut self, confidence: f32, details: Option<ConfidenceDetails>) {
-        let details = details.unwrap_or_else(|| ConfidenceDetails::house(confidence));
-        self.confidence = confidence;
-        self.confidence_band = details.band;
-        self.confidence_basis = details.basis;
     }
 }
 
@@ -385,6 +60,20 @@ impl ClaimBody {
 pub(crate) fn validate_claim_body_and_decode(
     data: &[u8],
     allow_reserved_predicate: bool,
+) -> Result<ClaimBody> {
+    validate_claim_body_and_decode_with_descriptor(
+        data,
+        allow_reserved_predicate,
+        |predicate| Ok(crate::comm::is_compiled_generic_claim_predicate(predicate)),
+        crate::comm::check_claim_against_compiled_descriptor,
+    )
+}
+
+fn validate_claim_body_and_decode_with_descriptor(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+    is_generic: impl FnOnce(&str) -> Result<bool>,
+    check_descriptor: impl FnOnce(&ClaimBody) -> Result<()>,
 ) -> Result<ClaimBody> {
     let body = decode_claim_body(data, allow_reserved_predicate)?;
     // Lineage before predicate shape (ONE-1710): the forgery guard is
@@ -418,33 +107,38 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_coreference_status_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_COREFERENCE_SHARE_CONSENT {
         validate_coreference_share_consent_claim_structure(&body)?;
-    } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
-        crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
-    } else if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
-        crate::thread_passport::validate_thread_claim_structure(&body)?;
-    } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
+    } else if body.predicate == crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM
+    {
+        crate::write_envelope::identity_pair::validate_distinct_from_claim_structure(&body)?;
+    } else if crate::write_envelope::thread_claim::is_thread_claim_predicate(&body.predicate) {
+        crate::write_envelope::thread_claim::validate_thread_claim_structure(&body)?;
+    } else if crate::write_envelope::channel_identity::is_channel_identity_claim_predicate(
+        &body.predicate,
+    ) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::channel_identity_provider::is_line_chat_observation_claim_predicate(
         &body.predicate,
     ) {
         crate::channel_identity_provider::validate_line_chat_observation_claim_structure(&body)?;
-    } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
-        crate::identity_reputation::validate_identity_reputation_claim_structure(&body)?;
+    } else if crate::write_envelope::identity_reputation::is_identity_reputation_claim_predicate(
+        &body.predicate,
+    ) {
+        crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure(
+            &body,
+        )?;
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
     {
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
-    } else if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
-        crate::subject_model::validate_actor_subject_claim_structure(&body)?;
-    } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
-        crate::subject_model::validate_person_substrate_claim_structure(&body)?;
+    } else if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
+        crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?;
+    } else if body.predicate == crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE {
+        crate::write_envelope::subject_record::validate_person_substrate_claim_structure(&body)?;
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::validate_imported_reliability(&body)?;
-    } else if crate::learning::is_learning_predicate(&body.predicate) {
+    } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         crate::learning::validate_learning_claim_structure(&body)?;
-    } else if body.predicate == PREDICATE_SKILL_EDIT_COST {
-        crate::edit_distance::attribution::validate_imported_skill_cost(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
@@ -454,12 +148,19 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
-    } else if crate::campaign::claims::is_campaign_pack_claim_predicate(&body.predicate) {
+    } else if is_generic(&body.predicate)? {
+        // Generic classes use the caller's descriptor. A synchronized builtin
+        // descriptor instead keeps the native family validation below.
+        check_descriptor(&body)?;
+        return Ok(body);
+    } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(
+        &body.predicate,
+    ) {
         // EXACT-predicate match, deliberately ahead of the `comm.` family: the
         // CRM pack owns `comm.do_not_contact` / `comm.bounce` /
         // `comm.jurisdiction` while `comm.rs` keeps `comm.opt_out` and friends.
-        crate::campaign::claims::validate_campaign_pack_claim_structure(&body)?;
-    } else if crate::comm::is_comm_claim_predicate(&body.predicate) {
+        crate::write_envelope::cohort_claims::validate_campaign_pack_claim_structure(&body)?;
+    } else if crate::write_envelope::communication::is_comm_claim_predicate(&body.predicate) {
         crate::comm::validate_comm_claim_structure(&body)?;
     } else if crate::disclosure::is_disclosure_claim_predicate(&body.predicate) {
         crate::disclosure::validate_disclosure_claim_structure(&body)?;
@@ -470,27 +171,44 @@ pub(crate) fn validate_claim_body_and_decode(
         // would silently adopt every future booking predicate. The lifecycle
         // heads are validated here too, so none breaks a read (FIX 5994).
         crate::booking::validate_booking_family_claim(&body)?;
-    } else if crate::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
-        crate::voice_segment::validate_voice_segment_claim_structure(&body)?;
-    } else if crate::reaction::is_reaction_claim_predicate(&body.predicate) {
-        crate::reaction::validate_reaction_claim_structure(&body)?;
+    } else if crate::write_envelope::voice_segment::is_voice_segment_claim_predicate(
+        &body.predicate,
+    ) {
+        crate::write_envelope::voice_segment::validate_voice_segment_claim_structure(&body)?;
+    } else if crate::claim::reaction_record::is_reaction_claim_predicate(&body.predicate) {
+        crate::claim::reaction_record::validate_reaction_claim_structure(&body)?;
     }
+    check_descriptor(&body)?;
     Ok(body)
 }
 
-/// [`validate_claim_body_and_decode`], then the claim's class descriptor
-/// where it declares a subject kind or a schema (ARCH-0057: descriptor
-/// validation on local writes and sync replay). Every family check above runs
-/// as it did.
+/// The same structural and family validation as
+/// [`validate_claim_body_and_decode`], using the synchronized class descriptor
+/// when readable and the compiled fallback otherwise (ARCH-0057). The compiled
+/// generic seed does not prefilter a synchronized descriptor's value.
 pub(crate) fn validate_claim_body_and_decode_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     data: &[u8],
     allow_reserved_predicate: bool,
 ) -> Result<ClaimBody> {
-    let body = validate_claim_body_and_decode(data, allow_reserved_predicate)?;
-    crate::comm::check_claim_against_descriptor_in_txn(store, txn, &body)?;
-    Ok(body)
+    validate_claim_body_and_decode_with_descriptor(
+        data,
+        allow_reserved_predicate,
+        |predicate| {
+            Ok(crate::comm::is_compiled_generic_claim_predicate(predicate)
+                && crate::comm::claim_class_descriptor_in_txn(store, txn, predicate)?.is_some_and(
+                    |descriptor| {
+                        descriptor.validator_kind == crate::comm::ClaimValidatorKind::Generic
+                    },
+                ))
+        },
+        |body| {
+            store
+                .record_hooks
+                .check_claim_against_descriptor_in_txn(store, txn, body)
+        },
+    )
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {

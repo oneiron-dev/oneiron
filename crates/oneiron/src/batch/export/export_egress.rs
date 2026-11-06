@@ -34,9 +34,19 @@ use super::export_manifest::{
 /// membership in a room, not about whether a room exists.
 ///
 /// [`Vault::whole_vault_export_rows`] calls this for every entity row.
-/// There is no second predicate, fences-present fast path, or scrub.
-pub fn whole_vault_export_excludes_entity(vault: &Vault, id: &EntityId) -> Result<bool> {
-    vault.store.off_record_sessions.contains_entity(id)
+/// There is no fences-present fast path or scrub. The second conjunct is a
+/// use-limit (FIX 1496 S5): a use-limited row exports nowhere, same as an
+/// off-record row, and names nothing. Every caller holds the txn; no nested
+/// txn is opened here.
+pub fn whole_vault_export_excludes_entity_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if store.off_record_sessions.contains_entity(id)? {
+        return Ok(true);
+    }
+    Ok(crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
 }
 
 /// THE EGRESS DOOR FOR RUN RESULT BODIES (OF-190 B++): why an export
@@ -50,7 +60,7 @@ pub(crate) fn whole_vault_export_withholds_result(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     run_id: EntityId,
-    output: &crate::code_run::CodeRunRawOutput,
+    output: &crate::store::result_manifest::CodeRunRawOutput,
 ) -> Result<Option<&'static str>> {
     vault.code_run_result_withheld_in_txn(rtxn, Some(run_id), output)
 }
@@ -112,7 +122,7 @@ pub fn whole_vault_export_manifest_artifact_for_bundle(
 ///
 /// Runs unconditionally: the manifest describes the vault's SHAPE (serializer,
 /// ABI, DB manifest), which no session can taint, and per-row exclusion is
-/// [`whole_vault_export_excludes_entity`]'s job at the enumeration door.
+/// [`whole_vault_export_excludes_entity_in_txn`]'s job at the enumeration door.
 pub fn whole_vault_export_manifest_artifact_for_vault(
     vault: &Vault,
     secrets_nulled: ExportSecretsNulledManifest,

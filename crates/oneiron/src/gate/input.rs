@@ -1,21 +1,15 @@
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::claim::ClaimSource;
-use crate::comm::SendOverrideMatch;
+use crate::consent::tool_scope::ScopedMcpCallContext;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::outbound_consent::ScopedMcpCallContext;
+use crate::write_envelope::communication::SendOverrideMatch;
 
 use super::ceiling::{PolicyApprovalCeiling, PolicyCriticality};
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::decision::GateReasonCode;
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateActor {
-    pub(crate) actor_class: String,
-    pub(crate) actor_ref: Option<String>,
-    pub(crate) delegation_grant_ref: Option<String>,
-}
+pub(crate) use crate::store::policy_record::GateActor;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,24 +216,7 @@ pub(super) fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Ve
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ExternalEffectPolicyRisk {
-    #[default]
-    Normal,
-    HoldToProposal,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl ExternalEffectPolicyRisk {
-    #[must_use]
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::HoldToProposal => "hold_to_proposal",
-        }
-    }
-}
+pub(crate) use crate::store::policy_record::ExternalEffectPolicyRisk;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,6 +6,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
+use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::source::prepare_source;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
@@ -23,13 +24,14 @@ use crate::{
     surface_event::SurfaceEventAdmission,
 };
 use crate::{
-    code_sandbox::SandboxCredentialHandle,
     code_sandbox::microvm::{
-        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
+        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmOutputSpool,
+        MicroVmOutputStreamBodies, MicroVmSandboxAdapter,
     },
-    code_sandbox::{SandboxGuestTier, SandboxMountTable},
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
+    store::sandbox_credential::SandboxCredentialHandle,
+    store::{sandbox_contract::SandboxGuestTier, sandbox_path::SandboxMountTable},
     surface_event::InboundSurfaceEventInput,
 };
 
@@ -50,6 +52,8 @@ pub struct PackScriptRun<'a> {
     pub grants: &'a [PackScriptGrant],
     pub image: &'a GuestImage,
     pub budget: ExecutionBudget,
+    /// The host's shared measured disk floor for this run's streamed output.
+    pub output_floor: Arc<dyn ProposalSpoolFloor>,
     pub now: u64,
     /// The host's type-feedback service, lent as it is; `None` answers that
     /// no checker is attached (FIX 10389).
@@ -64,6 +68,10 @@ pub struct PackScriptOutcome {
     pub inbound: Vec<SurfaceEventAdmission>,
     pub verbs: Vec<OutboundIntent>,
     pub wakes: Vec<ConnectorWakeDecision>,
+    /// The guest's optional step result, as returned; typed pack output remains the overlay.
+    pub step_result: Option<String>,
+    /// Each stream role and first-seen output file, retaining the host's admitted bodies.
+    pub output_streams: MicroVmOutputStreamBodies,
     pub session_manifest: Option<oneiron_container::SessionManifest>,
     pub sandbox_receipt: Option<String>,
     /// The adapter script's type feedback as it stood when the run ended,
@@ -171,13 +179,15 @@ impl Vault {
             crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
                 .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
         backend.set_read_transport(transport);
-        backend.set_egress(Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
-            Arc::clone(self),
-            run_id,
-            crate::code_sandbox::egress::EgressConfig::from_env()
-                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
-        )));
-        self.run_script_pack_in_vm(request, backend, run_id)
+        let egress: Arc<dyn oneiron_container::EgressRelay> =
+            Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
+                Arc::clone(self),
+                run_id,
+                crate::code_sandbox::egress::EgressConfig::from_env()
+                    .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+            ));
+        backend.set_egress(Arc::clone(&egress));
+        self.run_script_pack_in_vm(request, backend, run_id, egress)
     }
 
     pub(crate) fn installed_script_pack(
@@ -213,9 +223,10 @@ impl Vault {
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
         run_id: EntityId,
+        egress: Arc<dyn oneiron_container::EgressRelay>,
     ) -> Result<PackScriptOutcome> {
         let selected = self.installed_script_pack(request.name)?;
-        self.run_selected_script_pack_in_vm(request, backend, selected, run_id)
+        self.run_selected_script_pack_in_vm(request, backend, selected, run_id, egress)
     }
 
     fn run_selected_script_pack_in_vm(
@@ -224,6 +235,7 @@ impl Vault {
         backend: Box<dyn MicroVmBackend>,
         (source, _path, receipt): (PackSource, String, PackInstallReceipt),
         run_id: EntityId,
+        egress: Arc<dyn oneiron_container::EgressRelay>,
     ) -> Result<PackScriptOutcome> {
         let PackScriptRun {
             name,
@@ -231,6 +243,7 @@ impl Vault {
             grants,
             image,
             budget,
+            output_floor,
             now,
             type_feedback,
         } = request;
@@ -319,9 +332,11 @@ impl Vault {
             backend,
             resolver,
             allowlist,
-        )?;
+        )?
+        .with_credential_relay(egress);
         let guest = image.clone().with_source(injected);
-        let result = adapter.run(&guest, budget);
+        let mut streamed = MicroVmOutputSpool::new(output_floor);
+        let result = adapter.run(&guest, budget, &mut streamed);
         let session_manifest = adapter.session_manifest();
         let sandbox_receipt = session_manifest
             .as_ref()
@@ -398,6 +413,7 @@ impl Vault {
                 return Err(invalid("duplicate script connector event"));
             }
         }
+        let output_streams = streamed.into_stream_bodies()?;
         let mut inbound = Vec::new();
         let mut wakes = Vec::new();
         self.with_write_txn_grouped(|txn| {
@@ -433,6 +449,8 @@ impl Vault {
             inbound,
             verbs,
             wakes,
+            step_result: exit.result_json,
+            output_streams,
             session_manifest,
             sandbox_receipt,
             program_steps: vec![check.feedback()],
@@ -544,7 +562,7 @@ struct PackCredentialResolver {
 impl CredentialResolver for PackCredentialResolver {
     fn resolve_for(
         &self,
-        handle: &crate::code_sandbox::SandboxCredentialHandle,
+        handle: &crate::store::sandbox_credential::SandboxCredentialHandle,
         dest: &CredentialDestination,
     ) -> Result<Vec<u8>> {
         let (key_id, connector, secret_ref, bound_dest, agent) =

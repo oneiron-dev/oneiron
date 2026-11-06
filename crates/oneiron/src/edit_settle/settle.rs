@@ -6,7 +6,7 @@ use super::receipts::{
 };
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettlementRecord, SheetAnswerReceipt,
+    SettledReview, SettlementRecord, SheetAnswerReceipt,
 };
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
@@ -102,6 +102,43 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
     ) -> Result<SettleSelectOutcome> {
+        let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
+        self.settle_select_prepared(
+            artifact_id,
+            proposal,
+            made_by,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+            carry,
+            sheet.as_ref(),
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn settle_select_prepared(
+        &self,
+        artifact_id: &EntityId,
+        held: &EditProposal,
+        made_by: Option<&MadeBy>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        carry: Option<Option<&super::carry::UnitWithdrawal>>,
+        sheet: Option<&super::carry::SheetKeep>,
+    ) -> Result<SettleSelectOutcome> {
+        let split = sheet.and_then(|sheet| sheet.split.as_ref());
+        let proposal = split
+            .and_then(|split| split.carried.as_ref())
+            .unwrap_or(held);
+        let carry = match split {
+            Some(split) => {
+                Some((!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal))
+            }
+            None => carry,
+        };
         self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
         // A deck proposal answering a thread settles under that thread's brief
@@ -116,7 +153,6 @@ impl Vault {
                 "a deck proposal answering a thread settles only under that thread's brief",
             )));
         }
-        let deck_limits = deck.map(|_| self.docedit_package_limits()).transpose()?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -137,7 +173,24 @@ impl Vault {
             self.with_write_txn_grouped(|wtxn| {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
-                self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                if let Some(sheet) = sheet
+                    && !sheet.is_current_in_txn(self, wtxn)?
+                {
+                    // Leave the held proposal intact for a fresh Keep instead
+                    // of spinning while another writer keeps moving a source.
+                    return Err(Error::ConcurrentWrite(
+                        "sheet answer source changed during Keep",
+                    ));
+                }
+                if let Some(split) = split
+                    && split.carried.is_none()
+                {
+                    let (head, record) = self.settle_all_withdrawn_in_txn(
+                        wtxn, artifact_id, held, &split.withdrawal, consent, actor, learned_at,
+                    )?;
+                    return Ok((head, ReanchorSummary::default(), record, None));
+                }
                 if let Some(bundle) = &proposal.sheet_answers {
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
                     let cap = policy
@@ -280,6 +333,7 @@ impl Vault {
                         settled_at: learned_at,
                         actor_ref: Some(actor.entity_ref().to_hex()),
                         brief_ref: consent.brief_ref().map(str::to_owned),
+                        grant_ref,
                         before_version: proposal.base_version,
                         version: Some(base.version),
                         content_hash: Some(base.content_hash),
@@ -310,6 +364,12 @@ impl Vault {
                 } else {
                     None
                 };
+                // Deck replay ceilings resolve in this txn's snapshot, beside the
+                // DOCX/PPTX policy reads: a narrowing committed before this write
+                // applies to the replay (FIX 318).
+                let deck_limits = deck
+                    .map(|_| self.docedit_package_limits_in_txn(wtxn))
+                    .transpose()?;
                 let mut checked_deck = None;
                 if let Some(limits) = pptx_limits {
                     if proposal.base_version != Some(base.version) {
@@ -412,6 +472,7 @@ impl Vault {
                     settled_at: learned_at,
                     actor_ref: Some(actor.entity_ref().to_hex()),
                     brief_ref: consent.brief_ref().map(str::to_owned),
+                    grant_ref,
                     before_version: Some(base.version),
                     version: Some(version.version),
                     content_hash: Some(version.content_hash),
@@ -456,6 +517,7 @@ impl Vault {
             reanchor,
             receipt,
             reconciliation: None,
+            review: SettledReview::of(record),
         })
     }
 
@@ -485,12 +547,13 @@ impl Vault {
         let key = settlement_key_parts(artifact_id, proposal_ref);
 
         let reason = reason.trim();
-        let record = SettlementRecord {
+        let mut record = SettlementRecord {
             proposal_ref: proposal_ref.to_owned(),
             outcome: SettleOutcomeKind::Discarded,
             settled_at: learned_at,
             actor_ref: Some(actor.entity_ref().to_hex()),
             brief_ref: consent.brief_ref().map(str::to_owned),
+            grant_ref: None,
             before_version: None,
             version: None,
             content_hash: None,
@@ -514,7 +577,7 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            record.grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             require_entity_type(
                 &self.store,
                 wtxn,
@@ -660,7 +723,8 @@ impl Vault {
     }
 
     /// The transaction-composable form of [`Vault::authorize_settle`], run
-    /// INSIDE the settle's write transaction.
+    /// INSIDE the settle's write transaction. Returns the selected standing
+    /// grant's reference, or `None` for the owner's direct consent.
     ///
     /// This closes the revocation TOCTOU: a `StandingGrant` resolution checked
     /// on its own read transaction could observe a grant row a concurrent
@@ -675,17 +739,17 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         consent: &SettleConsent,
         actor: WriteActor,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(()),
+            SettleConsent::OwnerConsent { .. } => Ok(None),
             SettleConsent::StandingGrant { brief_ref } => {
                 let required = settle_grant_bound(actor, brief_ref)?;
-                let covered = self
+                let covering = self
                     .active_standing_consent_grants_in_txn(wtxn)?
-                    .iter()
-                    .any(|grant| grant.bound().contains(&required));
-                if covered {
-                    Ok(())
+                    .into_iter()
+                    .find(|grant| grant.bound().contains(&required));
+                if let Some(grant) = covering {
+                    Ok(Some(grant.bound().digest().to_hex()))
                 } else {
                     Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                         "no standing actor×artifact.settle×brief grant covers this settle",
@@ -749,24 +813,6 @@ impl Vault {
                 )));
             }
             verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
-            // A folder column answers for files read at a version: one that
-            // has moved since is not the file the answer read.
-            for pin in bundle
-                .answers
-                .iter()
-                .filter(|answer| answer.value.is_some())
-                .filter_map(|answer| answer.source.as_ref())
-            {
-                let current = match self.blob_artifact_head(&pin.id)? {
-                    Some(head) => self.read_blob_artifact_version(&pin.id, head.version)?,
-                    None => None,
-                };
-                if current.is_none_or(|bytes| blake3::hash(&bytes).as_bytes() != &pin.body_hash) {
-                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                        "a file the typed answers read has changed since; ask again",
-                    )));
-                }
-            }
         }
         // The spreadsheet door cannot settle a disguised PowerPoint manifest.
         if proposal.format == OfficeFormat::Xlsx

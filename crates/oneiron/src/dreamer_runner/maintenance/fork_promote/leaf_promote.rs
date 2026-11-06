@@ -23,7 +23,7 @@ use super::{
 };
 use crate::agent_dispatch::{load_team_type_tree, team_shape_skill_in_force};
 use crate::error::ArtifactError;
-use crate::llm::decision::{AnswerContract, DecisionClass, DecisionQuestion};
+use crate::model_decision::{AnswerContract, DecisionClass, DecisionQuestion};
 use crate::skill::SkillRecord;
 use crate::skill_hub::{HubPackage, SharedSkillMergeDisposition, encode_hub_package};
 use crate::skill_optimize::{HeldOutReplayNotes, held_out_receipts};

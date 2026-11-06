@@ -4,17 +4,24 @@
 //! calls, else on a meter of its own. Its settlement writes one usage event,
 //! a `web:<provider>:<tool>` service of one call from Oneiron cloud usage,
 //! which the cloud prices from its own price list; the engine never bills.
+//! A known provider cost is a separate fact on that event, with its basis.
 //! Calls on the user's own key or through the hub are not ours to charge.
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunAdmission, RunPermit,
 };
-use oneiron::web_connector::{BACKEND_KEY_ENV, WebProvider, WebTool};
+use oneiron::web_connector::{
+    BACKEND_KEY_ENV, WebCallOutcome, WebConnectorUsage, WebCostBasis, WebProvider, WebTool,
+};
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, ModelLocality};
 
 use crate::server::SyncServer;
+use crate::usage::{UsageServiceCost, UsageServiceCostBasis};
 
 /// The run name a call outside any run is admitted under.
 const WEB_RUN: &str = "web-connector";
+
+/// A snapshot of the exact content-free provider cost fact, not a billing table.
+const COST_SNAPSHOT_DOMAIN: &[u8] = b"oneiron.usage.web-provider-cost.v1";
 
 /// Admits one backend-key call of `tool` on `provider` and opens its
 /// dispatch: on `line`, the calling run's own, else on a meter of its own.
@@ -58,15 +65,57 @@ pub(super) fn admit(
 
 /// Settles a sent call: one call used when the provider answered; a failed
 /// one keeps its reservation as spend, as the request went out.
-pub(super) fn settle(permit: RunPermit, answered: bool) {
-    let outcome = if answered {
-        CallOutcome::Used(1)
+pub(super) fn settle(server: &SyncServer, permit: RunPermit, usage: &WebConnectorUsage) {
+    if let Some(cost) = service_cost(usage)
+        && let Some(ledger) = server.vault_usage()
+    {
+        ledger.record_service_cost(permit.instance(), permit.lease().id(), cost);
+    }
+    let outcome = if matches!(usage.outcome, WebCallOutcome::Ok { .. }) {
+        CallOutcome::UsedCounted(1)
     } else {
         CallOutcome::Failed
     };
     if let Err(denied) = permit.settle(outcome) {
         tracing::error!(%denied, "a web call's settlement was refused");
     }
+}
+
+/// Freezes the same provider fact that the web usage row keeps. An absent
+/// amount or an unpriced basis never becomes a measured zero.
+fn service_cost(usage: &WebConnectorUsage) -> Option<UsageServiceCost> {
+    let micro_usd = usage.cost_micro_usd?;
+    let (basis, label) = match usage.cost_basis {
+        WebCostBasis::Actual => (UsageServiceCostBasis::ProviderReported, "provider_reported"),
+        WebCostBasis::Estimated => (UsageServiceCostBasis::Declared, "declared"),
+        WebCostBasis::Unpriced => return None,
+    };
+    let mut digest = blake3::Hasher::new();
+    digest.update(COST_SNAPSHOT_DOMAIN);
+    for field in [
+        Some(usage.provider.as_str()),
+        Some(usage.tool.as_str()),
+        Some(label),
+        Some("USD"),
+        usage.provider_request_id.as_deref(),
+    ] {
+        match field {
+            Some(text) => {
+                digest.update(&[1]);
+                digest.update(&(text.len() as u64).to_le_bytes());
+                digest.update(text.as_bytes());
+            }
+            None => {
+                digest.update(&[0]);
+            }
+        }
+    }
+    digest.update(&micro_usd.to_le_bytes());
+    Some(UsageServiceCost {
+        micro_usd,
+        basis,
+        price_table_snapshot: digest.finalize().to_hex().to_string(),
+    })
 }
 
 /// The paid connector a backend-key call is admitted as: one call of one

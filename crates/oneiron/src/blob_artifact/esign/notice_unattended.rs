@@ -37,15 +37,16 @@ use super::notice_dispatch::{
 use super::notice_door::EsignNoticesDispatchView;
 use super::notice_scope::NoticeScope;
 use super::notice_send_act::{RecordedSendAct, send_act_in};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::authority::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, principal_standing_in_txn,
     principal_standing_or_lapse_in_txn,
 };
 use crate::edge::EdgeActorClass;
-use crate::memory::MemoryResult;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::memory::MemoryResult;
 
 /// The verb an agent's Grant lists for its notices to go out with no caller:
 /// the door's own row.

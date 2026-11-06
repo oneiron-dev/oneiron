@@ -18,8 +18,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{Attempts, Dispatches, task_of};
-use crate::attempt_queue::AttemptId;
+use super::{Attempts, Dispatches, entity, task_of};
+use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::limit_ask::EngineLimit;
 use crate::receipt::{CallAttemptRef, CallReceipt};
 use crate::side_table::{self, Named, SideTable};
@@ -28,25 +28,86 @@ use crate::{EntityId, Result, Vault};
 /// The call receipt ledger, read in place.
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
     SideTable::new(&side_table::CALL_RECEIPT);
+/// Whether a masked copy of a `CALL_RECEIPT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn call_receipt_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CallReceipt, Named>(bytes)
+}
 
 /// Agents' calls by actor, each actor's oldest first.
 pub(super) type AgentCalls = BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>;
+
+/// Unread call bounds: only a native witness can keep one actor's damaged
+/// receipt from making every other actor uncertain.
+#[derive(Default)]
+pub(super) struct UnreadCalls {
+    unknown: Option<u64>,
+    actors: BTreeMap<EntityId, u64>,
+}
+
+impl UnreadCalls {
+    fn note(&mut self, actor: Option<EntityId>, newer: Option<u64>) {
+        let bound = unread_bound(newer);
+        if let Some(actor) = actor {
+            self.actors.entry(actor).or_insert(bound);
+        } else {
+            self.unknown.get_or_insert(bound);
+        }
+    }
+
+    pub(super) fn for_actor(&self, actor: EntityId) -> Option<u64> {
+        self.unknown.max(self.actors.get(&actor).copied())
+    }
+}
+
+/// A strict primary decode, or uncertainty scoped only by a native witness.
+enum ReceiptRead {
+    Decoded(EntityId, CallReceipt),
+    Unread(Option<EntityId>),
+}
+
+fn read_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: Result<(Vec<u8>, Vec<u8>)>,
+) -> ReceiptRead {
+    let Ok((key, bytes)) = row else {
+        return ReceiptRead::Unread(None);
+    };
+    let Some(id) = <EntityId as side_table::SideKey>::decode_key(&key) else {
+        return ReceiptRead::Unread(None);
+    };
+    match CALL_RECEIPTS.decode_value(&bytes) {
+        Ok(receipt) => ReceiptRead::Decoded(id, receipt),
+        Err(_) => {
+            // Missing or failed metadata is global uncertainty, never a
+            // successful read or a guessed identity from the damaged body.
+            let actor = crate::receipt::unread_call_receipt_actor_in_txn(vault, txn, &id)
+                .ok()
+                .flatten();
+            ReceiptRead::Unread(actor)
+        }
+    }
+}
 
 /// Each agent's calls in the lookback, oldest first, and the newest time a
 /// receipt that did not read may hold ([`unread_bound`]). The whole lookback
 /// is read: past `limits.maintenance_scan_rows` receipts the review asks and
 /// reads on.
-pub(super) fn agent_calls(vault: &Vault, since: u64) -> Result<(AgentCalls, Option<u64>)> {
+pub(super) fn agent_calls(vault: &Vault, since: u64) -> Result<(AgentCalls, UnreadCalls)> {
     let rtxn = vault.store.env.read_txn()?;
     let mut calls = AgentCalls::new();
     let mut read: u64 = 0;
     let mut newer = None;
-    let mut unread = None;
-    for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
+    let mut unread = UnreadCalls::default();
+    for row in CALL_RECEIPTS.iter_raw_rev_from(&vault.store, &rtxn, &[])? {
         read += 1;
-        let Ok((id, receipt)) = row else {
-            unread.get_or_insert(unread_bound(newer));
-            continue;
+        let (id, receipt) = match read_receipt_in_txn(vault, &rtxn, row) {
+            ReceiptRead::Decoded(id, receipt) => (id, receipt),
+            ReceiptRead::Unread(actor) => {
+                unread.note(actor, newer);
+                continue;
+            }
         };
         newer = Some(receipt.at);
         if receipt.at < since {
@@ -220,13 +281,16 @@ pub(super) fn attempt_calls(
     let mut activity_open = activity_since.is_some() && witness.is_some();
     let mut read: u64 = 0;
     let mut newer = None;
-    for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
+    for row in CALL_RECEIPTS.iter_raw_rev_from(&vault.store, &rtxn, &[])? {
         read += 1;
-        let Ok((id, receipt)) = row else {
-            if activity_open {
-                activity.unread.get_or_insert(unread_bound(newer));
+        let (id, receipt) = match read_receipt_in_txn(vault, &rtxn, row) {
+            ReceiptRead::Decoded(id, receipt) => (id, receipt),
+            ReceiptRead::Unread(unread_actor) => {
+                if activity_open && unread_actor.is_none_or(|named| named == actor) {
+                    activity.unread.get_or_insert(unread_bound(newer));
+                }
+                continue;
             }
-            continue;
         };
         newer = Some(receipt.at);
         stream_open &= receipt.at >= since;
@@ -258,4 +322,44 @@ pub(super) fn attempt_calls(
         witnessed,
         activity,
     })
+}
+
+/// Each leased attempt claimed before the nightly lookback, under its
+/// attempt bytes, with its calls back to its claim (FIX 8374): the
+/// lookback alone truncates the silence clock of a lease older than the
+/// window, so `silent` would judge calls it cannot see as never made. The
+/// read is the targeted review's own ([`attempt_calls`]) with the same
+/// claim bound: the activity part does not depend on `since`, so both reviews
+/// judge the same activity; the witnessed stream
+/// it also collects is dropped, since the nightly review's streams come
+/// from its one shared read. Each scan is measured, never refused.
+pub(super) fn claim_bound_activities(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    since: u64,
+) -> Result<BTreeMap<[u8; 16], CallActivity>> {
+    let mut extended = BTreeMap::new();
+    for (id, dispatch) in dispatched {
+        let Some(record) = attempts.get(id) else {
+            continue;
+        };
+        if record.state != AttemptState::Leased {
+            continue;
+        }
+        let claimed = record.claimed_at.unwrap_or(record.updated_at);
+        if claimed >= since {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let own = CallAttemptRef {
+            attempt,
+            generation: record.attempt_count,
+        };
+        let calls = attempt_calls(vault, dispatch.actor, Some(own), since, Some(claimed))?;
+        extended.insert(*record.id.as_bytes(), calls.activity);
+    }
+    Ok(extended)
 }

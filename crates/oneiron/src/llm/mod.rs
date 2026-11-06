@@ -18,13 +18,16 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod tagger_admission;
 pub use inference_admission::admitted_as;
+pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
+pub use oneiron_model::llm::BudgetCheckpoint;
 pub use oneiron_model::llm::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -58,26 +61,30 @@ pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, ReplyCheck,
-    StepOutcome, StepProgression, TrapRef, call_as_step, call_as_step_checked,
-    call_as_step_with_fallbacks, consume_trap_signal, open_trap, reconcile_peer_result_signals,
-    register_peer_result_wait, register_wait, send_peer_result_signal, send_trap_signal,
-    trap_for_durable_wait, trap_park_owner, validate_json_schema,
+    DurableStepContext, DurableStepError, DurableStepResult, MediaStepOutcome,
+    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, TrapRef, call_as_step,
+    call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step, consume_trap_signal,
+    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
+    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
+    validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
-    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
-    wake_trap_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
+    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
-pub(crate) use step::{erase_submissions_in_txn, submission_carriage, submission_owners};
+pub(crate) use step::{
+    erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
+};
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -101,6 +108,7 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+pub use oneiron_model::llm::{TokenScore, first_token_alternatives};
 // FIX 6567: the cache evidence a backend reports on a physical call.
 pub use oneiron_model::llm::{
     CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
@@ -136,6 +144,8 @@ pub use oneiron_model::llm::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// I1 = C: the prepared tail of the worker session wire.
+pub use oneiron_model::llm::{PreparedUse, SessionPrepare, SessionPrepared};
 // DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
 pub use oneiron_model::llm::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
@@ -157,18 +167,19 @@ pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
     settled_step_usage_in_txn, terminal_step_identity,
 };
-pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
-    FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend, LlmCapability,
-    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream,
-    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
+    DispatchRelease, FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend,
+    LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, PinnedConfigViolation,
+    PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, SingleRouteBackend,
+    SingleSend, SpentKind, TierPrecedence, TransportFault, TransportFaultKind,
     UnsupportedCapability,
 };
 
@@ -193,7 +204,6 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
@@ -203,3 +213,8 @@ pub use budget::{
 pub use step::heal_sent_markers;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::routing::llm_routed_seat_accepts_masked;
+pub(crate) use self::step::dreamer_step_state_accepts_masked;

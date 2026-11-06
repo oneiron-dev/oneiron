@@ -28,7 +28,7 @@ mod paths;
 mod proposal;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
 /// in process, JavaScript passed through byte for byte (FIX 8276).
-pub mod source;
+pub use oneiron_code_source::source;
 
 /// Firecracker-backed microVM lane (Linux; feature-gated).
 #[cfg(feature = "microvm-firecracker")]
@@ -40,7 +40,7 @@ pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
 pub use self::contract::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
     SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,
-    SandboxGuestTier, SandboxImportClass, SandboxLinkedImport,
+    SandboxGuestTier, SandboxImportClass, SandboxLinkedImport, SandboxLinkedImportEffects,
 };
 pub use self::credential::{
     SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle,

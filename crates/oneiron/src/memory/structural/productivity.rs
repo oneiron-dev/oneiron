@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::error::Error;
-use crate::habit::{
-    TASK_BODY_CURRENT_STREAK_KEY, TASK_BODY_LONGEST_STREAK_KEY, TASK_BODY_ROLE_KEY, TaskRole,
-    task_role_from_body_bytes,
-};
 use crate::memory::support::encode_rmpv;
 use crate::memory::{Memory, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::{
+    TASK_BODY_CURRENT_STREAK_KEY, TASK_BODY_LONGEST_STREAK_KEY, TASK_BODY_ROLE_KEY, TaskRole,
+    task_role_from_body_bytes,
+};
 
 use super::EntityRefReceipt;
 

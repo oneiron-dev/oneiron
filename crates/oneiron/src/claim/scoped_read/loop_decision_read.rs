@@ -19,7 +19,8 @@ use crate::error::Result;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
 /// Which part of a loop a stored decision is.
@@ -192,13 +193,13 @@ impl LoopReader {
 
 /// One read's admission state: the lane's policy and floor, resolved once,
 /// and the answers it already has.
-struct LoopRead<'v> {
+struct LoopRead {
     reader: LoopReader,
     policy: PolicyManifestResolution,
     filter: ResolvedRetrievalFilter,
     /// One relationship authority for every row this read checks in its
     /// txn, not one per row (FIX 11648).
-    held: HeldAuthority<'v>,
+    held: HeldAuthority,
     /// Each actor row's floor answer; `None` did not answer.
     floor: BTreeMap<EntityId, Option<bool>>,
     /// The subject's projects, read once on first need.
@@ -228,7 +229,7 @@ fn answered<T>(check: Result<Option<T>>, what: &'static str) -> Option<Option<T>
     dead_code,
     reason = "L07-A's weave adapter (OF-499 A2) is its first caller"
 )]
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Every loop decision `reader` may see, admitted and refused alike, in
     /// ledger order (OF-499 A2). The reader binds in `txn` as the live weave
     /// report binds it: a person or an agent to this lane's actor, an owner
@@ -288,7 +289,7 @@ impl<'v> ScopedRead<'v> {
     fn walk_loop_decisions_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        mut read: LoopRead<'v>,
+        mut read: LoopRead,
     ) -> Vec<ReadableLoopDecision> {
         let mut count = ScanCount::start(&self.vault.store, txn, EngineScan::GateDecisionRows, &[])
             .unwrap_or_else(|_| {
@@ -325,7 +326,7 @@ impl<'v> ScopedRead<'v> {
     /// Binds `reader` in `txn` and resolves this lane's policy and floor:
     /// `None` when the reader is not this lane's actor, its proof is not
     /// current, or the lane reads no row at all.
-    fn loop_read_in(&self, txn: &heed::RoTxn<'_>, reader: WeaveReader<'_>) -> Option<LoopRead<'v>> {
+    fn loop_read_in(&self, txn: &heed::RoTxn<'_>, reader: WeaveReader<'_>) -> Option<LoopRead> {
         let bound = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
                 (self.actor_key.actor_ref() == id.to_hex()).then_some(LoopReader::Subject(id))
@@ -372,7 +373,7 @@ impl<'v> ScopedRead<'v> {
 
     /// Resolves this lane's policy and floor for a reader `bound` in `txn`:
     /// `None` when the lane reads no row at all.
-    fn loop_read_bound_in(&self, txn: &heed::RoTxn<'_>, bound: LoopReader) -> Option<LoopRead<'v>> {
+    fn loop_read_bound_in(&self, txn: &heed::RoTxn<'_>, bound: LoopReader) -> Option<LoopRead> {
         let (filter, policy) = match self.resolve_retrieval_filter_in(txn, None) {
             Ok(resolved) => resolved,
             Err(error) => {
@@ -416,7 +417,7 @@ impl<'v> ScopedRead<'v> {
     fn admit_loop_decision_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead<'v>,
+        read: &mut LoopRead,
         record: GateDecisionRecord,
     ) -> Option<ReadableLoopDecision> {
         let family = context::record_family(&record)?;
@@ -486,7 +487,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_entity_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         id: EntityId,
     ) -> Result<Option<Vec<EntityId>>> {
         if !self.is_entity_retrievable_held_in(txn, &read.policy, &read.filter, &id, &read.held)? {
@@ -517,7 +518,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_subject_admits_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead<'v>,
+        read: &mut LoopRead,
         subject: EntityId,
         actor: Option<EntityId>,
         about: Option<&[EntityId]>,
@@ -554,7 +555,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_actor_ref_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead<'v>,
+        read: &mut LoopRead,
         actor: Option<EntityId>,
     ) -> Option<Option<EntityId>> {
         let Some(actor) = actor else {
@@ -601,7 +602,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         subject: EntityId,
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
     ) -> BTreeSet<EntityId> {
         let mut projects = BTreeSet::new();
         let Ok(kind) = self.vault.project_type_byte() else {

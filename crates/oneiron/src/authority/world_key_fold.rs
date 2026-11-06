@@ -54,6 +54,7 @@ use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
+use super::fold_project::RowsReadWhole;
 use super::machine_standing::{Standing, StandingView};
 use super::world_privacy::policy_revision;
 use super::world_strength::{read_under, world_meet};
@@ -372,7 +373,7 @@ fn keep_first_slots(slots: &mut Slots) {
 /// with each counted envelope read from the record that carries it.
 pub(super) fn folded_world_keys(
     state: &FoldState,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &dyn RowsReadWhole,
     stands: &dyn Fn(EntityId) -> bool,
 ) -> BTreeMap<WorldKeyId, FoldedWorldKey> {
     let envelope = |hash: &AuthorityEntryHash, recipient: &WrapRecipient| {

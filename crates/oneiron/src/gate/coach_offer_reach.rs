@@ -22,7 +22,11 @@
 //! The same row reaches the result of a training run an offer led to
 //! (FIX 857): the one reserved question about a Scored run's result, while
 //! the run still waits at the expectation it froze, and the ask on its TURN.
-//! Revoking the row closes both questions.
+//! It also reaches an owner-judged contribution pair (FIX 3609): the pair's
+//! reserved question and answer parts, which the Coach speaks as the
+//! companion and the witness door lands only on this reach, while no ask
+//! carries the pair, and the ask on them. Revoking the row closes every one
+//! of these questions.
 
 use rmpv::Value;
 
@@ -33,11 +37,15 @@ use super::constants::{
 };
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
-use super::witness_message::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use super::witness_message::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope,
+};
+use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::gate::task_assignee::TaskAssignee;
 use crate::skill_optimize::TrainingOffer;
-use crate::task_verb::{ConsultPayloadRef, TaskAskSpec, TaskAskTarget, TaskAssignee};
+use crate::task_verb::{TaskAskSpec, TaskAskTarget};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -62,8 +70,8 @@ fn reach_row(actor_ref: &str) -> Result<Value> {
         ),
         (
             Value::from(GRANT_SCOPE_KEY),
-            crate::federation::scope_codec::encode_scope_value(
-                &crate::federation::scope_codec::effect_preset(),
+            oneiron_authority::federation::scope_codec::encode_scope_value(
+                &oneiron_authority::federation::scope_codec::effect_preset(),
             )?,
         ),
         (
@@ -110,7 +118,7 @@ pub(super) fn with_shipped_coach_offer_reach(manifest: Vec<u8>) -> Result<Vec<u8
 fn row_ceiling(grant: &PolicyScopedGrant) -> Option<PolicyApprovalCeiling> {
     if grant.budget.is_some()
         || grant.receipt_required
-        || grant.authority_scope != crate::federation::scope_codec::effect_preset()
+        || grant.authority_scope != oneiron_authority::federation::scope_codec::effect_preset()
     {
         return None;
     }
@@ -202,10 +210,18 @@ pub(crate) fn coach_offer_ask_ceiling_in_txn(
     if crate::task_verb::is_training_swap_ask_intent(&input.intent_key) {
         return coach_swap_ask_ceiling_in(vault, txn, input);
     }
+    // FIX 3609: the one owner a pending contribution pair asks, on its
+    // reserved question and answer TURNs.
+    if crate::task_verb::is_contribution_pair_ask_intent(&input.intent_key) {
+        return Ok(
+            crate::task_verb::contribution_pair_ask_permitted_in(vault, txn, input)?
+                && offer_reach_granted(&super::resolve_policy_manifest(&vault.store, txn)?),
+        );
+    }
     let Some(key) = crate::task_verb::training_offer_ask_key(&input.intent_key) else {
         return Ok(false);
     };
-    let (offer, owner, digest) = &key;
+    let (offer, owner, digest, _) = &key;
     let asks_owner = matches!(
         &input.who,
         Some(TaskAskTarget::Responder(TaskAssignee::Human { actor_ref })) if actor_ref == owner
@@ -267,8 +283,9 @@ fn coach_swap_ask_ceiling_in(
 }
 
 /// The Coach's leave to write one `system` question row about a pending
-/// offer, bound to the writer and the row's exact canonical bytes. Only the
-/// witness door's System-author floor reads it.
+/// offer, or one companion part of a contribution pair (FIX 3609), bound to
+/// the writer and the row's exact canonical bytes. Only the witness door's
+/// floor reads it.
 pub(crate) struct OfferQuestionPermit {
     actor: WriteActor,
     body: Vec<u8>,
@@ -299,12 +316,16 @@ pub(crate) fn coach_offer_question_permit_in_txn(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
-    if envelope.message_type == crate::task_verb::SWAP_QUESTION_TYPE {
+    if envelope.message_type == crate::gate::training_ask_kind::SWAP_QUESTION_TYPE {
         let ids = (conversation, turn, message);
         return coach_swap_question_permit_in(vault, txn, actor, ids, envelope, policy);
     }
+    if envelope.message_type == crate::task_verb::CONTRIBUTION_PAIR_QUESTION_TYPE {
+        let ids = (conversation, turn, message);
+        return coach_pair_question_permit_in(vault, txn, actor, ids, envelope, policy);
+    }
     if envelope.author != WITNESS_AUTHOR_SYSTEM
-        || envelope.message_type != crate::task_verb::OFFER_QUESTION_TYPE
+        || envelope.message_type != crate::gate::training_ask_kind::OFFER_QUESTION_TYPE
         || !envelope.is_visible
         || envelope.order != 0
         || !is_coach(actor.entity_ref(), actor.actor_class())?
@@ -325,7 +346,7 @@ pub(crate) fn coach_offer_question_permit_in_txn(
     {
         return Ok(None);
     }
-    let (offer, owner, digest) = &key;
+    let (offer, owner, digest, _) = &key;
     let Some(row) = pending_for_owner_in(vault, txn, offer, digest, owner)? else {
         return Ok(None);
     };
@@ -384,8 +405,47 @@ fn coach_swap_question_permit_in(
     }))
 }
 
-/// Whether `permit` lets `actor` write the `system` row `body` past the
-/// floor: it binds both, the reach still holds under `policy`, and neither an
+/// The permit one reserved part of an owner-judged contribution pair's
+/// question carries to the witness door (FIX 3609): the writer is the Coach
+/// in its System class; the message is one visible companion row at order
+/// 0, the speaker its new TURN needs; its metadata names a pending pair's
+/// part whose reservation holds exactly these `(conversation, TURN,
+/// MESSAGE)` ids and this text's digest, while no ask carries the pair, for
+/// a live owner; and the live policy grants the reach. The witness door
+/// lands a part only on this permit.
+fn coach_pair_question_permit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    ids: (EntityId, EntityId, EntityId),
+    envelope: &WitnessMessageEnvelope<'_>,
+    policy: &PolicyManifestResolution,
+) -> Result<Option<OfferQuestionPermit>> {
+    if envelope.author != WITNESS_AUTHOR_COMPANION
+        || !envelope.is_visible
+        || envelope.order != 0
+        || !is_coach(actor.entity_ref(), actor.actor_class())?
+    {
+        return Ok(None);
+    }
+    let Some(metadata) = envelope.metadata.as_ref() else {
+        return Ok(None);
+    };
+    let content = envelope.content;
+    if !crate::task_verb::contribution_pair_question_permitted_in(
+        vault, txn, ids, metadata, content,
+    )? || !offer_reach_granted(policy)
+    {
+        return Ok(None);
+    }
+    Ok(Some(OfferQuestionPermit {
+        actor,
+        body: envelope.encode_body()?,
+    }))
+}
+
+/// Whether `permit` lets `actor` write the row `body` past the floor: it
+/// binds both, the reach still holds under `policy`, and neither an
 /// AGENT_DEF self-limit nor a row bound to this writer clamps it to Proposed.
 pub(super) fn offer_question_authorized(
     permit: &OfferQuestionPermit,

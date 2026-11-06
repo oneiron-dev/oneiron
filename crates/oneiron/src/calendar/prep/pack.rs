@@ -1,6 +1,6 @@
 //! Ranked prep-pack assembly under the word ceiling.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -189,7 +189,11 @@ pub(crate) fn build_prep_pack_scoped(
             receipt: read.read_receipt(None, 0)?,
         });
     }
-    let (filter, policy) = read.recall_plan()?;
+    let crate::claim::SearchPlan {
+        filter,
+        candidates: plan_candidates,
+        policy,
+    } = read.recall_plan()?;
     // Every candidate goes to the actor gate, under one authority per
     // snapshot (FIX 11648).
     let gate = read.recall_candidate_gate(&policy, &filter);
@@ -198,7 +202,7 @@ pub(crate) fn build_prep_pack_scoped(
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
-        .authority_filter(filter.clone())
+        .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
         .run_scoped_with_run_status(read)?;
@@ -208,6 +212,25 @@ pub(crate) fn build_prep_pack_scoped(
         value: pack_from_candidates(read.vault(), request, &candidates)?,
         receipt: scoped.receipt,
     })
+}
+
+/// Every vault row id a pack's rows cite, the EVENT itself excluded: the
+/// `source_refs` the rendered lens carries as its detail lines.
+pub(crate) fn prep_pack_source_refs(pack: &PrepPack) -> BTreeSet<EntityId> {
+    let mut refs = BTreeSet::new();
+    for section in &pack.sections {
+        for item in &section.items {
+            for hex in &item.source_refs {
+                if let Ok(id) = EntityId::from_hex(hex) {
+                    refs.insert(id);
+                }
+            }
+        }
+    }
+    if let Ok(event) = EntityId::from_hex(&pack.event_ref) {
+        refs.remove(&event);
+    }
+    refs
 }
 
 fn pack_from_candidates(

@@ -19,6 +19,12 @@ its pages and the recurrent state at that exact frontier as the successor.
 Nothing computed for a working branch is ever promoted: a successor's pages
 come from its own commit alone.
 
+A prepare (I1 = C) runs as a commit does, its result kept as the session's
+prepared tail instead of its successor, and only while it is still the
+session's prepare: a fork, another prepare, a drop or an eviction stops it,
+and what it computed after that is released, never kept. A publish ends the
+tail it extended.
+
 `released` only once pages are back in the pool and state slots freed:
 `release_session` runs after every Job of the session has ended.
 
@@ -42,6 +48,8 @@ checkpoint or its pages checked again before each; any other copies at
 once, as before. The snapshot format and the publication are the same
 either way.
 """
+import hashlib
+import json
 import time
 
 import torch
@@ -52,12 +60,12 @@ from .anchor import Anchor, token_digest
 from .jobs import CommitJob, Plan
 from .pages import Owner
 from .registry import (LOST_RESIDENCY, SNAPSHOT_BUSY, SNAPSHOT_INCOMPATIBLE, STALE_GENERATION, UNKNOWN_SESSION,
-                       Checkpoint, Refused, Registry)
+                       Checkpoint, Prepared, Refused, Registry)
 
 # The capability a worker with this layer advertises in its hello.
 SCHEMA_MINOR = 1
 OPS = ("session.create", "session.fork", "session.generate", "session.append", "session.suffix_commit",
-       "session.checkpoint", "session.drop")
+       "session.checkpoint", "session.drop", "session.prepare")
 # What a worker that exports and imports snapshots advertises besides.
 SNAPSHOT_MINOR = 2
 SNAPSHOT_OPS = ("session.export", "session.import")
@@ -68,17 +76,105 @@ IDENTITY_FIELDS = ("model", "tokenizer", "template", "runtime")
 HEADER_FIELDS = frozenset(("checkpoint", "compatibility", "kv", "state", "tensors", "token_count"))
 
 
+# Rotary and other position settings a snapshot's KV depends on beyond its
+# layer shapes, named where a layer module or the cache names them. A value
+# that is not plain JSON names nothing: the digest refuses instead of
+# colliding (a repr carries the process's addresses).
+POSITION_FIELDS = ("rope_theta", "rope_freq_base", "rotary_dim",
+                   "max_position_embeddings", "rope_scaling", "sliding_window")
+
+
+def _named(value):
+    """`value` when JSON names it deterministically, else None. Plain
+    scalars and JSON containers pass through; anything else is tried as
+    int, then float (deterministic numeric normalizations, e.g. enums and
+    numpy scalars), and refused when neither reads. str is never a
+    fallback: an opaque object's default str carries the process's
+    addresses, so it would split digests across identically configured
+    workers instead of refusing capability. A repr is never used either."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+        return value
+    for coerce in (int, float):
+        try:
+            coerced = coerce(value)
+        except (TypeError, ValueError):
+            continue
+        try:
+            json.dumps(coerced, sort_keys=True)
+        except (TypeError, ValueError):
+            continue
+        return coerced
+    return None
+
+
+def attention_digest(cache):
+    """The attention and position settings a snapshot depends on, as a hex
+    digest, or None when they cannot be named: per-layer kinds, window and
+    rotary settings plus the recurrent state class, all static config of
+    the cache the snapshot was built from. Two workers with the same
+    weights but different position configs must not share a digest, or an
+    import reads KV computed under incompatible positions."""
+    try:
+        layers = getattr(cache, "layers", None)
+        if not layers:
+            return None
+        entries = []
+        for key in sorted(layers, key=repr):
+            layer = layers[key]
+            entry = {"kind": type(layer).__name__}
+            module = getattr(layer, "module", None)
+            for field in ("sliding_window", "kv_state_size") + POSITION_FIELDS:
+                value = getattr(module, field, None)
+                if value is None:
+                    continue
+                named = _named(value)
+                if named is None:
+                    return None
+                entry[field] = named
+            entries.append(entry)
+        recurrent = getattr(cache, "recurrent_state_cls", None)
+        doc = {"layers": entries, "recurrent": getattr(recurrent, "__name__", None)}
+        cache_position = {}
+        for field in POSITION_FIELDS:
+            value = getattr(cache, field, None)
+            if value is None:
+                continue
+            named = _named(value)
+            if named is None:
+                return None
+            cache_position[field] = named
+        if cache_position:
+            doc["cache"] = cache_position
+        return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+    except Exception:
+        return None
+
+
 def compatibility(identity, generator):
     """What an imported snapshot must match on this worker, or None when it
-    cannot write or rebuild one: the identity less its epoch, the KV layout
-    and the recurrent state kind."""
+    cannot write or rebuild one: the identity less its epoch, the KV layout,
+    the recurrent state kind, and the attention digest."""
     if identity is None or not snapshot.hostable():
         return None
     record = identity.record(None)
     kv, kind = snapshot.kv_layout(generator.cache), state.portable_kind(generator.cache)
     if kv is None or kind is None or any(record.get(field) is None for field in IDENTITY_FIELDS):
         return None
-    return dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+    compat = dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+    # Unnameable position config advertises no snapshot capability: a worker
+    # that cannot describe its positions must not export KV another worker
+    # reads as its own.
+    attention = attention_digest(generator.cache)
+    if attention is None:
+        return None
+    compat["attention"] = attention
+    return compat
 
 
 def kv_extent(frontier):
@@ -113,9 +209,11 @@ class SessionLayer(Registry):
     def capability(self):
         if self.compatibility is None:
             return {"minor": SCHEMA_MINOR, "ops": list(OPS)}
-        return {"minor": SNAPSHOT_MINOR, "ops": list(OPS + SNAPSHOT_OPS),
-                "snapshot": {"schema": snapshot.SCHEMA, "encoding": snapshot.ENCODING, "hash": snapshot.HASH,
-                             "state_kinds": [self.compatibility["state"]]}}
+        snapshot_caps = {"schema": snapshot.SCHEMA, "encoding": snapshot.ENCODING, "hash": snapshot.HASH,
+                         "state_kinds": [self.compatibility["state"]]}
+        if self.compatibility.get("attention") is not None:
+            snapshot_caps["attention"] = self.compatibility["attention"]
+        return {"minor": SNAPSHOT_MINOR, "ops": list(OPS + SNAPSHOT_OPS), "snapshot": snapshot_caps}
 
     def answer(self, op, body, conversation):
         """The answer body of session op `op` (not `session.generate`; for
@@ -179,6 +277,9 @@ class SessionLayer(Registry):
     def bind_call(self, branch, cancel):
         with self.lock:
             branch.cancel = cancel
+            dropping = branch.session.dropping
+        if dropping:
+            cancel()
 
     def end_branch_later(self, branch):
         """Ends `branch` on the scheduler thread, for a call that never
@@ -260,7 +361,10 @@ class SessionLayer(Registry):
                 victim = min(candidates, key=lambda session: session.used)
                 release = self.strip(victim)
                 victim.lost = True
+                preparing, victim.preparing = victim.preparing, None
             self.release(release)
+            if preparing is not None:
+                self.stop_commit(preparing, Refused(LOST_RESIDENCY, "the session was evicted"))
             print(f"SESSION_EVICTED session={victim.label} held_pages={self.held_pages()}", flush=True)
 
     def publish(self, session, op_id, generation, digest, publish):
@@ -275,6 +379,7 @@ class SessionLayer(Registry):
             release = []
             if publish and matches:
                 release += self.retire(session, session.published)
+                release += self.unprepare(session)
                 session.published, session.successor, session.staged = successor, None, None
                 session.generation += 1
                 session.lost = False
@@ -302,9 +407,11 @@ class SessionLayer(Registry):
                 if not branch.claimed:
                     release += self.close_branch(branch)
             commit = session.commit
+            preparing, session.preparing = session.preparing, None
         self.release(release)
-        if commit is not None:
-            self.stop_commit(commit, Refused("unknown_session", "the session was dropped"))
+        for running in (commit, preparing):
+            if running is not None:
+                self.stop_commit(running, Refused("unknown_session", "the session was dropped"))
 
     def release_session(self, session):
         """Gives back everything a dropped session held, once its calls and
@@ -651,12 +758,26 @@ class SessionLayer(Registry):
             session = commit.session
             if session.commit is commit:
                 session.commit = None
+            current = session.preparing is commit
+            if current:
+                session.preparing = None
             release += self.unpin(session, commit.base)
             if anchor is not None and (session.dropping or session.lost):
                 release.append(anchor)
                 anchor = None
                 refusal = Refused(LOST_RESIDENCY, "the session stopped serving while its commit ran")
-            if anchor is not None:
+            if commit.prepare and anchor is not None and (not current or session.published is not commit.base):
+                release.append(anchor)
+                anchor = None
+                refusal = Refused(ops.SUPERSEDED, "the prepare no longer serves")
+            if commit.prepare and anchor is not None:
+                checkpoint = Checkpoint(anchor, commit.staged.head, commit.base.digest)
+                release += self.unprepare(session)
+                computed = anchor.frontier - commit.plan.position
+                session.prepared = Prepared(checkpoint, commit.base, computed)
+                commit.reply = {"prepared_tokens": anchor.frontier - commit.base.anchor.frontier,
+                                "computed_tokens": computed}
+            elif anchor is not None:
                 checkpoint = Checkpoint(anchor, commit.staged.head,
                                         commit.base.digest if commit.base is not None else None)
                 release += self.retire(session, session.successor)
@@ -677,8 +798,10 @@ class SessionLayer(Registry):
             rows = []
             for session in sessions:
                 published = session.published
+                prepared = session.prepared
                 rows.append({"session": session.label, "resident": not session.lost,
                              "frontier_tokens": published.anchor.frontier if published is not None else 0,
+                             "prepared_tokens": prepared.checkpoint.anchor.frontier if prepared is not None else 0,
                              "unique_bytes": self.unique_bytes(session),
                              "retained_snapshot_bytes": self.retained_bytes(session)})
         total = None

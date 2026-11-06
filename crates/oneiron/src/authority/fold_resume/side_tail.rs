@@ -72,7 +72,7 @@ pub(super) struct FoldedTail {
     pub(super) states: BTreeMap<AuthorityEntryHash, FoldState>,
     /// Each new row's ancestors and counted ancestors.
     pub(super) ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
-    pub(super) uncounted: BTreeSet<AuthorityEntryHash>,
+    pub(super) uncounted: im::OrdSet<AuthorityEntryHash>,
     pub(super) pairs: u64,
     pub(super) counted_pairs: u64,
     pub(super) confirms: ConfirmKeys,
@@ -84,7 +84,7 @@ pub(super) struct FoldedTail {
 /// folded.
 pub(super) fn fold_tail(
     once: &Once,
-    base_rows: &BTreeMap<AuthorityEntryHash, RowSummary>,
+    base_rows: &BaseRows,
     new_rows: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     context: FoldContext<'_>,
 ) -> Option<FoldedTail> {
@@ -113,9 +113,12 @@ pub(super) fn fold_tail(
     // only its own slip rows join the uncounted.
     let mut uncounted = once.uncounted.clone();
     uncounted.extend(
-        order.iter().filter(|hash| {
-            crate::authority::log_budget::is_uncounted(new_rows[*hash], &once.issuers)
-        }),
+        order
+            .iter()
+            .filter(|hash| {
+                crate::authority::log_budget::is_uncounted(new_rows[*hash], &once.issuers)
+            })
+            .copied(),
     );
     let past = Past {
         new_rows,
@@ -212,7 +215,7 @@ pub(super) fn fold_tail(
 /// first, the main ones, and the main chain's tip; None for any other shape.
 fn shape(
     once: &Once,
-    base_rows: &BTreeMap<AuthorityEntryHash, RowSummary>,
+    base_rows: &BaseRows,
     new_rows: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
 ) -> Option<(
     Vec<AuthorityEntryHash>,
@@ -301,8 +304,8 @@ fn parents_first(
 /// and none of any other row.
 struct Past<'a> {
     new_rows: &'a BTreeMap<AuthorityEntryHash, &'a AuthorityLogEntry>,
-    judged: &'a BTreeSet<AuthorityEntryHash>,
-    base_rows: &'a BTreeMap<AuthorityEntryHash, RowSummary>,
+    judged: &'a im::OrdSet<AuthorityEntryHash>,
+    base_rows: &'a BaseRows,
 }
 
 impl<'a> Past<'a> {

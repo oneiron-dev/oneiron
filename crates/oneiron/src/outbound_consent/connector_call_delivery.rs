@@ -36,23 +36,36 @@ impl Vault {
     /// a settler that resumes each and answers its wait. A call whose
     /// connector asked for input is not one: its send was delivered, and its
     /// row is its caller's to poll (FIX 3837).
+    ///
+    /// The rows come in the fair line's order (FIX 12157): round-robin
+    /// across the principals whose calls wait, oldest held first within one,
+    /// so the calls a full window paced, which all open at one instant, share
+    /// it by principal when the settler drives them in this order.
     pub fn pending_connector_calls(
         &self,
     ) -> Result<Vec<PendingConnectorCallRef>, IntentLedgerError> {
         let txn = self.store.env.read_txn().map_err(Error::from)?;
         let now = crate::ports::job_recorded_at_in_txn(&self.store, &txn)?;
-        Ok(PENDING_CALLS
+        let mut pending: Vec<_> = PENDING_CALLS
             .scan(&self.store, &txn)?
             .into_iter()
             .filter(|(_, pending)| pending.input.is_none())
-            .map(|(call_ref, pending)| PendingConnectorCallRef {
-                call_ref,
-                name: pending.name,
-                tool: pending.tool,
-                settled: pending.settled.is_some(),
-                paced: pending.paced_until.map(|until| until > now),
-            })
-            .collect())
+            .collect();
+        pending.sort_by_key(|(_, pending)| pending.held_at_ms);
+        Ok(crate::outbound::fair_line_order(pending.into_iter().map(
+            |(call_ref, pending)| {
+                (
+                    pending.principal_ref,
+                    PendingConnectorCallRef {
+                        call_ref,
+                        name: pending.name,
+                        tool: pending.tool,
+                        settled: pending.settled.is_some(),
+                        paced: pending.paced_until.map(|until| until > now),
+                    },
+                )
+            },
+        )))
     }
 
     /// Drops a settled call's row once the wait reply that carries its

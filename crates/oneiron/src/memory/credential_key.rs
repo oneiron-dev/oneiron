@@ -59,6 +59,15 @@ impl Vault {
         )
     }
 
+    /// The selected write's target key in its own committing snapshot.
+    pub(crate) fn credential_target_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: &VerifiedSlip,
+    ) -> Result<Option<ScopedReadActorKey>> {
+        self.credential_key_in_with(txn, proof, ScopedReadActorKey::from_verified_slip_as_target)
+    }
+
     /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling
     /// FACET-READ = A), judged in one snapshot by the key
     /// [`Self::credential_read_key`] builds: the owner's own live credential,
@@ -69,6 +78,28 @@ impl Vault {
     pub fn credential_facets_owner_exempt(&self, proof: &VerifiedSlip) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         match self.credential_read_key_in(&txn, proof)? {
+            Some(key) => key.facets_owner_exempt_in(self, &txn),
+            None => Ok(false),
+        }
+    }
+
+    /// Whether `proof` is the vault owner's own held credential (FIX 9155):
+    /// the owner rule [`Self::credential_facets_owner_exempt`] judges, built
+    /// without asking the read verb, so an owner's narrowed credential that
+    /// grants no read still counts as the owner's. Judged in one snapshot by
+    /// the target key [`Self::credential_target_key`] builds (the same
+    /// holder, class, proof and record, world, facet and channel bounds, its
+    /// verb axis taken to admit `read`): the owner's own live credential,
+    /// and a narrower one the owner still holds, pass; a delegate's or a
+    /// transferred one never does. It lifts no world, record or channel
+    /// bound; it only answers whose credential it is.
+    pub fn credential_owner_held(&self, proof: &VerifiedSlip) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        match self.credential_key_in_with(
+            &txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip_as_target,
+        )? {
             Some(key) => key.facets_owner_exempt_in(self, &txn),
             None => Ok(false),
         }
@@ -182,10 +213,12 @@ impl Vault {
         owner: bool,
         base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
     ) -> Result<Option<ScopedReadActorKey>> {
-        let claims = proof.claims();
-        if claims.holder_ref != holder.to_hex() {
+        if proof.claims().holder_ref != holder.to_hex() {
             return Ok(None);
         }
+        let proof = self.member_bounded_slip_view_in_txn(txn, proof.clone())?;
+        let proof = &proof;
+        let claims = proof.claims();
         let Some(key) = base(proof) else {
             return Ok(None);
         };

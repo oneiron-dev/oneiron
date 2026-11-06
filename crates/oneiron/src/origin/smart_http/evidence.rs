@@ -11,12 +11,6 @@ use super::landing_lfs::{admit_landing_lfs_pointers, ref_required_lfs_oids};
 use super::paths::{now_secs, serve_failed};
 use super::serve_cmd::path_arg;
 use crate::Vault;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
-    encode_claim_body,
-};
-use crate::codebase::RepoRef;
-use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
@@ -29,8 +23,14 @@ use crate::origin::actor_erase::{
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::code_snapshot::RepoRef;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{
+    ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,
+};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use rmpv::Value;
 
 mod scan;
@@ -211,7 +211,7 @@ fn receive_pack_lfs_value(pointers: &[LfsPushedPointer]) -> Value {
             .iter()
             .map(|pointer| {
                 Value::Array(vec![
-                    Value::from(pointer.path.clone()),
+                    Value::Binary(pointer.path.clone()),
                     Value::from(pointer.oid.to_hex()),
                     Value::from(pointer.size_bytes),
                 ])
@@ -680,10 +680,10 @@ impl Vault {
                     .filter(|fields| fields.len() == 3)
                     .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?;
                 Ok(LfsPushedPointer {
-                    path: fields[0]
-                        .as_str()
-                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS path"))?
-                        .to_owned(),
+                    path: match &fields[0] {
+                        Value::Binary(path) => path.clone(),
+                        _ => return Err(receive_pack_provenance_refused("invalid LFS path")),
+                    },
                     oid: LfsOid::parse_hex(
                         fields[1]
                             .as_str()

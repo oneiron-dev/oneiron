@@ -25,7 +25,7 @@ use super::arc_chunks::{
 use super::arc_compose::{owe, owe_bare};
 use super::arc_evidence::ArcView;
 use super::arc_output::arc_schema;
-use super::arc_reduce::{Landing, Observed, observations};
+use super::arc_reduce::{Landing, Observed, observations, part_observations};
 use super::arc_review::{
     CallBuilder, CallShape, Called, KIND_COMPOSE, KIND_REVIEW, call_input, frame_tokens,
     show_observation, store_exit,
@@ -37,7 +37,7 @@ use crate::EntityId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::Result;
-use crate::llm::DurableStepContext;
+use crate::model_step_context::DurableStepContext;
 use crate::scope_summary::{
     ArcChildPlan, ArcChildRow, ArcManifest, ArcPendingCause, ArcPins, ArcRange, ArcWorkState,
     ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
@@ -499,7 +499,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         observations(&memory, &row.reviewed)
                     };
                     let observed = match read {
-                        Ok(Observed::All(observed)) => observed,
+                        Ok(Observed::All(observed)) => {
+                            part_observations(observed, &run.members, &group, &row.opened)
+                        }
                         // A review that no longer reads back (FIX 8288) is
                         // asked again, with every compose step after it.
                         Ok(Observed::Unread(index)) => {

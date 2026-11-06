@@ -4,7 +4,7 @@
 
 use super::Key;
 use crate::live::conversion::RebuildReason;
-use crate::xlsx_body::{a1, parse_a1};
+use crate::xlsx_body::parse_a1;
 
 const MAX_COLUMN: u32 = 16_384;
 const MAX_ROW: u32 = 1_048_576;
@@ -62,9 +62,15 @@ impl Line {
     /// and the way its points run (down a column, `Some(true)`): the levels
     /// stand side by side, the outermost first, when it is `levels` columns
     /// wide (the way a down-column block is written), else stacked when it
-    /// is `levels` rows tall; `None` when neither shape fits. One level is
-    /// the block itself, running its own way.
-    pub(super) fn levels(&self, levels: usize) -> Option<(Vec<Self>, Option<bool>)> {
+    /// is `levels` rows tall; `None` when neither shape fits. A square block
+    /// runs the way its series' values do (`along`), down a column when they
+    /// say neither (FIX 9167). One level is the block itself, running its
+    /// own way.
+    pub(super) fn levels(
+        &self,
+        levels: usize,
+        along: Option<bool>,
+    ) -> Option<(Vec<Self>, Option<bool>)> {
         if levels <= 1 {
             return Some((vec![self.clone()], self.down()));
         }
@@ -73,12 +79,11 @@ impl Line {
             span(self.first.0, self.last.0)?,
             span(self.first.1, self.last.1)?,
         );
-        let down = if width == levels {
-            true
-        } else if height == levels {
-            false
-        } else {
-            return None;
+        let down = match (width == levels, height == levels) {
+            (true, true) => along.unwrap_or(true),
+            (true, false) => true,
+            (false, true) => false,
+            (false, false) => return None,
         };
         let lines = (0..levels)
             .map(|level| {
@@ -167,13 +172,7 @@ impl Line {
 
     /// The reference as a chart writes it: `'Sheet1'!$B$2:$B$5`.
     pub(super) fn formula(&self) -> String {
-        let anchored = |(col, row): (u32, u32)| {
-            let cell = a1(col, row);
-            let split = cell
-                .find(|c: char| c.is_ascii_digit())
-                .unwrap_or(cell.len());
-            format!("${}${}", &cell[..split], &cell[split..])
-        };
+        let anchored = |(col, row): (u32, u32)| crate::a1::cell_text_fixed(col, row, true, true);
         let sheet = format!("'{}'", self.sheet.replace('\'', "''"));
         if self.first == self.last {
             format!("{sheet}!{}", anchored(self.first))

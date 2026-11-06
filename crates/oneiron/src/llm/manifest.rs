@@ -1,5 +1,5 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
-use super::{AutoCheckOutcome, CallPurpose, LlmRequest, ModelId, ModelLocality, ModelTierRef};
+use super::{AutoCheckOutcome, CallPurpose, LlmRequest, ModelId, ModelLocality};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -26,181 +26,8 @@ pub use encoder_export::{
 };
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelRole {
-    RetrievalEmbedder,
-    Reranker,
-    ExtractionEncoder,
-    ExtractionTeacher,
-    GenerativeReasoner,
-    /// The full-local default's reasoner: answers verdict and generate calls
-    /// through the LLM slot when the route is narrowed to the device or an
-    /// owned endpoint (ARCH-0036 r9 product pins).
-    LocalReasoner,
-    Checker,
-    DreamerCurrent,
-    DreamerTarget,
-    /// Optional until the owner binds a checkpoint from a training pack.
-    DreamerDistilled,
-    Asr,
-    Captioner,
-    DocParsing,
-    AudioVad,
-    TtsDeferred,
-    /// The Local-vision slot's small vision model: reads an image's full
-    /// pixels and answers a question about them in text or a Box as the
-    /// Local rung (`ask_image`, OF-329), through the LLM slot. No model is
-    /// chosen for it.
-    LocalVision,
-    /// The Coach's own seat (agent-mind AGM-5): its agent-health asks,
-    /// code-fix drafts and session-end distill. Optional: with no seat of its
-    /// own the Coach rides the generative reasoner's.
-    Coach,
-    /// The browser planner (CUA E5): the mid planner a browser subgoal's
-    /// next code-mode step runs on once a batch or library run of it ends
-    /// `NEEDS_AGENT`. Optional: with no seat or manifest row of its own the
-    /// step stays on the generative reasoner's. No model is chosen for it.
-    BrowserPlanner,
-}
-pub const MODEL_ROLES: [ModelRole; 18] = [
-    ModelRole::RetrievalEmbedder,
-    ModelRole::Reranker,
-    ModelRole::ExtractionEncoder,
-    ModelRole::ExtractionTeacher,
-    ModelRole::GenerativeReasoner,
-    ModelRole::LocalReasoner,
-    ModelRole::Checker,
-    ModelRole::DreamerCurrent,
-    ModelRole::DreamerTarget,
-    ModelRole::DreamerDistilled,
-    ModelRole::Asr,
-    ModelRole::Captioner,
-    ModelRole::DocParsing,
-    ModelRole::AudioVad,
-    ModelRole::TtsDeferred,
-    ModelRole::LocalVision,
-    ModelRole::Coach,
-    ModelRole::BrowserPlanner,
-];
-impl ModelRole {
-    /// A role of the generative family: it generates or rules through the
-    /// model line, never tags (ARCH-0036 "two model families").
-    #[must_use]
-    pub const fn is_generative(self) -> bool {
-        matches!(
-            self,
-            Self::GenerativeReasoner
-                | Self::LocalReasoner
-                | Self::Checker
-                | Self::DreamerCurrent
-                | Self::DreamerTarget
-                | Self::DreamerDistilled
-                | Self::ExtractionTeacher
-                | Self::Coach
-                | Self::BrowserPlanner
-        )
-    }
-    /// A role a v2 manifest may leave unbound: a trained checkpoint the owner
-    /// has not bound yet, or the Coach or the browser planner, each of which
-    /// falls back to the chat seat.
-    #[must_use]
-    pub const fn is_optional(self) -> bool {
-        matches!(
-            self,
-            Self::DreamerDistilled | Self::Coach | Self::BrowserPlanner
-        )
-    }
-    /// The disposition a row that names none takes: the extraction teacher
-    /// is offline, every other role served (ARCH-0036 "one base, two roles").
-    #[must_use]
-    pub const fn default_disposition(self) -> ModelDisposition {
-        if matches!(self, Self::ExtractionTeacher) {
-            ModelDisposition::Offline
-        } else {
-            ModelDisposition::Served
-        }
-    }
-}
-/// Whether a role's model answers served calls. An offline role teaches the
-/// tagger and runs background passes (extraction, consolidation, eval); it
-/// never serves a turn. An owner who routes a seat to it marks its row
-/// `served` and pays its cost (owner, 2026-10-08).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelDisposition {
-    Offline,
-    Served,
-}
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelSlot {
-    Llm,
-    Embedder,
-    Oneironer,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelBinding {
-    pub model: ModelId,
-    pub slot: ModelSlot,
-    pub tier: ModelTierRef,
-    /// Explicit identities for narrower routes; a model ID has one catalog locality.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub route_models: BTreeMap<ModelLocality, ModelId>,
-    /// Offline or served; absent takes [`ModelRole::default_disposition`].
-    /// The teacher's binding hash covers it, so serving the teacher needs a
-    /// probe approval of that served row.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disposition: Option<ModelDisposition>,
-    /// Whether the bound model, on every route this binding names, hears audio
-    /// clips on the chat wire. A decision rung over the role reads audio only
-    /// when this says so and the served model's catalog row admits
-    /// [`crate::llm::LlmCapability::AudioInput`]; absent is false.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub reads_audio: bool,
-}
 // The band and basis vocabulary is the claim's own (FIX 7761).
 pub use crate::claim::{ConfidenceBand, VerdictBasis};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum VerdictMode {
-    Shadow,
-    Enforce,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VerdictBinding {
-    #[schemars(with = "String")]
-    pub model: ModelId,
-    pub slot: ModelSlot,
-    pub floor: ConfidenceBand,
-    pub mode: VerdictMode,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CalibratedVerdict {
-    pub model: ModelId,
-    pub allow: bool,
-    pub confidence_millionths: u32,
-    pub band: ConfidenceBand,
-    pub basis: VerdictBasis,
-}
-impl CalibratedVerdict {
-    /// The verdict's own shape: a confidence of at most one, in millionths.
-    /// Its band is the producer's, kept as given: no fixed cutoff table
-    /// rewrites or refuses it (FIX 7761).
-    pub fn validate(&self) -> Result<()> {
-        if self.confidence_millionths > 1_000_000 {
-            return Err(invalid("verdict confidence is past one"));
-        }
-        Ok(())
-    }
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelManifest {
@@ -213,9 +40,7 @@ pub struct ModelManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_policy: Option<super::seat::SeatPolicy>,
 }
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(reason.into())
-}
+use crate::model_binding::invalid;
 fn model_for_route(
     binding: &ModelBinding,
     route: ModelLocality,
@@ -474,6 +299,11 @@ impl Vault {
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
     }
+    /// The validated manifest in the caller's snapshot. `None` means no
+    /// manifest is set in that transaction, not a missing role or an error.
+    pub fn model_manifest_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Option<ModelManifest>> {
+        read_manifest(&self.store, txn)
+    }
     /// The model a call of `role` binds in the caller's snapshot: the
     /// manifest's pin at the slot's effective route, or `fallback` (the
     /// role's seat) when no manifest is set. A candidate to price, not
@@ -551,7 +381,7 @@ fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality)
     }
     Ok(())
 }
-fn effective_route(
+pub(super) fn effective_route(
     manifest: &ModelManifest,
     routes: &BTreeMap<ModelSlot, ModelLocality>,
     slot: ModelSlot,
@@ -569,42 +399,11 @@ pub(super) fn read_routes(
 ) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
 }
-
-/// A calibrated check can only hold. Shadow emits a receipt reason without holding.
-pub(crate) fn apply_verdict_floor(
-    binding: Option<&VerdictBinding>,
-    outcome: AutoCheckOutcome,
-) -> (AutoCheckOutcome, Option<&'static str>) {
-    let Some(binding) = binding else {
-        return (
-            if matches!(outcome, AutoCheckOutcome::Verdict(_)) {
-                AutoCheckOutcome::Unavailable
-            } else {
-                outcome
-            },
-            None,
-        );
-    };
-    // A floor evaluates calibrated verdicts only; legacy checker refusals survive.
-    if matches!(
-        &outcome,
-        AutoCheckOutcome::Hold { .. } | AutoCheckOutcome::Unavailable
-    ) {
-        return (outcome, None);
-    }
-    let pass = matches!(&outcome, AutoCheckOutcome::Verdict(v) if v.validate().is_ok() && v.model == binding.model && v.allow && v.band >= binding.floor && v.basis == VerdictBasis::CalibratedModel);
-    if pass {
-        return (AutoCheckOutcome::Allow, Some("verdict_pass"));
-    }
-    match binding.mode {
-        VerdictMode::Shadow => (AutoCheckOutcome::Allow, Some("verdict_shadow_hold")),
-        VerdictMode::Enforce => (
-            AutoCheckOutcome::Hold {
-                reasons: vec!["verdict_floor".into()],
-            },
-            Some("verdict_enforce_hold"),
-        ),
-    }
-}
+pub(crate) use crate::claim_check::apply_verdict_floor;
 #[cfg(test)]
 mod tests;
+
+pub use crate::model_binding::{
+    CalibratedVerdict, MODEL_ROLES, ModelBinding, ModelDisposition, ModelRole, ModelSlot,
+    VerdictBinding, VerdictMode,
+};

@@ -2,17 +2,19 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
+use oneiron_authority::federation::Scope;
 use std::collections::BTreeSet;
 
 mod backup_signer;
 mod connect;
 mod connect_lifecycle;
-pub use connect_lifecycle::ConnectRescopeOffer;
+pub use connect_lifecycle::{
+    ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+};
 mod courtesy;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;
@@ -165,7 +167,8 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
-            && self.slip_refs_stand_in_txn(txn, claims, now)?)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
@@ -194,7 +197,10 @@ impl Vault {
         }
         // Its grant, invitation and delegation (OF-606) bound later frames (FIX 5952).
         match fold.slips.mints.get(id) {
-            Some(mint) => self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs()),
+            Some(mint) => Ok(
+                self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs())?
+                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?,
+            ),
             None => Ok(false),
         }
     }
@@ -270,6 +276,8 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm: None,
+            trusted_contact: None,
+            seat_claim: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -278,6 +286,7 @@ impl Vault {
             AuthorityOp::SlipMint(SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             }),
             now,
         )?;
@@ -337,6 +346,27 @@ impl Vault {
         let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
         Ok(verified)
     }
+    /// Verifies a contact-bound slip and its holder proof (FIX 4325): the
+    /// same host, caveat and holder checks as
+    /// [`Self::verify_capability_slip`], admitting only a contact-bound slip
+    /// and returning only the opaque [`TrustedContactCredential`]. Its naming
+    /// still stands in this snapshot; the contact's doors recheck it in
+    /// their acting transaction.
+    pub fn verify_trusted_contact_slip(
+        &self,
+        host_public_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<TrustedContactCredential> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let credential =
+            slip.verify_trusted_contact(host_public_key, &fold, now, challenge, signature)?;
+        let credential = self.admitted_trusted_contact_view_in_txn(&txn, credential, now)?;
+        Ok(credential)
+    }
     /// Verify a slip and its holder-signed caveats against the logged issuing host key.
     pub fn verify_capability_slip_with_host_key(
         &self,
@@ -377,6 +407,8 @@ impl Vault {
 
     /// Log-derived minting key is the authority source, not a registry row or
     /// retained server secret. Admission and nonce consumption share a txn.
+    /// A slip minted since this handle opened is admitted without the writer
+    /// instead (FIX 12023 W0, [`Self::admit_capability_slip_request_in_memory`]).
     pub fn admit_capability_slip_request(
         &self,
         slip: &CapabilitySlip,
@@ -384,6 +416,12 @@ impl Vault {
         signature: &[u8],
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        if let Some(verified) =
+            self.admit_capability_slip_request_in_memory(slip, timestamp, signature, nonce)
+        {
+            return Ok(verified);
+        }
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
@@ -430,6 +468,53 @@ impl Vault {
         )?;
         self.receipt_support_use_in_txn(txn, verified.claims(), nonce, timestamp)?;
         Ok(verified)
+    }
+    /// [`Self::admit_capability_slip_request`] without the writer (FIX 12023
+    /// W0; Engine ruling 10-31 with L02's conditions). It judges the request
+    /// in one snapshot as the writer's path does, spends its nonce in memory
+    /// before the reply, in one step that also reads the committed nonce
+    /// rows, and queues the rows that writer would commit on the detached
+    /// door (`slip_replay::spent_nonces`). `Some` only for a request it
+    /// admitted: any other, refusals included, comes back `None` and is
+    /// judged on the writer's path, as today.
+    ///
+    /// It takes any slip once this handle's open has replayed the spend
+    /// journal (review #4484 P1-C): every nonce an earlier process spent is
+    /// then a committed row this step reads, or one the replay landed, or
+    /// below the floor a failed replay raised; with no support delegation,
+    /// whose use receipt commits before the reply; on a vault this process
+    /// serves under its writer lease; once an admission has committed the
+    /// proof clock's floor.
+    fn admit_capability_slip_request_in_memory(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Option<VerifiedSlip> {
+        let door = self.spent_nonces.door(self)?;
+        // The snapshot ends before the spend opens its own under its lock:
+        // a thread holds one reader at a time.
+        let (verified, now, expires_at, clock) = {
+            let txn = self.store.env.read_txn().ok()?;
+            let clock = super::slip_replay::committed_request_now_in_txn(self, &txn).ok()??;
+            let fold = self.authority_view_readonly_in_txn(&txn).ok()?;
+            let mint = fold.slips.mints.get(&slip.claims.slip_id)?;
+            let now = self.instant_in_txn(&txn).ok()?.secs();
+            let challenge = super::slip_replay::request_challenge(timestamp, nonce, clock).ok()?;
+            let verified = slip
+                .verify(&mint.signer, &fold, now, &challenge, signature)
+                .ok()?;
+            let verified = self.admitted_slip_view_in_txn(&txn, verified, now).ok()?;
+            if verified.claims().single_use || verified.claims().delegation.is_some() {
+                return None;
+            }
+            (verified, now, mint.action.claims.expires_at, clock)
+        };
+        let spent =
+            super::slip_replay::SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
+        door.spend(spent, now, expires_at, clock)
+            .then_some(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.
     pub fn verify_logged_capability_slip_request(
@@ -507,11 +592,13 @@ impl Vault {
             SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             },
         )
     }
     /// [`Self::mint_slip_in_txn`] for a whole logged mint action: a renewal's
-    /// names the slip it renews (FIX 5481).
+    /// names the slip it renews (FIX 5481), and a redeemed link's names the
+    /// member who approved it (FIX 11713).
     pub(super) fn mint_slip_action_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -544,7 +631,7 @@ impl Vault {
             )],
         )?;
         let fresh = self.authority_view_readonly_in_txn(txn)?;
-        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
+        slip.verify_mint_authority(&issuer.public_key(), &fresh, now)?;
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
@@ -627,6 +714,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

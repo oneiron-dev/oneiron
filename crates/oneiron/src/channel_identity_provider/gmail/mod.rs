@@ -34,18 +34,21 @@
 //!   name. Its token callback rechecks the row at credential egress; token
 //!   bytes are never persisted or returned in a page.
 //! * **No new dependency.** The read protocol lives behind the wire trait; the
-//!   send wire [`HttpGmailSendWire`] uses the `reqwest` the crate already
-//!   declares, so the lockfile is untouched.
+//!   send wire [`HttpGmailSendWire`] and the read wire [`HttpGmailReadWire`]
+//!   use the `reqwest` the crate already declares, so the lockfile is untouched.
 //!
 //! Rotation is absent by construction: the member's provider owns revoking and
 //! re-issuing this grant, and the delegated edge table has no `Rotating` state
 //! to step into.
 
 mod http;
+mod http_read;
 mod provider;
 mod run;
 mod send;
+mod send_as;
 pub use self::http::HttpGmailSendWire;
+pub use self::http_read::HttpGmailReadWire;
 pub use self::run::GmailReadAuthority;
 pub use self::send::{
     GMAIL_SEND_PLAN_REF_PREFIX, GmailReplyThread, GmailSendAuthority, GmailSendPlan, GmailSendSink,
@@ -228,6 +231,9 @@ pub struct GmailDelegatedAdapterConfig {
     custody_record_ref: String,
     scopes: Vec<DelegatedGrantScope>,
     placement_policy: PlacementPolicy,
+    /// The mailbox's verified send-as aliases, a send may name as its From
+    /// (FIX 1055); see `send_as.rs`.
+    send_as: Vec<String>,
 }
 
 impl GmailDelegatedAdapterConfig {
@@ -261,6 +267,7 @@ impl GmailDelegatedAdapterConfig {
             custody_record_ref: grant.custody_record_ref,
             scopes: grant.scopes,
             placement_policy: PlacementPolicy::default(),
+            send_as: Vec::new(),
         })
     }
 
@@ -715,6 +722,61 @@ impl GmailDelegatedAdapter {
                 "gmail delegated reads require a read scope on the grant".to_owned(),
             ))
         }
+    }
+
+    /// Derives this adapter from a campaign step's sticky sender row
+    /// (FIX 11641): the row's own mailbox, custody record and scopes.
+    ///
+    /// The row must be an Active `delegated_grant` row on the email
+    /// channel whose grant carries `mail.send`. The adapter re-proves the
+    /// row against itself through the same predicate both doors use, and
+    /// the send door re-proves row and custody again at credential egress.
+    /// Pure assembly from vault reads: no secret crosses this call.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] when the sender row or its facts do not
+    /// read; [`Error::InvalidConfig`] when the row is not a send-capable
+    /// delegated mailbox for this adapter.
+    pub(crate) fn from_campaign_sender_row(vault: &Vault, sender_ref: EntityId) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        let identity = vault
+            .get_channel_identity_in_txn(&txn, &sender_ref)?
+            .ok_or(Error::EntityNotFound)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            &sender_ref,
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        drop(txn);
+        if facts.channel != EMAIL_CHANNEL {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires an email sender row".to_owned(),
+            ));
+        }
+        let Some(grant) = identity.grant() else {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires a delegated_grant sender row".to_owned(),
+            ));
+        };
+        if !grant.scopes.contains(&DelegatedGrantScope::MailSend) {
+            return Err(Error::InvalidConfig(
+                "gmail campaign send requires mail.send on the sender grant".to_owned(),
+            ));
+        }
+        // The adapter's mailbox is the row's live assigned address, spelled
+        // as the binding constructor spells it.
+        let (local_part, mailbox_domain) = split_email_address(&facts.address_or_handle)?;
+        let adapter = Self::new(GmailDelegatedAdapterConfig {
+            mailbox_address: format!("{local_part}@{mailbox_domain}"),
+            custody_record_ref: grant.custody_record_ref.clone(),
+            scopes: grant.scopes.clone(),
+            placement_policy: PlacementPolicy::default(),
+            send_as: Vec::new(),
+        });
+        adapter.require_active_row_matches_adapter(vault, &sender_ref)?;
+        Ok(adapter)
     }
 
     fn provision_record(

@@ -8,11 +8,12 @@
 use std::collections::BTreeMap;
 
 use super::{CodePushSourceLink, MergeQueue, QueueExportHold, QueueExportHoldReason};
-use crate::code_document::CodeDocumentFrontier;
-use crate::code_revision::{CodePathRetirement, CodeRevision, CodeTreeBlob, CodeTreeInventory};
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire};
 use crate::repo_mutation::proposal::RepoProposal;
+use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::code_revision_record::{CodePathRetirement, CodeRevision, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 type Held<T> = std::result::Result<T, QueueExportHold>;
 
@@ -122,7 +123,15 @@ impl MergeQueue<'_> {
                         file.path
                     ));
                 };
-                let bytes = wire.read_object(&self.repo, &GitOid::parse_hex(oid.clone())?)?;
+                // Gitlink content is the exact hex OID, never the linked object.
+                let (content_hash, size_bytes) = if *mode
+                    == crate::store::code_tree_blob::MODE_GITLINK
+                {
+                    (*blake3::hash(oid.as_bytes()).as_bytes(), oid.len() as u64)
+                } else {
+                    let bytes = wire.read_object(&self.repo, &GitOid::parse_hex(oid.clone())?)?;
+                    (*blake3::hash(&bytes).as_bytes(), bytes.len() as u64)
+                };
                 let operation = source.file_operation(index)?;
                 let document = self
                     .vault
@@ -133,8 +142,8 @@ impl MergeQueue<'_> {
                     CodePathRetirement {
                         previous: CodeTreeBlob {
                             git_oid: oid.clone(),
-                            content_hash: *blake3::hash(&bytes).as_bytes(),
-                            size_bytes: bytes.len() as u64,
+                            content_hash,
+                            size_bytes,
                             mode: *mode,
                         },
                         document,
@@ -161,3 +170,5 @@ impl MergeQueue<'_> {
         Ok(Ok((retired, pushes)))
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

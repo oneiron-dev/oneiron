@@ -28,17 +28,19 @@ use crate::dreamer_wake::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::inference_context::HostInferenceContext;
 use crate::learning::TypeRef;
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
-    call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::self_heal::audit::AttemptConfession;
 use crate::task_verb::QueueTaskBrief;
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 use std::collections::BTreeMap;
 
 mod landing;
@@ -126,9 +128,13 @@ pub async fn run_task_realize(
             step_hashes: Vec::new(),
         });
     };
-    let spec =
-        serde_json::to_string_pretty(&crate::msgpack_value_to_json(&attempt.status.payload.input))
+    // FIX 11687: the queued input carries who queued it; the spec passed
+    // on is identical after the unwrap.
+    let (spec_value, _) =
+        crate::task_verb::decode_task_realization_input(&attempt.status.payload.input)
             .map_err(|_| invalid("the spec is not JSON"))?;
+    let spec = serde_json::to_string_pretty(&crate::msgpack_value_to_json(&spec_value))
+        .map_err(|_| invalid("the spec is not JSON"))?;
     let mut text = format!(
         "Task: {}\n\n## Spec\n\n```json\n{spec}\n```\n",
         task.to_hex()
@@ -148,7 +154,7 @@ pub async fn run_task_realize(
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // The TASK's spec and brief leave the vault as an extraction's
             // records do, so they pass the same egress gate.
             purpose: CallPurpose::Extraction,
@@ -252,7 +258,9 @@ pub async fn run_task_realize(
         // A failed call's paid usage has no terminal step: it is handed
         // to the driver's settlement with the park (FIX 11554).
         Err(other) => {
-            if let DurableStepError::SpentLlm { usage, .. } = &other {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = &other
+            {
                 charges.record_usage(usage);
             }
             ctx.note_spend_before_error(charges.units, &charges.step_hashes);

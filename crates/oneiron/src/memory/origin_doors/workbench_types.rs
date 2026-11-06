@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::super::merge_queue_doors::MergeQueuePointersView;
 use crate::EntityId;
 use crate::code_document::{CodeDocumentFrontier, CodeFileMetadataEdit};
-use crate::code_revision::{CodeImportAnchor, CodeTreeBlob};
 use crate::origin::{CodePushCandidateView, ReceivedFileOperation};
+use crate::store::code_import_manifest::CodeImportAnchor;
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 /// One served code repository to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

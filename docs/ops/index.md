@@ -5,17 +5,29 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
-  `import`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+  `import`, `files`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+- [Retry a publisher issue signature](publisher-signature-retry.md) — an explicit owner new logical send after proved non-delivery, with the same frozen signature and normal outbound checks.
+- [Call receipts after actor erasure](call-receipt-erase.md) — deferred writes keep their receipt while applying the native hard-erased actor identity scrub.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
-  restore left pending, and a stopped-vault guest revoke's `--peer`.
+  restore left pending, `secrets import-supplement` for an export's secret supplements, and a
+  stopped-vault guest revoke's `--peer`.
 - [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
+- [Sign in with ChatGPT authorize plans](siwc-authorize-plan.md) — current open-source SIWC request fields; URL-only, not a token exchange or completed login.
+- [Local Sign in with ChatGPT](siwc-local-login.md): explicit callback, verified exchange, protected per-account file, configured Responses inference, rotating refresh and explicit local clear/revoke.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Coach jobs in an embedded wake executor](dreamer-coach-embedded-executor.md) — explicit
+  executor support for Coach host jobs and heals, with normal wake admission and settlement.
+- [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
+  proposals, exact owner review and confirmation, and atomic run-tray approval.
+- [Case-backed Coach prompt drafts](coach-prompt-repair-artifacts.md) — optional
+  host authors, Proposed prompt artifacts and the boundary before execution.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
+- [Legal-hold clone implementation map](legal-hold-clone-map.md) — planned per-order legal custody, normal user erase, and the remaining implementation slices; MAP only, not a shipped clone.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
@@ -29,6 +41,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [The built-in web connector](web-connector.md) — `connector.web.search` and `fetch`: the
   deploy's `TAVILY_API_KEY`, the owner's provider switch, result shapes and usage rows.
+- [Clipboard storage and Mac intake](clipboard.md) — owner-bound ordinary text capture,
+  masked read pages, cleanup policy and clip/range/world erasure; one Mac watcher,
+  private-copy routing and owner IPC. Quiet purpose questions/search/sync proof remain open.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to
@@ -51,5 +66,13 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   decision table and the image manifest's revision floors.
 - [Cloud registration](cloud-registration.md) — the pins file, `oneiron account login`, `status`, `refresh` and `logout`, the link/refresh/logout/erase lifecycle, key rollover, and what the client wipes.
 - [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
+- [Proposal birth attribution](proposal-birth-attribution.md) — captured draft attempts,
+  snapshot/finalize retention, and the evidence-door fallback order.
+- [Coach code-fix candidate provenance](coach-code-fix-provenance.md) — native Coach/publisher origin records, separate from model verdicts and independent learning evidence.
+- [Coach grant-environment proposals](coach-grant-environment-repair.md) — real grant targets and same-writer review artifacts, without changing access or executing repairs.
+- [Coach pilot answer release](coach-pilot-release.md) — frozen source rows for pilot
+  replies, device-local details and invocation replay.
+- [Frozen pattern revision witnesses](planned-spawn-revisions.md) — hard-erase scrubs,
+  late intent writes, and launch comparison without changing the frozen pack body.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).

@@ -12,10 +12,11 @@ use std::collections::BTreeSet;
 
 use super::principal_standing::grant_pact_standing_lapsed_in_txn;
 use super::withdrawn_grant::grant_known_withdrawn_in_txn;
-use crate::federation::{ScopeAxis, decode_federation_grant_body};
+use crate::federation::decode_federation_grant_body;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::ScopeAxis;
 
 /// What a Grant's verb names an `ai.*` operation by (CALLS `FIX 3208 ai
 /// grant verbs`): this prefix, then the operation's wire name. One verb per

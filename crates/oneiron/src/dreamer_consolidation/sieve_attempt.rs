@@ -5,6 +5,7 @@
 //! use the same durable step layer as consolidation.
 
 mod audit;
+mod typing_batch;
 
 use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
@@ -18,13 +19,14 @@ use crate::dreamer_wake::sieve::{self, RungInput};
 use crate::dreamer_wake::{
     DreamerAttemptExecution, SieveRung, SieveSpan, SpanOrigin, WakeAttemptContext,
 };
-use crate::llm::decision::HumanAskReason;
-use crate::llm::{DurableStepContext, DurableStepError};
+use crate::model_decision::HumanAskReason;
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result};
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_sieve_rungs(
-        &mut self,
+        &self,
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
@@ -58,6 +60,15 @@ impl ConsolidationExecutor<'_> {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
                 step_hashes: Vec::new(),
+            });
+        }
+        // A queued rung over an excluded conversation parks for retry
+        // before any source read, exactly as a refused wake preparation
+        // does; it runs if the conversation is later un-excluded.
+        if ctx.vault.dreamer_turn_excluded(&input.span.turn)? {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "conversation excluded from Dreamer passes".to_owned(),
+                cause: DreamerParkCause::Retry,
             });
         }
         let Some(evidence) = sieve::rung_evidence(ctx.vault, &input)? else {
@@ -159,8 +170,13 @@ impl ConsolidationExecutor<'_> {
             // Every generation that finished is spent, whatever the rung's
             // outcome. A tally the record cannot take settles with that
             // error instead of leaving the attempt uncharged (FIX 11554).
-            for (hash, usage) in &read.steps {
+            for (index, (hash, usage, _)) in read.steps.iter().enumerate() {
                 if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    for (_, usage, memoized) in &read.steps[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
                     return super::residency::spent_or_deferred(error, ctx, &charges);
                 }
             }
@@ -191,7 +207,15 @@ impl ConsolidationExecutor<'_> {
                     );
                 }
                 Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+                // A failed call's paid usage has no terminal step: it is
+                // handed to the driver's settlement with the park (FIX
+                // 11554).
                 Err(error) => {
+                    if let DurableStepError::SpentLlm { usage, .. }
+                    | DurableStepError::SpentFallback { usage, .. } = &error
+                    {
+                        charges.record_usage(usage);
+                    }
                     return Ok(
                         charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
                     );
@@ -217,7 +241,7 @@ impl ConsolidationExecutor<'_> {
                 None => {
                     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
                     if let Err(error) = ctx.vault.with_write_txn_grouped(|wtxn| {
-                        for (hash, _) in &read.steps {
+                        for (hash, _, _) in &read.steps {
                             store.forget_step_charge_in_txn(wtxn, attempt_id, hash)?;
                             crate::llm::forget_step_memo_in_txn(ctx.vault, wtxn, attempt_id, hash)?;
                         }
@@ -225,7 +249,7 @@ impl ConsolidationExecutor<'_> {
                     }) {
                         return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
-                    for (hash, _) in &read.steps {
+                    for (hash, _, _) in &read.steps {
                         charges.step_hashes.retain(|kept| *kept != *hash);
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));

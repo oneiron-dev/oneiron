@@ -28,10 +28,13 @@ use super::contribution_admission::{ContributionAdmission, ContributionRecord, a
 use super::contribution_targets::{CheckedEdge, ContributionTarget, Experiment, unchecked_edges};
 use super::late_credit::CREDIT_RECEIPT;
 use super::{AttemptOutcome, FollowedState, LateCreditReceipt, OutcomeEvidence};
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
-use crate::learning::{Anchor, EvidenceSource, LearningPredicate, TypeRef};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::receipt::{
-    ContributionCheck, PackAttributionFields, SkillContribution, attempt_pack_receipt,
+    ContributionCheck, PackAttributionFields, SkillContribution, attempt_pack_receipt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{Error, Result, Vault};
@@ -249,7 +252,7 @@ pub fn contribution_check_candidates_after(
 ) -> Result<Vec<(String, ContributionTarget, ContributionCandidate)>> {
     let rate = crate::learning_setting::setting_value(
         vault,
-        &crate::learning_setting::CONTRIBUTION_CHECK_RATE,
+        &crate::store::setting_seed::CONTRIBUTION_CHECK_RATE,
     )?;
     if rate <= 0.0 || limit == 0 {
         return Ok(Vec::new());
@@ -345,6 +348,22 @@ pub fn record_contribution_pair(
     pair: &ContributionPair,
     now: u64,
 ) -> Result<ContributionRecord> {
+    vault.with_write_txn_grouped(|txn| record_contribution_pair_in_txn(vault, txn, pair, now))
+}
+
+/// [`record_contribution_pair`] in a writer the caller holds: an owner's
+/// word scores an owner-judged pair and records it in the ask's settling
+/// commit (FIX 3609). The run's receipt is read in `txn`.
+///
+/// # Errors
+///
+/// As [`record_contribution_pair`].
+pub(crate) fn record_contribution_pair_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pair: &ContributionPair,
+    now: u64,
+) -> Result<ContributionRecord> {
     let (Some(skill), Some(target)) = (pair.skill, pair.target()) else {
         return Err(Error::InvalidClaimBody(
             "a contribution check names its skill and target",
@@ -384,7 +403,7 @@ pub fn record_contribution_pair(
             "a contribution check's forks are scored against a correctness anchor",
         ));
     }
-    let receipt = attempt_pack_receipt(vault, &pair.attempt_receipt)?.ok_or(
+    let receipt = attempt_pack_receipt_in_txn(&vault.store, txn, &pair.attempt_receipt)?.ok_or(
         Error::InvalidClaimBody("a contribution check names a stamped attempt"),
     )?;
     if !matches!(receipt.outcome.as_str(), "completed" | "failed") {
@@ -392,10 +411,8 @@ pub fn record_contribution_pair(
             "cancelled or abandoned work is not checked",
         ));
     }
-    vault.with_write_txn_grouped(|txn| {
-        super::pack_learning::require_loaded_skill(vault, txn, &receipt, skill)?;
-        admit_pair_in_txn(vault, txn, skill, target, pair, now)
-    })
+    super::pack_learning::require_loaded_skill(vault, txn, &receipt, skill)?;
+    admit_pair_in_txn(vault, txn, skill, target, pair, now)
 }
 
 /// `fields` with `check` as `skill`'s contribution, unless the receipt froze

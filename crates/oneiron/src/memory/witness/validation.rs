@@ -13,7 +13,7 @@ use rmpv::Value;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError};
-use crate::gate::{MAX_WITNESS_MESSAGE_ORDER, validate_canonical_witness_message_body};
+use crate::gate::validate_canonical_witness_message_body;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::ManifestDbs;
 
@@ -182,12 +182,6 @@ pub(super) fn validate_existing_witness_message_orders(
 ) -> MemoryResult<()> {
     let mut incoming = BTreeSet::new();
     for message in messages {
-        if message.order > MAX_WITNESS_MESSAGE_ORDER {
-            return Err(MemoryError::bad_request(format!(
-                "witness message order {} exceeds the {MAX_WITNESS_MESSAGE_ORDER} ceiling",
-                message.order,
-            )));
-        }
         incoming.insert(message.order);
     }
     match taken_witness_message_order(dbs, txn, turn_id, &incoming, existing_message_ids)? {
@@ -252,8 +246,8 @@ pub(crate) fn next_witness_message_order(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn_id: &EntityId,
-) -> MemoryResult<u32> {
-    let mut next = 0;
+) -> MemoryResult<u64> {
+    let mut next = 0_u64;
     for row in dbs.port_edges(
         txn,
         turn_id,
@@ -266,7 +260,7 @@ pub(crate) fn next_witness_message_order(
             continue;
         };
         if raw.entity_type == ENTITY_TYPE_MESSAGE {
-            next = next.max(witness_message_order(&raw.body)?.saturating_add(1));
+            next = next.max(u64::from(witness_message_order(&raw.body)?) + 1);
         }
     }
     Ok(next)
@@ -322,22 +316,9 @@ pub(crate) fn witness_message_order(body: &[u8]) -> crate::error::Result<u32> {
 /// already exists, the transactional witness paths add a second pass over its
 /// persisted `PartOf` children so an append cannot reuse a stored position.
 pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
-    // The order domain is fixed and small enough for a 1,024-word bitset. This
-    // keeps validation deterministic O(messages) even for a call spanning the
-    // complete legal domain; rescanning each preceding prefix made that input
-    // perform roughly two billion comparisons before opening a transaction.
-    const ORDER_WORDS: usize = (MAX_WITNESS_MESSAGE_ORDER as usize + 64) / 64;
-    let mut seen = [0_u64; ORDER_WORDS];
+    let mut seen = HashSet::with_capacity(messages.len());
     for message in messages {
-        if message.order > MAX_WITNESS_MESSAGE_ORDER {
-            return Err(MemoryError::bad_request(format!(
-                "witness message order {} exceeds the {MAX_WITNESS_MESSAGE_ORDER} ceiling",
-                message.order,
-            )));
-        }
-        let word = (message.order / 64) as usize;
-        let mask = 1_u64 << (message.order % 64);
-        if seen[word] & mask != 0 {
+        if !seen.insert(message.order) {
             return Err(MemoryError::bad_request_with(
                 format!(
                     "two witnessed messages claim order {} in one turn",
@@ -346,7 +327,6 @@ pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) ->
                 &["Give each message in one witness call its own position."],
             ));
         }
-        seen[word] |= mask;
     }
     Ok(())
 }
@@ -378,7 +358,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         let key = key.as_str().ok_or_else(fail)?;
         if !matches!(
             key,
-            "author" | "type" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
+            "author" | "type" | "parts" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
         ) || !keys.insert(key)
         {
             return Err(fail());
@@ -388,10 +368,13 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         }
     }
     let mut canonical = Vec::new();
+    // The stored parts axis rides the pointer body, never the document: it is
+    // carried verbatim so a parted MESSAGE still validates its order here.
     for name in [
         "author",
         "type",
         "content",
+        "parts",
         "metadata",
         "is_visible",
         "order",
@@ -402,7 +385,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         }
         if let Some((key, value)) = fields.iter().find(|(key, _)| key.as_str() == Some(name)) {
             canonical.push((key.clone(), value.clone()));
-        } else if name != "metadata" {
+        } else if name != "metadata" && name != "parts" {
             return Err(fail());
         }
     }

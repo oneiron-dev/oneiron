@@ -16,8 +16,9 @@
 //! read, and the principal's relationship grants are read live. A revocation
 //! after the save therefore never widens what the work reads. A lane that
 //! read under no narrowing freezes as its principal's own
-//! ([`FrozenReadLane::principal`]), which is how every saved read was built
-//! before: its principal's live authority alone, owner and Grants included.
+//! ([`FrozenReadLane::principal`]), unless a non-guest credential's native
+//! key lacks the owner's full floor. Even with a top read Scope, that lane
+//! keeps its credential rather than becoming its holder's principal lane.
 //!
 //! Sight is never frozen: a door that serves a secret derives it again from
 //! the rebuilt lane.
@@ -27,8 +28,11 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
-use crate::pipeline::WorldAuthoritySet;
+use crate::claim::world_access::WorldAuthoritySet;
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
+
+/// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
+const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";
 
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
@@ -36,9 +40,9 @@ use crate::pipeline::WorldAuthoritySet;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenReadLane {
-    /// The id of the credential that narrowed the saved lane. Every rebuild
+    /// The id of the credential that bounds the saved lane. Every rebuild
     /// reads nothing once it is no longer live. `None` on a lane no
-    /// credential narrowed.
+    /// credential bounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential: Option<[u8; 32]>,
     /// The read Scope the saved lane was held to, as every read door checks
@@ -56,13 +60,22 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
+    /// The fields a narrower reader's view of this lane withheld a row or a
+    /// scope id from (FIX 12171, 12285), by name: `records` when the caveat
+    /// names a row that reader does not read, `room_facets` when it does not
+    /// read the room, and `authority.worlds`, `authority.facets`,
+    /// `authority.audience` or `worlds` when that axis names an id the
+    /// reader's own lane does not cover. Empty on every saved or rebuilt
+    /// lane: only [`Self::reader_view`] fills it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    withheld: Vec<String>,
 }
 
 impl FrozenReadLane {
     /// The principal's own lane: no narrowing beyond the principal's live
     /// authority. An engine-built record that no caller's lane saved (an
     /// internal one-off ask, a review's dissent question) keeps it, and so
-    /// does a full lane.
+    /// does an un-narrowed native owner key or bare principal key.
     #[must_use]
     pub fn principal() -> Self {
         Self::default()
@@ -74,12 +87,13 @@ impl FrozenReadLane {
         *self == Self::default()
     }
 
-    /// `lane`, frozen. A lane under no narrowing (the owner's key, a full
-    /// credential, an un-narrowed principal key) freezes as the principal's
-    /// own. Otherwise the credential's id, read Scope and records caveat,
-    /// the asked worlds and the room facets are kept. A channel caveat the
-    /// lane did not meet freezes as a Scope that reads nothing, as the live
-    /// lane read nothing under it.
+    /// `lane`, frozen. A lane under no narrowing freezes as the principal's
+    /// own, except a non-guest credential whose native key lacks the owner's
+    /// full floor: its credential's id stays even with a top read Scope.
+    /// Otherwise the credential's id, read Scope and records caveat, the
+    /// asked worlds and the room facets are kept. A channel caveat the lane
+    /// did not meet freezes as a Scope that reads nothing, as the live lane
+    /// read nothing under it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] for a lane whose bound has no frozen form,
@@ -97,10 +111,23 @@ impl FrozenReadLane {
             .proof
             .as_ref()
             .map(crate::authority::VerifiedSlip::claims);
-        let records = claims
+        let mut records = claims
             .map(|claims| claims.records.clone())
             .unwrap_or_default();
-        let channel_refused = claims.is_some_and(|claims| !lane.credential_channel_allows(claims));
+        // A key rebuilt from a frozen lane holds its records caveat as a
+        // bound, not in its proof: keep it, met with the proof's caveat. A
+        // bound that meets to no row reads nothing.
+        let mut bound_reads_nothing = false;
+        if let Some(bound) = &key.record_bound {
+            records = if records.is_empty() {
+                bound.clone()
+            } else {
+                records.intersection(bound).cloned().collect()
+            };
+            bound_reads_nothing = records.is_empty();
+        }
+        let channel_refused = claims.is_some_and(|claims| !lane.credential_channel_allows(claims))
+            || bound_reads_nothing;
         let scope_narrows = key.authority_scope().is_some_and(|scope| {
             Scope {
                 verbs: ScopeAxis::All,
@@ -108,7 +135,10 @@ impl FrozenReadLane {
             } != Scope::top()
         });
         let worlds = key.worlds.as_ref().map(WorldAuthoritySet::scope_axis);
-        if !scope_narrows
+        let keep_credential =
+            claims.is_some_and(|claims| claims.grant_ref.is_none()) && !key.reads_as_vault_owner();
+        if !keep_credential
+            && !scope_narrows
             && records.is_empty()
             && !channel_refused
             && worlds.is_none()
@@ -117,9 +147,7 @@ impl FrozenReadLane {
             return Ok(Self::principal());
         }
         if claims.is_some_and(|claims| claims.grant_ref.is_some()) {
-            return Err(Error::InvalidConfig(
-                "a narrowed guest credential's read lane is not saved".into(),
-            ));
+            return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
         let authority = if channel_refused {
             Scope::default()
@@ -132,7 +160,76 @@ impl FrozenReadLane {
             records,
             worlds,
             room_facets: key.room_facets,
+            withheld: Vec::new(),
         })
+    }
+
+    /// The rows this lane names (FIX 12171): each row its records caveat
+    /// names, then the room whose facets bound it. A caveat entry that is no
+    /// entity id names no row.
+    #[must_use]
+    pub fn named_rows(&self) -> Vec<EntityId> {
+        self.records
+            .iter()
+            .filter_map(|row| EntityId::from_hex(row).ok())
+            .chain(self.room_facets)
+            .collect()
+    }
+
+    /// This lane as a narrower lane of its principal reads it (FIX 12171,
+    /// 12285), `reads` answering for each row [`Self::named_rows`] names and
+    /// `bound` for the scope ids, the reader's own lane bound
+    /// ([`ScopedRead::refs_readable_each_with_scope_id_bound`]): the records
+    /// caveat keeps the rows the reader reads, and the room stays while the
+    /// reader reads it. The read Scope's worlds, facets and audience axes,
+    /// and the asked worlds, keep each id `bound` covers on that axis; base
+    /// reality is the base world id there, so it stays while the reader
+    /// reads base. An open or empty axis names no id and stays as it is.
+    /// Each field that lost a row or an id is named in `withheld`, so an
+    /// emptied caveat never reads as no caveat. The credential id stays, so
+    /// a narrowed lane still reads as narrowed. The answer is a reply's
+    /// view: no rebuild narrows by it.
+    #[must_use]
+    pub fn reader_view(&self, reads: impl Fn(&EntityId) -> bool, bound: &Scope) -> Self {
+        let mut lane = self.clone();
+        lane.records
+            .retain(|row| EntityId::from_hex(row).is_ok_and(|id| reads(&id)));
+        if lane.records.len() < self.records.len() {
+            lane.withheld.push("records".to_owned());
+        }
+        if lane.room_facets.is_some_and(|room| !reads(&room)) {
+            lane.room_facets = None;
+            lane.withheld.push("room_facets".to_owned());
+        }
+        if let Some(authority) = &mut lane.authority {
+            for (field, axis, covered) in [
+                ("authority.worlds", &mut authority.worlds, &bound.worlds),
+                ("authority.facets", &mut authority.facets, &bound.facets),
+                (
+                    "authority.audience",
+                    &mut authority.audience,
+                    &bound.audience,
+                ),
+            ] {
+                if keep_covered_ids(axis, covered) {
+                    lane.withheld.push(field.to_owned());
+                }
+            }
+        }
+        if let Some(worlds) = &mut lane.worlds
+            && keep_covered_ids(worlds, &bound.worlds)
+        {
+            lane.withheld.push("worlds".to_owned());
+        }
+        lane
+    }
+
+    /// Whether `error` is [`Self::freeze`]'s refusal of a narrowed guest
+    /// credential's lane (FIX 12059), which a door that admitted that lane
+    /// answers as its own typed record-scope refusal.
+    #[must_use]
+    pub fn is_guest_lane_refusal(error: &Error) -> bool {
+        matches!(error, Error::InvalidConfig(message) if message.as_str() == GUEST_LANE_NOT_SAVED)
     }
 
     /// `key`, the principal's own live key, narrowed by this frozen lane in
@@ -194,6 +291,24 @@ impl FrozenReadLane {
     }
 }
 
+/// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
+/// cut one. An open or empty axis names no id and stays; one cut to no id
+/// is bottom.
+fn keep_covered_ids(axis: &mut ScopeAxis<ScopeId>, covered: &ScopeAxis<ScopeId>) -> bool {
+    let ScopeAxis::Some(ids) = axis else {
+        return false;
+    };
+    let named = ids.len();
+    ids.retain(|id| covered.contains(id));
+    if ids.len() == named {
+        return false;
+    }
+    if ids.is_empty() {
+        *axis = ScopeAxis::Bottom;
+    }
+    true
+}
+
 impl ScopedRead<'_> {
     /// This lane, frozen ([`FrozenReadLane::freeze`]).
     ///
@@ -201,6 +316,61 @@ impl ScopedRead<'_> {
     /// As [`FrozenReadLane::freeze`].
     pub fn freeze(&self) -> Result<FrozenReadLane> {
         FrozenReadLane::freeze(self)
+    }
+
+    /// Which of `sets` resolve whole for this lane, as
+    /// [`Self::refs_readable_each`] judges them, and the scope ids this
+    /// lane's own bounds cover, both in one snapshot (FIX 12285): what a
+    /// frozen lane of its principal's is viewed by
+    /// ([`FrozenReadLane::reader_view`]). The bound is one Scope over the
+    /// worlds, facets and audience axes, every other axis open: the worlds
+    /// it asked for met with its credential's and a room turn's, base
+    /// reality as the base world id there; its credential's facets met with
+    /// a room turn's and a named room's as this snapshot finds them, open
+    /// while its key reads past every facet (owner ruling FACET-READ = A);
+    /// and its credential's audience. No row is judged for the bound.
+    ///
+    /// # Errors
+    /// As [`Self::refs_readable_each`], and a store failure reading a
+    /// room's facets or the owner exemption.
+    pub fn refs_readable_each_with_scope_id_bound(
+        &self,
+        sets: &[Vec<EntityId>],
+    ) -> Result<(Vec<bool>, Scope)> {
+        let rtxn = self.grant_read_txn()?;
+        let each = if sets.is_empty() {
+            Vec::new()
+        } else {
+            self.refs_readable_each_in(&rtxn, sets)?
+        };
+        Ok((each, self.scope_id_bound_in(&rtxn)?))
+    }
+
+    /// This lane's own bound on the scope ids in `txn`; see
+    /// [`Self::refs_readable_each_with_scope_id_bound`].
+    fn scope_id_bound_in(&self, txn: &heed::RoTxn<'_>) -> Result<Scope> {
+        let key = &self.actor_key;
+        let mut bound = key.world_ceiling();
+        if let Some(credential) = key.authority_scope() {
+            bound.facets = credential.facets.clone();
+            bound.audience = credential.audience.clone();
+        }
+        if let Some(turn) = &key.room_turn {
+            let (worlds, facets) = turn
+                .terms
+                .with(|terms| (terms.worlds.worlds.clone(), terms.facets.clone()));
+            let now = crate::context_board::room_facets_axis_in(self.vault, txn, turn.room)?;
+            bound.worlds = bound.worlds.meet(&worlds);
+            bound.facets = bound.facets.meet(&facets).meet(&now);
+        }
+        if let Some(room) = key.room_facets {
+            let named = crate::context_board::room_facets_axis_in(self.vault, txn, room)?;
+            bound.facets = bound.facets.meet(&named);
+        }
+        if key.facets_owner_exempt_in(self.vault, txn)? {
+            bound.facets = ScopeAxis::All;
+        }
+        Ok(bound)
     }
 
     /// A frozen lane's records caveat on the row `id`: the rows a rebuilt

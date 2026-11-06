@@ -1,5 +1,6 @@
 //! A custody carrier in a checkpoint (KS7-3a): a custody transition, a
-//! protected input and a witness part (FIX 8088) are secret custody's
+//! protected input, a witness part (FIX 8088) and an export secret
+//! supplement's sealed copy (FIX 11843) are secret custody's
 //! (KS-6), handed to it as they stand, never ordinary payload. Each is read with its own codec and filed under
 //! its own key; the live admission door, which judges signers in a txn of
 //! its own, is not run.
@@ -9,6 +10,7 @@
 )]
 
 use super::INPUT_ROW_PREFIX;
+use super::export_output::{self, EXPORT_OUTPUT_ROW_PREFIX};
 use super::witness::WITNESS_ROW_PREFIX;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::secret_custody::{CustodyTransition, RelayedInput, WitnessPart};
@@ -17,6 +19,13 @@ use crate::sync::checkpoint_payload::{KeyClass, Placement, SyncUnclassified};
 
 /// Where the value under `key` in the custody map goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
+    if let Some(row_key) = key.strip_prefix(EXPORT_OUTPUT_ROW_PREFIX) {
+        return if export_output::filed(row_key, value) {
+            Placement::Dispatched(OtherClient::Credential)
+        } else {
+            Placement::unclassified(None, SyncUnclassified::Undecodable)
+        };
+    }
     let filed = match (
         key.strip_prefix(INPUT_ROW_PREFIX),
         key.strip_prefix(WITNESS_ROW_PREFIX),
@@ -37,8 +46,12 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
 }
 
 /// What a custody map key spells: a transition's record id and the place
-/// of its piece, a protected input's digest, or a witness part's key.
+/// of its piece, a protected input's digest, a witness part's key, or the
+/// entry hash of the request a sealed copy answers.
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
+    if key.starts_with(EXPORT_OUTPUT_ROW_PREFIX) {
+        return KeyClass::Digest;
+    }
     if key.starts_with(INPUT_ROW_PREFIX) || key.starts_with(WITNESS_ROW_PREFIX) {
         return KeyClass::Digest;
     }

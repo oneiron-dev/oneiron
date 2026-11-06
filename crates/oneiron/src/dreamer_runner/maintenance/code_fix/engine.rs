@@ -3,9 +3,11 @@
 //! until that runner can run a candidate engine (PR-S2a).
 //!
 //! First the Coach's own Grant must admit the failing call's capture (FIX
-//! 6357, 8704, `admission`): taken where the source snapshot found it, and
-//! read again here. With none the pair does not run, and is tried again once
-//! such a Grant admits it (FIX 7031). Then the failing call's captured
+//! 6357, 7027, 8704, `admission`): taken where the source snapshot found it,
+//! read again here, and held to every scope its captured step was served
+//! before any engine source is read. With none the pair does not run, and is
+//! tried again once such a Grant admits it (FIX 7031). Then the failing
+//! call's captured
 //! executor step is resolved and kept as its capsule, and read once, under
 //! that Grant, into one descriptor: its step, its request's digest (as sent,
 //! or as stored masked), its start, the bodies each arm must be granted, its
@@ -26,34 +28,55 @@
 
 use serde_json::json;
 
-use super::admission::CoachReplayAdmission;
+use super::admission::EngineStepGate;
 use super::instruction::{CoachReplay, request_conversation};
 use super::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
     EngineCandidateRun, EngineNotRun, EnginePairState,
 };
 use crate::code_run::shadow_runner::{
-    EngineArtifactPin, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowBodyRef, ShadowDeterminism,
-    ShadowIsolation, ShadowIsolationRequired, ShadowMeterContext, ShadowModelPin,
-    ShadowRequestDigest, ShadowRunRequest, ShadowRunResult, ShadowSandboxBinding, ShadowScope,
-    ShadowSource, ShadowStatus, ShadowStepIdentity, ShadowTarget, ShadowTraceEntry,
-    ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason,
+    ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowSourceAdmission, ShadowStatus,
     prepare_admitted_shadow_step_source,
 };
-use crate::code_run::{CapsuleHost, ExecutorStepStart, StepReplayCapsule, step_replay_capsules};
+use crate::code_run::step_replay_capsules;
+use crate::dreamer_runner::shadow_values::EngineArtifactPin;
+use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
+use crate::dreamer_runner::shadow_values::ShadowArmLease;
+use crate::dreamer_runner::shadow_values::ShadowBodyRef;
+use crate::dreamer_runner::shadow_values::ShadowIsolation;
+use crate::dreamer_runner::shadow_values::ShadowIsolationRequired;
+use crate::dreamer_runner::shadow_values::ShadowMeterContext;
+use crate::dreamer_runner::shadow_values::ShadowModelPin;
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowSandboxBinding;
+use crate::dreamer_runner::shadow_values::ShadowScope;
+use crate::dreamer_runner::shadow_values::ShadowSource;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
+use crate::dreamer_runner::shadow_values::ShadowTarget;
+use crate::dreamer_runner::shadow_values::ShadowTraceEntry;
+use crate::dreamer_runner::shadow_values::ShadowTraceKind;
+use crate::dreamer_runner::shadow_values::ShadowUnavailable;
+use crate::dreamer_runner::shadow_values::ShadowUnavailableReason;
+use crate::dreamer_runner::step_replay::CapsuleHost;
+use crate::dreamer_runner::step_replay::ExecutorStepStart;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{ReplayFidelity, ShadowRun};
-use crate::{ContentPart, EntityId, LlmRequest, LlmResponse, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 /// A pair's part, or why the pair has no verdict.
 type Outcome<T> = std::result::Result<T, EngineNotRun>;
 
 /// What an engine candidate's pair came to: the shadow result its export
 /// door seals, how the step's request ran once judged, and what the work row
-/// keeps of it.
+/// keeps of it; with the captured step the pair ran from, while one is
+/// chosen, for the write that keeps it (FIX 7027). The capsule never
+/// persists; the kept run stays content-free.
 pub(super) struct EnginePair {
     pub(super) shadow: ShadowRun,
     pub(super) fidelity: Option<ReplayFidelity>,
     pub(super) run: EngineCandidateRun,
+    pub(super) capsule: Option<StepReplayCapsule>,
 }
 
 impl CoachReplay<'_> {
@@ -79,36 +102,43 @@ impl CoachReplay<'_> {
             arms: Vec::new(),
             state: EnginePairState::Judged,
         };
-        Ok(match self.run_pair(candidate_id, pin, &mut run)? {
-            Ok(shadow) => {
-                let fidelity = run.request_digest.map(|digest| match digest {
-                    ShadowRequestDigest::AsSent(_) => ReplayFidelity::Exact,
-                    ShadowRequestDigest::AsStored(_) => ReplayFidelity::ExactMasked,
-                });
-                EnginePair {
-                    shadow,
-                    fidelity,
-                    run,
+        let mut capsule = None;
+        Ok(
+            match self.run_pair(candidate_id, pin, &mut run, &mut capsule)? {
+                Ok(shadow) => {
+                    let fidelity = run.request_digest.map(|digest| match digest {
+                        ShadowRequestDigest::AsSent(_) => ReplayFidelity::Exact,
+                        ShadowRequestDigest::AsStored(_) => ReplayFidelity::ExactMasked,
+                    });
+                    EnginePair {
+                        shadow,
+                        fidelity,
+                        run,
+                        capsule,
+                    }
                 }
-            }
-            Err(reason) => {
-                run.state = EnginePairState::NotRun { reason };
-                EnginePair {
-                    shadow: ShadowRun::Unavailable,
-                    fidelity: None,
-                    run,
+                Err(reason) => {
+                    run.state = EnginePairState::NotRun { reason };
+                    EnginePair {
+                        shadow: ShadowRun::Unavailable,
+                        fidelity: None,
+                        run,
+                        capsule,
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     /// The pair's run, `run` filled as each part lands: its verdict, or why
-    /// there is none.
+    /// there is none. `capsule_out` takes the captured step the pair ran
+    /// from, while one is chosen.
     fn run_pair(
         &self,
         candidate_id: &str,
         pin: EngineArtifactPin,
         run: &mut EngineCandidateRun,
+        capsule_out: &mut Option<StepReplayCapsule>,
     ) -> Result<Outcome<ShadowRun>> {
         let Some(shadow) = self.host.shadow_runner() else {
             return Ok(Err(EngineNotRun::NoRunner));
@@ -128,14 +158,26 @@ impl CoachReplay<'_> {
             };
             return Ok(Err(EngineNotRun::Admission(refused)));
         }
-        run.grant = Some(admission.grant());
         let chosen = self.snapshot.replay.capsule.as_ref();
         let Some(capsule) = failing_capsule(self.vault, chosen)? else {
             return Ok(Err(EngineNotRun::NoCapturedStep));
         };
+        *capsule_out = Some(capsule.clone());
+        // The pair's step is kept even when no Grant covers it, so a woken
+        // retry is held to this same step's scopes (FIX 7027, 7031).
         run.step = Some(ShadowStepIdentity::of(&capsule));
+        // FIX 7027: the pair runs under the first Grant that admits the
+        // capture and every scope its step was served, before any engine
+        // source, body or arm read or send. An unproved capture does not run;
+        // a step no Grant covers waits.
+        let engine_admission = match admission.take_engine_pair(self.vault, &capsule)? {
+            Ok(engine_admission) => engine_admission,
+            Err(refused) => return Ok(Err(EngineNotRun::Admission(refused))),
+        };
+        run.grant = Some(engine_admission.grant());
+        let gate = EngineStepGate::of(&engine_admission, &capsule);
         let meter = shadow.arm_meter();
-        let pair = match PairDescriptor::read(self.vault, &capsule, meter, admission)? {
+        let pair = match PairDescriptor::read(self.vault, &capsule, meter, &gate)? {
             Ok(pair) => pair,
             Err(unavailable) => return Ok(Err(EngineNotRun::Source(unavailable))),
         };
@@ -151,8 +193,8 @@ impl CoachReplay<'_> {
             id: candidate_id.to_owned(),
             pin,
         };
-        // The Grant is read again before each arm is sent (FIX 8704).
-        if let Err(reason) = still_admitted(self.vault, admission)? {
+        // The Grant is read again before each arm is sent (FIX 7027, 8704).
+        if let Err(reason) = still_admitted(self.vault, &gate)? {
             return Ok(Err(reason));
         }
         let candidate =
@@ -163,7 +205,7 @@ impl CoachReplay<'_> {
         if let Err(reason) = ran_step(EngineArm::Candidate, &candidate) {
             return Ok(Err(reason));
         }
-        if let Err(reason) = still_admitted(self.vault, admission)? {
+        if let Err(reason) = still_admitted(self.vault, &gate)? {
             return Ok(Err(reason));
         }
         let baseline = shadow.run_arm(pair.arm(
@@ -189,13 +231,13 @@ impl CoachReplay<'_> {
         if !isolated(&candidate, pin) {
             return Ok(Err(EngineNotRun::NotIsolated));
         }
-        // FIX 6357, 8704 again: the Grant still admits the capture before
-        // each body of either arm is read. A pact lapse keeps its own reason
-        // (FIX 7548).
+        // FIX 6357, 7027, 8704 again: the Grant still admits the capture
+        // and its captured-step scopes before each body of either arm is
+        // read. A pact lapse keeps its own reason (FIX 7548).
         let bodies = ArmBodies {
             shadow,
             vault: self.vault,
-            admission,
+            gate: &gate,
         };
         let after = match bodies.evidence(EngineArm::Candidate, &candidate)? {
             Ok(after) => after,
@@ -228,13 +270,12 @@ impl CoachReplay<'_> {
     }
 }
 
-/// Whether the Grant `admission` holds still admits the capture now, alone
-/// (FIX 8704); else why the pair cannot read on. A pact lapse keeps its own
-/// reason (FIX 7548), any other is `Lapsed`.
-fn still_admitted(vault: &Vault, admission: &CoachReplayAdmission) -> Result<Outcome<()>> {
-    Ok(admission
-        .still_admits(vault)?
-        .map_err(EngineNotRun::Admission))
+/// Whether the pair `gate` holds still admits its captured step now: the
+/// Grant alone, and every scope the step was served (FIX 7027, 8704); else
+/// why the pair cannot read on. A pact lapse keeps its own reason
+/// (FIX 7548), any other is `Lapsed`.
+fn still_admitted(vault: &Vault, gate: &EngineStepGate) -> Result<Outcome<()>> {
+    Ok(gate.check(vault)?.map_err(EngineNotRun::Admission))
 }
 
 /// The failing call's captured executor step, kept as its capsule (FIX
@@ -281,16 +322,16 @@ struct PairDescriptor {
 
 impl PairDescriptor {
     /// `capsule`'s step, read through the runner's own preparation while
-    /// `admission` still admits it (FIX 8704), with `meter` for both arms;
+    /// `gate` still admits it (FIX 7027, 8704), with `meter` for both arms;
     /// or the runner's reason it cannot be read, a capture that pinned no
     /// answering model or no route among them.
     fn read(
         vault: &Vault,
         capsule: &StepReplayCapsule,
         meter: ShadowMeterContext,
-        admission: &CoachReplayAdmission,
+        gate: &dyn ShadowSourceAdmission,
     ) -> Result<std::result::Result<Self, ShadowUnavailable>> {
-        let prepared = match prepare_admitted_shadow_step_source(vault, capsule, admission)? {
+        let prepared = match prepare_admitted_shadow_step_source(vault, capsule, gate)? {
             Ok(prepared) => prepared,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
@@ -415,13 +456,13 @@ fn isolated(result: &ShadowRunResult, pin: EngineArtifactPin) -> bool {
         }
 }
 
-/// What reads an arm's bodies: the host's runner, under the Coach's
-/// admission to the capture they came from, read again before each body
-/// (FIX 8704).
+/// What reads an arm's bodies: the host's runner, under the pair's gate
+/// to the captured step they came from, read again before each body
+/// (FIX 7027, 8704).
 struct ArmBodies<'a> {
     shadow: &'a dyn CodeFixShadowHost,
     vault: &'a Vault,
-    admission: &'a CoachReplayAdmission,
+    gate: &'a EngineStepGate<'a>,
 }
 
 impl ArmBodies<'_> {
@@ -486,8 +527,8 @@ impl ArmBodies<'_> {
     }
 
     /// The body `body` of the arm `arm`, read whole under its `lease` while
-    /// the Coach's Grant still admits the capture: one its producer did not
-    /// finish is partial, and one the runner cannot read now says why.
+    /// the pair's Grant still admits its captured step: one its producer did
+    /// not finish is partial, and one the runner cannot read now says why.
     fn whole(
         &self,
         lease: &ShadowArmLease,
@@ -497,7 +538,16 @@ impl ArmBodies<'_> {
         if !body.complete {
             return Ok(Err(EngineNotRun::PartialEvidence { arm }));
         }
-        if let Err(reason) = still_admitted(self.vault, self.admission)? {
+        if let Some(reason) = body.secret.as_deref() {
+            return Ok(Err(EngineNotRun::Unavailable {
+                arm,
+                unavailable: ShadowUnavailable::new(
+                    ShadowUnavailableReason::SourceWithheld,
+                    reason,
+                ),
+            }));
+        }
+        if let Err(reason) = still_admitted(self.vault, self.gate)? {
             return Ok(Err(reason));
         }
         Ok(self

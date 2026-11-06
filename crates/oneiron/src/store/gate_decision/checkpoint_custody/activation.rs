@@ -146,11 +146,12 @@ impl Store {
     /// credentials planned, and what came of the pad objects.
     pub(crate) fn activate_archived(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         source: &LiveCustody,
         expected: Option<&ExpectedPadObjects>,
     ) -> Result<(
         Vec<String>,
-        Vec<crate::world_keys::WorldKeyId>,
+        Vec<oneiron_authority::authority::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
         PadObjectsLanding,
     )> {
@@ -166,6 +167,7 @@ impl Store {
             prefixes.extend(known_history_prefixes());
             // Its erasable keys' refs, planned with the rest (FIX 11205).
             prefixes.push(side_table::KEY_CUSTODY_ERASABLE_REF.prefix);
+            prefixes.push(side_table::CALENDAR_CONNECTOR_WRITE.prefix);
             let rows = vault_meta_rows(&self.env, &txn, &prefixes)?;
             (rows, self.credential_fences_in_txn(&txn))
         };
@@ -178,6 +180,10 @@ impl Store {
         // references go.
         let mut kept = rows.clone();
         require_known_history(&mut kept, custody.plan_mut())?;
+        let calendars = crate::calendar::connectors::plan_archived_calendar_rows(
+            &mut kept,
+            custody.plan_mut(),
+        )?;
         let prune = ArchivePrune::of(&rows, kept, &retired)?;
         let erased_pads = crate::world_keys::plan_archived_pads(self, custody.plan_mut())?;
         // Its credential values' keys fork with the rest, each by exact id
@@ -205,12 +211,17 @@ impl Store {
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
         let mut landing = PadObjectsLanding::NotAttempted;
         let committed = self
-            .prune_bodies_in_txn(&mut wtxn, &prune, source)
+            .prune_bodies_in_txn(write, &mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
-            .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(self, &mut wtxn, &erased_pads))
+            .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(write, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
+            .and_then(|()| {
+                crate::calendar::connectors::read_back_archived_calendar_rows(
+                    self, &wtxn, &calendars,
+                )
+            })
             .and_then(|()| {
                 read_back_credentials_in_txn(self, &wtxn, &mut credentials);
                 fences.put_in_txn(self, &mut wtxn)
@@ -253,6 +264,7 @@ impl Store {
     /// whose erase retired it (FIX 7470, 9066).
     fn prune_bodies_in_txn(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         wtxn: &mut heed::RwTxn<'_>,
         prune: &ArchivePrune,
         source: &LiveCustody,
@@ -266,7 +278,7 @@ impl Store {
             self.side_vault_meta().put(wtxn, key, value)?;
         }
         for digest in &prune.files {
-            crate::provenance::body::queue_pruned_file_in_txn(self, wtxn, digest)?;
+            crate::store::owned_body::queue_pruned_file_in_txn(self, wtxn, digest)?;
         }
         if !prune.assets.is_empty() {
             let at = crate::ports::recorded_at_in_txn(self, wtxn)?;
@@ -290,7 +302,15 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            let Some((carriage, _)) = family.scan(key, &value).carriage() else {
+            let Some((carriage, _)) = family
+                .scan(
+                    self.attempt_operations,
+                    self.voice_bank_response,
+                    key,
+                    &value,
+                )
+                .carriage()
+            else {
                 continue;
             };
             let caller = (family == ResponseFamily::Http)
@@ -303,7 +323,7 @@ impl Store {
                 self.side_sync_state()?.delete(wtxn, row)?;
                 continue;
             }
-            family.retire_in_txn(self, wtxn, key, &carriage)?;
+            family.retire_in_txn(write, wtxn, key, &carriage)?;
         }
         replay.apply_in_txn(self, wtxn)?;
         // A step claim whose response's artifact version rests in a body its
@@ -311,7 +331,7 @@ impl Store {
         // goes with what the archive no longer holds (FIX 6225). The retired
         // ASSETs and files were read off the bindings before they went.
         let files: BTreeSet<[u8; 32]> = prune.files.iter().copied().collect();
-        crate::llm::prune_step_response_pins_in_txn(self, wtxn, &prune.assets, &files)
+        crate::llm::prune_step_response_pins_in_txn(write, wtxn, &prune.assets, &files)
     }
 
     /// Reads back, under the custody `txn` binds (the forked one), every

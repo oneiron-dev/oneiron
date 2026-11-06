@@ -9,20 +9,26 @@ mod json_tokens;
 mod tests;
 
 pub use self::answer::CallableSkillAnswer;
-pub use self::frozen::{callable_case_passes, callable_helper_cases};
-pub(crate) use self::frozen::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
+pub use self::frozen::{
+    CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest, amend_callable_case,
+    callable_case_passes, callable_helper_cases,
+};
+pub(crate) use self::frozen::{
+    erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
+    skill_callable_case_accepts_masked,
+};
 pub(crate) use self::json_tokens::AnswerMemory;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
 use crate::code_run::{CodeRunDeterminism, SelfCall};
-use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CallableProgram, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream,
     SelfDispatchResponse, StepCancellation,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
+use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::{EntityId, Vault};
 
 fn invalid(reason: &'static str) -> Error {

@@ -10,52 +10,105 @@
     )
 )]
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
-pub mod edge;
+pub(crate) mod engine_store_hooks;
+pub mod edge {
+    //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
+    //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
+    //! in `crate::edge_regeneration`.
+    #[cfg(feature = "sync")]
+    pub(crate) use crate::edge_regeneration::regeneration_stored;
+    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
+    pub use oneiron_base::edge::{
+        DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+        EdgeProvenanceFlags, EdgeValueLayout,
+    };
+    pub(crate) use oneiron_base::edge::{
+        EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+        EDGE_VALUE_STRUCTURAL_LEN, Regeneration, StrictEdgeRecord, decode_edge_value,
+        decode_edge_value_for_kind, edge_value_layout_for_kind, encode_edge_value,
+        parse_strict_edge_record, parse_strict_edge_record_key, reserved_regenerates,
+        validate_edge_weight, validate_public_edge_creation_kind, validate_public_edge_kind,
+    };
+}
+mod edge_regeneration;
 pub mod entity_id;
-pub mod error;
+pub use oneiron_base::error;
+pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
-pub(crate) mod limits;
+pub mod machine_destination;
+pub(crate) use oneiron_base::limits;
 pub mod maintain;
-pub(crate) mod msgpack_shape;
+pub(crate) use oneiron_base::msgpack_shape;
 pub mod off_record;
-pub(crate) mod overlay_db;
+pub(crate) use oneiron_store::overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
-pub mod registry;
+pub(crate) mod room_codec;
+pub mod registry {
+    //! Entity-type registry: defined in `oneiron-contracts` and named through
+    //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
+    pub use oneiron_base::registry::*;
+
+    pub mod export;
+    pub mod pack_byte_map;
+
+    // Only the `#[cfg(test)]` type-registry suite names this door.
+    #[cfg(test)]
+    pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
+}
+pub use oneiron_base::request_limits;
+pub use oneiron_store::heap_drop;
 pub mod result_body;
 pub mod result_memory;
-pub(crate) mod session_overlay;
+pub(crate) use oneiron_store::session_overlay;
+/// Core's own test binary registers the session overlay's allocation
+/// observer, as it did when the overlay lived in this crate; no other build
+/// installs it.
+#[cfg(test)]
+#[global_allocator]
+static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
+    session_overlay::hygiene_tests::ObservedAllocator;
 pub(crate) mod side_table;
 pub mod slim;
 pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;
 mod vault;
-pub mod work_line;
-pub mod write_envelope;
+#[cfg(feature = "sync")]
+pub mod window_key;
+pub use oneiron_base::work_line;
+mod task_work_line;
+pub use oneiron_store::write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
-pub mod analyzer;
+pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
 pub mod compaction;
 pub mod context_pack;
 pub mod context_projection;
 pub mod conversation;
-pub(crate) mod distance;
+pub(crate) use oneiron_base::distance;
 pub mod embed;
 pub mod entity_doc;
-pub(crate) mod fusion;
+pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
-pub mod live_rows;
+pub use oneiron_base::live_rows;
+pub mod claim_check;
+pub mod inference_context;
 pub mod llm;
+pub use oneiron_model::model_binding;
+pub mod model_decision;
+pub mod model_step_context;
+pub(crate) mod model_step_effect;
+pub mod model_step_error;
+pub use oneiron_store::model_step_record;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -63,20 +116,25 @@ pub mod prompt;
 pub mod query_expansion;
 pub mod reaction;
 pub mod rerank;
+pub mod research_budget;
 pub mod retrieval_depth;
-pub mod retrieval_quality;
+pub use oneiron_model::teacher_probe_policy;
+pub use oneiron_run_budget::run_budget;
+mod vault_live_rows;
+pub use oneiron_base::retrieval_quality;
 pub mod saved_query;
 pub mod serialize;
 pub mod speculative;
 pub mod tagging;
-pub mod tokenizer;
+pub use oneiron_base::tokenizer;
 // ===== Knowledge model ===== typed record families: claims, provenance, corpus, affect, people
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
-pub mod extraction_eval;
+pub use oneiron_base::extraction_eval;
 pub mod note;
 pub mod persona_snapshot;
 pub mod provenance;
@@ -95,6 +153,7 @@ pub mod policy_model;
 pub mod receipt;
 pub mod share;
 pub mod share_travel;
+pub mod source_audience;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -102,7 +161,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -123,13 +182,17 @@ pub mod commitment_ledger;
 pub mod commitment_lifecycle;
 pub mod commitment_schedule;
 pub mod commitment_wake;
+pub mod connect_delivery;
+pub mod guest_document_share;
 pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
+pub mod mail_pack;
 pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
+pub mod verb_catalog;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
@@ -148,7 +211,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -184,8 +247,9 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
-pub mod posterior;
+pub use oneiron_base::posterior;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -194,6 +258,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
@@ -204,6 +270,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;
@@ -212,6 +279,7 @@ pub mod code_revision;
 pub mod code_symbol;
 pub mod code_view;
 pub mod codebase;
+pub use oneiron_store::connector_key_status;
 pub mod contract_oracle;
 pub mod conversation_dag;
 pub mod core_write;
@@ -219,17 +287,21 @@ pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod edit_settle;
+pub mod file_secret_marks;
 pub mod git_wire;
 pub mod inference_snapshot;
+pub(crate) use oneiron_store::key_material;
 pub mod merge_queue;
 pub mod office_body;
 pub mod origin;
+pub(crate) use oneiron_store::receive_scan;
 pub mod repo_mutation;
 pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_record;
 pub mod secret_rotation;
 pub mod secret_snapshot;
 pub mod typed_body;
@@ -240,7 +312,7 @@ pub mod context_board;
 pub mod genui;
 pub mod lens;
 pub mod memory;
-pub mod panic_report;
+pub use oneiron_base::panic_report;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
@@ -256,7 +328,6 @@ pub mod voice_segment;
 // module-qualified (`oneiron::<module>::Name`); nothing was removed from the
 // module tree.
 pub use crate::access_grant::AccessGrant;
-pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
 pub use crate::agent_def::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
     MemoryProfile,
@@ -281,6 +352,7 @@ pub use crate::autoreason_campaign::{
     build_campaign_held_out_decision, build_campaign_split_report, compare_campaign,
     merge_campaign_arm_report,
 };
+pub use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
 // CampaignConfig at the crate root is the reusable skill-driven schema.
 // The fixed OF-366 type remains at autoreason_campaign::CampaignConfig.
 pub use crate::autoreason_campaign::general::CampaignConfig;
@@ -288,6 +360,7 @@ pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
 // so dropping these would make their own items `unreachable_pub` (denied workspace-wide).
 // `Bm25Formula` is signature-kept: public `Bm25RankProfile::with_formula` takes it.
+pub use crate::attempt_queue::companion_task::EnqueueCompanionTaskOutcome;
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
 };
@@ -324,10 +397,7 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
-};
+pub use crate::comm::{mint_send_override, send_override_for_send};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
@@ -347,13 +417,9 @@ pub use crate::compaction::{
     CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
     CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
-    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
-    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
-    decode_epoch_summary_body, encode_epoch_summary_body,
-};
-pub use crate::companion::{
-    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody, MarginLaw, SwapPlan,
+    ValidatedCompactionPacket, admit_compaction_packet, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -460,8 +526,8 @@ pub use crate::llm::{
     IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
@@ -488,6 +554,13 @@ pub use crate::pipeline::{
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
 pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
+pub use crate::write_envelope::communication::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope,
+};
+pub use crate::write_envelope::companion_subject::{
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind,
+};
+pub use crate::write_envelope::companion_task_kind::CompanionTaskKind;
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
 // them, and that is the whole contract. These three seams exist only so the
@@ -497,9 +570,6 @@ pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 pub use crate::provider_confidence::{
     clear_provider_confidence_indexes, provider_confidence_index_presence,
     set_provider_confidence_index_raw,
-};
-pub use crate::psych_profile::{
-    PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };
 pub use crate::repo_mutation::{
     REPO_PROVENANCE_NOTES_REF, export_repo_provenance_git_note, repo_commit_for_provenance_claim,
@@ -543,11 +613,14 @@ pub use crate::task_authority::{
     TaskAuthorityFactKind, TaskAuthorityState,
 };
 pub use crate::temporal::TimeRange;
-pub use crate::thread_passport::{
+pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
+pub use crate::write_envelope::profile_snapshot::{
+    PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
+};
+pub use crate::write_envelope::thread_claim::{
     CanonicalMessageId, StickyMaskDecision, ThreadMask, ThreadPassport, ThreadPassportInput,
     ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
 };
-pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
 // or through the doctor report's `pub` fields, and `vault` is not `pub`.
@@ -555,6 +628,12 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // ONE-1441: the single-writer lease names ride the same rule. `vault` is a
 // private module, so the SDK backend that OWNS a lease value and compares the
 // contention message can only name them through this list.
+pub use crate::memory::web_acquisition::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
+    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, MinExtractedContentBytes,
+    RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, RendererResult,
+    WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
+};
 pub use crate::vault::{
     ActorBound, HydratedShortId, IdScanPage, RawEntityPut, ReaderTableShortfall, TextIndexStatus,
     VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
@@ -569,11 +648,8 @@ pub use crate::vault_cleanup::{
     set_cleanup_posture, zero_live_members,
 };
 pub use crate::web_fetch::{
-    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
-    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, FirecrawlRenderer, HeadlessDocument,
-    HeadlessRenderer, MinExtractedContentBytes, NativeHeadlessRenderer, NativeReadabilityRenderer,
-    RenderedPage, Renderer, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind,
-    RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult, WebFetcher,
+    FirecrawlRenderer, HeadlessDocument, HeadlessRenderer, NativeHeadlessRenderer,
+    NativeReadabilityRenderer, RenderedPage, Renderer, WebFetcher,
 };
 
 pub use crate::wave_orchestration::{
@@ -592,19 +668,7 @@ pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
-pub(crate) fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
-
-pub(crate) fn unix_millis_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+pub(crate) use oneiron_base::{unix_millis_now, unix_seconds_now};
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
     crate::store::decode_vector_row(bytes, dimensions)

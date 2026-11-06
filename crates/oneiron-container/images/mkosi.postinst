@@ -1,7 +1,7 @@
 #!/bin/bash
 # Places the plan's non-package content into the image ($BUILDROOT), after
 # packages and the build script's $DESTDIR are in: the guest account, pinned
-# repo files and payloads, trees, symlinks and directories. Runs outside the
+# repo files and payloads, trees, symlinks, directories and empty files. Runs outside the
 # image with /usr from the tools tree; build.py writes the plan under
 # /work/src/plan as tab-separated files, so no list lives in this script.
 set -euo pipefail
@@ -50,3 +50,24 @@ done < "$plan/links.tsv"
 while IFS=$'\t' read -r path mode; do
   install -d -m "$mode" "$root$path"
 done < "$plan/dirs.tsv"
+
+# Empty regular files: a mountpoint a boot covers with a file bind mount (the
+# vault's /etc/resolv.conf). Nothing in the image may redirect one: a parent
+# that is a link is refused, a link at the path is removed (never followed),
+# and -T refuses a directory there instead of writing into it.
+while IFS=$'\t' read -r path mode; do
+  probe=$root
+  IFS=/ read -r -a parts <<< "${path%/*}"
+  for part in "${parts[@]}"; do
+    [ -n "$part" ] || continue
+    probe=$probe/$part
+    if [ -L "$probe" ]; then
+      echo "empty file $path: ${probe#"$root"} is a symlink" >&2
+      exit 1
+    fi
+  done
+  if [ -L "$root$path" ]; then
+    rm -f "$root$path"
+  fi
+  install -D -T -m "$mode" /dev/null "$root$path"
+done < "$plan/empty-files.tsv"

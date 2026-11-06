@@ -149,6 +149,15 @@ URL. Managed serve (`--managed-by-hypnos`) takes both from its supervisor on
 argv (`--kit-bundle-public-urls`, `--oauth-resource-indicator`), and its
 settings file may not set them.
 
+`git_door_base` (flag `--git-door-base`, env `ONEIRON_GIT_DOOR_BASE`) is the
+host's own Git door, `https://<host>/git` (plain `http` only on loopback).
+When it is set, every run checkout bind (the public `vault.repo` door, a code
+run's `repo.checkout_bind`, and a resident run's) names this base, and the
+endpoint the caller sent is ignored. When it is unset, the caller's explicit
+endpoint is used, as before. The server refuses to start on a value outside
+that grammar. Managed serve takes it from its supervisor on argv, like the
+other public addresses.
+
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
 (`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
@@ -164,6 +173,20 @@ connection floor and each address's unauthenticated share. Managed serve
 (`--managed-by-hypnos`) refuses the port flag. Its artifact listener is the unix
 socket the supervisor names with `--artifact-http-socket` (an absolute path);
 without one, its `/a/` answers on the API socket alone.
+
+Managed serve's native preview listener is the unix socket the supervisor
+names with `--preview-socket` (an absolute path), only for an explicitly
+configured preview domain and installed engines at or after this flag's build
+floor (`oneiron-vault-contract`'s `CONTRACT_VERSION` docs). It serves only an
+already-held private preview on the exact origin the supervisor bound to that
+lease, never the vault API. The same owner, invitation, sharing tokens and
+revocations protect both origins; a public DNS name does not publish the app.
+Without the flag there is no registration caller or preview data socket, and
+the standalone loopback preview is unchanged. Losing a held registration stops
+hosted ingress and its streams, not the still-live loopback lease or its tokens.
+The trusted session runtime must install the actual process connector; HTTP
+input cannot install one. This ingress is native-only: the vault-VM typed
+ledger bridge does not carry preview registration.
 
 `artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
 comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
@@ -186,6 +209,17 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
+and `app` with an `artifact_id` from stored published pointers whose labels
+fit the existing per-app host codec. Preview pointers are excluded. These are
+publication facts, not public DNS, artifact availability or a change to any
+serve tier or credential check. The supervisor joins its own public slug and
+domains; this report does not enable `artifact_domains` or hosted ingress.
+Origins share the existing bounded pages and digest with wake entries, and an
+origin-only change advances the report. Engine, supervisor and vault-VM
+readers must all include the FIX 11004 build floor documented under
+`CONTRACT_VERSION`; the new fields are required, with no old reader.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each
@@ -198,13 +232,28 @@ authenticated work for count. A wait ends at `queue_wait_timeout_ms`, a
 request timeout, with a 503 and `retry-after` and nothing started.
 
 The descriptor floor has a live check of its own. `GET /v1/owner/wire-health`
-answers `connection_pool_pressure` beside its `checks`: `{"state": "clear"}`
-while no socket waits for the pool, else `{"state": "active", "check": ...}`, a
+answers `connection_pool_pressure` beside its `checks`: `{"state": "clear", ...}`
+while no socket waits for the pool, carrying the pool's live connection counts
+and its reserve bound with `parking_bound` 0 for no active episode (FIX 9134),
+else `{"state": "active", "check": ...}`, a
 check of kind `inspect_connection_pool_pressure` that names the episode, the
-`limits.max_connections` row and its bound, the credentials holding the most
+`limits.max_connections` row and the episode's current bound, the credentials holding the most
 open request bodies, the pool's connections and the remedy. The check observes
-only: it pauses, revokes and refuses nothing, and it does not promise that a
-revocation releases a body already open.
+only: it pauses, revokes and refuses nothing.
+
+An explicit revoke does end the revoked credential's already-open counted TCP
+request body at its next read: a verified slip or a delegation parent captured
+at its successful verification must carry a current explicit `SlipRevoke`, or
+the node must receive a punch for the accepted account key. A later colliding
+mint cannot replace that admitted ancestry. The body fails with typed
+`credential_revoked`. When that cut precedes the routed reply, the reply is 401 with that error code and `connection: close`,
+even if a body parser would otherwise report a parse error. A reply already
+streaming cannot change its HTTP headers. The node remembers a punch for each accepted
+body's lifetime, independently of the verdict lease and temporary punch record.
+Expiry, grant changes, cache misses and unreadable revocation state do not end
+an admitted body through this check. Slip reads run off-thread, one received
+frame at a time, and their wait does not consume the network-idle limit. Mesh
+and in-process bodies keep their existing behavior.
 
 ```toml
 [limits]
@@ -229,6 +278,7 @@ projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
+paced_verb_wait_secs = 604800     # how long a call a budget window paced waits in its caller's line before it ends unrun
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
@@ -296,11 +346,12 @@ seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision c
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (each stream decodes whole; the largest also meets seal_stream_decode_bytes)
 seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
 seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
-seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
+seal_fetch_asks = 32              # fetch asks (timestamps, CRLs, OCSP) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
 seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
+seal_ocsp_bytes = 1048576         # bytes of one OCSP reply a seal fetches; past it the reply is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
 seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (each stream decodes whole)
@@ -314,6 +365,8 @@ seal_reference_hops = 128         # reference links of one other chain the seal 
 seal_dss_reference_work = 16384   # reference steps one measurement of a PDF's DSS coverage takes; past it every chain is followed and the row asks
 seal_field_tree_work = 16384      # nodes one descent of a PDF's AcroForm field tree visits; past it the tree is walked whole and the row asks
 seal_contents_bytes = 262144      # DER bytes of the largest CMS or timestamp token one seal writes into a signature hole; past it a revision the seal writes grows its hole and the row asks
+seal_operation_id_bytes = 224     # bytes of one seal's caller operation id; past it the seal's backend sees the id's alias and the row asks
+seal_backend_operation_id_bytes = 256 # bytes of the longest operation id one seal sends its backend, its own suffix counted; past it the id is sent whole and the row asks
 organ_asks = 32                   # asks of every verb one organ call makes (an install naming its own count is measured at it); past it each granted ask is answered and the row asks
 organ_ask_per_verb = 32           # asks of one verb one organ call makes, measured at the count the install grant names for it; past it each is answered and the row asks
 organ_answer_bytes = 16777216     # answer bytes one organ call is lent (an install naming its own is measured at it); past it the call's booking grows and the row asks
@@ -334,6 +387,8 @@ organ_note_items = 64             # notes of one kind (touched, warnings, losses
 organ_note_bytes = 256            # bytes of one note (an encoded locator, a warning, a loss's detail) an organ call's receipt keeps; past it the note is kept whole and the row asks
 organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's receipt keeps; past it the code is kept whole and the row asks
 organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
+organ_mesh_object_bytes = 1073741824 # bytes of one object a peer stages on this node for a mesh organ call, spilled to disk; past it the object is staged whole and the row asks
+organ_mesh_staged_bytes = 1073741824 # bytes one mesh connection holds staged at once, both ways, spilled to disk; past it every object is staged and the row asks
 deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 connector_live_questions = 64     # rounds of foreign MCP questions (elicitation) one server holds live for connector callers; past it the question registers and waits like any other and the row asks; only the memory floor and a round's 120 s deadline end one
@@ -348,6 +403,9 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+codebase_manifest_files = 10000000 # files one legacy codebase snapshot manifest names; past it the manifest is kept whole and the row asks
+requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
+embedding_dimensions = 1048576 # embedding vector dimensions one vault opened with, measured where its host serves it; past it the vault serves as opened and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without
@@ -425,6 +483,60 @@ seat_host = true    # the default; false leaves queued CLI attempts to another r
 
 [runtime.host_destinations]
 GH_TOKEN = "cli:gh"
+```
+
+A secret reaches a run's process only when the run declares it. The repo's
+`.oneiron/secret-manifest.toml`, at the commit the run's checkout pins, names
+the secret and the environment variable it is read as (`env_name`). The host
+mints one T1 grant per declared secret whose variable it offers, before the
+CLI starts, and revokes it when the CLI is done (FIX 10624). A declared
+secret the vault refuses fails the run before it starts. The process's
+environment never changes while it runs.
+
+`[runtime.helper_destinations]` serves a value a tool asks for mid-run,
+through git's credential-helper protocol. Each entry names the secret, the
+effector the owner's binding names, and the exact git context and username
+it answers. A run whose pinned manifest declares the secret gets a slip bound
+to its claim. git then calls `oneiron credential-helper` for that context,
+and the helper asks this host over loopback (`POST
+/v1/seat/credential-helper`). The value goes back to git alone, never into
+the CLI's environment. The host clears every other helper for that context,
+so no other helper stores the value. The slip ends with the claim, and the
+grants are revoked at the run's end. The table is empty by default, so no
+helper is offered.
+
+```toml
+[runtime.helper_destinations.github]
+secret = "GITHUB_TOKEN"     # the custody name the manifest declares
+effector = "cli:git"        # the owner's binding must admit T1 for it
+protocol = "https"
+host = "github.com"
+username = "x-access-token"
+# path = "owner/repo"       # optional: answer one repository's path alone
+```
+
+`[runtime.seat_model_providers]` sends a seat's model calls through this
+host, with the provider key kept in the vault (T0). Each slot names a
+`[models.providers]` entry with a `key_secret` and the exact wire models a
+seat may ask for. A run whose pinned manifest declares that key gets a fresh
+reference to the slot. Its CLI gets the reference and the slot's loopback URL
+in the variables its SDK reads: `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`
+for an Anthropic slot, `OPENAI_BASE_URL` and `OPENAI_API_KEY` for an OpenAI
+chat slot. The SDK posts to `/v1/seat/model/<slot>/v1/messages` or
+`/v1/seat/model/<slot>/v1/chat/completions`. The host reads the key at the
+custody door for each call and sends the request through the credential
+broker. The CLI never holds the key. The reference works only from this
+device and only while the run's claim holds. A request that names another
+model is refused. A request with `stream: true` gets the provider's events
+as they come, the key stripped from them. Messages also takes Claude Code's
+`?beta=true`; the door takes no other query. With this slot the CLI calls
+the provider on the key, not on the person's own login. The table is empty
+by default, so no seat is offered the door.
+
+```toml
+[runtime.seat_model_providers.anthropic]
+provider = "anthropic"            # a [models.providers] entry with key_secret
+models = ["claude-sonnet-5-5"]    # the wire models a seat may ask for
 ```
 
 ## Prompt layout

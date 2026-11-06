@@ -6,71 +6,6 @@
 // Section 3 — explicit rename/copy anchor transfer
 // ---------------------------------------------------------------------------
 
-/// Between two distinct symbols, Rename re-points and Copy clones. A file
-/// rename needs neither: its symbols keep their document-based ids and
-/// their notes (FIX 7810).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnchorTransferKind {
-    Rename,
-    Copy,
-}
-
-impl AnchorTransferKind {
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Rename => TRANSFER_TAG_RENAME,
-            Self::Copy => TRANSFER_TAG_COPY,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            TRANSFER_TAG_RENAME => Ok(Self::Rename),
-            TRANSFER_TAG_COPY => Ok(Self::Copy),
-            _ => Err(record_error()),
-        }
-    }
-}
-
-/// An EXPLICIT, already-reviewed rename/copy mapping. Path or fingerprint
-/// resemblance never produces one of these.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnchorTransfer {
-    pub kind: AnchorTransferKind,
-    pub from_symbol_id: EntityId,
-    pub to_symbol_id: EntityId,
-    pub from_locator: CodeMemoryLocator,
-    pub to_locator: CodeMemoryLocator,
-    pub actor_id: EntityId,
-    pub observed_at: u64,
-    pub provenance_claim_id: EntityId,
-}
-
-/// What one applied transfer moved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AnchorTransferReceipt {
-    /// Source slot-value cardinality measured BEFORE destination merge. A
-    /// fully deduped transfer is legal and still reports a nonzero count.
-    /// A legal CONTRACT-ONLY transfer reports zero: the count measures slot
-    /// values, and always-on rows are a separate family.
-    pub moved_attachments: usize,
-}
-
-/// Decoded, queryable transfer history. Raw metadata keys never cross the
-/// public API.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnchorTransferRecord {
-    pub kind: AnchorTransferKind,
-    pub from_symbol_id: EntityId,
-    pub to_symbol_id: EntityId,
-    pub from_locator: CodeMemoryLocator,
-    pub to_locator: CodeMemoryLocator,
-    pub actor_id: EntityId,
-    pub observed_at: u64,
-    pub provenance_claim_id: EntityId,
-    pub moved_attachments: usize,
-}
-
 /// Applies one explicit anchor transfer in the caller's single transaction.
 ///
 /// Order is fixed: validate both endpoints as live, distinct `CODE_SYMBOL`
@@ -260,17 +195,6 @@ pub(crate) fn read_transfer_records(
 // ---------------------------------------------------------------------------
 // Section 4 — `EdgeKind::Blocks`: closed, gated, acyclic, durable, non-PPR
 // ---------------------------------------------------------------------------
-
-/// Authority context for the dedicated readiness-edge doors.
-///
-/// Deliberately built from the LIVE vocabulary — [`WriteActor`] for actor
-/// identity/class and [`ClaimSource`] for host-stamped source trust. The
-/// caller supplies no raw allow/deny boolean and no parallel trust enum.
-#[derive(Debug, Clone, Copy)]
-pub struct BlocksWriteContext<'a> {
-    pub actor: &'a WriteActor,
-    pub source: ClaimSource,
-}
 
 /// Binds the asserted actor class to the STORED actor entity type and clears
 /// the host-stamped source, mirroring

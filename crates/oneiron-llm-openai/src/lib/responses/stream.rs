@@ -77,7 +77,7 @@ impl OpenAiResponsesStreamAccumulator {
                     {
                         match reasoning_signature(item, &self.model) {
                             Some(signature) => self.assembly.reasoning(
-                                &format!("reasoning-{}", index()),
+                                &format!("reasoning-{}-0", index()),
                                 "",
                                 Some(signature),
                             ),
@@ -108,9 +108,27 @@ impl OpenAiResponsesStreamAccumulator {
                 self.assembly
                     .text(&format!("text-{}-{content}", index()), delta())
             }
-            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => self
-                .assembly
-                .reasoning(&format!("reasoning-{}", index()), delta(), None),
+            "response.reasoning_summary_text.delta" => {
+                let part = event
+                    .get("summary_index")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0);
+                self.assembly.reasoning_with_kind(
+                    &format!("reasoning-summary-{}-{part}", index()),
+                    delta(),
+                    None,
+                    oneiron::ReasoningPartKind::Summary,
+                    None,
+                )
+            }
+            "response.reasoning_text.delta" => {
+                let part = event
+                    .get("content_index")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0);
+                self.assembly
+                    .reasoning(&format!("reasoning-{}-{part}", index()), delta(), None)
+            }
             "response.function_call_arguments.delta" => {
                 let header = self
                     .tools
@@ -217,6 +235,23 @@ impl Stream for OpenAiResponsesLlmStream<'_> {
                         }
                     }
                 }
+                Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::ChunkWithMetadata {
+                    chunk,
+                    metadata,
+                }))) => match this.accumulator.push_event(&chunk) {
+                    Ok(mut events) => {
+                        for event in &mut events {
+                            if let LlmStreamEvent::Done { usage, .. } = event {
+                                usage.call_metadata = Some(metadata.clone());
+                            }
+                        }
+                        this.pending.extend(events.into_iter().map(Ok));
+                    }
+                    Err(error) => {
+                        this.ended = true;
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                },
                 Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::Abort { usage }))) => {
                     this.pending
                         .extend(this.accumulator.abort_with_usage(usage).into_iter().map(Ok));

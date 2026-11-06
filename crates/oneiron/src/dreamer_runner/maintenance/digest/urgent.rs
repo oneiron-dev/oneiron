@@ -24,17 +24,23 @@ use serde::{Deserialize, Serialize};
 use super::super::invalid;
 use super::{DigestProposal, ProactivityCadence, ProactivityDigest};
 use crate::attempt_queue::AttemptId;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerParkCause, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::DreamerAttemptExecution;
-use crate::llm::decision::catalogue::URGENT_DIGEST_HARM;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionQuestion, TypedDecision, cut_text, fit_state,
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::catalogue::URGENT_DIGEST_HARM;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionQuestion, cut_text, fit_state,
 };
-use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
+use crate::{EntityId, Result, Vault};
+
+mod intent;
+use intent::{
+    body_hash_in, stated_intent_of, stated_intent_owner_in, stated_intent_text_and_due,
+    stated_intents_in,
+};
 
 /// The maintenance facet one harm question rides; the host's executor asks
 /// it on the shared ladder.
@@ -47,9 +53,6 @@ pub const DIGEST_URGENT_FACET: &str = "dreamer.digest.urgent";
 /// resumes after the runner's retry delay, never read as an answer.
 pub const DIGEST_ASSESS_UNLENT_PARK_REASON: &str =
     "no host lends this pass the decision ladder for an urgent digest question";
-
-/// The stored claim an urgent digest answers to.
-const INTENT_PREDICATE: &str = "profile.intent";
 
 /// The payload keys a harm question and a witnessed answer ride under.
 pub(crate) const CANDIDATE_KEY: &str = "candidate";
@@ -80,8 +83,8 @@ pub struct DigestHarmResult {
 }
 
 /// A factual time the intent's need falls due, with the record that states
-/// it: evidence the question reads, never a gate of its own. No producer
-/// sets one yet.
+/// it: evidence the question reads, never a gate of its own. The native
+/// producer reads it from the same intent when the owner states a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DigestNeededBefore {
@@ -261,7 +264,7 @@ impl Vault {
             if readable.is_empty() {
                 continue;
             }
-            for intent in stated_intents_in(self, &txn, owner)? {
+            for (intent, needed_before) in stated_intents_in(self, &txn, owner)? {
                 for (group, proposal) in &readable {
                     candidates.push(DigestHarmCandidate {
                         recipient: owner,
@@ -271,7 +274,7 @@ impl Vault {
                             revision: proposal.revision,
                             group: group.clone(),
                         },
-                        needed_before: None,
+                        needed_before,
                         next_regular_at: next,
                         period_secs: cadence.period_secs,
                     });
@@ -367,7 +370,10 @@ impl Vault {
         {
             return Ok(None);
         }
-        let intent_text = intent.value.as_str().unwrap_or_default().to_owned();
+        let intent_text = stated_intent_text_and_due(&intent.value)
+            .map(|(text, _)| text)
+            .unwrap_or_default()
+            .to_owned();
         // The result as the digest would render it.
         let summary = format!("{}: {}", result.predicate, result.value);
         let state = fit_state(intent_text.len().max(summary.len()), |cut| {
@@ -655,69 +661,6 @@ impl DigestAudience<'_> {
             Self::Timer | Self::Owner(..) => true,
         }
     }
-}
-
-/// The person a claim is the live stated intent of: an Approved, Active,
-/// non-stale UserStated `profile.intent` with words, about one entity.
-fn stated_intent_of(body: &crate::ClaimBody) -> Option<EntityId> {
-    let crate::ClaimSubject::Entity(person) = &body.subject else {
-        return None;
-    };
-    (body.predicate == INTENT_PREDICATE
-        && body.source == Some(ClaimSource::UserStated)
-        && body
-            .value
-            .as_str()
-            .is_some_and(|text| !text.trim().is_empty())
-        && body.approval == ClaimApprovalStatus::Approved
-        && body.lifecycle == ClaimLifecycleStatus::Active
-        && !body.stale)
-        .then_some(*person)
-}
-
-/// [`stated_intent_of`] the stored claim `id`, as the vault reads it.
-fn stated_intent_owner_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-) -> Result<Option<EntityId>> {
-    Ok(vault
-        .get_claim_in_txn(txn, &id)?
-        .as_ref()
-        .and_then(stated_intent_of))
-}
-
-/// Each live stated intent about `owner`, at the bytes it is stored at.
-fn stated_intents_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    owner: EntityId,
-) -> Result<Vec<DigestVersionRef>> {
-    let mut intents = Vec::new();
-    for id in crate::ports::ClaimStore::port_claim_list(vault, txn, &owner)? {
-        if stated_intent_owner_in(vault, txn, id)? != Some(owner) {
-            continue;
-        }
-        if let Some(body_hash) = body_hash_in(vault, txn, id)? {
-            intents.push(DigestVersionRef {
-                claim_ref: id,
-                body_hash,
-            });
-        }
-    }
-    Ok(intents)
-}
-
-/// BLAKE3 of the stored claim `id`'s body bytes, as a digest revision is
-/// taken; `None` for no stored claim.
-fn body_hash_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Option<[u8; 32]>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
-        return Ok(None);
-    };
-    let claim = EntityMetadataHeader::parse(&raw)
-        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
-    Ok((claim && raw.len() > ENTITY_METADATA_HEADER_LEN)
-        .then(|| *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes()))
 }
 
 /// One payload entry: `value` as JSON text under `key`.

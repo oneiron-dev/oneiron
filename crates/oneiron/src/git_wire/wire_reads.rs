@@ -15,8 +15,8 @@ use super::{
     GitWireRepo, GitWireResult, ObservedGitRef,
 };
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
+use crate::store::code_snapshot::RepoRef;
 
 /// The typed git seam. One handle owns the pinned process baseline and the
 /// vault its durable records live in.

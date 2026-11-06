@@ -8,7 +8,7 @@ use oneiron::edit_settle::{OrganWait, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
-use oneiron_organ_protocol::{ByteBuf, TypedBody};
+use oneiron_organ_protocol::{ByteBuf, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
@@ -29,6 +29,10 @@ pub struct OrganJob {
     pub call: OrganCall,
     pub lent: Vec<LentInput>,
     pub trigger: Option<MadeByTrigger>,
+    /// The authenticated principal who submitted the job, when one did: its
+    /// files' made_by is admitted through that principal's own read when
+    /// they land, now or at a redrive (FIX 9310). None for a host's own job.
+    pub submitter: Option<EntityId>,
 }
 
 /// What became of a submitted job.
@@ -57,8 +61,9 @@ pub enum Redrive {
     Landed(Vec<PendingProposalView>),
     /// Still no node; the reason is on its row.
     Waiting(String),
-    /// A node ran it and it failed there, or its landing was refused; the
-    /// row keeps the failure until released.
+    /// The held call stopped being current before dispatch, a node failed,
+    /// or its landing was refused. A failed run's row keeps the failure
+    /// until released.
     Failed(String),
     /// The host's mesh stop cut it short (FIX 4755): its row stays held, as
     /// it was, for the next start.
@@ -75,7 +80,7 @@ struct HeldCall {
     organ: String,
     verb: String,
     schema: u32,
-    args: rmpv::Value,
+    args: Value,
     body: Option<TypedBody>,
     /// A version never changes, so a redrive reads the bytes the call named.
     inputs: Vec<HeldInput>,
@@ -194,13 +199,15 @@ impl OrganRouter {
             call,
             lent,
             trigger,
+            submitter,
         } = job;
-        let held = rmp_serde::to_vec_named(&HeldCall::of(&call, &lent))
+        let held = oneiron_organ_protocol::to_vec(&HeldCall::of(&call, &lent))
             .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
-                let proposals =
-                    propose_organ_outputs(vault, &artifact, &outcome, &run_ref, trigger, actor)?;
+                let proposals = propose_organ_outputs(
+                    vault, &artifact, &outcome, &run_ref, trigger, actor, submitter,
+                )?;
                 Ok(Submitted::Landed { proposals, ran_on })
             }
             Routed::Waiting(wait) => {
@@ -211,6 +218,7 @@ impl OrganRouter {
                     verb: wait.verb,
                     call: held,
                     trigger,
+                    submitter,
                     held_by: actor,
                     held_at: vault.now_recorded_at(),
                 };
@@ -260,13 +268,18 @@ impl OrganRouter {
         wait: OrganWait,
         asks: &AskHandlers<'_>,
     ) -> Result<Redrive, HostError> {
+        if !vault.organ_wait_is_current(&wait)? {
+            return Ok(Redrive::Failed(
+                "the held call is no longer current".to_owned(),
+            ));
+        }
         let artifact = wait.artifact_id;
         let now = vault.now_recorded_at();
         let failed = |detail: String| -> Result<Redrive, HostError> {
             vault.fail_organ_wait(&artifact, &wait.run_ref, &detail, now)?;
             Ok(Redrive::Failed(detail))
         };
-        let held = match rmp_serde::from_slice::<HeldCall>(&wait.call)
+        let held = match oneiron_organ_protocol::from_slice::<HeldCall>(&wait.call)
             .map_err(|err| err.to_string())
             .and_then(HeldCall::into_call)
         {
@@ -282,6 +295,7 @@ impl OrganRouter {
                 &wait.run_ref,
                 wait.trigger.clone(),
                 wait.held_by,
+                wait.submitter,
             ) {
                 Ok(proposals) => {
                     vault.release_organ_wait(&artifact, &wait.run_ref)?;

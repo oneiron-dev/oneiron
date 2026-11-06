@@ -4,17 +4,26 @@
 
 use super::*;
 use crate::result_body::ResultBodyPin;
+use crate::store::result_body_rows::body_handle;
+pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
+mod context;
+mod context_output;
 mod host_occurrence;
 mod reader;
-
-pub(crate) use self::reader::CodeRunResultBodyReader;
 
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
     /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
         Ok(self.code_run_script_sink()?.sweeping(self.known_source()?))
+    }
+
+    /// A result of the actual execution that received PERSON reveals.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        Ok(self
+            .code_run_script_sink()?
+            .sweeping_run(self.run_known_source(exec_run)?))
     }
 
     /// [`Self::code_run_output_sink`] with no sweep, for a step's program:
@@ -448,12 +457,7 @@ impl Vault {
     }
 }
 
-/// What result bodies staged inside one write transaction spill into,
-/// prepared before it opened ([`Vault::staged_result_sinks`]).
-#[derive(Clone)]
-pub(crate) struct StagedSinks {
-    mint: crate::store::BodyMint,
-}
+pub(crate) use crate::store::result_manifest::StagedSinks;
 
 /// A finished body: its manifest, its row and the secret scan's hit. A
 /// spilled body's file is already whole on disk.
@@ -688,12 +692,6 @@ pub(crate) fn code_run_inline_body_of_row<'v>(
     }
 }
 
-/// Whether a raw result body row holds its body inline, whoever holds the
-/// body.
-pub(crate) fn code_run_row_inline(value: &[u8]) -> bool {
-    matches!(split_row(value), Some((STORED_INLINE, _)))
-}
-
 /// Whether the result body row of `digest` holds its body on its own: a raw
 /// output no descriptor holds (FIX 5399b). Another holder's release of the
 /// same bytes neither queues nor collects it. `false` with no row.
@@ -733,18 +731,36 @@ pub(crate) fn lift_code_run_file_hold_in_txn(
     crate::provenance::body::queue_pruned_file_in_txn(dbs, wtxn, digest)
 }
 
-/// The raw `vault_meta` key of the result body row of `digest`.
-pub(crate) fn code_run_body_row_key(digest: &[u8; 32]) -> Vec<u8> {
-    RAW_OUTPUTS.key_bytes(&body_handle(digest))
-}
-
-/// The content handle the result body row of `digest` is keyed by.
-fn body_handle(digest: &[u8; 32]) -> String {
-    CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
-        hash: *digest,
-        byte_len: 0,
-    })
-    .handle
+/// Drops the key rows of restore-unlanded inline bodies (FIX 11417), only
+/// when no body row or descriptor holds them and the reopened destination
+/// can journal their instance history. Archived or unbound destinations
+/// keep their mappings. The custody keys are not erased.
+///
+/// # Errors
+///
+/// Storage errors, and a key row that does not decode.
+pub(crate) fn retire_unlanded_inline_body_keys_in_txn(
+    dbs: &(impl crate::store::ManifestDbs + crate::side_table::SideTableDbs),
+    wtxn: &mut heed::RwTxn<'_>,
+    unlanded: &[[u8; 32]],
+) -> Result<()> {
+    for digest in unlanded {
+        let Some(key) = crate::store::body_key_row_in_txn(dbs, wtxn, digest)? else {
+            continue;
+        };
+        if !key.inline
+            || RAW_OUTPUTS
+                .get_borrowed(dbs, wtxn, &body_handle(digest))?
+                .is_some()
+            || crate::provenance::body::digest_is_held_in_txn(dbs, wtxn, digest)?
+        {
+            continue;
+        }
+        if crate::store::journal_restored_body_key_in_txn(dbs, wtxn, digest, &key)? {
+            crate::store::retire_body_key_in_txn(dbs, wtxn, digest)?;
+        }
+    }
+    Ok(())
 }
 
 /// The digest a raw result body row's key names by its handle.

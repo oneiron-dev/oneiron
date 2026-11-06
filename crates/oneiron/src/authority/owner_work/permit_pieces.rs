@@ -27,8 +27,6 @@
 //! the fold read back. Permits that fit one row keep today's inline path and
 //! bytes.
 
-use std::borrow::Cow;
-
 use ed25519_dalek::SigningKey;
 
 use super::*;
@@ -86,28 +84,132 @@ pub(super) fn apply_permit_piece(
         )?,
         None => kit_signer(state, entry, hash)?,
     };
-    keep_piece(
+    if keep_piece(
         &mut state.owner_work.permit_pieces,
         (key, piece.commitment, piece.index),
         &Arc::new(piece.clone()),
-    );
+    ) {
+        // A set verified before this piece changed it is judged again.
+        state
+            .owner_work
+            .verified_permit_sets
+            .remove(&(key, piece.commitment));
+    }
     Ok(())
 }
 
 /// Keeps `piece` under `key`, or the lesser of it and the piece kept there.
+/// True when the piece kept under `key` changed.
 pub(super) fn keep_piece(
     pieces: &mut BTreeMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
     key: PermitPieceKey,
     piece: &Arc<CustodyPermitPiece>,
-) {
-    pieces
-        .entry(key)
-        .and_modify(|held| {
-            if **piece < **held {
-                *held = Arc::clone(piece);
+) -> bool {
+    match pieces.entry(key) {
+        std::collections::btree_map::Entry::Occupied(mut held) => {
+            if **piece < **held.get() {
+                held.insert(Arc::clone(piece));
+                true
+            } else {
+                false
             }
-        })
-        .or_insert_with(|| Arc::clone(piece));
+        }
+        std::collections::btree_map::Entry::Vacant(slot) => {
+            slot.insert(Arc::clone(piece));
+            true
+        }
+    }
+}
+
+/// One permit set's kept join ([`keep_joined`], FIX 12139).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct JoinedPermitSet {
+    /// The kept request's signed entry: what its supersede prunes the join
+    /// by (FIX 12140).
+    request: AuthorityEntryHash,
+    /// The request as the fold keeps it: the `Arc` the fold's requests hold.
+    body: Arc<OwnerWorkRequest>,
+}
+
+/// A request as the fold keeps it ([`joined_request`]): as signed when its
+/// permits ride inline, else with its permits joined, shared.
+pub(super) enum KeptRequest<'r> {
+    Signed(&'r OwnerWorkRequest),
+    Joined(Arc<OwnerWorkRequest>),
+}
+
+impl KeptRequest<'_> {
+    /// The body the fold keeps: a copy of an inline request, its permits
+    /// shared (FIX 12281), the joined one itself.
+    pub(super) fn into_shared(self) -> Arc<OwnerWorkRequest> {
+        match self {
+            Self::Signed(request) => Arc::new(request.clone()),
+            Self::Joined(joined) => joined,
+        }
+    }
+}
+
+impl std::ops::Deref for KeptRequest<'_> {
+    type Target = OwnerWorkRequest;
+
+    fn deref(&self) -> &OwnerWorkRequest {
+        match self {
+            Self::Signed(request) => request,
+            Self::Joined(joined) => joined,
+        }
+    }
+}
+
+/// Whether `joined`, a request kept with its permits joined, is `request`
+/// as signed: every field the same but the permits, which `request` carries
+/// in pieces. Each field is named, so a field added later is compared too.
+fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
+    let OwnerWorkRequest {
+        carrier,
+        act,
+        executor,
+        work,
+        privacy_basis,
+    } = request;
+    let (
+        OwnerWorkBody::Custody {
+            change,
+            generation,
+            input,
+            holder,
+            recipients: _,
+            pieces,
+            authority,
+        },
+        OwnerWorkBody::Custody {
+            change: joined_change,
+            generation: joined_generation,
+            input: joined_input,
+            holder: joined_holder,
+            recipients: _,
+            pieces: joined_pieces,
+            authority: joined_authority,
+        },
+    ) = (work, &joined.work)
+    else {
+        return false;
+    };
+    (carrier, act, executor, privacy_basis)
+        == (
+            &joined.carrier,
+            &joined.act,
+            &joined.executor,
+            &joined.privacy_basis,
+        )
+        && (change, generation, input, holder, pieces, authority)
+            == (
+                joined_change,
+                joined_generation,
+                joined_input,
+                joined_holder,
+                joined_pieces,
+                joined_authority,
+            )
 }
 
 /// `request` as the fold keeps it, signed by `signer`, at `work`, the state
@@ -117,33 +219,130 @@ pub(super) fn keep_piece(
 /// request's own carrier (none for a kit request), and the whole set
 /// ascending, without a zero digest and hashing to the commitment
 /// ([`OwnerWorkRequest::validate`]). `None` when they do not join.
+///
+/// A set a kept request already joined here ([`keep_joined`]) hands that
+/// request's `Arc` out to a join of the same request, copying no permit
+/// (FIX 12139); a join of another request on the set whose pieces name its
+/// carrier shares that request's permits, copying and hashing none (FIX
+/// 12014, 12281). The first join still verifies: one piece hands over its
+/// shared run, copying no permit (FIX 12310), more join into one list sized
+/// to them, which the set then keeps without a copy.
 pub(super) fn joined_request<'r>(
     work: &OwnerWorkState,
     signer: &[u8; 32],
     request: &'r OwnerWorkRequest,
-) -> Option<Cow<'r, OwnerWorkRequest>> {
+) -> Option<KeptRequest<'r>> {
     let OwnerWorkBody::Custody {
         pieces: Some(commitment),
         ..
     } = &request.work
     else {
-        return Some(Cow::Borrowed(request));
+        return Some(KeptRequest::Signed(request));
     };
-    let carrier = request.kit_root().is_none().then_some(request.carrier);
-    let mut permits = Vec::new();
+    let carrier = piece_carrier(request);
+    let verified = work.verified_permit_sets.get(&(*signer, *commitment));
+    if let Some(joined) = verified {
+        if joins_as(request, &joined.body) {
+            return Some(KeptRequest::Joined(Arc::clone(&joined.body)));
+        }
+        // The pieces it joined named this carrier, and no piece of the set
+        // changed since (`apply_permit_piece`, `merge_owner_work`).
+        if piece_carrier(&joined.body) == carrier
+            && let OwnerWorkBody::Custody { recipients, .. } = &joined.body.work
+        {
+            let shared = with_permits(request, recipients.clone());
+            return Some(KeptRequest::Joined(Arc::new(shared)));
+        }
+    }
+    let mut runs = Vec::new();
+    let mut joined_len = 0_usize;
     for index in 0..commitment.pieces {
         let piece = work.permit_pieces.get(&(*signer, *commitment, index))?;
-        if piece.carrier != carrier || usize::try_from(piece.first).ok()? != permits.len() {
+        if piece.carrier != carrier || usize::try_from(piece.first).ok()? != joined_len {
             return None;
         }
+        joined_len = joined_len.checked_add(piece.permits.len())?;
+        runs.push(piece);
+    }
+    // One piece carries the whole set: hand over its shared run, copying no
+    // permit (FIX 12310).
+    if let [only] = runs.as_slice() {
+        let joined = with_permits(request, only.permits.clone());
+        if verified.is_none() {
+            joined.validate().ok()?;
+        }
+        return Some(KeptRequest::Joined(Arc::new(joined)));
+    }
+    let mut permits = Vec::with_capacity(joined_len);
+    for piece in runs {
         permits.extend_from_slice(&piece.permits);
     }
+    let joined = with_permits(request, CustodyRecipientPermits::from(permits));
+    if verified.is_none() {
+        joined.validate().ok()?;
+    }
+    Some(KeptRequest::Joined(Arc::new(joined)))
+}
+
+/// The carrier every piece of `request`'s permits names: its own, none for
+/// a kit request.
+fn piece_carrier(request: &OwnerWorkRequest) -> Option<EntityId> {
+    request.kit_root().is_none().then_some(request.carrier)
+}
+
+/// `request`, signed with its permits in pieces, carrying `permits` joined:
+/// the set itself, shared, never a copy of it.
+fn with_permits(request: &OwnerWorkRequest, permits: CustodyRecipientPermits) -> OwnerWorkRequest {
     let mut joined = request.clone();
     if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
         *recipients = permits;
     }
-    joined.validate().ok()?;
-    Some(Cow::Owned(joined))
+    joined
+}
+
+/// Keeps `body`, the request signed as entry `request` by `signer` and kept
+/// by the fold, as its permit set's join when its permits ride in pieces
+/// (FIX 12139): the same `Arc` the fold's requests hold, so it costs no
+/// permit. A later join of the same request hands it out
+/// ([`joined_request`]); the latest kept on a set stands.
+pub(super) fn keep_joined(
+    work: &mut OwnerWorkState,
+    (signer, request): ([u8; 32], AuthorityEntryHash),
+    body: &Arc<OwnerWorkRequest>,
+) {
+    if let OwnerWorkBody::Custody {
+        pieces: Some(commitment),
+        ..
+    } = &body.work
+    {
+        let joined = JoinedPermitSet {
+            request,
+            body: Arc::clone(body),
+        };
+        work.verified_permit_sets
+            .insert((signer, *commitment), joined);
+    }
+}
+
+/// Drops each kept join whose request a newer request on its secret
+/// superseded, or whose secret an admitted revoke names (FIX 12140): where
+/// the fold records the supersede or the revoke, a request's landing and a
+/// merge. The memo is a cache: a pruned set joins and verifies again on its
+/// next join, and nothing is refused for it.
+pub(super) fn prune_joined(work: &mut OwnerWorkState) {
+    let OwnerWorkState {
+        verified_permit_sets,
+        heads,
+        revoked,
+        ..
+    } = work;
+    verified_permit_sets.retain(|_, joined| {
+        let secret = joined.body.act.target;
+        !revoked.contains(&secret)
+            && !heads
+                .get(&(OwnerWorkKind::Custody, secret))
+                .is_some_and(|held| held.superseded.contains(&joined.request))
+    });
 }
 
 impl Vault {
@@ -204,7 +403,7 @@ impl Vault {
                 commitment,
                 index,
                 first,
-                permits: run.to_vec(),
+                permits: CustodyRecipientPermits::from(run),
             };
             let op = AuthorityOp::CustodyPermitPiece(piece);
             let entry = sign_side_entry(fold, signing, seq, parents, op, now)?;
@@ -223,7 +422,7 @@ impl Vault {
         {
             return Err(authority_refused(PIECE_NOT_FOLDED));
         }
-        recipients.clear();
+        *recipients = CustodyRecipientPermits::default();
         *pieces = Some(commitment);
         Ok(Some(staged))
     }

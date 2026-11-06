@@ -10,6 +10,10 @@
 //! rule tier on its Rule rung first (a defect, a lapse or a discovery), then
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
+//!
+//! An attempt's anchored outcome is read from its stored source, never
+//! asked of the classifier's model: a completed random audit of the
+//! attempt's exact result (FIX 3611, [`stored_anchored_outcome`]).
 use oneiron::attempt_queue::{AttemptId, ReadSetProducer};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::limit_ask::EngineLimit;
@@ -17,7 +21,7 @@ use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
     FollowedState, HunkVerdict, JudgeRequest, ReceiptAttributionFacts, ReceiptAttributionSource,
-    ReceiptTrace, receipt_attribution_trace_sourced,
+    ReceiptTrace, WitnessedPackOutcome, receipt_attribution_trace_sourced, stored_anchored_outcome,
 };
 use oneiron::{EntityId, LlmMessageRole, Vault};
 use serde::Deserialize;
@@ -184,6 +188,16 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         record_attribution_rows(self.vault, self.attempt, rows);
         Ok(parse_facts(&text, &trace))
     }
+
+    /// The attempt's anchored outcome, read from its stored source with that
+    /// source's witness (FIX 3611); no model is asked whether a success is
+    /// anchored.
+    fn anchored_outcome(
+        &self,
+        receipt: &ReceiptRecord,
+    ) -> oneiron::Result<Option<WitnessedPackOutcome>> {
+        stored_anchored_outcome(self.vault, receipt)
+    }
 }
 
 /// The note seam beside the sweep's ladder: one Coach call per doubtful
@@ -266,9 +280,11 @@ impl AttributionNotes for MeasuredNotes<'_> {
         request: &JudgeRequest<'_>,
         answers: &[HunkVerdict],
     ) -> oneiron::Result<Vec<Option<String>>> {
-        // Evidence and floor row ids are not in pack_source_rows yet
-        // (Engine 05:54): the note tier's complete set stays unknown.
-        record_attribution_rows(self.vault, self.attempt, None);
+        // The note tier's complete set is the noted request's rows: the judge
+        // already unioned request + decision evidence, and unknown stays
+        // unknown, so a `None` here still poisons honestly when any
+        // constituent is unknown (FIX 7020).
+        record_attribution_rows(self.vault, self.attempt, request.sources.map(<[_]>::to_vec));
         let notes = self.coach.notes(request, answers)?;
         let longest = notes.iter().flatten().map(String::len).max().unwrap_or(0);
         let _ = self

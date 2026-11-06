@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
-use oneiron::llm::SingleRouteBackend;
+use oneiron::llm::{LlmCallMetadata, LlmEndpointFlavor, SingleRouteBackend};
 use oneiron::{
     BudgetLease, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream,
     LlmStreamResult, ModelId,
@@ -364,12 +364,12 @@ impl ResponsesSockets {
     }
 
     async fn step(&self, state: Turn) -> Option<(Frame, Turn)> {
-        let (mut session, turn, mut chained) = match state {
+        let (mut session, turn, mut previous_response_id) = match state {
             Turn::Done => return None,
-            Turn::Reading(session, turn, chained) => (session, turn, chained),
+            Turn::Reading(session, turn, previous) => (session, turn, previous),
             Turn::Start(mut session, turn) => {
                 let (previous, input) = session.chain.plan(&turn.items);
-                let chained = previous.is_some();
+                let previous_response_id = previous.map(str::to_owned);
                 let frame = turn.create_frame(previous, input);
                 if session
                     .socket
@@ -379,7 +379,7 @@ impl ResponsesSockets {
                 {
                     return Some((Err(OpenAiCompatTransportError::Connection), Turn::Done));
                 }
-                (session, turn, chained)
+                (session, turn, previous_response_id)
             }
         };
         loop {
@@ -404,12 +404,12 @@ impl ResponsesSockets {
             match responses_error_code(&event) {
                 // The socket no longer holds the chained response, and said so
                 // before generating anything: the turn goes again, whole.
-                Some(RESPONSES_PREVIOUS_NOT_FOUND) if chained => {
+                Some(RESPONSES_PREVIOUS_NOT_FOUND) if previous_response_id.is_some() => {
                     if turn.stored() {
                         self.forget(self.chain_key(session.chain.digests()));
                     }
                     session.chain.clear();
-                    chained = false;
+                    previous_response_id = None;
                     let frame = turn.create_frame(None, &turn.items);
                     if session
                         .socket
@@ -434,15 +434,25 @@ impl ResponsesSockets {
             if !responses_event_is_terminal(&event) {
                 return Some((
                     Ok(OpenAiCompatStreamFrame::Chunk(event)),
-                    Turn::Reading(session, turn, chained),
+                    Turn::Reading(session, turn, previous_response_id),
                 ));
             }
+            let metadata = LlmCallMetadata {
+                endpoint: LlmEndpointFlavor::OpenAiResponsesSocket,
+                response_id: event
+                    .get("response")
+                    .and_then(|response| response.get("id"))
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned),
+                previous_response_id,
+                store: Some(turn.stored()),
+            };
             // A turn that did not complete leaves the chain where the provider
             // may have dropped it: the next turn sends everything.
             match event.get("response") {
                 Some(response) if responses_event_type(&event) == "response.completed" => {
-                    let continued =
-                        (turn.stored() && chained).then(|| self.chain_key(session.chain.digests()));
+                    let continued = (turn.stored() && metadata.previous_response_id.is_some())
+                        .then(|| self.chain_key(session.chain.digests()));
                     session.chain.record(&turn.items, response);
                     if turn.stored() {
                         self.keep(&session.chain, continued);
@@ -451,7 +461,13 @@ impl ResponsesSockets {
                 _ => session.chain.clear(),
             }
             self.put_back(session);
-            return Some((Ok(OpenAiCompatStreamFrame::Chunk(event)), Turn::Done));
+            return Some((
+                Ok(OpenAiCompatStreamFrame::ChunkWithMetadata {
+                    chunk: event,
+                    metadata,
+                }),
+                Turn::Done,
+            ));
         }
     }
 }
@@ -460,7 +476,7 @@ type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 enum Turn {
     Start(Session, OpenAiResponsesTurn),
-    Reading(Session, OpenAiResponsesTurn, bool),
+    Reading(Session, OpenAiResponsesTurn, Option<String>),
     Done,
 }
 
@@ -497,6 +513,31 @@ impl OpenAiSessions {
     }
 }
 
+fn chat_call_metadata(usage: &mut oneiron::LlmUsage) {
+    usage.call_metadata = Some(LlmCallMetadata {
+        endpoint: LlmEndpointFlavor::OpenAiChatCompletions,
+        response_id: None,
+        previous_response_id: None,
+        store: None,
+    });
+}
+
+fn chat_response_metadata(mut response: oneiron::LlmResponse) -> oneiron::LlmResponse {
+    chat_call_metadata(&mut response.usage);
+    response
+}
+
+fn chat_stream_metadata(stream: LlmStream<'_>) -> LlmStream<'_> {
+    LlmStream::new(stream.map(|event| {
+        event.map(|mut event| {
+            if let oneiron::LlmStreamEvent::Done { usage, .. } = &mut event {
+                chat_call_metadata(usage);
+            }
+            event
+        })
+    }))
+}
+
 impl LlmBackend for OpenAiSessions {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.chat.supports(model, capability)
@@ -509,7 +550,11 @@ impl LlmBackend for OpenAiSessions {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             if !self.carries(&request) {
-                return self.chat.generate(request, lease).await;
+                return self
+                    .chat
+                    .generate(request, lease)
+                    .await
+                    .map(chat_response_metadata);
             }
             let turn = self.turn(&request, false)?;
             match self.sockets.checkout(&turn).await {
@@ -518,14 +563,18 @@ impl LlmBackend for OpenAiSessions {
                         .into_response()
                         .await
                 }
-                None => self.chat.generate(request, lease).await,
+                None => self
+                    .chat
+                    .generate(request, lease)
+                    .await
+                    .map(chat_response_metadata),
             }
         })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         if !self.carries(&request) {
-            return self.chat.stream(request, lease);
+            return self.chat.stream(request, lease).map(chat_stream_metadata);
         }
         let turn = self.turn(&request, true)?;
         let opened = async move {
@@ -533,7 +582,7 @@ impl LlmBackend for OpenAiSessions {
                 Some(session) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(
                     self.sockets.run(session, turn),
                 ))),
-                None => self.chat.stream(request, lease),
+                None => self.chat.stream(request, lease).map(chat_stream_metadata),
             }
         };
         Ok(LlmStream::new(futures_util::stream::once(opened).flat_map(

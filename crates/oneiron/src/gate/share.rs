@@ -3,12 +3,12 @@
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::share::{Share, share_effect_target};
-use crate::store::{GateDecisionId, Store};
+use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 use super::{
-    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateDecision,
-    GateProvenanceHandles, check_external_effect_policy, resolve_policy_manifest,
+    ExternalEffectCheck, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
+    GateProvenanceHandles, check_external_effect_policy_paced, resolve_policy_manifest,
 };
 
 pub(crate) fn check_share_create_policy(
@@ -17,21 +17,21 @@ pub(crate) fn check_share_create_policy(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
-    travel: &crate::share_travel::TravelChoice,
-) -> Result<(GateDecisionId, GateDecision)> {
+    travel: &oneiron_authority::share_travel::TravelChoice,
+) -> Result<ExternalEffectCheck> {
     let policy = resolve_policy_manifest(store, txn)?;
     let effect = share_create_effect(share_id, issuer, share, travel)?;
     // Execution, not a preview: charge any governing connector budget and record
     // the real decision in the grant's transaction. Pending is never authority.
-    let (id, decision, _) = check_external_effect_policy(store, txn, &effect, &policy, true)?;
-    Ok((id, decision))
+    // A full count-bound window paces the share instead (FIX 12155).
+    check_external_effect_policy_paced(store, txn, &effect, &policy)
 }
 
 pub(crate) fn share_create_effect(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
-    travel: &crate::share_travel::TravelChoice,
+    travel: &oneiron_authority::share_travel::TravelChoice,
 ) -> Result<ExternalEffectGateInput> {
     Ok(ExternalEffectGateInput {
         actor: GateActor {

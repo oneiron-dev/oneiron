@@ -34,12 +34,16 @@ use std::collections::BTreeSet;
 
 pub(super) mod approved;
 
-/// The curator's finding predicate.
-pub(crate) const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
+pub(crate) use crate::gate::curator_proposal::PROPOSAL_PREDICATE;
 
 /// Owner-set rubric dial for the memory-curator maintenance pass.
 const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
     SideTable::new(&side_table::DREAMER_CURATOR_RUBRIC);
+/// Whether a masked copy of a `DREAMER_CURATOR_RUBRIC` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_curator_rubric_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CuratorRubric, LegacyJson>(bytes)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratorTrigger {
@@ -93,6 +97,17 @@ impl CuratorRubric {
     }
 }
 impl Vault {
+    /// The actual stored curator rubric, or its validated shipped defaults,
+    /// read with the owner's current authority in this same snapshot.
+    pub fn curator_rubric_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<CuratorRubric> {
+        let txn = self.store.env.read_txn()?;
+        super::validate_owner_in_txn(self, &txn, owner)?;
+        rubric_in_txn(self, &txn)
+    }
+
     pub fn set_curator_rubric(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -503,6 +518,7 @@ fn demote_in_place_in_txn(
             end: now,
         },
         learned_at: header.learned_at,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

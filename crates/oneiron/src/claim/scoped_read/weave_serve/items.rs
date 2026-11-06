@@ -2,7 +2,8 @@
 //! wire view, and a saved period's view with its lens beside it.
 use super::super::{ScopedRead, StoredWeaveDigest, WeaveItem, WeaveReader, WeaveReport};
 use super::{WeaveDigestFramed, WeaveDigestView, WeaveItemView, WeaveSectionView};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 impl Memory<'_> {
     /// A saved period's view. Its render composes under `read`, the

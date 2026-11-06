@@ -1,16 +1,7 @@
-//! The audited classification of a corrupt CLAIM (FIX 7800, ARCH-0038).
-//!
-//! An owner's maintenance pass may select a stored CLAIM whose non-empty body fails its strict
-//! capture decode. Classifying it appends one REDACTION_AUDIT row of a second strict shape, the
-//! repair event: ids, two times and a closed code, signed under the receipt transcript (OD-6).
-//! It records a classification, never a deletion: it carries no completion time, no sweep, final
-//! row or erase reader takes it for an erase receipt, and the typed receipt decoder refuses it,
-//! which keeps it on this device (`reverse_remat_skip_redaction_receipt_mirror`). The erase it
-//! unblocks names it, per record, in that erase's own `capture_failures`.
+//! Core half of `deletion::receipt::capture`: its store-layer items live in `oneiron_store::deletion::receipt::capture` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use serde::{Deserialize, Serialize};
+pub(crate) use oneiron_store::deletion::receipt::capture::*;
 
 use super::super::receipt_grammar::{
     validate_opaque_uuid, validate_receipt_scope, validate_receipt_verification,
@@ -18,43 +9,8 @@ use super::super::receipt_grammar::{
 use super::{RedactionScope, receipt_attestation};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
-
-/// The one event a repair event records.
-const CORRUPT_CLAIM_RECLASSIFIED: &str = "corrupt_claim_reclassified";
-
-/// The closed code a classification and the erase it unblocks record.
-pub(crate) const CAPTURE_FAILED: &str = "capture_failed";
-
-/// The pinned repair event keys in their one encoded order: `verification` last, as the
-/// attestation transcript's tail splice needs.
-const REPAIR_EVENT_KEYS: [&str; 7] = [
-    "event",
-    "request_id",
-    "scope",
-    "recorded_at",
-    "generation",
-    "error_code",
-    "verification",
-];
-
-/// One record whose hard erase took the audited capture exception: its id, the closed
-/// `capture_failed` code and the repair event that classified it, all opaque.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CaptureFailure {
-    pub(crate) entity_id: String,
-    pub(crate) error_code: String,
-    pub(crate) repair_receipt: String,
-}
-
-impl CaptureFailure {
-    pub(crate) fn new(entity: &EntityId, repair_receipt: &EntityId) -> Self {
-        Self {
-            entity_id: entity.to_hex(),
-            error_code: CAPTURE_FAILED.to_owned(),
-            repair_receipt: repair_receipt.to_hex(),
-        }
-    }
-}
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The repair event body (`rmp_serde::to_vec_named`, field order = [`REPAIR_EVENT_KEYS`]).
 #[derive(Serialize)]
@@ -77,7 +33,7 @@ pub(crate) fn encode_corrupt_claim_repair_event(
     request_id: String,
     recorded_at: u64,
     event_id: &EntityId,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     let mut event = CorruptClaimRepairEvent {
         event: CORRUPT_CLAIM_RECLASSIFIED,

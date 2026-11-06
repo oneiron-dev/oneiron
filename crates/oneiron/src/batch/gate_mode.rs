@@ -4,6 +4,24 @@ use crate::entity_id::EntityId;
 
 use super::ClaimMaterialization;
 
+/// One exact preflight Pending-Auto occurrence, staged only in a rolled-back
+/// reader-bound probe. Ordinary apply modes carry none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PendingAutoProbe {
+    pub(super) claim: EntityId,
+    pub(super) decision: crate::store::GateDecisionId,
+}
+
+impl PendingAutoProbe {
+    pub(super) fn matches(
+        self,
+        claim: &EntityId,
+        decision: Option<crate::store::GateDecisionId>,
+    ) -> bool {
+        self.claim == *claim && Some(self.decision) == decision
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
     pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
@@ -16,22 +34,25 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// The caller's active mask: the FACET every NOTE and ASSET born in this
-    /// batch is stamped with. `None` stamps the vault default.
+    pub(super) pending_auto_probes: HashMap<crate::store::GateDecisionId, PendingAutoProbe>,
+    /// The caller's active mask: the FACET every NOTE, ASSET, EVENT and TURN
+    /// born in this batch is stamped with. `None` stamps the vault default.
+    /// A CLAIM carries its facet in its body and ignores the mask (FIX 7757).
     pub(super) birth_mask: Option<EntityId>,
     /// Every source each ASSET_TEXT this batch births was written from: its
     /// birth copies their one facet (`BatchBuilder::asset_text_birth`).
     pub(super) text_births: HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births, stamped
     /// after every op has applied.
-    pub(super) births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    pub(super) births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// BM25 analyses of this batch's text ops, done before the write
     /// transaction opened; consumed per id in op order.
-    pub(super) pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
+    pub(super) pre_analyzed_text:
+        HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     /// HNSW insert plans of this batch's vector ops, searched under a read
     /// snapshot before the write transaction opened; consumed per id in op
     /// order.
-    pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     /// The vault owner's in-person authorship of this batch's claim
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
@@ -44,6 +65,10 @@ pub(crate) struct ApplyOpsGateMode {
     /// keeps its signed bytes for read quarantine instead of the local
     /// write-window refusal.
     pub(super) replicated_puts: std::collections::BTreeSet<EntityId>,
+    /// Each ASSET `BatchBuilder::put_marked_carrier` queued, by the BLAKE3
+    /// of its bytes (FIX 9034): a batch of nothing else skips the door's
+    /// scan, its detection being the carrier's mark.
+    pub(super) marked_carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
@@ -61,6 +86,7 @@ impl ApplyOpsGateMode {
             claim_materializations: VecDeque::new(),
             claim_transitions: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
+            pending_auto_probes: HashMap::new(),
             birth_mask: None,
             text_births: HashMap::new(),
             births: Vec::new(),
@@ -69,6 +95,7 @@ impl ApplyOpsGateMode {
             owner_authored: None,
             asset_files: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
+            marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
         }
     }
@@ -122,6 +149,15 @@ impl ApplyOpsGateMode {
         self
     }
 
+    /// Binds each marked carrier's ASSET put to its bytes (FIX 9034).
+    pub(super) fn with_marked_carriers(
+        mut self,
+        carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
+    ) -> Self {
+        self.marked_carriers = carriers;
+        self
+    }
+
     /// Marks the rows the replication applier put (FIX 7925).
     pub(super) fn with_replicated_puts(
         mut self,
@@ -134,7 +170,7 @@ impl ApplyOpsGateMode {
     /// Stamps each row's Rule A birth envelope once the batch's ops apply.
     pub(crate) fn with_births(
         mut self,
-        births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+        births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     ) -> Self {
         self.births = births;
         self
@@ -181,6 +217,14 @@ impl ApplyOpsGateMode {
     /// gate evaluation in `apply_put` is skipped.
     pub(super) fn with_prechecked_claim_gate(mut self) -> Self {
         self.claim_gate_prechecked = true;
+        self
+    }
+
+    pub(super) fn with_pending_auto_probes(
+        mut self,
+        probes: HashMap<crate::store::GateDecisionId, PendingAutoProbe>,
+    ) -> Self {
+        self.pending_auto_probes = probes;
         self
     }
 

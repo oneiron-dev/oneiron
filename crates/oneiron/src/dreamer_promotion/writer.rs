@@ -100,12 +100,17 @@ pub(super) fn promote_one(
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
     verified: Option<&VerifiedEvidenceSet>,
 ) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
-    promote_one_answering(vault, run, candidate, checker, fence, verified, &[])
+    promote_one_answering(vault, run, candidate, checker, fence, verified, &[], false)
 }
 
 /// [`promote_one`] for an output that answers the open markers `answers`
 /// name: its provenance keeps each binding, so a replay that meets it again
 /// still closes them (FIX 7325). With none, its provenance is as before.
+/// Only the owned attempt sink records the id inside this claim's transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one promotion with its evidence, answers and sink recording purpose"
+)]
 pub(super) fn promote_one_answering(
     vault: &Vault,
     run: &DreamerRunContext,
@@ -114,6 +119,7 @@ pub(super) fn promote_one_answering(
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
     verified: Option<&VerifiedEvidenceSet>,
     answers: &[&ResolvedConflictOutput],
+    record_output: bool,
 ) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
     // A blank run would hide the write from every Dreamer-run reader: the
     // gate's imported floor and the owner's review grouping among them.
@@ -472,7 +478,7 @@ pub(super) fn promote_one_answering(
             crate::own_rate::count_in_txn(
                 &vault.store,
                 wtxn,
-                crate::own_rate::OwnRateKind::AutoWrite,
+                crate::store::own_rate_record::OwnRateKind::AutoWrite,
                 run.agent_actor.entity_ref(),
                 vault.store.clock.now_recorded_at(),
                 auto_write_rate,
@@ -514,7 +520,23 @@ pub(super) fn promote_one_answering(
                 )
             }
             None => Ok(()),
+        }?;
+        if record_output {
+            let approval = verify_landed_body(&landed, &probe_body.predicate, source)
+                .map_err(Error::InvalidClaimBody)?;
+            if matches!(
+                approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+            ) {
+                crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
+                    vault,
+                    wtxn,
+                    run.attempt_id,
+                    &[candidate.claim_id],
+                )?;
+            }
         }
+        Ok(())
     };
     // A signed (MACHINE) promotion carries no lexical query hints (FIX 11356):
     // a hint is a stale side CLAIM, and a machine claim birth refuses every
@@ -557,10 +579,16 @@ pub(super) fn promote_one_answering(
                 &hints,
             )
             .text(&candidate.claim_id, &[("val", birth_text.as_str())])
-            .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
+            .commit_with_checker_guard_and_then(
+                checker,
+                read_prior,
+                finish_promotion,
+                Some("promotion"),
+            )
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
             read_prior(wtxn)?;
             vault
                 .batch_in()
@@ -619,20 +647,24 @@ pub(super) fn verify_landed(
             "landed verification failed: claim missing after commit",
         ));
     };
+    verify_landed_body(&body, expected_predicate, expected_source)
+        .map_err(PromotionRejection::guard)
+}
+
+/// The same checks for the actual body in the writer and its post-commit read.
+fn verify_landed_body(
+    body: &crate::claim::ClaimBody,
+    expected_predicate: &str,
+    expected_source: ClaimSource,
+) -> std::result::Result<ClaimApprovalStatus, &'static str> {
     if body.predicate != expected_predicate {
-        return Err(PromotionRejection::guard(
-            "landed verification failed: predicate mismatch",
-        ));
+        return Err("landed verification failed: predicate mismatch");
     }
     if body.source != Some(expected_source) {
-        return Err(PromotionRejection::guard(
-            "landed verification failed: source stamp mismatch",
-        ));
+        return Err("landed verification failed: source stamp mismatch");
     }
-    if claim_evidence_taint(&body) != Some(expected_source) {
-        return Err(PromotionRejection::guard(
-            "landed verification failed: evidence taint stamp mismatch",
-        ));
+    if claim_evidence_taint(body) != Some(expected_source) {
+        return Err("landed verification failed: evidence taint stamp mismatch");
     }
     Ok(body.approval)
 }

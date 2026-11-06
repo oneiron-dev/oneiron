@@ -21,9 +21,10 @@ use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_f
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDiaryHold, ExportDiaryRead,
-    ExportEdge, ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
-    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRun, ExportRunOutput,
+    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
+    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
+    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
+    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
     ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
     ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
     VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
@@ -31,6 +32,7 @@ use crate::batch::export::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::{RowBirth, WithheldKey};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL,
 };
@@ -47,6 +49,9 @@ pub(crate) struct DocumentTail {
     /// archive with their edges.
     pub(crate) unlogged: BTreeSet<EntityId>,
     pub(crate) secrets_included: bool,
+    /// FIX 12066: the custody secrets only the fold knows here, named for
+    /// their holders: the manifest lists them.
+    pub(crate) fold_only_secrets: Vec<EntityId>,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
     /// The rows this export is derived from, as a host lists them beside it
@@ -71,12 +76,17 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each agent's birth-source ASSET, kept as it passes.
     birth_sources: BTreeSet<EntityId>,
     agents: Vec<ExportEntity>,
-    skills: Vec<(EntityId, crate::skill::SkillRecord)>,
+    skills: Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     knowledge: Vec<ExportEntity>,
     birth_bodies: BTreeMap<EntityId, ExportBody>,
     /// Each result body's row by digest, nulled and with its file detached.
     bodies: BTreeMap<String, Value>,
     side_withheld: Vec<ArchiveSideWithheld>,
+    /// Every entity id this writer carried, and each carried row's birth
+    /// (FIX 1178): a birth is masked against the carried set only at
+    /// `finish`, when that set and the unlogged diaries are final.
+    carried_ids: BTreeSet<EntityId>,
+    row_births: BTreeMap<EntityId, RowBirth>,
 }
 
 impl<'v> DocumentWriter<'v> {
@@ -91,7 +101,7 @@ impl<'v> DocumentWriter<'v> {
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
-            .filter_map(|id| crate::agent_def::birth_source_id(id).ok())
+            .filter_map(|id| crate::store::agent_birth_identity::birth_source_id(id).ok())
             .collect();
         let mut writer = Self {
             vault,
@@ -108,6 +118,8 @@ impl<'v> DocumentWriter<'v> {
             birth_bodies: BTreeMap::new(),
             bodies: BTreeMap::new(),
             side_withheld: Vec::new(),
+            carried_ids: BTreeSet::new(),
+            row_births: BTreeMap::new(),
         };
         for adapter in adapters {
             writer.push_nulled(
@@ -122,6 +134,10 @@ impl<'v> DocumentWriter<'v> {
     /// One live entity: its row, and the derivation index, source package
     /// or pack source it carries.
     pub(crate) fn entity(&mut self, raw: ExportSnapshotEntity<'_>) -> Result<()> {
+        self.carried_ids.insert(raw.id);
+        if let Some(birth) = raw.birth {
+            self.row_births.insert(raw.id, birth);
+        }
         let entity_type = raw.header.entity_type;
         // OF-222: a stored file an ASSET body is goes beside the document
         // once, by digest, as it is stored; its row carries the descriptor
@@ -242,6 +258,20 @@ impl<'v> DocumentWriter<'v> {
     pub(crate) fn run(&mut self, run: ExportSnapshotRun) -> Result<()> {
         let hex = crate::entity_id::bytes_to_hex_lower;
         let row = ExportRun {
+            bindings: run
+                .bindings
+                .into_iter()
+                .map(|(binding, withheld)| ExportRunBinding {
+                    name: binding.name,
+                    path: binding.path,
+                    handle: withheld.is_none().then_some(binding.handle),
+                    withheld: withheld.map(str::to_owned),
+                })
+                .collect(),
+            determinism: run.determinism.map(|determinism| ExportDeterminism {
+                frozen_unix_ms: determinism.frozen_unix_ms,
+                rng_seed: hex(&determinism.rng_seed),
+            }),
             receipts: run
                 .receipts
                 .iter()
@@ -262,8 +292,8 @@ impl<'v> DocumentWriter<'v> {
                     blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                     bytes: output.raw_len,
                     kind: match output.kind {
-                        crate::code_run::CodeRunOutputKind::Text => "text",
-                        crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        crate::store::result_manifest::CodeRunOutputKind::Text => "text",
+                        crate::store::result_manifest::CodeRunOutputKind::Binary => "binary",
                     }
                     .to_owned(),
                     lines: output.lines,
@@ -409,7 +439,7 @@ impl<'v> DocumentWriter<'v> {
             &self.skills,
             &self.knowledge,
             &tail.agent_fork_hashes,
-            crate::agent_def::KnowledgeFormat::CURRENT,
+            crate::batch::export::agent_knowledge_format::KnowledgeFormat::CURRENT,
         )?;
         for bundle in &bundles {
             self.ledger
@@ -465,6 +495,32 @@ impl<'v> DocumentWriter<'v> {
                 self.groups.insert(path.to_owned(), kept);
             }
         }
+        // FIX 1178: each carried row's birth leaves with the archive, naming
+        // only the rows this archive carries (an unlogged diary's birth
+        // leaves with its row above). One key per export, as the scoped
+        // export masks. A birth the credential pass would change stays
+        // home: its row ships birthless, as it did before, rather than
+        // under a nulled envelope no import could read back.
+        if self.cut == ExportCut::Archive {
+            let key = WithheldKey::for_export();
+            for (id, birth) in std::mem::take(&mut self.row_births) {
+                if tail.unlogged.contains(&id) {
+                    continue;
+                }
+                let birth = birth.masked(
+                    |row| self.carried_ids.contains(row) && !tail.unlogged.contains(row),
+                    &key,
+                );
+                let value = serde_json::to_value(ExportRowBirth {
+                    id: id.to_hex(),
+                    birth,
+                })
+                .map_err(|_| encode_failed())?;
+                if null_document_member("", &value, 2) == value {
+                    self.push(ArchiveRecordKind::RowBirth, &value)?;
+                }
+            }
+        }
         let (import_refusals, import_omissions, bundle_omissions) = self.ledger.finish();
         let storage = tail.storage.with_serializer_nulling();
         let manifest = WholeVaultDocumentManifest {
@@ -491,6 +547,7 @@ impl<'v> DocumentWriter<'v> {
             files: Vec::new(),
             diary_holds: tail.diary_holds,
             secrets_included: tail.secrets_included,
+            fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
         };
@@ -499,6 +556,12 @@ impl<'v> DocumentWriter<'v> {
         let mut manifest: WholeVaultDocumentManifest =
             serde_json::from_value(nulled(&manifest, "manifest", 1)?)
                 .map_err(|_| encode_failed())?;
+        // Ids only, added after the pass as the member lists are (FIX 12066).
+        manifest.fold_only_secrets = tail
+            .fold_only_secrets
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
         let sink = match self.cut {
             ExportCut::Archive => {
                 manifest.records = self
@@ -548,9 +611,9 @@ impl<'v> DocumentWriter<'v> {
                 .body
                 .to_bytes()
                 .ok()
-                .and_then(|bytes| crate::claim::decode_claim_body(&bytes, false).ok())
+                .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, false).ok())
                 .is_some_and(|claim| {
-                    matches!(claim.subject, crate::claim::ClaimSubject::Entity(id)
+                    matches!(claim.subject, crate::write_envelope::claim_body::ClaimSubject::Entity(id)
                         if self.agent_ids.contains(&id))
                 })
     }

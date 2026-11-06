@@ -15,13 +15,13 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -79,10 +79,11 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
 /// their carrier and the next rematerialization takes them back.
 pub(crate) fn record_version_claim(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     body: &ClaimBody,
 ) -> Result<()> {
+    let store = write.store;
     let Some((artifact, hash)) = version_claim_reference(body) else {
         return Ok(());
     };
@@ -91,7 +92,13 @@ pub(crate) fn record_version_claim(
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
-        return super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash);
+        return super::lifecycle::release_bytes_of_deleted_artifact(
+            store,
+            txn,
+            &artifact,
+            &hash,
+            &|txn, id| crate::batch::deindex_entity(write, txn, id),
+        );
     }
     VERSION_CLAIM.put(store, txn, &(hash, artifact), &())?;
     CLAIMED_HASH.put(store, txn, &(artifact, hash), &())?;
@@ -180,11 +187,53 @@ pub(super) fn retained_claim_names(
         let Some(named) = hash else {
             return Ok(true);
         };
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
             continue;
         };
         if version_claim_reference(&body) == Some((*artifact, *named)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a retained replicated version claim keeps this artifact's
+/// payload under a hold. Its claim is preserved with the bytes it names.
+pub(super) fn artifact_claim_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+) -> Result<bool> {
+    for edge in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        artifact,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim = edge?.target;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
+            continue;
+        };
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN
+            || raw[0] != ENTITY_TYPE_CLAIM
+            || crate::deletion::row_deletion_marked(store, txn, &claim, Some(&raw))?
+        {
+            continue;
+        }
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
+            continue;
+        };
+        if version_claim_reference(&body).is_some_and(|(id, _)| id == *artifact)
+            && crate::store::legal_hold::held_in_txn(store, txn, claim.as_bytes())?
+        {
             return Ok(true);
         }
     }
@@ -296,8 +345,34 @@ pub(crate) fn readmit_held_asset_in_txn(
         return Ok(());
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
-    if super::versions::blob_artifact_asset_entity_id(&hash)? != *asset
-        || !held_by_live_artifact(store, txn, &hash, None)?
+    readmit_held_asset_hash_in_txn(store, txn, asset, &hash)
+}
+
+/// Readmission from facts measured while staging the complete body, without
+/// reading its bytes again. The caller must bind these facts to the actual
+/// staged body, not take a peer's advertised digest as evidence of receipt.
+#[cfg(feature = "sync")]
+pub(crate) fn readmit_held_asset_with_facts_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    asset: &EntityId,
+    facts: crate::store::AssetBodyFacts,
+) -> Result<()> {
+    if !store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
+        return Ok(());
+    }
+    readmit_held_asset_hash_in_txn(store, txn, asset, &facts.blake3)
+}
+
+#[cfg(feature = "sync")]
+fn readmit_held_asset_hash_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    asset: &EntityId,
+    hash: &ContentHash,
+) -> Result<()> {
+    if super::versions::blob_artifact_asset_entity_id(hash)? != *asset
+        || !held_by_live_artifact(store, txn, hash, None)?
     {
         return Ok(());
     }

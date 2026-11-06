@@ -1,7 +1,7 @@
 //! Read-set witnesses a resident attempt's replay record can prove (FIX 7020).
 
 use super::payload::decode_self_dispatch_outcome;
-use super::replay::CodeRunReplayRecord;
+use super::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
 use super::types::{SelfDispatchOutcome, SelfDurableWaitReason};
 use super::wait_rows::wait_rows;
 use crate::EntityId;
@@ -25,7 +25,25 @@ pub fn resident_tool_answer_rows(
     rows.extend_from_slice(record.callable_rows.as_deref()?);
     // The run id names the replay record and capsules read back under it.
     rows.push(record.run_id);
-    for call in &record.bridge_calls {
+    let scan_rows = match current_wait {
+        Some(_) => resident_tool_answer_rows_of_from(&record.bridge_calls, 0, current_wait)?,
+        None => record.cached_resident_tool_answer_rows()?,
+    };
+    rows.extend(scan_rows);
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
+}
+
+/// The DurableWait/MemorySearch half of the resident read set, decodable as
+/// an append-only suffix by the replay record's memo (FIX 837).
+pub(crate) fn resident_tool_answer_rows_of_from(
+    calls: &[CodeRunBridgeCall],
+    from: usize,
+    current_wait: Option<EntityId>,
+) -> Option<Vec<EntityId>> {
+    let mut rows = Vec::new();
+    for call in calls.get(from..)? {
         match decode_self_dispatch_outcome(&call.outcome).ok()? {
             SelfDispatchOutcome::DurableWait(wait) => {
                 let current_peer_wait = Some(wait.wait_id) == current_wait
@@ -42,7 +60,5 @@ pub fn resident_tool_answer_rows(
             _ => {}
         }
     }
-    rows.sort_unstable();
-    rows.dedup();
     Some(rows)
 }

@@ -236,11 +236,18 @@ impl LlmEventBus {
                     text: String::new(),
                 },
             ),
-            LlmStreamEvent::ReasoningStart { part_id, signature } => self.insert(
+            LlmStreamEvent::ReasoningStart {
+                part_id,
+                signature,
+                reasoning_kind,
+                data,
+            } => self.insert(
                 part_id,
                 ContentPart::Reasoning {
                     text: String::new(),
                     signature: signature.clone(),
+                    reasoning_kind: *reasoning_kind,
+                    data: data.clone(),
                 },
             ),
             LlmStreamEvent::TextDelta { part_id, text }
@@ -250,6 +257,14 @@ impl LlmEventBus {
                 ) = self.parts.get_mut(part_id).and_then(Option::as_mut)
                 {
                     value.push_str(text);
+                }
+            }
+            LlmStreamEvent::ReasoningEnd { part_id, signature } => {
+                if let Some(ContentPart::Reasoning {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id).and_then(Option::as_mut)
+                {
+                    shown.clone_from(signature);
                 }
             }
             LlmStreamEvent::ToolCallStart { part_id, .. }

@@ -266,6 +266,9 @@ pub struct SlateFacetNarrow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateRow {
+    /// The latest explicit owner act on this row, or its fresh draft identity.
+    /// Unchanged rows carry it across slate revisions.
+    pub settings_act: EntityId,
     pub draft: SlateDraftRow,
     pub owner_override: Option<SlateOwnerOverride>,
     pub holder_narrow: Option<SlateHolderNarrow>,
@@ -418,6 +421,7 @@ impl ConnectorGrantSlate {
             .map(|row| {
                 (
                     row.draft.tool.as_str(),
+                    row.settings_act,
                     row.stamped_disposition().as_str(),
                     row.draft.data_class.as_str(),
                 )
@@ -488,7 +492,7 @@ impl ConnectorGrantSlate {
 fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
     if let Some(source) = &manifest.pack_source {
         EntityId::from_hex(&source.source_ref)?;
-        crate::skill::SkillContentHash::parse_hex(&source.content_hash)?;
+        crate::write_envelope::skill_record::SkillContentHash::parse_hex(&source.content_hash)?;
     }
     let declared = &manifest.tools;
     let row_count = declared.len() + usize::from(manifest.elicitation.is_some());
@@ -814,31 +818,6 @@ pub(in crate::connector_key) fn bind_connector_slate_in_txn(
     SLATE_BINDING.put(&vault.store, txn, &slate_id, key_id)
 }
 
-/// A code consent wait's stop-asking answer (DOOR-079 1a) in the answering
-/// writer: the owner's one-row override of `tool` on slate `id` back to
-/// `auto`, at the revision the wait's offer was made against, through the
-/// owner's own stamp and its checks. A slate that moved since refuses
-/// ([`Error::ConcurrentWrite`]); it never widens to `always allow`. Returns
-/// the slate's new revision.
-pub(crate) fn stop_asking_tool_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    owner: &AuthenticatedOwner,
-    id: EntityId,
-    expected_revision: u64,
-    tool: &str,
-) -> Result<u64> {
-    let overrides = BTreeMap::from([(
-        tool.to_owned(),
-        SlateOwnerOverride {
-            disposition: SlateDisposition::Auto,
-        },
-    )]);
-    Ok(vault
-        .stamp_slate_in_txn(txn, owner, id, expected_revision, &overrides, None)?
-        .revision)
-}
-
 pub(crate) fn read_connector_slate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -902,6 +881,43 @@ pub(in crate::connector_key) fn put_slate_in_txn(
     GRANT_SLATE.put(store, txn, &id, slate)
 }
 
+/// This table's actor scrub (FIX 9231 sibling): an erase of `actor` drops
+/// every holder row narrow and the holder facet narrow it stamped, in the
+/// erase's writer. Same drop, same reason as the overlay table: a narrow
+/// without its holder is meaningless.
+pub(crate) fn erase_grant_slate_holder_narrows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let holder = actor.to_hex();
+    for (slate_id, mut slate) in GRANT_SLATE.scan(&vault.store, wtxn)? {
+        let mut changed = false;
+        for row in &mut slate.rows {
+            if row
+                .holder_narrow
+                .as_ref()
+                .is_some_and(|narrow| narrow.actor == holder)
+            {
+                row.holder_narrow = None;
+                changed = true;
+            }
+        }
+        if slate
+            .holder_facet_narrow
+            .as_ref()
+            .is_some_and(|narrow| narrow.actor == holder)
+        {
+            slate.holder_facet_narrow = None;
+            changed = true;
+        }
+        if changed {
+            GRANT_SLATE.put(&vault.store, wtxn, &slate_id, &slate)?;
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Persists the typed admission artifact. Free text, partial rows, duplicate
     /// tools, and owner columns in the draft all fail before the first write.
@@ -923,12 +939,15 @@ impl Vault {
         let rows = rows
             .into_iter()
             .chain(elicitation)
-            .map(|draft| SlateRow {
-                draft,
-                owner_override: None,
-                holder_narrow: None,
+            .map(|draft| {
+                Ok(SlateRow {
+                    settings_act: self.store.clock.entity_id()?,
+                    draft,
+                    owner_override: None,
+                    holder_narrow: None,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         self.put_new_slate(new_slate(&manifest, rows, None, None, BTreeSet::new())?)
     }
     pub(in crate::connector_key) fn put_new_slate(
@@ -1006,9 +1025,8 @@ impl Vault {
             self.stamp_slate_in_txn(txn, owner, id, expected_revision, overrides, facet_limit)
         })
     }
-    /// [`Self::stamp_slate`] in the caller's writer, so an owner act that
-    /// changes a setting composes it with its own record (DOOR-079: a code
-    /// consent wait's stop-asking answer).
+    /// [`Self::stamp_slate`] in the caller's writer, composing an explicit
+    /// owner settings act with its record.
     pub(in crate::connector_key) fn stamp_slate_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -1042,6 +1060,7 @@ impl Vault {
             if let Some(value) = overrides.get(&row.draft.tool) {
                 // The owner's ruling on a row reverses a holder's narrow.
                 row.owner_override = Some(value.clone());
+                row.settings_act = self.store.clock.entity_id()?;
                 row.holder_narrow = None;
             }
         }

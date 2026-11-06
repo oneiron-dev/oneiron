@@ -16,7 +16,7 @@ pub(super) struct Rewrite {
 /// (SKILL escalation, TASK streak strip, pad reference, critical-confirm
 /// reconcile) and plan the short-id update over the rewritten bytes.
 pub(super) fn rewrite_put_body(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -25,6 +25,7 @@ pub(super) fn rewrite_put_body(
     task_body_without_streaks: &Option<Vec<u8>>,
     pad_stored_body: &Option<Vec<u8>>,
 ) -> Result<Rewrite> {
+    let store = write.store;
     if fixed.occurred.start > fixed.occurred.end {
         return Err(Error::InvalidTimeRange {
             start: fixed.occurred.start,
@@ -59,7 +60,7 @@ pub(super) fn rewrite_put_body(
     if fixed.replicated
         && !crate::registry::is_delete_protected_engine_record(fixed.entity_type)
         && revision.put.is_none()
-        && !crate::dreamer_runner::authority::is_base_agent_actor(&fixed.id)?
+        && !crate::store::base_agent::is_base_agent_actor(&fixed.id)?
         && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &fixed.id)?
     {
         return Err(Error::InvariantViolation(
@@ -67,7 +68,7 @@ pub(super) fn rewrite_put_body(
         ));
     }
     let evicted_shell_sources = if dispatch.authority_dominates_key_squatter || revision.squatter {
-        evict_authority_log_store_key_squatter(store, wtxn, &fixed.id)?
+        evict_authority_log_store_key_squatter(write, wtxn, &fixed.id)?
     } else {
         BTreeSet::new()
     };
@@ -96,7 +97,9 @@ pub(super) fn rewrite_put_body(
                 updated,
                 fixed.hub_admission,
             )? {
-                Some(crate::skill::encode_skill_record(updated)?)
+                Some(crate::write_envelope::skill_record::encode_skill_record(
+                    updated,
+                )?)
             } else {
                 None
             }

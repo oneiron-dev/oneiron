@@ -8,82 +8,18 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::{ModelId, ModelTierRef};
 use crate::pipeline::WorldScope;
-use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
+use crate::skill::SkillDependency;
 use rmpv::Value;
 
-/// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
-///
-/// `instructions`, `modelTier`, `world`, `ceiling`, `forkedFrom`, `logicalId`,
-/// and `displayName` are optional and elided from the encoded map when absent
-/// or default-valued (the elide-the-default pattern); every other key is
-/// required. Decode rejects any key outside this set, so the schema is a
-/// review-visible contract and hosts cannot add fields. A body with
-/// `ceiling = proposed` (the default) and no fork lineage encodes
-/// byte-identically to the pre-AGENT-2 17-key codec.
-///
-/// `enabled` is the SOLE always-encode exception (ONE-1890): a decode default
-/// alone would let a seeded `enabled: true` row encode differently across
-/// vaults, breaking byte-identical cross-vault seeding.
-///
-/// `memory_profile` (RT-05, ONE-1687) and the dreaming mode/model fields
-/// append in that order and are elided when absent, so older bodies re-encode
-/// byte-for-byte. Absent dreaming means inherit, on by default.
-///
-/// `refusal` (OF-533) appends next and is elided when absent; absent means
-/// every domain sits at the vault-kind default.
-///
-/// `models` and `compaction_model` (FIX 4472) append last, elided when empty
-/// or absent: no list runs the agent on its one house-routed model, and no
-/// compaction model takes the house's.
-pub const AGENT_DEF_BODY_KEYS: [&str; 29] = [
-    "agentId",
-    "desc",
-    "version",
-    "instructions",
-    "skills",
-    "connectors",
-    "codeModeMcps",
-    "modelTier",
-    "scope",
-    "world",
-    "ceiling",
-    "forkedFrom",
-    "approvalStatus",
-    "lifecycleStatus",
-    "source",
-    "confidence",
-    "generated",
-    "humanAuthored",
-    "provenance",
-    "logicalId",
-    "enabled",
-    "displayName",
-    "memory_profile",
-    "dreaming",
-    "dreamingModel",
-    "wakeCadence",
-    "refusal",
-    "models",
-    "compaction_model",
-];
+pub use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
 
-/// The pinned key pair for an [`McpRef`] sub-map.
-pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
+pub use crate::store::agent_record::MCP_REF_KEYS;
 
-/// The pinned key pair for one [`AgentModel`] entry, in encode order.
-pub const AGENT_MODEL_KEYS: [&str; 2] = ["model_ref", "when"];
+pub use crate::store::agent_record::AGENT_MODEL_KEYS;
 
-/// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
-pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
-    "window_token_budget",
-    "budget_split",
-    "compaction_backend",
-    "compaction",
-    "hot_steps",
-    "output_decay",
-    "verbatim_pins",
-    "optional_memory",
-];
+pub use crate::store::agent_record::MEMORY_PROFILE_KEYS;
+
+pub(super) use crate::store::agent_definition_codec::keys::MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES;
 
 /// The `memory_profile.compaction_backend` value that makes an agent its own
 /// compaction writer (FIX 4465): each epoch and fold summary is written AS
@@ -92,196 +28,29 @@ pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
 /// table's self-compaction row. Every other key keeps its backend unchanged.
 pub(crate) const SELF_COMPACTION_BACKEND: &str = "self";
 
-/// The pinned sub-map keys for a profile's `output_decay`, in encode order.
-pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
+pub use crate::store::agent_record::CONTEXT_BUDGET_SPLIT_KEYS;
 
-/// Bytes of one verbatim pin past which a put asks (the length it once
-/// refused past); a pin of any length is kept, as any number of pins is.
-pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
+pub use crate::store::agent_record::AGENT_ID_MAX_BYTES;
 
-/// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
-pub const CONTEXT_BUDGET_SPLIT_KEYS: [&str; 4] = ["claims", "turns", "summaries", "other"];
+pub use crate::store::agent_record::AGENT_DESC_MAX_BYTES;
 
-/// Bytes of an `agent_id` past which a put asks; any length is kept.
-pub const AGENT_ID_MAX_BYTES: usize = 256;
+pub use crate::store::agent_record::AGENT_VERSION_MAX_BYTES;
 
-/// Bytes of a `desc` past which a put asks; any length is kept.
-pub const AGENT_DESC_MAX_BYTES: usize = 4096;
+pub use crate::store::agent_record::AGENT_INSTRUCTIONS_MAX_BYTES;
 
-/// Bytes of a `version` (or a ref's `min_version`) past which a put asks.
-pub const AGENT_VERSION_MAX_BYTES: usize = 128;
+pub use crate::store::agent_record::AGENT_MODEL_TIER_MAX_BYTES;
 
-/// Bytes of the optional `instructions` past which a put asks; any are kept.
-pub const AGENT_INSTRUCTIONS_MAX_BYTES: usize = 16_384;
+pub use crate::store::agent_record::AGENT_REF_KEY_MAX_BYTES;
 
-/// Bytes of a `model_tier` or model reference past which a put asks.
-pub const AGENT_MODEL_TIER_MAX_BYTES: usize = 256;
+pub use crate::store::agent_record::AGENT_MAX_LIST_ENTRIES;
 
-/// Bytes of a skill/connector/MCP id or key past which a put asks.
-pub const AGENT_REF_KEY_MAX_BYTES: usize = 256;
+pub(super) use crate::store::agent_manifest::{
+    AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, SYSTEM_AGENT_DEFINITIONS_V1_JSON,
+};
 
-/// Entries in one composition list past which a definition's put asks
-/// whether everything is okay (the count it once refused past); every entry
-/// is kept, however many (rule 5).
-pub const AGENT_MAX_LIST_ENTRIES: usize = 64;
+pub use crate::store::agent_record::McpRef;
 
-pub(super) const KEY_AGENT_ID: &str = AGENT_DEF_BODY_KEYS[0];
-
-pub(super) const KEY_DESC: &str = AGENT_DEF_BODY_KEYS[1];
-
-pub(super) const KEY_VERSION: &str = AGENT_DEF_BODY_KEYS[2];
-
-pub(super) const KEY_INSTRUCTIONS: &str = AGENT_DEF_BODY_KEYS[3];
-
-pub(super) const KEY_SKILLS: &str = AGENT_DEF_BODY_KEYS[4];
-
-pub(super) const KEY_CONNECTORS: &str = AGENT_DEF_BODY_KEYS[5];
-
-pub(super) const KEY_CODE_MODE_MCPS: &str = AGENT_DEF_BODY_KEYS[6];
-
-pub(super) const KEY_MODEL_TIER: &str = AGENT_DEF_BODY_KEYS[7];
-
-pub(super) const KEY_SCOPE: &str = AGENT_DEF_BODY_KEYS[8];
-
-pub(super) const KEY_WORLD: &str = AGENT_DEF_BODY_KEYS[9];
-
-pub(super) const KEY_CEILING: &str = AGENT_DEF_BODY_KEYS[10];
-
-pub(super) const KEY_FORKED_FROM: &str = AGENT_DEF_BODY_KEYS[11];
-
-pub(super) const KEY_APPROVAL_STATUS: &str = AGENT_DEF_BODY_KEYS[12];
-
-pub(super) const KEY_LIFECYCLE_STATUS: &str = AGENT_DEF_BODY_KEYS[13];
-
-pub(super) const KEY_SOURCE: &str = AGENT_DEF_BODY_KEYS[14];
-
-pub(super) const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[15];
-
-pub(super) const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[16];
-
-pub(super) const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[17];
-
-pub(super) const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[18];
-
-pub(super) const KEY_LOGICAL_ID: &str = AGENT_DEF_BODY_KEYS[19];
-
-pub(super) const KEY_ENABLED: &str = AGENT_DEF_BODY_KEYS[20];
-
-pub(super) const KEY_DISPLAY_NAME: &str = AGENT_DEF_BODY_KEYS[21];
-
-pub(super) const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
-
-pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
-
-pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
-pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
-
-pub(super) const KEY_REFUSAL: &str = AGENT_DEF_BODY_KEYS[26];
-
-pub(super) const KEY_MODELS: &str = AGENT_DEF_BODY_KEYS[27];
-
-pub(super) const KEY_COMPACTION_MODEL: &str = AGENT_DEF_BODY_KEYS[28];
-
-pub(super) const KEY_MODEL_REF: &str = AGENT_MODEL_KEYS[0];
-
-pub(super) const KEY_MODEL_WHEN: &str = AGENT_MODEL_KEYS[1];
-
-pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
-
-pub(super) const KEY_PROFILE_BUDGET_SPLIT: &str = MEMORY_PROFILE_KEYS[1];
-
-pub(super) const KEY_PROFILE_COMPACTION_BACKEND: &str = MEMORY_PROFILE_KEYS[2];
-
-pub(super) const KEY_PROFILE_COMPACTION: &str = MEMORY_PROFILE_KEYS[3];
-
-pub(super) const KEY_PROFILE_HOT_STEPS: &str = MEMORY_PROFILE_KEYS[4];
-
-pub(super) const KEY_PROFILE_OUTPUT_DECAY: &str = MEMORY_PROFILE_KEYS[5];
-
-pub(super) const KEY_PROFILE_VERBATIM_PINS: &str = MEMORY_PROFILE_KEYS[6];
-
-pub(super) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[7];
-
-pub(super) const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
-
-pub(super) const KEY_SPLIT_TURNS: &str = CONTEXT_BUDGET_SPLIT_KEYS[1];
-
-pub(super) const KEY_SPLIT_SUMMARIES: &str = CONTEXT_BUDGET_SPLIT_KEYS[2];
-
-pub(super) const KEY_SPLIT_OTHER: &str = CONTEXT_BUDGET_SPLIT_KEYS[3];
-
-pub(super) const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
-
-pub(super) const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
-
-pub(super) const KEY_MCP_KEY: &str = MCP_REF_KEYS[0];
-
-pub(super) const KEY_MCP_MIN_VERSION: &str = MCP_REF_KEYS[1];
-
-pub(super) const SCOPE_ALL: &str = "all";
-
-pub(super) const SCOPE_BASE: &str = "base";
-
-pub(super) const SCOPE_WORLD: &str = "world";
-
-/// Reserved logical-id prefix for seeded system rows. Enforced at the
-/// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
-/// place that holds both the body and the row id it is being stored at.
-pub(super) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
-
-/// Bytes of a `logical_id` past which a put asks; any length is kept.
-pub(super) const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;
-
-/// Bytes of the runtime-editable `display_name` past which a put asks.
-pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
-
-/// A versioned reference to a code-mode MCP, patterned on [`SkillDependency`].
-///
-/// `min_version` is the cheap forward hook for the OF-215 trajectory where MCPs
-/// become versioned entities; today it is stored verbatim and never
-/// existence-checked at write time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct McpRef {
-    pub key: String,
-    pub min_version: Option<String>,
-}
-
-impl McpRef {
-    #[must_use]
-    pub fn new(key: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            min_version: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_min_version(key: impl Into<String>, min_version: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            min_version: Some(min_version.into()),
-        }
-    }
-}
-
-/// The run scope persisted with an `AgentDefinition`.
-///
-/// A new persisted descriptor rather than an embedded [`WorldScope`], which is
-/// a runtime-only type that does not implement `Serialize`. `World` carries the
-/// world's [`EntityId`], hex-encoded into the body. `WorldSet` is deliberately
-/// not modelled here — it is a repo-clamp key with no day-1 caller, and a later
-/// additive variant per the `#[non_exhaustive]` marker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AgentScope {
-    /// Span every world (the constructor default; matches `PipelineBuilder`).
-    All,
-    /// Base-reality only.
-    Base,
-    /// This world plus base reality.
-    World(EntityId),
-}
+pub use crate::store::agent_scope::AgentScope;
 
 impl AgentScope {
     /// Maps to the runtime [`WorldScope`] a dispatch layer (AGENT-3) reconstitutes.
@@ -293,201 +62,15 @@ impl AgentScope {
             Self::World(world) => WorldScope::World(*world),
         }
     }
-
-    pub(super) fn discriminant(&self) -> &'static str {
-        match self {
-            Self::All => SCOPE_ALL,
-            Self::Base => SCOPE_BASE,
-            Self::World(_) => SCOPE_WORLD,
-        }
-    }
 }
 
-/// The authored approval-ceiling bound persisted on an `AgentDefinition`
-/// (OF-074: binary — the third trust tier is compositional, not a variant).
-///
-/// This is the agent's *self-limit*, not the owner's grant: effective
-/// authority at every gate evaluation is `definition ceiling ∧ preset bound ∧
-/// manifest actor_ceilings projection` (the meet across all three), so a
-/// stored `Auto` never bypasses the owner-signed manifest. A persisted-
-/// descriptor mirror of the gate's `PolicyApprovalCeiling` (which stays
-/// `pub(crate)`); the conversion lives gate-side so this module never imports
-/// gate types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentCeiling {
-    Auto,
-    Proposed,
-}
+pub use crate::store::agent_record::{
+    AgentCeiling, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode,
+};
 
-impl AgentCeiling {
-    /// The pinned wire string, matching `PolicyApprovalCeiling` vocabulary.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Proposed => "proposed",
-        }
-    }
+pub use crate::store::agent_memory_profile::MemoryProfile;
 
-    /// Parses the pinned wire vocabulary (`"auto"` / `"proposed"`).
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "proposed" => Some(Self::Proposed),
-            _ => None,
-        }
-    }
-
-    /// True iff `self` requests wider authority than `bound` — the only
-    /// ordering the no-widen rule ever needs.
-    #[must_use]
-    pub const fn widens_beyond(self, bound: Self) -> bool {
-        matches!((self, bound), (Self::Auto, Self::Proposed))
-    }
-}
-
-/// Who compacts an agent's context WINDOW (RT-05, ONE-1687).
-///
-/// MEMORY consolidation is the Dreamer's regardless of this flag — that half
-/// is not a field, it is a law. This flag says only who owns the WINDOW, and
-/// it follows execution ownership so a window is never double-compacted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactionOwnership {
-    /// First-party code mode: the engine compacts the window.
-    Engine,
-    /// A bring-your-own-agent harness self-compacts; the engine NEVER touches
-    /// its window.
-    Byoa,
-}
-
-impl CompactionOwnership {
-    /// Pinned wire string for [`Self::Engine`].
-    pub const ENGINE: &'static str = "engine";
-    /// Pinned wire string for [`Self::Byoa`].
-    pub const BYOA: &'static str = "byoa";
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Engine => Self::ENGINE,
-            Self::Byoa => Self::BYOA,
-        }
-    }
-
-    /// Parses the pinned wire vocabulary. Unknown strings are typed decode
-    /// errors, never a default.
-    pub fn parse(value: &str) -> Result<Self> {
-        match value {
-            Self::ENGINE => Ok(Self::Engine),
-            Self::BYOA => Ok(Self::Byoa),
-            _ => Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "memory_profile compaction must be one of engine|byoa",
-            ))),
-        }
-    }
-}
-
-/// How a resident's own dreaming chooses its model and window.
-///
-/// `Inherit` shares the vault weaver model and window, never the resident's
-/// diary. `Own` uses the resident's model slot (or its talking model when the
-/// slot is unset). `Off` disables that resident's dreaming, not the vault weave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DreamingMode {
-    Own,
-    Inherit,
-    Off,
-}
-
-impl DreamingMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Own => "own",
-            Self::Inherit => "inherit",
-            Self::Off => "off",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "own" => Some(Self::Own),
-            "inherit" => Some(Self::Inherit),
-            "off" => Some(Self::Off),
-            _ => None,
-        }
-    }
-}
-
-/// Resident wake dial. A cadence interval of `None` inherits the vault grain.
-/// Surprise and agency are independent signals; a worker never wakes on time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentWakeCadence {
-    Companion { every_turns: Option<u64> },
-    Leader { every_turns: Option<u64> },
-    Worker,
-}
-
-/// Optional per-entity-class share of the window budget.
-///
-/// Absent means the engine default split holds. Every fraction is validated
-/// finite and strictly inside `(0.0, 1.0)`, and the four sum to `1.0 ± 1e-6`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
-pub struct ContextBudgetSplit {
-    pub claims: f32,
-    pub turns: f32,
-    pub summaries: f32,
-    pub other: f32,
-}
-
-impl ContextBudgetSplit {
-    #[must_use]
-    pub const fn new(claims: f32, turns: f32, summaries: f32, other: f32) -> Self {
-        Self {
-            claims,
-            turns,
-            summaries,
-            other,
-        }
-    }
-}
-
-/// The per-agent context-window memory profile (RT-05, ONE-1687).
-///
-/// Additive and optional: an `AgentDefinition` carrying `None` reproduces
-/// today's behavior byte-for-byte, so the record grew without moving any
-/// existing agent's assembly.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct MemoryProfile {
-    /// Context-window token budget for this agent — the lift of
-    /// `context_pack`'s builder-constant default.
-    pub window_token_budget: u64,
-    /// Optional per-entity-class split; absent = the engine default split.
-    pub budget_split: Option<ContextBudgetSplit>,
-    /// Host-registered compaction backend key. Resolved against the
-    /// compaction registry at drive time; never a frontier tier. The ban is
-    /// enforced at registration, not by sniffing this string.
-    pub compaction_backend: ModelTierRef,
-    /// Who compacts this agent's context WINDOW.
-    pub compaction: CompactionOwnership,
-    /// How many recent steps stay raw past a compaction (agent-runtime-v1
-    /// #d7 hot window, Docs Q13); absent = the host's configured hot window.
-    pub hot_steps: Option<u64>,
-    /// When a stored output decays to its overview, then to a stub, in turns
-    /// (#d7 decay thresholds); absent = the executor's default decay.
-    pub output_decay: Option<crate::compaction::output::OutputDecayPolicy>,
-    /// Literal text every summary of this agent's window keeps verbatim when
-    /// the span holds it (#d7 verbatim pins). User messages and failure lines
-    /// stay pinned regardless; these are added, never a replacement.
-    pub verbatim_pins: Vec<String>,
-    /// The optional recall this reader takes per task family; absent = the
-    /// caller's request as sent. Separate from the window above.
-    pub optional_memory: Option<OptionalMemoryProfile>,
-}
+pub use crate::store::agent_definition::AgentDefinition;
 
 impl MemoryProfile {
     #[must_use]
@@ -547,67 +130,6 @@ impl MemoryProfile {
         self.optional_memory = Some(optional_memory);
         self
     }
-}
-
-/// A saved, host-agnostic agent composition record.
-///
-/// The lifecycle block (`approval_status` … `provenance`) is the shared
-/// `SkillRecord` machinery, field-for-field. `generated`/`human_authored` are a
-/// mutually-exclusive authorship pair and `generated` tracks
-/// `source == ClaimSource::Generated`; both invariants are frozen on update.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct AgentDefinition {
-    pub agent_id: String,
-    pub desc: String,
-    pub version: String,
-    pub instructions: Option<String>,
-    pub skills: Vec<SkillDependency>,
-    pub connectors: Vec<String>,
-    pub code_mode_mcps: Vec<McpRef>,
-    pub model_tier: Option<ModelTierRef>,
-    pub scope: AgentScope,
-    pub ceiling: AgentCeiling,
-    /// The fork parent's stored row id. Frozen on update.
-    pub forked_from: Option<EntityId>,
-    pub approval_status: ClaimApprovalStatus,
-    pub lifecycle_status: ClaimLifecycleStatus,
-    pub source: ClaimSource,
-    pub confidence: f32,
-    pub generated: bool,
-    pub human_authored: bool,
-    pub provenance: Value,
-    /// Stable lookup key for a seeded row (`sys.*`). User-created definitions
-    /// carry `None`; once `Some`, it is frozen on update.
-    pub logical_id: Option<String>,
-    /// Whether this definition may be dispatched. Row state, not absence —
-    /// reseeding never resurrects a user's "off".
-    pub enabled: bool,
-    /// Runtime-editable display name; deliberately NOT in the freeze-set.
-    pub display_name: Option<String>,
-    /// Per-agent context-window memory profile (RT-05, ONE-1687). A dial, not
-    /// identity: it may change on update under the ordinary version-bump rule,
-    /// so it is deliberately NOT in the freeze-set.
-    pub memory_profile: Option<MemoryProfile>,
-    /// Absent means enabled and inheriting the vault weaver model and window.
-    pub dreaming: Option<DreamingMode>,
-    /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
-    pub dreaming_model: Option<ModelTierRef>,
-    /// An absent role follows the owner-editable wake-policy absent-role row.
-    pub wake_cadence: Option<AgentWakeCadence>,
-    /// Her refusal dial (OF-533). Absent, or a domain left unset, takes the
-    /// vault-kind default; resolve through [`super::resolve_refusal`]. A
-    /// dial, not identity: deliberately NOT in the freeze-set.
-    pub refusal: Option<RefusalDial>,
-    /// The models the agent may run on, in its owner's order, each with the
-    /// owner's words on when (FIX 4472). Empty: its one house-routed model.
-    /// A dial, not identity: deliberately NOT in the freeze-set.
-    pub models: Vec<AgentModel>,
-    /// The model that compacts the agent's window; absent takes the default
-    /// its host supplies (for a `self` writer, the self-compaction row's
-    /// cheap model, FIX 6029). It need not be listed; resolve through
-    /// [`super::resolve_compaction_model`].
-    pub compaction_model: Option<ModelId>,
 }
 
 impl AgentDefinition {
@@ -745,13 +267,6 @@ impl AgentDefinition {
         self
     }
 }
-
-/// The canonical seeded system-agent roster (OF-334 / ONE-1890): data, not a
-/// compiled enum. Every baseline row is an ordinary byte-17 `AGENT_DEF` entity
-/// with a pinned row id, a pinned actor id equal to it, and a stable `sys.*`
-/// logical id. ONE-1709 appends `sys.team_lead` to this same file.
-pub(super) const SYSTEM_AGENT_DEFINITIONS_V1_JSON: &str =
-    include_str!("data/system_agent_definitions.v1.json");
 
 /// Seam shim (SEAM-GATE-PRESET-NEUTRALIZATION): gate.rs resolves a fork parent
 /// through ONE call. Post-ONE-1890 `forked_from` already IS the parent row id,

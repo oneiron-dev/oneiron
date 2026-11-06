@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, Outcome,
-    Payload, SharedRegion,
+    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, Outcome, Payload, SharedRegion,
 };
 
 use crate::asks::{AskContext, CallAsks};
@@ -30,6 +29,7 @@ mod outputs;
 mod sized;
 
 use outputs::{Called, Replied, finish};
+pub use sized::LentRegion;
 pub use sized::{CallMeasure, CallSize};
 use sized::{OneCall, Run};
 
@@ -55,6 +55,12 @@ struct Resolved {
     hash: Hash32,
     len: u64,
     held: Held,
+}
+
+/// One input lent as bytes, or already copied into its call-owned region.
+pub(super) enum Lent {
+    Bytes(Option<OrganInput>, LentInput),
+    Region(LentRegion),
 }
 
 /// The engine side of the organ protocol.
@@ -388,14 +394,27 @@ impl OrganHost {
         asks: &AskHandlers<'_>,
         cancel: &MeshCancel,
     ) -> Result<OrganOutcome, HostError> {
-        cancel.scope(|| shutdown::settle(self.run(vault, call, inputs, asks, Run::Warm)))
+        cancel.scope(|| {
+            shutdown::settle(
+                self.run(
+                    vault,
+                    call,
+                    inputs
+                        .into_iter()
+                        .map(|(of, input)| Lent::Bytes(of, input))
+                        .collect(),
+                    asks,
+                    Run::Warm,
+                ),
+            )
+        })
     }
 
     fn run(
         &self,
         vault: &Vault,
         call: OrganCall,
-        lent: Vec<(Option<OrganInput>, LentInput)>,
+        lent: Vec<Lent>,
         asks: &AskHandlers<'_>,
         mut how: Run<'_>,
     ) -> Result<OrganOutcome, HostError> {
@@ -407,7 +426,12 @@ impl OrganHost {
         // longer one, up to `Duration::MAX`, waits that long and never
         // overflows the clock.
         let longest = Duration::from_millis(u64::from(u32::MAX));
-        let deadline = begun + call.deadline.min(longest);
+        let fixed_deadline = how.until().is_some();
+        let deadline = how
+            .until()
+            .map_or(begun + call.deadline.min(longest), |until| {
+                until.min(begun + longest)
+            });
         self.unload_idle();
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
@@ -428,9 +452,6 @@ impl OrganHost {
         {
             return Err(HostError::KindNotGranted(body.kind.clone()));
         }
-        if call.inputs.len() + lent.len() > MAX_FDS_PER_FRAME {
-            return Err(HostError::TooManyInputs);
-        }
         let booking = how.booking(&slot.spec);
         // The call's room: its booking, grown as its answers and outputs
         // need (FIX 5284), and as the organ's own buffers lease the machine's
@@ -442,8 +463,11 @@ impl OrganHost {
             .iter()
             .map(|input| self.resolve(vault, &slot.spec, *input))
             .collect::<Result<Vec<_>, _>>()?;
-        for (of, input) in lent {
-            inputs.push(self.lend(&slot.spec, input, of)?);
+        for input in lent {
+            inputs.push(match input {
+                Lent::Bytes(of, input) => self.lend(&slot.spec, input, of)?,
+                Lent::Region(input) => input.resolve(&slot.spec)?,
+            });
         }
         let frames = self.budget.room(self.floor.clone());
         let process = if how.fresh() {
@@ -484,7 +508,15 @@ impl OrganHost {
             &call.grant,
             inline_max,
         );
-        let exchanged = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline);
+        let exchanged = self.exchange(
+            &slot,
+            &process,
+            &call,
+            &inputs,
+            &mut asked,
+            deadline,
+            fixed_deadline,
+        );
         how.measured(&process);
         // The deadline as the exchange's waits for room moved it: the
         // outputs count on from there (FIX 8020).
@@ -534,6 +566,7 @@ impl OrganHost {
         inputs: &[Resolved],
         asked: &mut CallAsks<'_>,
         deadline: Instant,
+        fixed_deadline: bool,
     ) -> Result<Exchanged, HostError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let (wire_inputs, fds) = wire_inputs(inputs);
@@ -556,6 +589,7 @@ impl OrganHost {
             },
             asks: asked,
             deadline,
+            fixed_deadline,
             grace,
         };
         match process.call(wire, &fds, wait) {
@@ -701,8 +735,10 @@ impl OrganHost {
 }
 
 /// Bytes a local caller lent: no vault version stands behind them.
-fn unvouched(lent: Vec<LentInput>) -> Vec<(Option<OrganInput>, LentInput)> {
-    lent.into_iter().map(|input| (None, input)).collect()
+fn unvouched(lent: Vec<LentInput>) -> Vec<Lent> {
+    lent.into_iter()
+        .map(|input| Lent::Bytes(None, input))
+        .collect()
 }
 
 fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
@@ -713,7 +749,8 @@ fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
             let data = match &resolved.held {
                 Held::Inline(bytes) => Payload::Inline(ByteBuf::from(bytes.clone())),
                 Held::Region(region) => {
-                    let slot = u16::try_from(fds.len()).unwrap_or(u16::MAX);
+                    // Any number: the call's frames carry every region.
+                    let slot = fds.len() as u64;
                     fds.push(region.fd());
                     Payload::Slot(slot)
                 }
@@ -729,9 +766,9 @@ fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
     (wire, fds)
 }
 
-/// Measures the largest frames a call's process carried for it against
-/// the install grant's own frame sizes: thresholds, never refusals, under
-/// the wire's own `u32` length (Rule 5).
+/// Measures the largest messages a call's process carried for it against
+/// the install grant's own frame sizes: thresholds, never refusals; a
+/// message takes as many frames as it needs (Rule 5).
 fn measure_frames(vault: &Vault, spec: &OrganSpec, (sent, received): (u64, u64)) {
     let rows = [
         (EngineLimit::OrganCallFrameBytes, spec.max_call_frame, sent),

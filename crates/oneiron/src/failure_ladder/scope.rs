@@ -4,7 +4,7 @@ use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_dispatch::HealerSlot;
+use crate::failure_ladder::healer_dispatch::HealerSlot;
 
 use super::classify::DEFAULT_MAX_CONSECUTIVE_TRANSIENTS;
 
@@ -36,6 +36,26 @@ pub struct FailureScopePolicy {
 }
 
 impl FailureScopePolicy {
+    /// Selects the configured healer without changing the scope's retry cap.
+    /// A reserved slot stays human-only; an explicit healer selects auto escalation.
+    #[must_use]
+    pub fn for_healer(
+        scope: FailureScope,
+        max_consecutive_transients: NonZeroU16,
+        healer_slot: HealerSlot,
+    ) -> Self {
+        let escalation_mode = match &healer_slot {
+            HealerSlot::Reserved => FailureEscalationMode::Human,
+            HealerSlot::Coach | HealerSlot::AgentDef { .. } => FailureEscalationMode::Auto,
+        };
+        Self {
+            scope,
+            max_consecutive_transients,
+            escalation_mode,
+            healer_slot,
+        }
+    }
+
     /// The default policy: N=3, Auto escalation that wakes the Coach.
     #[must_use]
     pub const fn auto(scope: FailureScope) -> Self {

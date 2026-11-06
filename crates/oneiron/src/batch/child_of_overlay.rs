@@ -7,11 +7,12 @@ use heed::RwTxn;
 use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
-use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 #[derive(Debug, Default)]
 pub(super) struct ChildOfBatchOverlay {
@@ -531,7 +532,7 @@ pub(super) fn effective_entity_after_batch(
     let Some(body) = put.task_body.as_deref() else {
         return Ok(EffectiveEntity::NonTask(put.entity_type));
     };
-    crate::habit::task_role_from_body_bytes(body).map(EffectiveEntity::Task)
+    crate::write_envelope::task_body::task_role_from_body_bytes(body).map(EffectiveEntity::Task)
 }
 
 /// One entity's CURRENTLY STORED state, before any of this batch's ops.
@@ -549,7 +550,7 @@ pub(super) fn stored_entity(
     if header.entity_type != ENTITY_TYPE_TASK {
         return Ok(EffectiveEntity::NonTask(header.entity_type));
     }
-    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+    crate::write_envelope::task_body::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map(EffectiveEntity::Task)
 }
 
@@ -626,7 +627,7 @@ pub(super) fn recompute_touched_habit_streaks_in_txn(
 ) -> Result<()> {
     for habit_id in candidates {
         if stored_task_role(store, &*wtxn, habit_id)? == Some(TaskRole::Habit) {
-            crate::habit::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
+            crate::store::habit_streak::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
         }
     }
     Ok(())
@@ -641,9 +642,10 @@ pub(super) fn validate_immutable_task_record(
     data: &[u8],
     body_changed: bool,
 ) -> Result<()> {
-    let old_role =
-        crate::habit::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
-    let new_role = crate::habit::task_role_from_body_bytes(data)?;
+    let old_role = crate::write_envelope::task_body::task_role_from_body_bytes(
+        &old_record[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    let new_role = crate::write_envelope::task_body::task_role_from_body_bytes(data)?;
     // A habit check-in and an engine-authored authority fact (the proof of a
     // task's owner) are immutable: only an exact echo, local or replicated,
     // may land at their id. A same-type put can neither rewrite the fact's

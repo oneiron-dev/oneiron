@@ -12,12 +12,13 @@
 //! reply says so, rather than carrying a ref.
 //!
 //! A transport's reply does not wait for that row's commit (Engine ruling
-//! 10-30 23:09, [`Vault::record_call_receipt_deferred_commit`]): the row is
-//! staged in the vault's group commit, in arrival order and through the
-//! side-row wall, before the reply, and commits with that group after it. A
-//! crash can lose the last receipts of calls whose answers already went out;
-//! a clean close keeps them, and a lookup of a ref reads its row once that
-//! commit is decided.
+//! 10-30 23:09, [`Vault::record_call_receipt_deferred_commit`]), nor for the
+//! writer (FIX 12023): the ref is minted before the reply and the row queues
+//! in the vault's group commit as a detached write, in arrival order; it is
+//! staged through the side-row wall and committed with a group after the
+//! reply. A crash can lose the last receipts of calls whose answers already
+//! went out; a clean close keeps them, and a lookup of a ref reads its row
+//! once that commit is decided.
 //!
 //! A reply no credential attributed (a pre-auth refusal, a protocol-only
 //! reply) is recorded too, attributed to the connection it arrived on: its
@@ -29,7 +30,9 @@
 //! classes); erasing an actor is one-way and rewrites who called in each of
 //! its receipts to [`ERASED_CALL_IDENTITY`], keeping each receipt, its ref
 //! and its time, and drops the attempt each named
-//! (`Vault::erase_call_receipt_actor_in_txn`). No prune policy ages them out.
+//! (`Vault::erase_call_receipt_actor_in_txn`). A deferred receipt landing
+//! after that actor's hard-delete marker applies the same scrub in its own
+//! writer before storage, keeping the receipt. No prune policy ages them out.
 //!
 //! OF-568 L4: a call that held a live run states the attempt it ran inside
 //! ([`CallAttemptRef`]), as the host witnessed it at the hold
@@ -47,18 +50,22 @@
 //! the same action on the same inputs. A call whose inputs were not
 //! captured states none, and is never read as equal to another.
 
+mod call_agent_witness;
+
+pub(crate) use call_agent_witness::unread_call_receipt_actor_in_txn;
+
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{
-    Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
-};
+use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::Rows;
+use crate::store::DetachedWrite;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The prefix every call receipt ref carries.
 pub const CALL_RECEIPT_REF_PREFIX: &str = "call:";
@@ -75,10 +82,7 @@ const MAX_CALL_RECEIPT_FIELD_BYTES: usize = 256;
 /// `actor_ref` is the connection's id, and no person is named.
 pub const CONNECTION_CALL_ACTOR_CLASS: &str = "connection";
 
-/// What an erased actor's call receipts state in place of who called: the
-/// actor, its class and the credential it presented (FIX 812). Engine call
-/// 10-18, behind this one constant.
-pub const ERASED_CALL_IDENTITY: &str = "erased";
+pub use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
 /// The wire a call arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -231,7 +235,7 @@ impl CallAttemptWitness {
 /// it ran (agent-mind §4.3): each input's name and the version it had then.
 /// A run whose inputs were not captured has none, so its action digest is
 /// `None`: unknown inputs never read as equal ones.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionInputs(BTreeMap<String, String>);
 
 /// The domain an action digest is taken in, so it never equals another
@@ -384,6 +388,11 @@ fn bounded(mut text: String) -> String {
     text
 }
 
+/// The `call:<32hex>` ref of the receipt `id` names.
+fn call_receipt_ref(id: &EntityId) -> String {
+    format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex())
+}
+
 /// The id a `call:<32hex>` ref names; `None` for anything else.
 fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
     let hex = receipt_ref.strip_prefix(CALL_RECEIPT_REF_PREFIX)?;
@@ -416,7 +425,7 @@ impl Vault {
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
         );
-        let graph = crate::ppr::read_graph_version(&self.store, &txn)?;
+        let graph = crate::store::graph_version::read_graph_version(&self.store, &txn)?;
         let mut inputs = ActionInputs::new()
             .with("vault.changes", head)
             .with("vault.graph", graph.to_string());
@@ -446,15 +455,17 @@ impl Vault {
         self.with_write_txn_grouped(|txn| self.record_call_receipt_in_txn(txn, input))
     }
 
-    /// [`Self::record_call_receipt`] for a transport's reply path, without
-    /// waiting for the row's commit and its data sync (Engine ruling 10-30
-    /// 23:09). The row is staged in the vault's group commit in arrival
-    /// order, its id, time and side-row wall included, and the ref comes back
-    /// once it is staged: a receipt refused there is refused before the
-    /// reply, as before. The group's leader commits it after the reply. A
-    /// crash before that commit loses the receipt of a call whose answer
-    /// already went out; a clean close keeps it, and a lookup of the ref
-    /// waits for it ([`Memory::call_receipt`]).
+    /// [`Self::record_call_receipt`] for a transport's reply path, waiting
+    /// for neither the writer nor the row's stage nor its commit (Engine
+    /// ruling 10-30 23:09; FIX 12023). The receipt's id, and so its ref, is
+    /// minted here from the vault's id source, as the row would mint it, and
+    /// the row queues as a detached write in the vault's group commit, in
+    /// arrival order: its time and side-row wall are taken when a group runs
+    /// it, after the reply, and that group commits it. A receipt the wall
+    /// refuses then is rolled back and said in a warn by name; the reply
+    /// carried its ref already. A crash before that commit loses the receipt
+    /// of a call whose answer already went out; a clean close keeps it, and a
+    /// lookup of the ref waits for it ([`Memory::call_receipt`]).
     ///
     /// The write carries its own row only: the general write door's
     /// per-write work (waiting scan checks, found-key notices, owed rederives
@@ -463,16 +474,19 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The clock's, the side-row wall's and storage errors met while the row
-    /// is staged.
-    pub fn record_call_receipt_deferred_commit(&self, input: CallReceiptInput) -> Result<String> {
-        self.store.group_write_deferred_commit(|txn| {
-            let _active_write_txn = crate::store::active_write_txn_guard();
-            match self.record_call_receipt_in_txn(txn, input) {
-                Ok(receipt_ref) => Rows::Commit(receipt_ref),
-                Err(error) => Rows::Discard(Err(error)),
-            }
-        })
+    /// The id source's errors.
+    pub fn record_call_receipt_deferred_commit(
+        self: &Arc<Self>,
+        input: CallReceiptInput,
+    ) -> Result<String> {
+        let id = self.store.clock.entity_id()?;
+        let receipt_ref = call_receipt_ref(&id);
+        self.store.group_write_detached(DetachedWrite::of_vault(
+            "call receipt",
+            self,
+            move |vault, txn| vault.put_call_receipt_in_txn(txn, id, input).map(drop),
+        ));
+        Ok(receipt_ref)
     }
 
     /// [`Self::record_call_receipt`] inside `txn`, for a writer whose own
@@ -484,13 +498,24 @@ impl Vault {
         input: CallReceiptInput,
     ) -> Result<String> {
         let id = self.store.clock.entity_id()?;
-        let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
+        self.put_call_receipt_in_txn(txn, id, input)
+    }
+
+    /// Writes the receipt `id` names inside `txn`, through the side-row wall,
+    /// stamped with the vault clock now; returns its ref.
+    fn put_call_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        input: CallReceiptInput,
+    ) -> Result<String> {
+        let receipt_ref = call_receipt_ref(&id);
         let mut served = input.served;
         served.truncate(MAX_CALL_RECEIPT_SERVED);
         let action_digest = input
             .inputs
             .map(|inputs| inputs.action_digest(&input.verb, &input.request_digest));
-        let receipt = CallReceipt {
+        let mut receipt = CallReceipt {
             receipt_ref: receipt_ref.clone(),
             at: self.store.clock.now_recorded_at(),
             transport: input.transport,
@@ -513,8 +538,46 @@ impl Vault {
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
-        CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+        if self.call_receipt_actor_erased_in_txn(&*txn, &receipt.actor_ref)? {
+            receipt.actor_ref = ERASED_CALL_IDENTITY.to_owned();
+            receipt.actor_class = ERASED_CALL_IDENTITY.to_owned();
+            if receipt.credential_ref.is_some() {
+                receipt.credential_ref = Some(ERASED_CALL_IDENTITY.to_owned());
+            }
+            receipt.attempt_ref = None;
+        }
+        let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+        let stored = CALL_RECEIPTS.decode_value(&stored)?;
+        call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
         Ok(receipt_ref)
+    }
+
+    /// Whether a late receipt names an actor the vault already hard-erased.
+    fn call_receipt_actor_erased_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor_ref: &str,
+    ) -> Result<bool> {
+        let Ok(actor) = EntityId::from_hex(actor_ref) else {
+            return Ok(false);
+        };
+        if actor.to_hex() != actor_ref
+            || !self.local_hard_delete_marker_exists_in_txn(txn, &actor)?
+        {
+            return Ok(false);
+        }
+        if let Some(raw) = self.get_raw_in(txn, &actor)?
+            && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+            && !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON
+                    | crate::registry::ENTITY_TYPE_MACHINE
+                    | crate::registry::ENTITY_TYPE_AGENT_DEF
+            )
+        {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// The final delivery of a call whose answer was replaced when it was
@@ -556,7 +619,9 @@ impl Vault {
                 served_records: Vec::new(),
                 ..original
             };
-            CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.put_as_stored(self, txn, &id, &receipt)?;
+            let stored = CALL_RECEIPTS.decode_value(&stored)?;
+            call_agent_witness::record_in_txn(self, txn, &id, &stored)?;
             Ok(Some(receipt_ref))
         })
     }
@@ -602,6 +667,7 @@ impl Vault {
             receipt.attempt_ref = None;
             CALL_RECEIPTS.put(self, wtxn, &id, &receipt)?;
         }
+        call_agent_witness::erase_actor_in_txn(self, wtxn, actor)?;
         Ok(())
     }
 }
@@ -659,8 +725,8 @@ impl Memory<'_> {
                     records.extend(read.value.as_ref().map(crate::lens::RecordRef::from_view));
                 }
                 Err(error)
-                    if error.code == crate::memory::MEMORY_CODE_NOT_FOUND
-                        || error.code == crate::memory::MEMORY_CODE_BAD_REQUEST => {}
+                    if error.code == oneiron_contracts::memory::MEMORY_CODE_NOT_FOUND
+                        || error.code == oneiron_contracts::memory::MEMORY_CODE_BAD_REQUEST => {}
                 Err(error) => return Err(error),
             }
         }

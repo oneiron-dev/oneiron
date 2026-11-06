@@ -13,14 +13,20 @@ mod dispatch_attempt_id;
 mod dispatch_pipeline;
 mod dispatch_types;
 mod executor;
+mod fair_line;
 mod intent;
+pub use oneiron_linkedin_policy as linkedin_policy;
 mod manifests;
 mod receipt_fields;
 mod recovery_suggestions;
 mod reply_content;
 mod reply_job;
+pub mod report_signature;
 mod retry_audit;
+mod schedule_contract;
+pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod served_sink;
+mod weave_digest_send;
 mod window_door;
 
 #[cfg(test)]
@@ -28,7 +34,11 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
-pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
+pub(crate) use self::fair_line::fair_line_order;
+
+pub use self::ambient_alternative::{
+    OutboundAmbientAlternative, OutboundScheduleContinuation, OutboundSendSelection,
+};
 pub(crate) use self::capability::OutboundReplaySafety;
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
@@ -47,6 +57,7 @@ pub(crate) use self::dispatch_attempt_id::{
     connector_logical_send_ref, outbound_dispatch_attempt_id,
 };
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
+pub(crate) use self::dispatch_pipeline::connector_slate_effect_from_frozen_payload;
 pub(crate) use self::dispatch_pipeline::outbound_gate_effect;
 pub(crate) use self::dispatch_pipeline::provider_retry_after_secs;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
@@ -77,8 +88,9 @@ pub use self::reply_job::{
     ConnectorReplyJobResult, ConnectorReplyStage,
 };
 pub use self::served_sink::{
-    LINE_API_BASE, OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints,
-    ServedTransports, TELEGRAM_API_BASE,
+    APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment, LINE_API_BASE,
+    OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints, ServedTransports,
+    TELEGRAM_API_BASE,
 };
 
 pub(crate) use self::connector_task::{
@@ -86,8 +98,12 @@ pub(crate) use self::connector_task::{
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::reply_job::{
-    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+    connector_event_participant_ids, erase_connector_reply_bodies_by_authors_in_txn,
+    erase_connector_reply_bodies_for_events_in_txn, erase_connector_reply_job_payload,
+    erase_connector_reply_results_in_txn,
 };
+pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
+pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

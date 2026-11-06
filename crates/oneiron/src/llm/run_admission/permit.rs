@@ -9,7 +9,8 @@ use super::super::{
 use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
-    AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
+    AllocationRef, KeyCustody, LiveAllocation, OfferBinding, PaidConnector, Payer, UnitRate,
+    Unpriced, convert,
 };
 use super::receipt::{PermitFacts, RunStreamUsage};
 use super::resident::ResidentDraw;
@@ -64,6 +65,12 @@ pub(super) struct AllocationHold {
 }
 
 impl RunPermit {
+    /// The issuing run instance stamped on this call's receipts.
+    #[must_use]
+    pub fn instance(&self) -> crate::EntityId {
+        self.run.instance()
+    }
+
     /// The lease the call carries to the gated backend.
     #[must_use]
     pub fn lease(&self) -> &BudgetLease {
@@ -97,6 +104,22 @@ impl RunPermit {
         self.settle_with(outcome, Vec::new())
     }
 
+    /// Settles a refusal proved not to have sent any physical attempt:
+    /// releases the reservation and records no dispatched receipt.
+    pub fn settle_unsent(mut self) -> Result<BudgetSettlement, RunDenied> {
+        self.settled = true;
+        let run = Arc::clone(&self.run);
+        run.guard
+            .mark_unsent(&self.lease)
+            .map_err(|denied| RunDenied::Budget { denied })?;
+        if let Some(hold) = &self.allocation {
+            hold.meter
+                .mark_unsent(&hold.lease)
+                .map_err(|denied| RunDenied::Budget { denied })?;
+        }
+        run.settle(&self, CallOutcome::Failed, None, Vec::new())
+    }
+
     /// Settles the call as [`Self::settle`] does, with `provided`, the
     /// inference receipts the call reported outside an answer's usage, on
     /// its receipt (FIX 8314).
@@ -110,8 +133,9 @@ impl RunPermit {
         run.settle(&self, outcome, None, provided)
     }
 
-    /// Settles a metered stream, as [`Self::settle`] settles `Used(units)`,
-    /// with the stream's admitted audio and bound on its receipt.
+    /// Settles a metered stream, as [`Self::settle`] settles
+    /// `UsedCounted(units)`, with the stream's admitted audio and bound on
+    /// its receipt.
     pub(super) fn settle_stream(
         mut self,
         units: u64,
@@ -119,7 +143,12 @@ impl RunPermit {
     ) -> Result<BudgetSettlement, RunDenied> {
         self.settled = true;
         let run = Arc::clone(&self.run);
-        run.settle(&self, CallOutcome::Used(units), Some(stream), Vec::new())
+        run.settle(
+            &self,
+            CallOutcome::UsedCounted(units),
+            Some(stream),
+            Vec::new(),
+        )
     }
 }
 
@@ -476,17 +505,28 @@ impl RunInner {
 }
 
 /// Whether a call is free work (FIX 9482): nobody pays per call
-/// ([`Payer::Local`]) and the host bound it to this device, or to the owner's
-/// own server with no key. Read only from the host-bound offer or connector,
-/// never from a caller's request, nor from a missing key, an own server or a
-/// zero rate alone; a keyed owner endpoint stays paid.
+/// ([`Payer::Local`]) and the host bound it, with no key, to this device or
+/// to the owner's own server. Read only from the host-bound offer or
+/// connector, never from a caller's request, nor from a missing key, an own
+/// server or a zero rate alone; a keyed owner endpoint stays paid, on this
+/// device too (FIX 14889): a paid provider's managed worker served over its
+/// native channel is paid as its own-server offer is, so no locality turns
+/// paid work free.
 fn free_work(payer: Payer, locality: ModelLocality, custody: KeyCustody) -> bool {
     let free_route = match locality {
-        ModelLocality::OnDevice => true,
-        ModelLocality::OwnServer => custody == KeyCustody::Keyless,
+        ModelLocality::OnDevice | ModelLocality::OwnServer => custody == KeyCustody::Keyless,
         ModelLocality::ThirdParty => false,
     };
     payer == Payer::Local && free_route
+}
+
+/// Whether a call bound to `binding` is free work, by the one rule the run
+/// admission charges it by (FIX 9482, FIX 14889): a host that annotates its
+/// work or builds an offer's on-device alternative reads the answer the
+/// permit reaches, never a copy of the rule.
+#[must_use]
+pub fn offer_is_free_work(binding: &OfferBinding) -> bool {
+    free_work(binding.payer, binding.locality, binding.custody)
 }
 
 /// A reservation in a meter's unit. A price no meter can hold never fits.

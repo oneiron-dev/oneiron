@@ -29,10 +29,12 @@ use crate::agent_dispatch::{
     AgentSpawnContext, PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, SpawnSpend,
 };
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{SelfSpawnAsk, TaskExposure};
+use crate::code_run::SelfSpawnAsk;
 use crate::entity_id::EntityId;
 use crate::skill::LoadedSkillPack;
 use crate::task_type::{PlacementDecisions, TaskTypeRef};
+use crate::team::task_exposure::TaskExposure;
+use crate::vault::RevisionRef;
 
 use super::PatternLaunchSpec;
 
@@ -181,6 +183,8 @@ pub struct FrozenPatternPack {
     entity: EntityId,
     skill_id: String,
     version: String,
+    /// The retained revision witnessed at freeze; absent when no witness was available.
+    revision: Option<(EntityId, RevisionRef)>,
     /// The files, path and bytes; `None` for a native record-only skill,
     /// which has no file tree.
     files: Option<Vec<FrozenPackFile>>,
@@ -211,9 +215,41 @@ impl FrozenPatternPack {
             entity: pack.entity,
             skill_id: pack.record.skill_id.clone(),
             version: pack.record.version.clone(),
+            revision: None,
             body_hash: pack_body_hash(files.as_deref()),
             files,
         }
+    }
+
+    /// Binds the revision the engine witnessed when it froze this pack.
+    #[must_use]
+    pub(crate) fn with_revision(mut self, entity: EntityId, revision: RevisionRef) -> Self {
+        self.revision = Some((entity, revision));
+        self
+    }
+
+    /// The retained revision witnessed at freeze, when one was available.
+    #[must_use]
+    pub fn revision(&self) -> Option<(EntityId, RevisionRef)> {
+        self.revision
+    }
+
+    /// Clears only this erased skill's retained revision witness.
+    pub(crate) fn erase_revision_for(&mut self, entity: &EntityId) -> bool {
+        if self.entity == *entity && self.revision.is_some_and(|(pinned, _)| pinned == *entity) {
+            self.revision = None;
+            return true;
+        }
+        false
+    }
+
+    /// The same frozen pack apart from its erasable revision witness.
+    pub(crate) fn same_frozen_pack(&self, other: &Self) -> bool {
+        self.entity == other.entity
+            && self.skill_id == other.skill_id
+            && self.version == other.version
+            && self.files == other.files
+            && self.body_hash == other.body_hash
     }
 
     /// The skill entity that loaded.

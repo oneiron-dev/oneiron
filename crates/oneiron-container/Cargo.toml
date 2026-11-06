@@ -13,11 +13,13 @@ doctest = false
 
 [dependencies]
 blake3 = { workspace = true }
+bytes = { version = "1.12.1", features = ["serde"] }
 oneiron-spawn = { path = "../oneiron-spawn" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = "3"
 thiserror = { workspace = true }
+tracing = "0.1"
 uuid = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

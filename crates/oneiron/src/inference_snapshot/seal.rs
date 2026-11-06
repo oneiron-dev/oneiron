@@ -17,8 +17,12 @@
 //! count. A reader checks the sealed length and count before it opens a
 //! chunk, and authenticates a chunk before it returns a byte of it: a body
 //! cut short, reordered, extended or opened under another manifest does not
-//! read. Every open failure is one [`Error::CorruptedIndex`], carrying no
-//! manifest bytes.
+//! read. Malformed or unauthenticated bodies return [`Error::CorruptedIndex`],
+//! carrying no manifest bytes. Reserving a native record's measured plaintext
+//! length, associated-data buffers and sealed frame storage can also return
+//! an I/O allocation fault.
+
+use std::borrow::Cow;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -32,8 +36,6 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 use crate::world_keys::{os_fill, refused};
 
-/// The format version both values' bytes and every chunk key id carry.
-const VERSION: u8 = 1;
 /// Plaintext per chunk: one envelope seals this much of the body.
 const CHUNK_LEN: usize = 64 * 1024;
 /// The snapshot id's width: fresh random bytes, never taken from a digest.
@@ -43,64 +45,26 @@ const EPOCH: u64 = 1;
 const RECIPIENT: &[u8] = b"oneiron/inference-snapshot/chunk";
 /// The domain a wrapped data key's associated data opens with.
 const WRAP_AAD_DOMAIN: &[u8] = b"oneiron/inference-snapshot-key/v1\0";
-const WRAP_NONCE_LEN: usize = 12;
-/// A wrapped key's fixed width: version ‖ nonce ‖ 32 key bytes + 16 tag.
-const WRAPPED_LEN: usize = 1 + WRAP_NONCE_LEN + 48;
 
-fn corrupt() -> Error {
-    Error::CorruptedIndex("inference snapshot")
-}
-
-/// One snapshot's data key, wrapped under the vault's key: `u8` version 1, a
-/// fresh 12-byte nonce, then the 32 key bytes sealed under it. The sealed
-/// body never carries the key; whoever holds only [`SealedSnapshot`] opens
-/// nothing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WrappedSnapshotKey {
-    bytes: Vec<u8>,
-}
-
-impl WrappedSnapshotKey {
-    /// Parses wrapped bytes: the version, then nonce and ciphertext, exactly.
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != WRAPPED_LEN || bytes[0] != VERSION {
-            return Err(corrupt());
-        }
-        Ok(Self {
-            bytes: bytes.to_vec(),
-        })
-    }
-
-    /// The canonical bytes: version, nonce, ciphertext.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.bytes.clone()
-    }
-
-    /// Retires this copy of the wrapped key: its bytes are wiped and dropped,
-    /// so this handle never unwraps again. Durable erasure — the stored rows,
-    /// copies and backups — is the store's erase wiring, not a filename
-    /// delete here.
-    pub fn retire(mut self) {
-        zeroize::Zeroize::zeroize(&mut self.bytes);
-    }
-}
+pub use crate::store::snapshot_key::WrappedSnapshotKey;
+use crate::store::snapshot_key::{VERSION, WRAP_NONCE_LEN, WRAPPED_LEN, corrupt};
 
 /// One snapshot's sealed body: the snapshot id, the chunk count, the
 /// plaintext length, and one envelope per chunk. Opaque bytes: no key, no
 /// manifest, no plaintext.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SealedSnapshot {
+pub struct SealedSnapshot<'a> {
     id: [u8; ID_LEN],
     count: u64,
     total: u64,
-    frames: Vec<Vec<u8>>,
+    frames: Vec<Cow<'a, [u8]>>,
 }
 
-impl SealedSnapshot {
+impl<'a> SealedSnapshot<'a> {
     /// Parses sealed bytes: version, id, count, length, then exactly `count`
     /// length-prefixed envelopes, each a well-formed envelope. Nothing is
     /// authenticated here; [`open_snapshot`] opens every chunk.
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (version, rest) = bytes.split_first_chunk::<1>().ok_or_else(corrupt)?;
         if version[0] != VERSION {
             return Err(corrupt());
@@ -117,7 +81,7 @@ impl SealedSnapshot {
             let len = usize::try_from(u32::from_be_bytes(*len)).map_err(|_| corrupt())?;
             let frame = tail.get(..len).ok_or_else(corrupt)?;
             Envelope::parse(frame).map_err(|_| corrupt())?;
-            frames.push(frame.to_vec());
+            frames.push(Cow::Borrowed(frame));
             rest = &tail[len..];
         }
         if !rest.is_empty() {
@@ -142,17 +106,41 @@ impl SealedSnapshot {
     /// with its `u32be` length.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        out.push(VERSION);
-        out.extend_from_slice(&self.id);
-        out.extend_from_slice(&self.count.to_be_bytes());
-        out.extend_from_slice(&self.total.to_be_bytes());
+        // A `Vec` writer cannot fail; this is the in-memory form of `write_to`.
+        self.write_to(&mut out)
+            .expect("writing sealed bytes to a Vec cannot fail");
+        out
+    }
+
+    /// The canonical length in bytes: the fixed header plus each frame's
+    /// `u32be` prefix and actual bytes. Checked; overflow reports the
+    /// existing typed error.
+    pub(super) fn encoded_len(&self) -> Result<u64> {
+        let mut len: u64 = 1 + ID_LEN as u64 + 8 + 8;
+        for frame in &self.frames {
+            len = len
+                .checked_add(4)
+                .and_then(|len| len.checked_add(frame.len() as u64))
+                .ok_or_else(corrupt)?;
+        }
+        Ok(len)
+    }
+
+    /// Writes the canonical bytes to `writer`: version, id, count, length,
+    /// then each envelope with its `u32be` length. The one serializer
+    /// shared by [`Self::to_bytes`] and the store's file writer.
+    pub(super) fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        writer.write_all(&[VERSION])?;
+        writer.write_all(&self.id)?;
+        writer.write_all(&self.count.to_be_bytes())?;
+        writer.write_all(&self.total.to_be_bytes())?;
         for frame in &self.frames {
             // A parsed frame is an envelope, capped far below `u32::MAX`.
             let len = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-            out.extend_from_slice(&len.to_be_bytes());
-            out.extend_from_slice(frame);
+            writer.write_all(&len.to_be_bytes())?;
+            writer.write_all(frame)?;
         }
-        out
+        Ok(())
     }
 }
 
@@ -205,12 +193,17 @@ fn key_id(id: &[u8; ID_LEN], index: u64, role: Role) -> [u8; 27] {
 
 /// The last chunk's extra associated data: the manifest plus the body's
 /// length and chunk count the sealed header claims.
-fn last_extra_aad(manifest: &[u8], total: u64, count: u64) -> Vec<u8> {
-    let mut extra = Vec::with_capacity(manifest.len() + 16);
+fn last_extra_aad(manifest: &[u8], total: u64, count: u64) -> Result<Vec<u8>> {
+    let len = manifest
+        .len()
+        .checked_add(16)
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    let mut extra = Vec::new();
+    extra.try_reserve_exact(len).map_err(std::io::Error::from)?;
     extra.extend_from_slice(manifest);
     extra.extend_from_slice(&total.to_be_bytes());
     extra.extend_from_slice(&count.to_be_bytes());
-    extra
+    Ok(extra)
 }
 
 fn seal_chunk(
@@ -277,10 +270,10 @@ fn open_chunk(
 
 /// The associated data a data key is wrapped under: the wrap domain and its
 /// snapshot's id.
-fn wrap_aad(id: &[u8; ID_LEN]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(WRAP_AAD_DOMAIN.len() + ID_LEN);
-    aad.extend_from_slice(WRAP_AAD_DOMAIN);
-    aad.extend_from_slice(id);
+fn wrap_aad(id: &[u8; ID_LEN]) -> [u8; WRAP_AAD_DOMAIN.len() + ID_LEN] {
+    let mut aad = [0; WRAP_AAD_DOMAIN.len() + ID_LEN];
+    aad[..WRAP_AAD_DOMAIN.len()].copy_from_slice(WRAP_AAD_DOMAIN);
+    aad[WRAP_AAD_DOMAIN.len()..].copy_from_slice(id);
     aad
 }
 
@@ -299,7 +292,10 @@ fn wrap_key(vault_key: &[u8; 32], id: &[u8; ID_LEN], raw: &[u8; 32]) -> Result<W
             },
         )
         .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    let mut bytes = Vec::with_capacity(WRAPPED_LEN);
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(WRAPPED_LEN)
+        .map_err(std::io::Error::from)?;
     bytes.push(VERSION);
     bytes.extend_from_slice(&nonce);
     bytes.extend_from_slice(&ciphertext);
@@ -346,7 +342,7 @@ pub fn seal_snapshot(
     vault_key: &[u8; 32],
     manifest: &[u8],
     plaintext: &[u8],
-) -> Result<(WrappedSnapshotKey, SealedSnapshot)> {
+) -> Result<(WrappedSnapshotKey, SealedSnapshot<'static>)> {
     let mut id = [0u8; ID_LEN];
     os_fill(&mut id)?;
     let mut raw = Zeroizing::new([0u8; 32]);
@@ -355,10 +351,20 @@ pub fn seal_snapshot(
     let total = u64::try_from(plaintext.len()).map_err(|_| corrupt())?;
     let pieces = plaintext.len().div_ceil(CHUNK_LEN).max(1);
     let count = u64::try_from(pieces).map_err(|_| corrupt())?;
-    let last_extra = last_extra_aad(manifest, total, count);
+    let last_extra = last_extra_aad(manifest, total, count)?;
     let mut frames = Vec::new();
+    frames
+        .try_reserve_exact(pieces)
+        .map_err(std::io::Error::from)?;
     if plaintext.is_empty() {
-        frames.push(seal_chunk(&kek, &id, 0, Role::Last, &last_extra, &[])?);
+        frames.push(Cow::Owned(seal_chunk(
+            &kek,
+            &id,
+            0,
+            Role::Last,
+            &last_extra,
+            &[],
+        )?));
     } else {
         for (at, piece) in plaintext.chunks(CHUNK_LEN).enumerate() {
             let index = u64::try_from(at).map_err(|_| corrupt())?;
@@ -371,7 +377,9 @@ pub fn seal_snapshot(
                 Role::Chunk => manifest,
                 Role::Last => last_extra.as_slice(),
             };
-            frames.push(seal_chunk(&kek, &id, index, role, extra, piece)?);
+            frames.push(Cow::Owned(seal_chunk(
+                &kek, &id, index, role, extra, piece,
+            )?));
         }
     }
     let wrapped = wrap_key(vault_key, &id, &raw)?;
@@ -394,16 +402,54 @@ pub fn open_snapshot(
     vault_key: &[u8; 32],
     wrapped: &WrappedSnapshotKey,
     manifest: &[u8],
-    sealed: &SealedSnapshot,
+    sealed: &SealedSnapshot<'_>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    open_snapshot_inner(vault_key, wrapped, manifest, sealed, None)
+}
+
+/// Opens a native record's body, reserving its measured plaintext length.
+/// A different header total is corruption; allocation failure is an I/O fault.
+pub(super) fn open_snapshot_with_expected_len(
+    vault_key: &[u8; 32],
+    wrapped: &WrappedSnapshotKey,
+    manifest: &[u8],
+    sealed: &SealedSnapshot<'_>,
+    expected_plaintext_len: u64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    open_snapshot_inner(
+        vault_key,
+        wrapped,
+        manifest,
+        sealed,
+        Some(expected_plaintext_len),
+    )
+}
+
+fn open_snapshot_inner(
+    vault_key: &[u8; 32],
+    wrapped: &WrappedSnapshotKey,
+    manifest: &[u8],
+    sealed: &SealedSnapshot<'_>,
+    expected_plaintext_len: Option<u64>,
 ) -> Result<Zeroizing<Vec<u8>>> {
     check_totals(sealed.count, sealed.total)?;
     if sealed.frames.len() as u64 != sealed.count {
         return Err(corrupt());
     }
+    if expected_plaintext_len.is_some_and(|expected| expected != sealed.total) {
+        return Err(corrupt());
+    }
     let key = open_wrapped(vault_key, &sealed.id, wrapped)?;
     let kek = Kek::from_bytes_ref(&key);
-    let last_extra = last_extra_aad(manifest, sealed.total, sealed.count);
+    let last_extra = last_extra_aad(manifest, sealed.total, sealed.count)?;
     let mut plain = Zeroizing::new(Vec::new());
+    if let Some(expected) = expected_plaintext_len {
+        let bytes = usize::try_from(expected)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        plain
+            .try_reserve_exact(bytes)
+            .map_err(std::io::Error::from)?;
+    }
     for (at, frame) in sealed.frames.iter().enumerate() {
         let index = u64::try_from(at).map_err(|_| corrupt())?;
         let role = if index + 1 == sealed.count {

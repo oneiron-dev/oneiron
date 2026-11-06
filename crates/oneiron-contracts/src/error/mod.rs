@@ -40,8 +40,8 @@ pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRoot
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
-    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-    SyncRollbackError, SyncSelectorValidation,
+    FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncProtocolPruneScope,
+    SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation,
 };
 
 /// Result type used throughout the crate.
@@ -143,6 +143,8 @@ pub enum ErrorKind {
     EditRoundtripFailed,
     /// The live deck body refused; the error carries the docedit refusal.
     LiveDeckRefused,
+    /// A non-deck artifact operation could not reserve the host's machine memory.
+    MemoryFloorRefused,
     EditProposalAlreadySettled,
     EditProposalStale,
     SettleNotAuthorized,
@@ -174,8 +176,12 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    /// The Gate allowed a share creation but a full budget window paces
+    /// it; the error names the instant to bring it back.
+    ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
+    GuestClaimWithheld,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -215,6 +221,8 @@ pub enum ErrorKind {
     RetrievalStageCut,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
+    /// A durable step's committed trap already parked its attempt.
+    DurableStepTrapped,
     /// A refusal that names its bound; its message is the whole answer.
     Refused,
     /// A legal order binding the host keeps the record, or keeps it from
@@ -232,8 +240,6 @@ pub enum ErrorKind {
     SyncProtocolError,
     #[cfg(feature = "sync")]
     SyncEngineError,
-    #[cfg(feature = "sync")]
-    MaintenanceIngestQuotaExceeded,
     #[cfg(feature = "sync")]
     HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
@@ -410,6 +416,9 @@ pub enum ErrorKind {
     EmbeddingTransformChanged,
     ArchivedVault,
     HostActionRequiresSupportGrant,
+    /// A nonce spend met the writer lease another process holds on the vault
+    /// (FIX 12023 W0).
+    VaultServedElsewhere,
 }
 
 /// What a host credential gets for an owner act where no host acts as a
@@ -506,6 +515,10 @@ pub enum Error {
     /// so the run parks on the outage rather than its guest handling it.
     #[error("no provider answered; retry in {retry_after} s")]
     ProviderUnavailable { retry_after: u64 },
+    /// The caller's durable step committed its trap and parked its attempt.
+    /// Native execution must unwind without completing or failing that attempt.
+    #[error("the durable step is parked behind its trap")]
+    DurableStepTrapped,
     /// A refusal that names its bound: what the caller funds, configures or
     /// changes before asking again. Its message is caller-safe and is the
     /// whole answer.
@@ -524,6 +537,12 @@ pub enum Error {
     /// an owner act inside the vault takes the customer's support grant.
     #[error("{}", HOST_ACTION_REQUIRES_SUPPORT_GRANT_TEXT)]
     HostActionRequiresSupportGrant,
+    /// A request's nonce spend in a process that holds no writer lease on
+    /// the vault met the lease another process holds (FIX 12023 W0): that
+    /// process serves the vault and may have spent the nonce in memory, its
+    /// row not landed yet, so this one spends none beside it.
+    #[error("this vault is served by another process; send the request there")]
+    VaultServedElsewhere,
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -677,9 +696,11 @@ impl Error {
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
+            Self::DurableStepTrapped => ErrorKind::DurableStepTrapped,
             Self::Refused(_) => ErrorKind::Refused,
             Self::LegalHold(_) => ErrorKind::LegalHold,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,
+            Self::VaultServedElsewhere => ErrorKind::VaultServedElsewhere,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),

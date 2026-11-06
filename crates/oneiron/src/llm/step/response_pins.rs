@@ -19,7 +19,10 @@
 //!
 //! A replica's copy of a step claim was filed by no write here, so no row of
 //! the table names it: its teardown takes the pin its own value names, the
-//! exact artifact, version and content hash (FIX 8500).
+//! exact artifact, version and content hash (FIX 8500). A teardown's
+//! elsewhere check reads a replica's carried pin the same way, so a version
+//! a retained replica claim still pins is never released under it
+//! (FIX 12122).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,11 +86,12 @@ pub(super) fn register_step_response_pin_in_txn(
 ///
 /// Storage and custody errors.
 pub(crate) fn release_step_response_pins_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     erase: bool,
 ) -> Result<()> {
+    let store = write.store;
     let pins = match PINS.get(store, txn, claim)? {
         Some(pins) => {
             PINS.delete(store, txn, claim)?;
@@ -99,7 +103,7 @@ pub(crate) fn release_step_response_pins_in_txn(
         },
     };
     for pin in &pins {
-        release_pin_in_txn(store, txn, claim, pin, erase)?;
+        release_pin_in_txn(write, txn, claim, pin, erase)?;
     }
     Ok(())
 }
@@ -115,30 +119,44 @@ fn carried_pin_in_txn(
     let Some(raw) = store.port_entity_raw(txn, claim)? else {
         return Ok(None);
     };
+    Ok(carried_pin_in_raw(&raw))
+}
+
+/// [`carried_pin_in_txn`] over a stored row already read. Most claims are
+/// not a step's: their bodies are never decoded here (as
+/// `store::model_step_response_carriage::step_claim_carriage` reads them).
+fn carried_pin_in_raw(raw: &[u8]) -> Option<StepResponseRef> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
-        return Ok(None);
+        return None;
     }
-    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
-        return Ok(None);
-    };
+    let encoded = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let predicate = super::types::DREAMER_STEP_PREDICATE.as_bytes();
+    if !encoded
+        .windows(predicate.len())
+        .any(|window| window == predicate)
+    {
+        return None;
+    }
+    let body = crate::claim::decode_claim_body(encoded, true).ok()?;
     if body.predicate != super::types::DREAMER_STEP_PREDICATE {
-        return Ok(None);
+        return None;
     }
-    Ok(super::step_claim::decode_step_claim_value(&body.value)
+    super::step_claim::decode_step_claim_value(&body.value)
         .ok()
-        .and_then(|decoded| decoded.response_ref))
+        .and_then(|decoded| decoded.response_ref)
 }
 
 /// One pin of `claim`'s teardown: the bytes' descriptors are read before
 /// any of them goes, the version released when no other retained claim pins
 /// it, then an erase's retirement staged or owed.
 fn release_pin_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     pin: &StepResponseRef,
     erase: bool,
 ) -> Result<()> {
+    let store = write.store;
     #[cfg(unix)]
     let custody = if erase {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&pin.content_hash)?;
@@ -157,7 +175,7 @@ fn release_pin_in_txn(
     let _ = erase;
     if !pinned_elsewhere_in_txn(store, txn, claim, pin)? {
         crate::blob_artifact::release_response_version_in_txn(
-            store,
+            write,
             txn,
             &pin.artifact_id,
             pin.version,
@@ -179,7 +197,10 @@ fn release_pin_in_txn(
 
 /// Whether a retained claim other than `claim` pins the exact version `pin`
 /// names. Every pin row is read, none skipped: a closed historical claim
-/// still holds its recorded answer.
+/// still holds its recorded answer. The pin a replica's copy carries in its
+/// own value holds the version the same way (FIX 12122): no pin row names
+/// it, so the claim type index is walked for it, one carried pin at a time.
+/// A claim with a pin row was judged by the walk above.
 fn pinned_elsewhere_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -190,6 +211,21 @@ fn pinned_elsewhere_in_txn(
         let (other, pins) = row?;
         if other != *claim
             && pins.contains(pin)
+            && row_retained(store, txn, &other, ENTITY_TYPE_CLAIM)?
+        {
+            return Ok(true);
+        }
+    }
+    for entry in store.type_index.prefix_iter(txn, &[ENTITY_TYPE_CLAIM])? {
+        let (key, _) = entry?;
+        let other = crate::vault::entity_id_from_type_index_key(&key)?;
+        if other == *claim || PINS.get(store, txn, &other)?.is_some() {
+            continue;
+        }
+        let Some(raw) = store.port_entity_raw(txn, &other)? else {
+            continue;
+        };
+        if carried_pin_in_raw(&raw) == Some(*pin)
             && row_retained(store, txn, &other, ENTITY_TYPE_CLAIM)?
         {
             return Ok(true);
@@ -239,18 +275,19 @@ fn rests_in_retired(
 ///
 /// Storage and custody errors.
 pub(crate) fn prune_step_response_pins_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     erased_assets: &BTreeSet<EntityId>,
     erased_digests: &BTreeSet<[u8; 32]>,
 ) -> Result<()> {
+    let store = write.store;
     for (claim, pins) in PINS.scan(store, txn)? {
         if store.port_entity_raw(txn, &claim)?.is_none() {
             PINS.delete(store, txn, &claim)?;
             continue;
         }
         if !row_retained(store, txn, &claim, ENTITY_TYPE_CLAIM)? {
-            release_step_response_pins_in_txn(store, txn, &claim, false)?;
+            release_step_response_pins_in_txn(write, txn, &claim, false)?;
             continue;
         }
         let mut erased = false;
@@ -258,7 +295,7 @@ pub(crate) fn prune_step_response_pins_in_txn(
             erased |= rests_in_retired(pin, erased_assets, erased_digests)?;
         }
         if erased {
-            super::response_bodies::retire_step_claim_in_txn(store, txn, claim.as_bytes())?;
+            super::response_bodies::retire_step_claim_in_txn(write, txn, claim.as_bytes())?;
             continue;
         }
         let mut standing = Vec::with_capacity(pins.len());

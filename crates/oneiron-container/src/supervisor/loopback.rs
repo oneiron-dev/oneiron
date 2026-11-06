@@ -15,11 +15,20 @@
 //! loopback connect no listener holds, except on port 53, which keeps the
 //! fence's DNS.
 //!
+//! An IPv4-mapped address (::ffff:127.x.y.z) on an AF_INET6 socket is its
+//! IPv4 address (FIX 6787): the registry keys every address by
+//! [`canonical`], so it shares IPv4's ports, and an AF_INET6 socket shows
+//! an IPv4 address in its mapped form ([`presented`]). A socket with
+//! IPV6_V6ONLY takes no mapped address. ::1 stays IPv6.
+//!
 //! A listener is readable while its queue is not empty: each queued
 //! connection writes one byte (a token) to the listener's guest end, and
 //! each dequeue reads one back, under the queue's lock, through the copy of
-//! that end the listener keeps.
+//! that end the socket kept since `socket()` (FIX 6788).
+//!
+//! A connect to a full queue waits its turn ([`connect()`], FIX 6785).
 
+use super::control::Control;
 use super::{Socket, State, get, inode};
 use crate::{
     HostNetPermit, LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason, linux, wire,
@@ -34,30 +43,36 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+// Connects that wait their turn for a slot (FIX 6785, FIX 8015).
+mod connect;
+pub(super) use connect::Connecting;
+// SO_ACCEPTCONN and IPV6_V6ONLY, kept by the fence (FIX 6784, FIX 6787).
+mod options;
+
+pub(super) use options::{get_option, set_option};
+
 /// The longest accept queue a listener keeps: a larger backlog is cut to
-/// it, and a connect to a full queue answers `EAGAIN`. A connection an
-/// accept has reserved still counts, so putting it back never overfills
-/// the queue (FIX 6791).
+/// it, and a connect to a full queue waits its turn or, nonblocking,
+/// answers `EAGAIN` ([`connect()`]). A connection an accept has reserved
+/// still counts until it is installed or back in its queue, so putting it
+/// back never overfills the queue (FIX 6791).
 const LOOPBACK_BACKLOG: usize = 128;
 /// The virtual ports a bind to port 0 and a client's own end take.
 const LOOPBACK_PORTS: RangeInclusive<u16> = 49152..=65535;
-/// What a listener holds of the host floor while it lives, as (descriptors,
-/// workers): its copy of the guest's end. Its host end is its entry's.
-const LISTENER: (usize, usize) = (1, 0);
 /// What a queued connection holds until the guest accepts it: the client's
 /// host end, whose entry may end first.
 const QUEUED: (usize, usize) = (1, 0);
-/// How long a blocking accept sleeps before it looks at its call, its
-/// listener and the session again: a cadence, not a bound.
-const ACCEPT_POLL: Duration = Duration::from_millis(250);
+/// How long a blocking accept or connect sleeps before it looks at its
+/// call, its listener and the session again: a cadence, not a bound.
+const BLOCKED_CALL_POLL: Duration = Duration::from_millis(250);
 
 /// One session's virtual loopback.
 #[derive(Default)]
 pub(super) struct Registry {
-    /// Each socket's virtual local address: bound, listening, accepted, or
-    /// a client's own end.
+    /// Each socket's virtual local address, by its [`canonical`] key:
+    /// bound, listening, accepted, or a client's own end.
     local: HashMap<u64, SocketAddr>,
-    /// Every bound address, and the socket that holds it.
+    /// Every bound [`canonical`] address, and the socket that holds it.
     bound: HashMap<SocketAddr, u64>,
     listeners: HashMap<u64, Arc<Listener>>,
     /// Where the next search for a free virtual port starts.
@@ -65,16 +80,22 @@ pub(super) struct Registry {
 }
 
 struct Listener {
+    /// The listener's [`canonical`] address.
     address: SocketAddr,
     family: i32,
-    /// The listener's guest end: it reads tokens back and shows the
-    /// guest's mode.
-    guest: OwnedFd,
-    /// The listener's host end: it writes the tokens.
+    /// The listener's IPV6_V6ONLY, which its accepted sockets take.
+    ipv6_only: bool,
+    /// The socket's copy of its guest end, with that copy's room on the
+    /// host floor: it reads tokens back and shows the guest's mode.
+    control: Control,
+    /// The listener's host end: it writes the tokens. Its room on the host
+    /// floor is its socket entry's.
     host: UnixStream,
     queue: Mutex<Queue>,
+    /// An accept may find a connection.
     ready: Condvar,
-    _charge: HostNetPermit,
+    /// A connect waiting its turn may find a slot.
+    space: Condvar,
 }
 
 #[derive(Default)]
@@ -82,33 +103,68 @@ struct Queue {
     waiting: VecDeque<Queued>,
     /// Connections an accept took, until its address is written.
     reserved: HashMap<u64, Queued>,
+    /// Reserved connections a finish is installing: each holds its slot
+    /// until it is installed or back in `waiting`.
+    installing: usize,
     next: u64,
     backlog: usize,
     closed: bool,
+    /// The connects waiting for a slot, in arrival order.
+    pending: connect::PendingConnects,
+}
+
+impl Queue {
+    /// The slots the queue's connections hold.
+    fn occupied(&self) -> usize {
+        self.waiting.len() + self.reserved.len() + self.installing
+    }
 }
 
 struct Queued {
     /// The client's host end: the guest's accepted socket.
     stream: UnixStream,
-    /// The client's virtual address.
+    /// The client's virtual address, by its [`canonical`] key.
     peer: SocketAddr,
     _charge: HostNetPermit,
 }
 
-/// The loopback set: whether `address` may hold a listener, or why not.
-/// 127.0.0.0/8 and ::1 may; the wildcard, a mapped IPv6 form and every
+/// The loopback set: whether the [`canonical`] `address` may hold a
+/// listener, or why not. 127.0.0.0/8 and ::1 may; the wildcard and every
 /// other address may not.
 fn loopback_admits(address: SocketAddr) -> Result<(), LoopbackRefusalReason> {
     match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => Err(LoopbackRefusalReason::Wildcard),
         IpAddr::V4(ip) if ip.is_loopback() => Ok(()),
         IpAddr::V6(ip) if ip.is_unspecified() => Err(LoopbackRefusalReason::Wildcard),
-        IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some() => {
-            Err(LoopbackRefusalReason::MappedAddress)
-        }
         IpAddr::V6(ip) if ip.is_loopback() => Ok(()),
         _ => Err(LoopbackRefusalReason::NotLoopback),
     }
+}
+
+/// The registry's key for `address`: an IPv4-mapped IPv6 address is its
+/// IPv4 address, and no scope or flow label names another endpoint.
+fn canonical(address: SocketAddr) -> SocketAddr {
+    let ip = match address.ip() {
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(IpAddr::V6(ip), IpAddr::V4),
+        ip => ip,
+    };
+    SocketAddr::new(ip, address.port())
+}
+
+/// The address a socket of `family` shows for the key `address`: an
+/// AF_INET6 socket shows an IPv4 address in its mapped form.
+fn presented(address: SocketAddr, family: i32) -> SocketAddr {
+    match address.ip() {
+        IpAddr::V4(ip) if family == libc::AF_INET6 => {
+            SocketAddr::new(IpAddr::V6(ip.to_ipv6_mapped()), address.port())
+        }
+        _ => address,
+    }
+}
+
+/// Whether `named`, as the guest named it, is an IPv4-mapped address.
+fn mapped(named: SocketAddr) -> bool {
+    matches!(named.ip(), IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some())
 }
 
 /// The refusal shape: the errno a refusal answers. A connect no listener
@@ -121,7 +177,6 @@ fn refusal_errno(reason: LoopbackRefusalReason) -> i32 {
         LoopbackRefusalReason::NotListening => libc::EINVAL,
         LoopbackRefusalReason::Wildcard
         | LoopbackRefusalReason::NotLoopback
-        | LoopbackRefusalReason::MappedAddress
         | LoopbackRefusalReason::Datagram => libc::EACCES,
     }
 }
@@ -178,49 +233,59 @@ impl Registry {
 }
 
 /// A bind of a stream socket to a loopback address of its family, once and
-/// before any connect. Port 0 takes a free virtual port.
+/// before any connect. Port 0 takes a free virtual port. An IPv4-mapped
+/// address binds its IPv4 address, unless the socket has IPV6_V6ONLY:
+/// then it is `EINVAL`, as on Linux.
 pub(super) fn bind(state: &State, id: u64, address: SocketAddr) -> io::Result<wire::Reply> {
     let socket = get(state, id)?;
     // The address alone: no flow label or scope names another listener.
-    let address = SocketAddr::new(address.ip(), address.port());
+    let named = SocketAddr::new(address.ip(), address.port());
     if socket.kind == libc::SOCK_DGRAM {
         let reason = LoopbackRefusalReason::Datagram;
-        return Ok(refuse(state, LoopbackOperation::Bind, address, reason));
+        return Ok(refuse(state, LoopbackOperation::Bind, named, reason));
     }
-    if address.is_ipv6() != (socket.family == libc::AF_INET6) {
+    if named.is_ipv6() != (socket.family == libc::AF_INET6) {
         return Err(errno(libc::EAFNOSUPPORT));
     }
-    if let Err(reason) = loopback_admits(address) {
-        return Ok(refuse(state, LoopbackOperation::Bind, address, reason));
+    if mapped(named) && socket.ipv6_only.load(Ordering::Acquire) {
+        return Err(errno(libc::EINVAL));
+    }
+    let key = canonical(named);
+    if let Err(reason) = loopback_admits(key) {
+        return Ok(refuse(state, LoopbackOperation::Bind, named, reason));
     }
     let mut registry = state.loopback.lock().map_err(|_| poisoned())?;
     let connected = socket.stream.lock().map_err(|_| poisoned())?.is_none();
-    if connected || registry.local.contains_key(&id) {
+    // Looked at again under the registry's lock, which a setsockopt of
+    // IPV6_V6ONLY also holds ([`set_option`]).
+    let v6_only_mapped = mapped(named) && socket.ipv6_only.load(Ordering::Acquire);
+    if connected
+        || v6_only_mapped
+        || registry.local.contains_key(&id)
+        || socket.connecting.load(Ordering::Acquire)
+    {
         return Err(errno(libc::EINVAL));
     }
-    let address = if address.port() == 0 {
+    let key = if key.port() == 0 {
         registry
-            .free(address.ip())
+            .free(key.ip())
             .ok_or_else(|| errno(libc::EADDRINUSE))?
-    } else if registry.bound.contains_key(&address) {
+    } else if registry.bound.contains_key(&key) {
         return Err(errno(libc::EADDRINUSE));
     } else {
-        address
+        key
     };
-    registry.bound.insert(address, id);
-    registry.local.insert(id, address);
+    registry.bound.insert(key, id);
+    registry.local.insert(id, key);
     Ok(wire::Reply::default())
 }
 
 /// A listen on a socket that holds a loopback bind. A listen with no bind
-/// would take the wildcard: it is refused. The listener keeps `guest`, the
-/// socket's guest end, and takes its room on the host floor first.
-pub(super) fn listen(
-    state: &State,
-    id: u64,
-    backlog: i32,
-    guest: Option<OwnedFd>,
-) -> io::Result<wire::Reply> {
+/// would take the wildcard: it is refused. The listener takes the socket's
+/// copy of its guest end, with that copy's room on the host floor. A
+/// repeated listen sets the backlog again: a larger one may let waiting
+/// connects in.
+pub(super) fn listen(state: &State, id: u64, backlog: i32) -> io::Result<wire::Reply> {
     let socket = get(state, id)?;
     let backlog = usize::try_from(backlog)
         .unwrap_or(0)
@@ -229,6 +294,7 @@ pub(super) fn listen(
         let mut registry = state.loopback.lock().map_err(|_| poisoned())?;
         if let Some(listener) = registry.listeners.get(&id) {
             listener.queue.lock().map_err(|_| poisoned())?.backlog = backlog;
+            listener.space.notify_all();
             return Ok(wire::Reply::default());
         }
         let mut host = socket.stream.lock().map_err(|_| poisoned())?;
@@ -239,13 +305,15 @@ pub(super) fn listen(
             .filter(|address| registry.bound.get(address) == Some(&id));
         match (host.is_some(), address) {
             (false, _) => return Err(errno(libc::EINVAL)),
+            _ if socket.connecting.load(Ordering::Acquire) => return Err(errno(libc::EINVAL)),
             (true, None) => true,
             (true, Some(address)) => {
-                let guest = guest
-                    .filter(|guest| inode(guest).is_ok_and(|found| found == id))
+                let control = socket
+                    .control
+                    .lock()
+                    .map_err(|_| poisoned())?
+                    .take()
                     .ok_or_else(|| errno(libc::EBADF))?;
-                let (fds, workers) = LISTENER;
-                let charge = state.relay.host_net_floor().acquire(fds, workers)?;
                 let host = host.take().ok_or_else(|| errno(libc::EINVAL))?;
                 let queue = Queue {
                     backlog,
@@ -254,11 +322,12 @@ pub(super) fn listen(
                 let listener = Listener {
                     address,
                     family: socket.family,
-                    guest,
+                    ipv6_only: socket.ipv6_only.load(Ordering::Acquire),
+                    control,
                     host,
                     queue: Mutex::new(queue),
                     ready: Condvar::new(),
-                    _charge: charge,
+                    space: Condvar::new(),
                 };
                 registry.listeners.insert(id, Arc::new(listener));
                 false
@@ -274,9 +343,9 @@ pub(super) fn listen(
 }
 
 /// Takes the next queued connection under a ticket (the reply's value),
-/// with its peer address. A listener in nonblocking mode answers `EAGAIN`
-/// on an empty queue; a blocking one waits until `waiting` (the call), the
-/// listener or the session ends.
+/// with its peer address as the listener's family shows it. A listener in
+/// nonblocking mode answers `EAGAIN` on an empty queue; a blocking one
+/// waits until `waiting` (the call), the listener or the session ends.
 pub(super) fn accept(
     state: &State,
     id: u64,
@@ -284,18 +353,18 @@ pub(super) fn accept(
 ) -> io::Result<wire::Reply> {
     let Some(listener) = listening(state, id)? else {
         let family = get(state, id)?.family;
-        let address = local(state, id).unwrap_or_else(|| wildcard(family));
+        let address = local(state, id, family).unwrap_or_else(|| wildcard(family));
         let reason = LoopbackRefusalReason::NotListening;
         return Ok(refuse(state, LoopbackOperation::Accept, address, reason));
     };
-    let nonblocking = in_nonblocking_mode(&listener.guest);
+    let nonblocking = listener.control.nonblocking();
     let mut queue = listener.queue.lock().map_err(|_| poisoned())?;
     loop {
         if let Some(queued) = queue.waiting.pop_front() {
             listener.untoken();
             queue.next += 1;
             let ticket = queue.next;
-            let peer = queued.peer;
+            let peer = presented(queued.peer, listener.family);
             queue.reserved.insert(ticket, queued);
             return Ok(wire::Reply {
                 value: ticket as i64,
@@ -311,7 +380,7 @@ pub(super) fn accept(
         }
         queue = listener
             .ready
-            .wait_timeout(queue, ACCEPT_POLL)
+            .wait_timeout(queue, BLOCKED_CALL_POLL)
             .map_err(|_| poisoned())?
             .0;
     }
@@ -320,7 +389,9 @@ pub(super) fn accept(
 /// Installs a reserved connection as the result of the guest's accept,
 /// with `flags` (accept4's SOCK_NONBLOCK and SOCK_CLOEXEC), or puts it back
 /// first in its queue. Its entry, with its virtual local and peer
-/// addresses, exists before the guest holds it.
+/// addresses, exists before the guest holds it. The connection holds its
+/// slot until it is installed or back: only an install frees the slot for
+/// a waiting connect.
 pub(super) fn finish(
     request: &wire::Request,
     notify: &OwnedFd,
@@ -331,13 +402,15 @@ pub(super) fn finish(
     flags: i32,
 ) -> io::Result<wire::Reply> {
     let listener = listening(state, id)?.ok_or_else(|| errno(libc::ECONNABORTED))?;
-    let reserved = listener
-        .queue
-        .lock()
-        .map_err(|_| poisoned())?
-        .reserved
-        .remove(&ticket);
-    let queued = reserved.ok_or_else(|| errno(libc::ECONNABORTED))?;
+    let queued = {
+        let mut queue = listener.queue.lock().map_err(|_| poisoned())?;
+        let queued = queue
+            .reserved
+            .remove(&ticket)
+            .ok_or_else(|| errno(libc::ECONNABORTED))?;
+        queue.installing += 1;
+        queued
+    };
     if !commit {
         listener.requeue(queued)?;
         return Ok(wire::Reply::default());
@@ -356,9 +429,12 @@ pub(super) fn finish(
     let socket = Arc::new(Socket {
         family: listener.family,
         kind: libc::SOCK_STREAM,
-        target: Mutex::new(Some(queued.peer)),
+        target: Mutex::new(Some(presented(queued.peer, listener.family))),
         stream: Mutex::new(None),
         datagram: None,
+        control: Mutex::new(None),
+        ipv6_only: AtomicBool::new(listener.ipv6_only),
+        connecting: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         // The guest holds both ends; the host holds nothing of it.
         _charge: HostNetPermit::new(()),
@@ -381,10 +457,13 @@ pub(super) fn finish(
         flags & libc::SOCK_CLOEXEC != 0,
     );
     match injected {
-        Ok(fd) => Ok(wire::Reply {
-            value: i64::from(fd),
-            ..Default::default()
-        }),
+        Ok(fd) => {
+            listener.installed();
+            Ok(wire::Reply {
+                value: i64::from(fd),
+                ..Default::default()
+            })
+        }
         // A connection the guest never received has no entry and goes back.
         Err(error) => {
             if let Ok(mut sockets) = state.sockets.lock()
@@ -403,94 +482,68 @@ pub(super) fn finish(
     }
 }
 
-/// A stream connect to a loopback `target`. A listener of this session at
-/// `target` queues the client's host end for its accept, and the client is
-/// connected; with none there, the connect is refused (`ECONNREFUSED`),
-/// except on port 53, whose DNS goes on as before. `None` is every connect
-/// that goes on as before: any other target, port 53 with no listener, and
-/// a socket already connected.
+/// A stream connect to a loopback `target`, an IPv4-mapped one included. A
+/// listener of this session at `target` queues the client's host end for
+/// its accept once a slot is free and the connect's turn has come
+/// ([`connect::enqueue`]), and the client is connected; with none there,
+/// the connect is refused (`ECONNREFUSED`), except on port 53, whose DNS
+/// goes on as before. `None` is every connect that goes on as before: any
+/// other target, port 53 with no listener, and a socket already connected.
+/// `waiting` is whether the call still waits for its answer.
 pub(super) fn connect(
     state: &State,
     id: u64,
     socket: &Socket,
     target: SocketAddr,
+    waiting: impl Fn() -> bool,
 ) -> Option<io::Result<wire::Reply>> {
-    if !target.ip().is_loopback() {
+    let named = SocketAddr::new(target.ip(), target.port());
+    let key = canonical(named);
+    if !key.ip().is_loopback() {
         return None;
     }
-    let target = SocketAddr::new(target.ip(), target.port());
+    if named.is_ipv6() != (socket.family == libc::AF_INET6) {
+        return Some(Err(errno(libc::EAFNOSUPPORT)));
+    }
+    // A v6-only socket reaches no IPv4 address, as on Linux.
+    if mapped(named) && socket.ipv6_only.load(Ordering::Acquire) {
+        return Some(Err(errno(libc::ENETUNREACH)));
+    }
     let found = state.loopback.lock().map(|mut registry| {
         let listener = registry
             .bound
-            .get(&target)
+            .get(&key)
             .and_then(|holder| registry.listeners.get(holder))
             .cloned()?;
         let own = registry.local.get(&id).copied();
-        let own = own.or_else(|| registry.free(target.ip()))?;
+        let own = own.or_else(|| registry.free(key.ip()))?;
         Some((listener, own))
     });
     match found {
         Err(_) => Some(Err(poisoned())),
-        Ok(Some((listener, own))) => Some(enqueue(state, id, socket, &listener, own, target)),
-        Ok(None) if target.port() == 53 => None,
+        // A client bound to ::1 reaches no IPv4 listener.
+        Ok(Some((_, own))) if own.is_ipv4() != key.is_ipv4() => Some(Err(errno(libc::EINVAL))),
+        Ok(Some((listener, own))) => {
+            let target = presented(key, socket.family);
+            let enqueued = connect::enqueue(state, id, socket, &listener, own, target, waiting);
+            Some(enqueued)
+        }
+        Ok(None) if key.port() == 53 => None,
         // A socket already connected answers as it always did.
         Ok(None) if !socket.stream.lock().is_ok_and(|peer| peer.is_some()) => None,
         Ok(None) => {
             let reason = LoopbackRefusalReason::NoListener;
-            let reply = refuse(state, LoopbackOperation::Connect, target, reason);
+            let reply = refuse(state, LoopbackOperation::Connect, named, reason);
             Some(Ok(reply))
         }
     }
 }
 
-/// Queues the client's host end on `listener`, with the client's own
-/// virtual address `own`, and its token. The room it holds is taken first.
-fn enqueue(
-    state: &State,
-    id: u64,
-    socket: &Socket,
-    listener: &Listener,
-    own: SocketAddr,
-    target: SocketAddr,
-) -> io::Result<wire::Reply> {
-    let mut peer = socket.stream.lock().map_err(|_| poisoned())?;
-    if peer.is_none() {
-        return Err(errno(libc::EISCONN));
-    }
-    let (fds, workers) = QUEUED;
-    let charge = state.relay.host_net_floor().acquire(fds, workers)?;
-    {
-        let mut queue = listener.queue.lock().map_err(|_| poisoned())?;
-        if queue.closed {
-            return Err(errno(libc::ECONNREFUSED));
-        }
-        if queue.waiting.len() + queue.reserved.len() >= queue.backlog {
-            return Err(errno(libc::EAGAIN));
-        }
-        let stream = peer.take().ok_or_else(|| errno(libc::EISCONN))?;
-        listener.token();
-        queue.waiting.push_back(Queued {
-            stream,
-            peer: own,
-            _charge: charge,
-        });
-        listener.ready.notify_one();
-    }
-    *socket.target.lock().map_err(|_| poisoned())? = Some(target);
-    drop(peer);
-    state
-        .loopback
-        .lock()
-        .map_err(|_| poisoned())?
-        .local
-        .insert(id, own);
-    Ok(wire::Reply::default())
-}
-
-/// The virtual local address of socket `id`, when it has one: getsockname
-/// answers it.
-pub(super) fn local(state: &State, id: u64) -> Option<SocketAddr> {
-    state.loopback.lock().ok()?.local.get(&id).copied()
+/// The virtual local address of socket `id`, of `family`, when it has one:
+/// getsockname answers it.
+pub(super) fn local(state: &State, id: u64, family: i32) -> Option<SocketAddr> {
+    let key = state.loopback.lock().ok()?.local.get(&id).copied()?;
+    Some(presented(key, family))
 }
 
 fn listening(state: &State, id: u64) -> io::Result<Option<Arc<Listener>>> {
@@ -528,7 +581,7 @@ impl Listener {
         // MSG_DONTWAIT keeps it from waiting whatever the guest's mode.
         let _ = unsafe {
             libc::recv(
-                self.guest.as_raw_fd(),
+                self.control.as_raw_fd(),
                 byte.as_mut_ptr().cast(),
                 1,
                 libc::MSG_DONTWAIT,
@@ -536,16 +589,27 @@ impl Listener {
         };
     }
 
-    /// Puts a connection back first in the queue, with its token. A closed
-    /// listener drops it, and its client reads the end.
+    /// Puts a connection a finish took back first in the queue, with its
+    /// token. It held its slot throughout. A closed listener drops it, and
+    /// its client reads the end.
     fn requeue(&self, queued: Queued) -> io::Result<()> {
         let mut queue = self.queue.lock().map_err(|_| poisoned())?;
+        queue.installing = queue.installing.saturating_sub(1);
         if !queue.closed {
             self.token();
             queue.waiting.push_front(queued);
             self.ready.notify_one();
         }
         Ok(())
+    }
+
+    /// An accept installed a connection: its slot is free for the connect
+    /// whose turn it is.
+    fn installed(&self) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.installing = queue.installing.saturating_sub(1);
+        }
+        self.space.notify_all();
     }
 
     /// Ends the listener: its queued connections close, and its waits end.
@@ -556,13 +620,6 @@ impl Listener {
             queue.reserved.clear();
         }
         self.ready.notify_all();
+        self.space.notify_all();
     }
-}
-
-/// Whether the guest put the listener in nonblocking mode. The kept copy
-/// shares the guest end's open file description, and with it its mode.
-fn in_nonblocking_mode(guest: &OwnedFd) -> bool {
-    // SAFETY: F_GETFL only reads the status flags of a live descriptor.
-    let flags = unsafe { libc::fcntl(guest.as_raw_fd(), libc::F_GETFL) };
-    flags >= 0 && flags & libc::O_NONBLOCK != 0
 }

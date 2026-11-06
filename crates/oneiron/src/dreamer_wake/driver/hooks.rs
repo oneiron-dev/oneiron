@@ -8,10 +8,13 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::runtime_hooks::{
-    BudgetHit, HOST_BUDGET_HIT, InvocationId, VerbCall, VerbDomain, VerbHookPre,
-};
 use crate::skill_hub::pack_catalog::HookActorClass;
+use crate::store::verb_invocation::InvocationId;
+use crate::{
+    runtime_hooks::VerbHookPre,
+    runtime_hooks::{BudgetHit, HOST_BUDGET_HIT, VerbCall},
+    store::verb_domain::VerbDomain,
+};
 
 /// The host verb a wake pass runs under.
 const HOST_WAKE: &str = "host.wake";
@@ -157,7 +160,7 @@ impl DreamerWakeDriver<'_> {
                 )
             }
             None => (
-                crate::BudgetExhaustionPolicy::Suspend,
+                oneiron_model::llm::BudgetExhaustionPolicy::Suspend,
                 match self.store.budget(&self.budget_id) {
                     Ok(Some(record)) => json!({
                         "total_units": record.total_units,
@@ -186,6 +189,7 @@ impl DreamerWakeDriver<'_> {
             accounting,
             actor,
             invocation,
+            scope: None,
         });
     }
 }

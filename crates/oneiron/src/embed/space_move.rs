@@ -36,11 +36,15 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
 use crate::pipeline::ScoredEntity;
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_optimize::SufficiencyCard;
 
 mod cutover;
+mod stock;
+pub(super) use stock::stock_move_kinds;
 
 /// Ranks a probe reads: a target found below this depth scores as missed.
 pub const SPACE_PROBE_DEPTH: usize = 10;
@@ -801,6 +805,7 @@ impl Vault {
         by: SetupDoor<'_>,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes, versions) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &rtxn)?)?;
@@ -812,9 +817,12 @@ impl Vault {
             };
             // A document a third-party candidate is never sent is settled, not pending: the
             // move would otherwise read filling until its deadline (FIX 6741).
+            // No model reads here (FIX 6741): the gate judges a destination nobody
+            // proved, as the backfill's gate does for an unproved model.
+            let unknown = ReadDestination::toward(PeerMachine::Unknown);
             let gate = encoder
                 .candidate_egress()
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &unknown))
                 .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             let pending = self.media_backlog_where_in_txn(
@@ -1053,6 +1061,7 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<()> {
         let check = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, candidate)? else {
@@ -1060,8 +1069,11 @@ impl Vault {
                     "embedding space {candidate} is not declared"
                 )));
             };
+            // No model reads here either: the gate judges a destination nobody
+            // proved, as the move's check reads it.
+            let unknown = ReadDestination::toward(PeerMachine::Unknown);
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &unknown))
                 .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             if !self
@@ -1116,6 +1128,9 @@ impl Vault {
         // The binding the move applied goes back with its slots (O3b PR B).
         super::binding_move::move_undone_in_txn(self, &mut wtxn, &moving, actor)?;
         wtxn.commit()?;
+        // FIX 11482: the undone move's note commits here in a raw transaction
+        // with no owner scope, so this door sends the signal itself.
+        self.store.notify_notification_updates();
         self.embedding_setup_committed(setup);
         self.embedding_move_ended();
         Ok(())

@@ -14,13 +14,16 @@ use super::side_keys::HexPair;
 use super::{EntityDoc, ForkStatus, SettleVerb, storage};
 use crate::error::{ArtifactError, Error};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
-use crate::recovery::{
-    CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
-    CanonicalEntityDocument, CanonicalEntityDocumentHistory, CanonicalForkStatus,
-    CanonicalSettleVerb,
-};
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::canonical_document::CanonicalDocumentFork;
+use crate::store::canonical_document::CanonicalDocumentPin;
+use crate::store::canonical_document::CanonicalDocumentPurge;
+use crate::store::canonical_document::CanonicalDocumentReceipt;
+use crate::store::canonical_document::CanonicalEntityDocument;
+use crate::store::canonical_document::CanonicalEntityDocumentHistory;
+use crate::store::canonical_document::CanonicalForkStatus;
+use crate::store::canonical_document::CanonicalSettleVerb;
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
@@ -84,6 +87,7 @@ pub(crate) fn capture(
         metadata: doc.metadata_bytes()?,
         summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
+        // The stored stamp token, carried as it stands (FIX 11964).
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
@@ -720,6 +724,7 @@ fn bind_rows(
                     .as_ref()
                     .ok_or(invalid("entity document fork metadata"))?,
             )?;
+            super::document::restate_birth(&branch.doc);
             branch.doc.commit();
             ENTITY_DOC_FORK_SNAPSHOT.put(
                 store,

@@ -37,7 +37,9 @@ use std::pin::Pin;
 pub use self::admit::admit_published_inline;
 pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
-pub use self::source::{PreparedShadowStep, prepare_shadow_step_source, shadow_source_gone};
+pub use self::source::{
+    PreparedShadowStep, prepare_shadow_step_source, shadow_route_prompt, shadow_source_gone,
+};
 pub(crate) use self::source::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
 pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
@@ -50,9 +52,7 @@ pub use self::types::{
 };
 use crate::Result;
 
-/// The shadow protocol's version: a request or frame of another is
-/// unavailable (`ProtocolUnsupported`). CALLS "shadow protocol version 1".
-pub const SHADOW_PROTOCOL_VERSION: u32 = 1;
+pub use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
 
 /// One arm's run, as a runner answers it.
 pub type ShadowRunFuture<'a> = Pin<Box<dyn Future<Output = Result<ShadowRunResult>> + Send + 'a>>;

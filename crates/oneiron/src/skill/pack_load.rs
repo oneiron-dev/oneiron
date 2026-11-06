@@ -34,15 +34,7 @@ enum LoadResident {
     Attempt,
 }
 
-/// The one runtime admission invariant used by the load door and hub installs.
-#[must_use]
-pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
-    record.lifecycle_status == SkillLifecycle::Active
-        && matches!(
-            record.approval_status,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        )
-}
+pub(crate) use crate::write_envelope::skill_record::skill_loadable;
 
 impl Vault {
     /// Bind one live attempt to its executing actor (PERSON, AGENT_DEF or
@@ -101,6 +93,29 @@ impl Vault {
         executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
+        self.load_attempt_skill_pack_sourced(
+            attempt,
+            skill,
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )
+        .map(|(loaded, _)| loaded)
+    }
+
+    /// Loads the pack and returns the instruction source rows witnessed in
+    /// the same transaction: the loaded SKILL or proposal and any replicated
+    /// package carrier. The ordinary load's checks and attempt stamps stand.
+    pub fn load_attempt_skill_pack_sourced(
+        &self,
+        attempt: AttemptId,
+        skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
+        at: u64,
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
         self.load_skill_pack_bound(
             attempt,
             skill,
@@ -137,6 +152,7 @@ impl Vault {
             Some(executor_model),
             at,
         )
+        .map(|(loaded, _)| loaded)
     }
 
     #[expect(
@@ -152,7 +168,7 @@ impl Vault {
         attempt_count: u32,
         executor_model: Option<&str>,
         at: u64,
-    ) -> Result<LoadedSkillPack> {
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
         let (loaded, ask) = self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
@@ -212,14 +228,17 @@ impl Vault {
                 txn,
                 attempt,
                 ReadSetProducer::SKILL_PACK,
-                Some(read),
+                Some(read.clone()),
             );
             Ok((
-                LoadedSkillPack {
-                    entity,
-                    record,
-                    source_files,
-                },
+                (
+                    LoadedSkillPack {
+                        entity,
+                        record,
+                        source_files,
+                    },
+                    read,
+                ),
                 routed.ask,
             ))
         })?;
@@ -265,6 +284,7 @@ impl Vault {
             (!stamped).then_some(executor),
             at,
         )
+        .map(|(loaded, _)| loaded)
     }
 
     /// Loads the exact revision a frozen plan names, in the caller's own
@@ -483,10 +503,11 @@ impl Vault {
     }
 
     /// The skill's resident when the live attempt runs as that very agent,
-    /// its leased row decoded in the load's own transaction (FIX 10153). The
-    /// lease itself is fenced later in that transaction. Any other attempt,
-    /// or a row the dispatch decoder does not read, loads as before: shared
-    /// skills only.
+    /// from its dispatch input or its native resident/program stamp in the
+    /// load's own transaction. A valid dispatch wins; only the matching
+    /// queued resident/free-time or turn-program kind tries its optional
+    /// native stamp. No valid binding means shared skills only. The lease
+    /// itself is fenced later in the same transaction.
     fn attempt_resident_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -496,11 +517,24 @@ impl Vault {
         let Some(owner) = super::resident_of(record)? else {
             return Ok(None);
         };
-        let actor = AttemptQueue::new(self)
-            .get_in_txn(txn, attempt)?
+        let queued = AttemptQueue::new(self).get_in_txn(txn, attempt)?;
+        let actor = queued
             .as_ref()
             .and_then(crate::agent_dispatch::record_dispatch_input)
             .and_then(|input| crate::agent_dispatch::agent_dispatch_actor(&input).ok());
+        let actor = match actor {
+            Some(actor) => Some(actor),
+            None => match queued.as_ref().map(|queued| queued.kind.as_str()) {
+                Some(
+                    crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+                    | crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND,
+                ) => self.resident_actor_for_attempt_in_txn(txn, attempt)?,
+                Some(crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND) => {
+                    self.program_actor_for_attempt_in_txn(txn, attempt)?
+                }
+                _ => None,
+            },
+        };
         Ok(actor
             .map(|actor| actor.entity_ref())
             .filter(|actor| *actor == owner))
@@ -692,13 +726,24 @@ impl Vault {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;
-            if body.predicate.starts_with("actor.")
-                && !matches!(&body.subject,
-                    crate::claim::ClaimSubject::Entity(actor) if Some(*actor) == resident)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "actor self-model belongs to a different resident",
-                ));
+            if body.predicate.starts_with("actor.") {
+                let allowed = match resident {
+                    Some(resident) => {
+                        // A resident's shells merged into it read as its own
+                        // (FIX 9073): the redirect authority names them.
+                        crate::skill_reliability::redirect_equivalent_subjects_in_txn(
+                            self, &*txn, &resident,
+                        )?
+                    }
+                    None => Vec::new(),
+                };
+                if !matches!(&body.subject,
+                    crate::claim::ClaimSubject::Entity(actor) if allowed.contains(actor))
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "actor self-model belongs to a different resident",
+                    ));
+                }
             }
             // A claim whose every cited TURN is erased has no live support,
             // however late it replicated (FIX 8643): it is not loaded.

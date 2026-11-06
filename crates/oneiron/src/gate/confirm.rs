@@ -1,15 +1,12 @@
 use crate::ports::EntityStoreRead;
-use sha2::Digest;
-use sha2::Sha256;
 
-use crate::authority::{CRITICAL_WRITE_CONFIRM_DOMAIN, CriticalWriteConfirmDisposition};
+use crate::authority::CriticalWriteConfirmDisposition;
 
-use crate::batch::{BatchOp, EntityMetadataHeader, apply_session_bundle_claim_puts};
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, encode_claim_body};
+use crate::batch::EntityMetadataHeader;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
+use crate::store::{PendingGateConsentRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -17,47 +14,43 @@ use super::ceiling::PolicyCriticality;
 use super::decision::GateReasonCode;
 use super::input::{GateContentKind, GateEvaluatorInput};
 
-pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;
+mod demotion_retry;
+mod status_grant;
+
+pub(super) use self::status_grant::{
+    PreauthorizedClaimStatusGrant, put_preauthorized_claim_status_in_txn,
+};
+
 // A public listing uses one expiry pass plus one listing pass: at most 512 rows total.
 const CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT: usize = 256;
 const CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET: usize = CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT * 2;
+pub use crate::store::critical_confirm_record::{
+    CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+};
+pub(super) use crate::store::critical_confirm_record::{
+    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED,
+    GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM,
+};
+pub(crate) use crate::store::critical_confirm_record::{
+    critical_write_confirm_binding, pending_row_holds_critical_confirm,
+};
 pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.allow.critical_confirm_attached";
 /// The receipt reason of a critical claim its vault's authenticated owner
 /// wrote in person: it carries its own confirmation and attaches none.
 pub(crate) const GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED: &str =
     "gate.allow.critical_owner_authored";
-// The decision receipt uses the allow namespace; the durable pending row must
-// remain in store.rs's existing pending namespace.
-pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
-    "gate.pending.critical_confirm_attached";
-pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_confirm_timeout";
+/// The receipt reason of a claim whose only criticality is the fallback for
+/// a predicate no policy rule names: that default sets the legibility and
+/// truncation floors and does not stop the write (ARCH-0003 §Criticality),
+/// so it attaches no confirmation. Only a declared critical class does.
+pub(crate) const GATE_REASON_ALLOW_FALLBACK_CRITICALITY: &str = "gate.allow.fallback_criticality";
 pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
 pub(super) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
     "gate.retract.critical_confirm_replicated_overwrite";
-/// The pending reason of the confirm this device attaches to a critical claim
-/// that reached it by sync. The peer's Auto stamp is not this device's Clear.
-/// The hold has no deadline here, since a timeout's demotion would rewrite the
-/// peer's bytes on this device.
-pub(super) const GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM: &str =
-    "gate.pending.critical_confirm_replicated";
-/// The pending reason of the item a claim's open owner-answer obligation
-/// shows its owner after a door removed the one it had without an answer, or a
-/// later revision outdated it ([`super::owner_answer`]). Like a replicated
-/// hold, it has no deadline.
-pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED: &str =
-    "gate.pending.critical_confirm_reopened";
 /// The change-log reason of a Clear, which changes no claim bytes.
 const CHANGE_REASON_CRITICAL_CONFIRM_CLEARED: &str = "critical confirm cleared";
-
-/// Whether `row` is a critical confirm's item: attached here or on sync,
-/// timed out, or shown for an open obligation. Each one opens its claim's
-/// owner-answer obligation, which is the hold readers ask.
-pub(crate) fn pending_row_holds_critical_confirm(row: &PendingGateConsentRecord) -> bool {
-    row.reason_codes
-        .iter()
-        .any(|reason| reason.contains("critical_confirm"))
-}
 
 /// Whether `row`'s confirm waits for its owner however long that takes: a hold
 /// this device attached on sync, or an item an open obligation shows. Only the
@@ -67,86 +60,6 @@ pub(crate) fn critical_confirm_has_no_deadline(row: &PendingGateConsentRecord) -
         row.reason_codes.as_slice(),
         [reason] if reason == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
             || reason == GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED
-    )
-}
-
-/// A private, single-use authority for a settlement status rewrite.
-///
-/// Its fields are deliberately not caller supplied at the materialization door:
-/// only the verified timeout/sweep and authority-fold paths below can construct it.
-#[derive(Clone, Copy)]
-pub(super) enum PreauthorizedClaimStatusGrant {
-    TimeoutDemotion,
-    FoldDecline,
-    FoldClear,
-}
-
-#[cfg(test)]
-impl PreauthorizedClaimStatusGrant {
-    // Test-only access verifies the materialization door's row/header binding.
-    pub(super) fn test_timeout_demotion() -> Self {
-        Self::TimeoutDemotion
-    }
-}
-
-pub(super) fn put_preauthorized_claim_status_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    expected: &ClaimBody,
-    grant: PreauthorizedClaimStatusGrant,
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let current = vault
-        .get_claim_in_txn(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    let raw = vault
-        .store
-        .port_entity_record(&*wtxn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    if raw.entity_type != ENTITY_TYPE_CLAIM
-        || raw.occurred.start != occurred.start
-        || raw.occurred.end != occurred.end
-        || raw.learned_at != learned_at
-        || current != *expected
-    {
-        return Err(Error::InvariantViolation(
-            "preauthorized claim status update does not bind current claim row",
-        ));
-    }
-    let mut updated = current;
-    match grant {
-        PreauthorizedClaimStatusGrant::TimeoutDemotion => {
-            updated.approval = ClaimApprovalStatus::Proposed;
-        }
-        PreauthorizedClaimStatusGrant::FoldClear => {
-            updated.approval = ClaimApprovalStatus::Auto;
-        }
-        PreauthorizedClaimStatusGrant::FoldDecline => {
-            updated.lifecycle = ClaimLifecycleStatus::Retracted;
-        }
-    }
-    let data = encode_claim_body(&updated)?;
-    crate::claim::validate_claim_body_bytes(&data, false)?;
-    apply_session_bundle_claim_puts(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        wtxn,
-        vec![BatchOp::Put {
-            id: *id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred,
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
     )
 }
 
@@ -229,10 +142,17 @@ impl Vault {
         &self,
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
-        self.with_write_txn_grouped(|wtxn| {
+        let resolution = self.with_write_txn_grouped(|wtxn| {
             let now = self.store.clock.now_recorded_at();
             self.settle_critical_write_confirm_in_txn(wtxn, confirm_id, now, None)
-        })?
+        })??;
+        // A settled answer can release a held hook binding at once, not at
+        // the binding cache's staleness lapse (FIX 12108): after the commit,
+        // never inside the writer, and never on an error.
+        if resolution != CriticalWriteConfirmResolution::AlreadySettled {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(resolution)
     }
 
     /// Applies the folded answer in the caller's writer. An owner ceremony
@@ -282,13 +202,14 @@ impl Vault {
         }
         // An answer to a parked decay or stale mark settles a restriction,
         // so it reads a held machine history; every other answer waits.
-        let mut body =
-            if self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)? {
-                self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
-            } else {
-                self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
-            }
-            .ok_or(Error::EntityNotFound)?;
+        let in_place_demotion =
+            self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)?;
+        let mut body = if in_place_demotion {
+            self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
+        } else {
+            self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
+        }
+        .ok_or(Error::EntityNotFound)?;
         let raw = self
             .store
             .port_entity_record(&*wtxn, &binding.claim_id)?
@@ -364,14 +285,39 @@ impl Vault {
                 None => crate::vault::embedded_owner_actor_id()?,
             },
         };
-        let settled = |outcome| crate::runtime_hooks::SettledFact {
+        let settled = |outcome| crate::consent::settlement_fact::SettledFact {
             proposal: binding.claim_id,
             outcome,
             settled_by,
-            kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+            kind: crate::consent::settlement_fact::SettlementKind::CriticalWriteConfirm,
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
+                // Repair a lapse from the resolved row, never a held view.
+                // In-place demotions use their restriction read and completion
+                // path; a repair-only read must not wait on held history.
+                let mut repaired = false;
+                if !in_place_demotion {
+                    let resolved = self
+                        .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    repaired = resolved.approval == ClaimApprovalStatus::Proposed;
+                    if repaired {
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &resolved,
+                            PreauthorizedClaimStatusGrant::FoldClear,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                        )?;
+                        body.approval = ClaimApprovalStatus::Auto;
+                    }
+                }
                 // The owner's Clear answers the item this confirm bound.
                 let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
                     &self.store,
@@ -381,7 +327,9 @@ impl Vault {
                     super::owner_answer::OwnerAnswer::authority_log(),
                 )?;
                 if deferred {
-                    if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
+                    if !repaired
+                        && self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?
+                    {
                         put_preauthorized_claim_status_in_txn(
                             self,
                             wtxn,
@@ -441,7 +389,7 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    settled(crate::runtime_hooks::SettledOutcome::Approved),
+                    settled(crate::consent::settlement_fact::SettledOutcome::Approved),
                 )?;
                 Ok(Ok(CriticalWriteConfirmResolution::Cleared))
             }
@@ -487,9 +435,9 @@ impl Vault {
                     self,
                     wtxn,
                     settled(if retract {
-                        crate::runtime_hooks::SettledOutcome::Retracted
+                        crate::consent::settlement_fact::SettledOutcome::Retracted
                     } else {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }),
                 )?;
                 Ok(Ok(if retract {
@@ -519,8 +467,12 @@ impl Vault {
 
     /// Demotes every expired confirm the page reaches, recording each
     /// demotion as a `Demoted` settlement settled by the engine (FIX 1093).
+    /// A row whose demotion failed waits out its backoff before the walk
+    /// tries it again (FIX 12079); the backoff it learned is kept once the
+    /// page commits. Once the walk ends, entries whose rows left the tray
+    /// another way are dropped (FIX 12288).
     fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
-        self.with_write_txn_grouped(|wtxn| {
+        let (page, outcomes, seen) = self.with_write_txn_grouped(|wtxn| {
             let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
             let (cursor, prior_fence) = self
                 .store
@@ -543,53 +495,102 @@ impl Vault {
                 if complete { None } else { fence },
             )?;
             let mut demoted = 0;
+            let mut outcomes = Vec::new();
+            let mut seen = Vec::new();
             for (_, row) in pending {
-                if critical_confirm_has_no_deadline(&row) {
-                    continue;
-                }
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
+                // Every confirm still in the tray, even one this page skips,
+                // so a finished walk drops only entries whose rows left it
+                // (FIX 12288).
+                seen.push(binding.confirm_id);
+                if critical_confirm_has_no_deadline(&row) {
+                    continue;
+                }
                 if binding.expires_at > now
-                    || self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?
+                    || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
                 {
                     continue;
                 }
-                let Some(body) = self.get_claim_in_txn(&*wtxn, &binding.claim_id)? else {
-                    continue;
-                };
-                if body.approval != ClaimApprovalStatus::Auto {
-                    continue;
-                }
-                let raw = self
+                // Each demotion runs in a savepoint: one that fails drops only
+                // its own rows, and the walk passes it over so the cursor still
+                // moves on (FIX 12025). A store failure fails the page.
+                let claim_id = binding.claim_id;
+                let landed = self
                     .store
-                    .port_entity_record(&*wtxn, &binding.claim_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                put_preauthorized_claim_status_in_txn(
-                    self,
-                    wtxn,
-                    &binding.claim_id,
-                    &body,
-                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
-                    TimeRange {
-                        start: raw.occurred.start,
-                        end: raw.occurred.end,
-                    },
-                    raw.learned_at,
-                )?;
-                let mut timed_out = row;
-                timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
-                self.store
-                    .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
-                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
-                demoted += 1;
+                    .env
+                    .nested_write_txn(wtxn)
+                    .map_err(Error::from)
+                    .and_then(|mut savepoint| {
+                        let landed =
+                            self.demote_expired_confirm_in_txn(&mut savepoint, row, claim_id)?;
+                        savepoint.commit()?;
+                        Ok(landed)
+                    });
+                let retry = match landed {
+                    Ok(landed) => {
+                        demoted += usize::from(landed);
+                        None
+                    }
+                    Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => {
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        Some(self.confirm_demotion_failed_in_txn(wtxn, &binding, &error, now)?)
+                    }
+                };
+                outcomes.push((binding.confirm_id, retry));
             }
-            Ok(ConfirmExpiryPage {
+            let page = ConfirmExpiryPage {
                 demoted,
                 began_at: cursor.is_none().then_some(now),
                 ended: complete,
-            })
-        })
+            };
+            Ok((page, outcomes, seen))
+        })?;
+        self.confirm_demotion_retries
+            .record(outcomes, seen, page.ended);
+        Ok(page)
+    }
+
+    /// The timeout demotion of an expired confirm's `row` whose claim still
+    /// stands `Auto` with no deferred write: `true` once it demoted.
+    fn demote_expired_confirm_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        mut row: PendingGateConsentRecord,
+        claim_id: EntityId,
+    ) -> Result<bool> {
+        if self.has_deferred_claim_in_txn(wtxn, &claim_id)? {
+            return Ok(false);
+        }
+        let Some(body) = self.get_claim_in_txn(&*wtxn, &claim_id)? else {
+            return Ok(false);
+        };
+        if body.approval != ClaimApprovalStatus::Auto {
+            return Ok(false);
+        }
+        let raw = self
+            .store
+            .port_entity_record(&*wtxn, &claim_id)?
+            .ok_or(Error::EntityNotFound)?;
+        put_preauthorized_claim_status_in_txn(
+            self,
+            wtxn,
+            &claim_id,
+            &body,
+            PreauthorizedClaimStatusGrant::TimeoutDemotion,
+            TimeRange {
+                start: raw.occurred.start,
+                end: raw.occurred.end,
+            },
+            raw.learned_at,
+        )?;
+        row.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
+        self.store.put_pending_gate_consent_in_txn(wtxn, &row)?;
+        crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, claim_id)?;
+        Ok(true)
     }
 }
 
@@ -603,18 +604,6 @@ pub(crate) struct ConfirmExpiryPage {
     pub(crate) began_at: Option<u64>,
     /// Whether it ended the walk it was on.
     pub(crate) ended: bool,
-}
-
-/// The deterministic authority-log binding for a critical claim attachment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CriticalWriteConfirmBinding {
-    pub confirm_id: [u8; 32],
-    pub gate_decision_id: GateDecisionId,
-    pub claim_id: EntityId,
-    pub effect_digest: [u8; 32],
-    pub read_frontier_hash: [u8; 32],
-    pub nonce: [u8; 16],
-    pub expires_at: u64,
 }
 
 #[derive(
@@ -692,51 +681,6 @@ pub(crate) fn claim_critical_confirm_settled_in_txn(
         !crate::store::pending_gate_consent_in(store, txn, claim_id)?
             .is_some_and(|row| pending_row_holds_critical_confirm(&row)),
     )
-}
-
-pub(crate) fn critical_write_confirm_binding(
-    pending: &PendingGateConsentRecord,
-) -> Result<CriticalWriteConfirmBinding> {
-    if !matches!(
-        pending.reason_codes.as_slice(),
-        [reason]
-            if reason.as_str() == GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED
-                || reason.as_str() == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
-                || reason.as_str() == GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED
-                || reason.as_str() == GATE_REASON_CRITICAL_CONFIRM_TIMEOUT
-    ) {
-        return Err(Error::InvalidClaimBody("not a critical-confirm attachment"));
-    }
-    let claim_id = EntityId::from_bytes(pending.claim_id)
-        .map_err(|_| Error::InvalidClaimBody("pending critical-confirm claim id"))?;
-    let mut digest = blake3::Hasher::new();
-    digest.update(b"oneiron:critical-confirm:v1");
-    digest.update(claim_id.as_bytes());
-    digest.update(&pending.decision_id.as_bytes());
-    digest.update(&pending.diff_handle);
-    digest.update(&pending.read_frontier_hash);
-    let effect_digest = *digest.finalize().as_bytes();
-    let nonce = pending.decision_id.as_bytes();
-    let expires_at = pending
-        .created_at
-        .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
-    let mut confirm = Sha256::new();
-    confirm.update(CRITICAL_WRITE_CONFIRM_DOMAIN);
-    confirm.update(pending.decision_id.as_bytes());
-    confirm.update(claim_id.as_bytes());
-    confirm.update(effect_digest);
-    confirm.update(pending.read_frontier_hash);
-    confirm.update(nonce);
-    confirm.update(expires_at.to_be_bytes());
-    Ok(CriticalWriteConfirmBinding {
-        confirm_id: confirm.finalize().into(),
-        gate_decision_id: pending.decision_id,
-        claim_id,
-        effect_digest,
-        read_frontier_hash: pending.read_frontier_hash,
-        nonce,
-        expires_at,
-    })
 }
 
 /// Whether a critical claim write may land `Auto` with an attached owner

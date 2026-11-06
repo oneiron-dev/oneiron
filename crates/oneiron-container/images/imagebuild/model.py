@@ -8,6 +8,7 @@ Nothing here downloads or builds.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import tomllib
 import uuid
@@ -74,6 +75,7 @@ class Plan:
     launchers: list[dict] = field(default_factory=list)
     links: list[dict] = field(default_factory=list)
     dirs: list[dict] = field(default_factory=list)
+    empty_files: list[dict] = field(default_factory=list)
     user: dict | None = None
     image: dict = field(default_factory=dict)
 
@@ -171,6 +173,7 @@ class Model:
             launchers=both("launchers", base),
             links=(list(plumbing_doc.get("links", [])) if plumbing else []) + list(overlay.get("links", [])),
             dirs=both("dirs", base),
+            empty_files=both("empty_files", base),
             user=plumbing_doc.get("user") if plumbing else overlay.get("user"),
             image=image,
         )
@@ -181,6 +184,20 @@ class Model:
         if self.lock is None:
             raise MissingPin("packages.lock.toml is missing: run `build.py fetch --learn` once, commit the lock")
         return self.lock.get("package", [])
+
+    def lock_files(self, scopes: list[str]) -> set[str]:
+        """The exact union of .deb filenames these learned scopes need."""
+        if self.lock is None:
+            raise MissingPin("packages.lock.toml is missing: run `build.py fetch --learn` once, commit the lock")
+        files = set()
+        for name in scopes:
+            scope = self.lock.get("scopes", {}).get(name)
+            if scope is None:
+                raise MissingPin(f"packages.lock.toml has no [scopes.{name}]: run `build.py fetch --learn`")
+            if "files" not in scope:
+                raise MissingPin(f"packages.lock.toml has no file list for {name}: rerun `build.py fetch --learn`")
+            files.update(scope["files"])
+        return files
 
     def check_lock_covers(self, plan: Plan) -> None:
         if self.lock is None:
@@ -290,6 +307,14 @@ def _check_requests(model: Model, problems: list[str]) -> None:
             dest = entry.get("dest", entry.get("path", ""))
             if not str(dest).startswith("/usr/") and not str(dest).startswith("/opt/"):
                 problems.append(f"packages.toml: {name} places {dest!r} outside /usr or /opt (merged-usr image)")
+        for entry in plan.empty_files:
+            path = str(entry.get("path", ""))
+            # An absolute, normalized path inside the image: no "." or "..",
+            # no trailing or doubled slash, not the root, nothing a TSV row breaks on.
+            if (not path.startswith("/") or path.startswith("//") or path == "/"
+                    or posixpath.normpath(path) != path or any(c in path for c in "\t\n\r\\")):
+                problems.append(f"packages.toml: {name} empty file {path!r} must be an absolute, normalized "
+                                "path inside the image")
         for entry in plan.launchers:
             for key in ("runtime", "entry"):
                 value = str(entry.get(key, ""))
@@ -312,6 +337,11 @@ def _check_lock(model: Model, problems: list[str], notes: list[str]) -> None:
             problems.append(f"packages.lock.toml: unknown scope {scope!r}")
         elif entry.get("requests_sha256") != model.plan(scope).requests_sha256():
             problems.append(f"packages.lock.toml: scope {scope} is stale against packages.toml (rerun fetch --learn)")
+        files = entry.get("files")
+        if files is not None and (not isinstance(files, list) or any(not isinstance(f, str) for f in files)):
+            problems.append(f"packages.lock.toml: scope {scope} files must be a list of filenames")
+        elif files is not None and len(set(files)) != len(files):
+            problems.append(f"packages.lock.toml: scope {scope} files contains a duplicate")
     names = set()
     for entry in lock.get("package", []):
         for key in ("name", "version", "arch", "filename", "size", "sha256"):
@@ -320,6 +350,12 @@ def _check_lock(model: Model, problems: list[str], notes: list[str]) -> None:
         if entry.get("filename") in names:
             problems.append(f"packages.lock.toml: {entry.get('filename')} appears twice")
         names.add(entry.get("filename"))
+    for scope, entry in lock.get("scopes", {}).items():
+        files = entry.get("files")
+        if isinstance(files, list):
+            unknown = sorted(set(files) - names)
+            if unknown:
+                problems.append(f"packages.lock.toml: scope {scope} names files with no package entry: {unknown}")
     scopes = sorted(lock.get("scopes", {}))
     notes.append(f"packages.lock.toml: {len(names)} packages, scopes {scopes}")
 

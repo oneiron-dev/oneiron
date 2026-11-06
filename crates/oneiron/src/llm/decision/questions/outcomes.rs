@@ -22,22 +22,63 @@ pub fn project_bound_outcomes(
     principal: EntityId,
     question: EntityId,
 ) -> Result<usize> {
-    if super::read_question(vault, principal, question, None)?.is_none() {
+    let Some(facts) = projectable_facts(vault, principal, question)? else {
         return Ok(0);
-    }
-    let facts = {
-        let txn = vault.store.env.read_txn()?;
-        crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &vault.store,
-            &txn,
-            crate::registry::ENTITY_TYPE_CLAIM,
-            None,
-        )?
-        .collect::<Result<std::collections::BTreeSet<_>>>()?
     };
     vault.with_write_txn_grouped(|txn| {
         super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)
     })
+}
+
+/// [`project_bound_outcomes`], answering each label the projection newly
+/// bound rather than their count (FIX 11827): the labels the question held
+/// before and after it, in the projection's own write.
+pub(super) fn project_bound_labels(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<OutcomeLabel>> {
+    let Some(facts) = projectable_facts(vault, principal, question)? else {
+        return Ok(Vec::new());
+    };
+    let prefix = family_prefix(question, b"label");
+    vault.with_write_txn_grouped(|txn| {
+        let held: std::collections::BTreeSet<(EntityId, EntityId)> = QUESTION_LABEL
+            .scan_from(&vault.store, txn, &prefix)?
+            .into_iter()
+            .map(|(_, label)| (label.answer, label.fact))
+            .collect();
+        if super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)? == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(QUESTION_LABEL
+            .scan_from(&vault.store, txn, &prefix)?
+            .into_iter()
+            .map(|(_, label)| label)
+            .filter(|label| !held.contains(&(label.answer, label.fact)))
+            .collect())
+    })
+}
+
+/// Every claim a projection of `principal`'s standing question judges as a
+/// fact; `None` when the question is not theirs.
+fn projectable_facts(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
+    if super::read_question(vault, principal, question, None)?.is_none() {
+        return Ok(None);
+    }
+    let txn = vault.store.env.read_txn()?;
+    let facts = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        &txn,
+        crate::registry::ENTITY_TYPE_CLAIM,
+        None,
+    )?
+    .collect::<Result<std::collections::BTreeSet<_>>>()?;
+    Ok(Some(facts))
 }
 
 /// The stored outcome labels of the caller's standing question, in label

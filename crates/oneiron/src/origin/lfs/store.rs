@@ -4,10 +4,10 @@ use super::{
     LfsAdmission, LfsAssetClass, LfsOid, LfsPathPolicy, LfsPointerIntent, VAULT_LFS_OID_LEN,
 };
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 
 /// Schema version of both `vault_meta` row families below.
@@ -191,6 +191,21 @@ impl Vault {
         Ok(OBJECTS
             .get(&self.store, &txn, &oid)?
             .map(|record| record.with_oid(oid)))
+    }
+
+    /// The live object's manifest ASSET binding in the caller's snapshot.
+    /// A missing, deleted or undecodable object has no attributable source.
+    pub(crate) fn lfs_object_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        oid: LfsOid,
+    ) -> Result<Option<EntityId>> {
+        if super::lifecycle::DELETED.contains(&self.store, txn, &oid)? {
+            return Ok(None);
+        }
+        Ok(OBJECTS
+            .get_lenient(&self.store, txn, &oid)?
+            .map(|record| record.asset_id))
     }
 
     /// The directory the object plane and an upload's spool are written in:

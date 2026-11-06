@@ -1,0 +1,263 @@
+//! Export secret supplements on the window plane (FIX 11843): the sealed
+//! copy an export secret request's holder commits rides the custody map,
+//! keyed `export_output:` and the request's entry hash, in the base window
+//! of the month it was sealed in, each row committed on its own, so the
+//! owner's server reads it whether or not it is the holder.
+//!
+//! - Admission takes a row only whole, filed under its own request, in its
+//!   sealing month's base window, within one row's bound. A copy (or a part
+//!   set) carries the request's signed result as its witness (FIX 12312);
+//!   one whose witness does not name it, or that the folded result does not
+//!   name, is admitted, never kept, and leaves at the next prune (FIX 12065,
+//!   12294); whether a copy is the one named is judged where it is kept.
+//! - Reverse rematerialization relays each copy this vault keeps that stands
+//!   on its fold (`KeptExportOutput::stands`), with its witness, and drops a
+//!   row once its request is refused here, no signed result names it (its
+//!   witness, or the result folded here), or its secret an admitted revoke
+//!   ended or an erase here fenced, or once the fold holds the owner's mark
+//!   that he imported it (FIX 12062): no install relays a marked copy again.
+//!   A row its witness names whose request this vault has not folded stays,
+//!   as an input row's does; any other stays until its base window retires.
+//! - Every install keeps a relayed copy that stands on its fold, once,
+//!   rechecked in the writer that keeps it, with or without the request's
+//!   result folded there (FIX 12312). Only the recipient machine opens it;
+//!   no install that keeps or relays it can.
+//! - A copy past one row rides in numbered parts by these same rules, each
+//!   part signed by its holder with the key that signed the result and
+//!   proven alone, and is joined before it is judged (FIX 12063, 12373,
+//!   `parts`).
+
+pub(super) mod parts;
+
+use std::collections::BTreeSet;
+
+use loro::{LoroDoc, LoroValue, ValueOrContainer};
+
+use super::super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
+use super::super::types::WindowKey;
+use super::{CUSTODY_MAP, admission_read_fault, commit_custody, holds_custody_map, refused};
+use crate::Vault;
+use crate::authority::AuthorityFold;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::Result;
+use crate::secret_custody::holder_export::{
+    KeptExportOutput, MAX_RELAYED_OUTPUT_BYTES, held_export_outputs,
+    keep_relayed_export_output_in_txn, relayed_export_output_due_in_txn,
+};
+
+/// The key prefix of a sealed copy's row in the custody map, before its
+/// request's entry hash in hex.
+pub(crate) const EXPORT_OUTPUT_ROW_PREFIX: &str = "export_output:";
+
+fn output_row(request: &[u8; 32]) -> String {
+    format!("{EXPORT_OUTPUT_ROW_PREFIX}{}", bytes_to_hex_lower(request))
+}
+
+/// Whether `value` is a whole copy filed under `row_key`, the map key after
+/// its prefix: what a checkpoint files as secret custody's.
+pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
+    KeptExportOutput::decode(value).is_some_and(|kept| bytes_to_hex_lower(&kept.request) == row_key)
+        || parts::filed(row_key, value)
+}
+
+/// Admits one sealed copy under `row_key`, the map key after its prefix:
+/// one that decodes within one row's bound, filed under its own request, in
+/// its sealing month's base window. A copy no signed result names, by its
+/// witness or the request's folded result (`KeptExportOutput::named_by`,
+/// FIX 12312), is admitted, never kept, and leaves at the next prune
+/// (`row_done`, FIX 12065): refusing it would refuse the whole update of a
+/// peer that has not folded the result yet.
+pub(super) fn admit_export_output(
+    vault: &Vault,
+    key: Option<&WindowKey>,
+    row_key: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
+        return Err(refused("export secret supplement past one row's bound"));
+    }
+    if let Some(admitted) = parts::admit_part(vault, key, row_key, bytes) {
+        return admitted;
+    }
+    let kept = KeptExportOutput::decode(bytes)
+        .ok_or_else(|| refused("malformed export secret supplement"))?;
+    if bytes_to_hex_lower(&kept.request) != row_key {
+        return Err(refused(
+            "export secret supplement filed under another request",
+        ));
+    }
+    if key.is_some_and(|key| *key != WindowKey::from_timestamp(kept.sealed_at)) {
+        return Err(refused(
+            "export secret supplement outside its sealing month's base window",
+        ));
+    }
+    // Reading this vault's own authority is the store's work: its fault is
+    // this machine's, never the peer's refused update (FIX 5925).
+    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let fold = vault
+        .authority_view_readonly_in_txn(&rtxn)
+        .map_err(admission_read_fault)?;
+    if !kept.named_by(&fold) {
+        // Admitted, never kept: the keep path judges it against the result,
+        // and the relay prune drops it (`row_done`). Refusing it would refuse
+        // the whole update or snapshot of a peer that has not folded the
+        // result yet, and stall the window's sync until it does. The row's
+        // key alone: never a byte of the copy.
+        tracing::debug!(
+            request = row_key,
+            "an export secret supplement row its request's signed result does not name; it leaves at the next prune"
+        );
+    }
+    Ok(())
+}
+
+/// Relays each copy this vault keeps into window `key`, the base window of
+/// its sealing month, while it stands on `fold` with `erased` as this
+/// vault's erase fences and `fold` holds no import mark of its request, and
+/// drops from the window every row due to leave it, a marked one among
+/// them. Returns whether it wrote any.
+pub(super) fn mirror_export_outputs(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+    fold: &AuthorityFold,
+    erased: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let kept = held_export_outputs(vault, fold)?;
+    let holds = holds_custody_map(doc);
+    if kept.is_empty() && !holds {
+        return Ok(false);
+    }
+    let fenced = |secret: &EntityId| erased.contains(secret);
+    let mut wrote = false;
+    for output in kept {
+        if WindowKey::from_timestamp(output.sealed_at) != *key
+            || !output.stands(fold, fenced)
+            || fold.export_supplement_imported(&output.request)
+        {
+            continue;
+        }
+        if KeptExportOutput::rides_in_parts(output.sealed.len() as u64) {
+            wrote |= parts::mirror_parts(doc, &output, &output.copy_frame())?;
+            continue;
+        }
+        let bytes = output.encode();
+        let map = doc.get_map(CUSTODY_MAP);
+        let row = output_row(&output.request);
+        if map_get_bytes(&map, &row).as_deref() != Some(bytes.as_slice()) {
+            // Each row commits on its own: no one update outgrows a frame.
+            map_insert_bytes(&map, &row, &bytes)?;
+            commit_custody(doc);
+            wrote = true;
+        }
+    }
+    if holds {
+        let map = doc.get_map(CUSTODY_MAP);
+        let mut done = Vec::new();
+        map.for_each(|map_key, value| {
+            if !map_key.starts_with(EXPORT_OUTPUT_ROW_PREFIX) {
+                return;
+            }
+            let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                return;
+            };
+            if KeptExportOutput::decode(&bytes).is_some_and(|output| {
+                output.row_done(fold, fenced) || fold.export_supplement_imported(&output.request)
+            }) {
+                done.push(map_key.to_owned());
+            }
+        });
+        done.extend(parts::done_part_rows(&map, fold, fenced));
+        for row in done {
+            map_delete(&map, &row)?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
+}
+
+/// Export supplements prepared against the caller's current authority snapshot.
+pub(in crate::sync) struct ExportOutputBatch {
+    due: Vec<KeptExportOutput>,
+}
+
+impl ExportOutputBatch {
+    pub(in crate::sync) fn prepare_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        doc: &LoroDoc,
+        rows: &[(String, Vec<u8>)],
+    ) -> Result<Self> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let mut due = Vec::new();
+        for (map_key, bytes) in rows {
+            let Some(output) = KeptExportOutput::decode(bytes) else {
+                continue;
+            };
+            if *map_key == output_row(&output.request)
+                && !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        for output in parts::joined_copies(doc, &fold, rows) {
+            if !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        Ok(Self { due })
+    }
+
+    pub(in crate::sync) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+        let mut kept = 0;
+        for output in &self.due {
+            if keep_relayed_export_output_in_txn(vault, wtxn, &fold, output)? {
+                kept += 1;
+            }
+        }
+        Ok(kept)
+    }
+}
+
+/// Keeps each relayed copy, filed under its own request, that stands on
+/// this vault's fold and that it keeps no copy for yet, checked again in the
+/// writer that keeps it. A copy the fold holds an import mark of is not
+/// kept: its relay is over (FIX 12062). Any other row stays in the window,
+/// unread. A row that fails is logged and left.
+pub(super) fn keep_relayed_export_outputs(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window: &str,
+    rows: Vec<(String, Vec<u8>)>,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let outcome = (|| -> Result<usize> {
+        let batch = {
+            let rtxn = vault.store.env.read_txn()?;
+            ExportOutputBatch::prepare_in_txn(vault, &rtxn, doc, &rows)?
+        };
+        if batch.due.is_empty() {
+            return Ok(0);
+        }
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
+    })();
+    match outcome {
+        Ok(kept) if kept > 0 => {
+            tracing::debug!(window, kept, "export secret supplements kept for the owner");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(window, error = %error, "export secret supplements not kept");
+        }
+    }
+}

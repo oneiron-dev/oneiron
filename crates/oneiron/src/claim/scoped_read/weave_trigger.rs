@@ -1,7 +1,8 @@
 //! Typed weave publication and persisted correction reads for the bound reader.
 use super::{ClaimReadStatus, ScopedReadReceipt, WeaveLinkCorrectionView, WeaveWrongLinkRequest};
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::MemoryResult;
 use serde::{Deserialize, Serialize};
 
 /// A completed publication. Read its sections through `vault.weave.digest`

@@ -5,6 +5,8 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub(super) const MEMBERSHIP_ROW_VERSION: u8 = 2;
+
 /// One membership ledger row, keyed by `(conversation, row_index)`.
 pub(super) const MEMBERSHIP_ROWS: SideTable<(EntityId, u64), MembershipRow, Named> =
     SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_ROW);
@@ -41,18 +43,10 @@ pub struct MembershipRow {
     pub at: u64,
     pub actor: EntityId,
     pub visible_from: Option<u64>,
+    /// The exact receipt of the speaker handoff that created this Join.
+    pub handoff: Option<SpeakerHandoffReceipt>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MembershipWindow {
-    pub joined_at: u64,
-    pub from: u64,
-    pub to: Option<u64>,
-}
-impl MembershipWindow {
-    pub fn contains(&self, at: u64) -> bool {
-        self.from <= at && self.to.is_none_or(|end| at < end)
-    }
-}
+pub use crate::memory::conversation_membership::MembershipWindow;
 
 pub(super) fn revision_in(
     store: &crate::store::Store,
@@ -79,7 +73,7 @@ pub(super) fn rows_in(
 ) -> Result<Vec<MembershipRow>> {
     let mut rows = Vec::new();
     for (_, row) in MEMBERSHIP_ROWS.scan_from(store, txn, conversation.as_bytes())? {
-        if row.v != 1
+        if row.v != MEMBERSHIP_ROW_VERSION
             || rows
                 .last()
                 .is_some_and(|last: &MembershipRow| last.at > row.at)
@@ -338,6 +332,7 @@ impl Vault {
             MembershipAction::History,
             None,
             Some(from),
+            None,
         )
     }
     /// [`Self::join_member`] in the caller's write transaction: a room join
@@ -360,28 +355,27 @@ impl Vault {
             MembershipAction::Join,
             Some(history),
             None,
+            None,
         )
     }
-    /// [`Self::join_member_in_txn`] with the window visible from `from`, at
-    /// or before the join `at`: a speaker handoff's boundary (FIX 3634).
+    /// Joins the PERSON in this handoff's window and keeps the same
+    /// receipt on its membership row (FIX 3634).
     pub(super) fn join_member_from_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        conversation: EntityId,
-        person: EntityId,
+        receipt: &SpeakerHandoffReceipt,
         actor: WriteActor,
-        at: u64,
-        from: u64,
     ) -> Result<()> {
         self.change_membership_in_txn(
             txn,
-            conversation,
-            person,
+            receipt.container,
+            receipt.person,
             actor,
-            at,
+            receipt.joined_at,
             MembershipAction::Join,
             None,
-            Some(from),
+            Some(receipt.visible_from),
+            Some(receipt),
         )
     }
     #[expect(
@@ -408,6 +402,7 @@ impl Vault {
                 action,
                 history,
                 from,
+                None,
             )
         })
     }
@@ -425,6 +420,7 @@ impl Vault {
         action: MembershipAction,
         history: Option<HistoryChoice>,
         from: Option<u64>,
+        handoff: Option<&SpeakerHandoffReceipt>,
     ) -> Result<()> {
         authorize(self, txn, actor)?;
         require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
@@ -477,12 +473,13 @@ impl Vault {
             txn,
             conversation,
             &MembershipRow {
-                v: 1,
+                v: MEMBERSHIP_ROW_VERSION,
                 person,
                 action,
                 at,
                 actor: actor.entity_ref(),
                 visible_from,
+                handoff: handoff.cloned(),
             },
         )?;
         body.member_ids = members.into_iter().collect();

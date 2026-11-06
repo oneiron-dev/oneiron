@@ -6,8 +6,8 @@
 //! not synthetic dispatchers. Unknown extension kinds retain their own facet
 //! name at the authority-stamping door.
 
-use crate::agent_def::AgentCeiling;
-use crate::llm::ModelLocality;
+use crate::store::agent_record::AgentCeiling;
+use oneiron_model::llm::ModelLocality;
 
 /// The two base agents on the runner (ARCH-0026 #base-agents). A job that
 /// changes what the vault knows is the Dreamer's; one that changes how agents
@@ -87,10 +87,13 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_TYPE_TREE_UPKEEP_FACET => Some(coach::COACH_TYPE_TREE_UPKEEP_FACET),
         coach::COACH_FORK_PROMOTE_FACET => Some(coach::COACH_FORK_PROMOTE_FACET),
         coach::COACH_ROOM_UPKEEP_FACET => Some(coach::COACH_ROOM_UPKEEP_FACET),
+        coach::COACH_FOLD_SUGGESTIONS_FACET => Some(coach::COACH_FOLD_SUGGESTIONS_FACET),
+        coach::COACH_LAYOUT_SUGGESTIONS_FACET => Some(coach::COACH_LAYOUT_SUGGESTIONS_FACET),
         coach::COACH_OFFER_CHECK_FACET => Some(coach::COACH_OFFER_CHECK_FACET),
         coach::COACH_EVAL_MEASUREMENT_FACET => Some(coach::COACH_EVAL_MEASUREMENT_FACET),
         coach::COACH_TRAINING_RUN_FACET => Some(coach::COACH_TRAINING_RUN_FACET),
         coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
+        coach::COACH_DRAFTER_RETRAIN_FACET => Some(coach::COACH_DRAFTER_RETRAIN_FACET),
         coach::COACH_RESEARCH_SELECT_FACET => Some(coach::COACH_RESEARCH_SELECT_FACET),
         coach::COACH_RESEARCH_RUN_FACET => Some(coach::COACH_RESEARCH_RUN_FACET),
         coach::COACH_LEARNING_SWEEP_FACET => Some(coach::COACH_LEARNING_SWEEP_FACET),

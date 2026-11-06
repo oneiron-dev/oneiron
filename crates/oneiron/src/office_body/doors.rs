@@ -258,7 +258,14 @@ impl Vault {
         if actor.actor_class() != EdgeActorClass::Human {
             return Err(invalid("machine work edits a fork, not the live body"));
         }
+        // FIX 596: a live DOCX/XLSX edit is the vault owner's freely, else a
+        // standing `entity.office.edit` grant's; without either the verb
+        // raises the owner ask. Decks keep today's behavior.
+        let gated = kind != OfficeBodyKind::Pptx;
         self.with_write_txn_grouped(|wtxn| {
+            if gated {
+                admit_live_edit_in_txn(self, wtxn, artifact, &actor.entity_ref())?;
+            }
             if let Some(base) = base {
                 let (_, live) = self.loro_body(wtxn, artifact, kind, None)?;
                 let (_, target) = self.loro_body(wtxn, artifact, kind, Some(base))?;
@@ -268,6 +275,12 @@ impl Vault {
             let (minted, commit) =
                 edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
             validate(kind, &self.loro_body(wtxn, artifact, kind, None)?.1)?;
+            crate::housekeeping::note_wake_in_txn(
+                &self.store,
+                wtxn,
+                crate::housekeeping::HousekeepingSweep::AnnotationBodyAnchors,
+                self.now_recorded_at(),
+            )?;
             Ok(OfficeBodyEdit {
                 frontier: commit.frontier,
                 minted,
@@ -279,7 +292,7 @@ impl Vault {
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
     /// the run `run_root`, whose approve-all scope then covers it. A DOCX or
-    /// XLSX fork joins `proposal`, an unsettled proposal on this artifact, or
+    /// XLSX fork joins `proposal`, an unsettled proposal by id, or
     /// opens its own under the fork's id. A deck fork joins no proposal; it
     /// lands through the deck merge door.
     pub fn open_office_body_fork(
@@ -455,18 +468,18 @@ impl Vault {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
+                artifact: *artifact,
                 fork: *fork,
+                head: expected_head.to_vec(),
                 fork_head: expected_fork.to_vec(),
             }];
             let request = ProposalSettleRequest {
                 verdict: SettleVerdict::Accept,
                 scope: None,
-                head: expected_head,
                 reviewed: &reviewed,
                 reason: None,
             };
-            let (_, landed) =
-                consent::settle_in_txn(self, wtxn, artifact, &proposal, &request, actor)?;
+            let (_, landed) = consent::settle_in_txn(self, wtxn, &proposal, None, &request, actor)?;
             Ok(landed
                 .into_iter()
                 .next()
@@ -492,11 +505,12 @@ impl Vault {
     }
 
     /// Project the body onto its imported package and land it as the artifact's
-    /// next version: a DOCX body as one tracked revision, an XLSX body as its
-    /// changed cells and names, recalculated. The projection is deterministic
-    /// in the body's content, the author and the export time; no vault ref (a
-    /// frontier, an input hash) enters the file (OF-491). A deck exports
-    /// through [`Self::export_pptx_body`].
+    /// next version: a DOCX body as one tracked revision per consecutive actor
+    /// group (FIX 595; a typed author keeps a single revision), an XLSX body
+    /// as its changed cells and names, recalculated. The projection is
+    /// deterministic in the commit history, the revision authors and the
+    /// export time; no vault ref (a frontier, an input hash) enters the file
+    /// (OF-491). A deck exports through [`Self::export_pptx_body`].
     pub fn export_office_body(
         &self,
         artifact: &EntityId,
@@ -516,6 +530,11 @@ impl Vault {
         // FIX 4513: a DOCX export with no author lands a token, not its actor.
         let author = author_token::ExportAuthor::of(self, head.kind, request)?;
         let at = self.now_recorded_at();
+        // FIX 595: a default-author DOCX alone projects sequential per-actor
+        // revisions; every other export keeps its single-revision shape.
+        if head.kind == OfficeBodyKind::Docx && request.author.is_none() {
+            return self.export_docx_sequential(artifact, request, &head, &author, at);
+        }
         let Some((bytes, changes, recalc, effects)) =
             self.project_body(artifact, &head, &author.landed, at, request.zone)?
         else {
@@ -555,6 +574,7 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -741,7 +761,7 @@ impl Vault {
     /// owner's row, else the shipped one. A policy that cannot resolve keeps
     /// the shipped default these doors read under before, so no body read
     /// gains a refusal it did not have.
-    fn office_docx_limits(&self, holder: Option<EntityId>) -> Result<ArchiveLimits> {
+    pub(super) fn office_docx_limits(&self, holder: Option<EntityId>) -> Result<ArchiveLimits> {
         let rtxn = self.store.env.read_txn()?;
         Ok(crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
             .docx_archive_limits(holder)

@@ -9,10 +9,10 @@ use crate::entity_id::derived_domains::{
     TASK_ASK_ANSWER, TASK_ASK_INTENT, TASK_ASK_MEMBER, TASK_ASK_ORIGIN,
 };
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::side_table::{self, SideTable};
+use crate::write_envelope::task_body::TaskRole;
 use crate::{EntityId, Vault};
 pub(crate) use guard::guard_ask_fact_put;
 pub(super) use guard::validate_notice_companion;
@@ -23,6 +23,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 mod attendee_entry;
+mod attendee_late_ask;
 mod consult_answer;
 mod link_proof;
 mod word_admission;

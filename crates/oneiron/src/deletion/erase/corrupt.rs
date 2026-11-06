@@ -32,10 +32,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, WindowDeletionRows};
-use crate::provenance::EdgeRef;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 
 /// Whether a SoftErase has scrubbed the classified body since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,13 +47,50 @@ enum CorruptCapturePhase {
     SoftScrubbed,
 }
 
-/// One classification: the exact 25-byte header seen, the id of its signed
+/// One classification: the exact entity header seen, the id of its signed
 /// repair event and its phase. No content, no actor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CorruptCaptureMark {
-    header: [u8; 25],
+    #[serde(with = "header_bin")]
+    header: [u8; ENTITY_METADATA_HEADER_LEN],
     repair_receipt: [u8; 16],
     phase: CorruptCapturePhase,
+}
+
+mod header_bin {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use serde::{Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        header: &[u8; ENTITY_METADATA_HEADER_LEN],
+        out: S,
+    ) -> Result<S::Ok, S::Error> {
+        out.serialize_bytes(header)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        input: D,
+    ) -> Result<[u8; ENTITY_METADATA_HEADER_LEN], D::Error> {
+        struct Header;
+        impl serde::de::Visitor<'_> for Header {
+            type Value = [u8; ENTITY_METADATA_HEADER_LEN];
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "an entity header of {ENTITY_METADATA_HEADER_LEN} bytes")
+            }
+
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+                bytes
+                    .try_into()
+                    .map_err(|_| E::invalid_length(bytes.len(), &self))
+            }
+
+            fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Self::Value, E> {
+                self.visit_bytes(&bytes)
+            }
+        }
+        input.deserialize_bytes(Header)
+    }
 }
 
 /// The classifications awaiting their hard erase, by CLAIM id.
@@ -214,9 +251,10 @@ impl Vault {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(not_corrupt);
         };
-        let seen: [u8; 25] = raw[..ENTITY_METADATA_HEADER_LEN]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("entity header"))?;
+        let seen: [u8; ENTITY_METADATA_HEADER_LEN] =
+            raw[..ENTITY_METADATA_HEADER_LEN]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("entity header"))?;
         if let Some(mark) = CORRUPT_CAPTURE.get(&self.store, wtxn, id)?
             && mark.header == seen
         {
@@ -235,7 +273,7 @@ impl Vault {
         let repair_receipt = self.store.clock.entity_id()?;
         let request_id = uuid::Uuid::from_bytes(self.store.clock.ulid()?).to_string();
         let recorded_at = self.store.clock.now_recorded_at();
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
         let event = encode_corrupt_claim_repair_event(
             id,
             header.learned_at,
@@ -275,7 +313,7 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<Option<EntityId>> {
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-        let error = match crate::claim::decode_claim_body(body, true) {
+        let error = match crate::write_envelope::claim_body::decode_claim_body(body, true) {
             Ok(claim) => return Ok(claim.world),
             Err(error) => error,
         };
@@ -399,13 +437,16 @@ impl Vault {
         }
         #[cfg(feature = "sync")]
         {
-            let queued = crate::sync::queue::queued_window_labels_in_txn(self, wtxn)?;
+            let queued = self
+                .store
+                .sync_hooks
+                .queued_window_labels_in_txn(self, wtxn)?;
             windows.extend(
                 queued
                     .into_iter()
                     .filter(|label| label.starts_with(&prefix)),
             );
-            windows.extend(crate::sync::residence::indexed_windows_in_txn(
+            windows.extend(self.store.sync_hooks.indexed_windows_in_txn(
                 &self.store,
                 wtxn,
                 &prefix,

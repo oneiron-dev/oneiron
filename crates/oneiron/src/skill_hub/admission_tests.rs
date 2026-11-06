@@ -1284,7 +1284,11 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
         assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
         let txn = fixture.vault.store.env.read_txn()?;
         assert!(
-            !super::refinement_custody_exists_in_txn(&fixture.vault.store, &txn, &id)?,
+            !crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                &fixture.vault.store,
+                &txn,
+                &id
+            )?,
             "no receipt carrier may hold rejected provider metadata"
         );
         drop(txn);

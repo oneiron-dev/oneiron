@@ -3,13 +3,13 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::store::{ManifestDbs, Store};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 use super::tombstone::{
     ARCHIVE_MARKER, PendingTombstoneKey, decode_tombstone_value, window_label_from_timestamp,
@@ -93,11 +93,14 @@ fn row_window(
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     let world = if pad {
-        crate::world_keys::pad_body_world(raw).and_then(Result::ok)
+        crate::store::world_pad_rows::pad_body_world(raw).and_then(Result::ok)
     } else {
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .ok()
-            .and_then(|body| body.world)
+        crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )
+        .ok()
+        .and_then(|body| body.world)
     };
     if let Some(world) = world {
         label.push('@');
@@ -128,7 +131,7 @@ pub(crate) fn row_deletion_marked(
     };
     Ok(!(EntityMetadataHeader::parse(raw).is_some_and(|header| {
         crate::registry::is_delete_protected_engine_record(header.entity_type)
-    }) || crate::dreamer_runner::authority::is_base_agent_actor(id)?))
+    }) || crate::store::base_agent::is_base_agent_actor(id)?))
 }
 
 /// Whether any world window of `month` holds a pending tombstone marker.
@@ -146,6 +149,7 @@ fn world_pending_tombstone_exists(
 pub enum HydratedShortIdDeletionReason {
     UserDelete,
     UserHardDelete,
+    OwnerErase,
     GdprDelete,
     PolicyDelete,
 }
@@ -304,10 +308,10 @@ impl Vault {
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         let mut count = {
             let txn = self.store.env.read_txn()?;
-            crate::scan_check::ScanCount::start(
+            crate::store::scan_count::ScanCount::start(
                 &self.store,
                 &txn,
-                crate::scan_check::EngineScan::TimelineRecords,
+                crate::store::EngineScan::TimelineRecords,
                 anchor.as_bytes(),
             )?
         };
@@ -435,9 +439,8 @@ impl Vault {
         }
         #[cfg(feature = "sync")]
         {
-            use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_values_for_id,
-            };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let window_label = WindowAddress::new(&pending_key.window);
             let Some(doc) =
                 self.store
@@ -492,9 +495,8 @@ impl Vault {
         }
         #[cfg(feature = "sync")]
         {
-            use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_values_for_id,
-            };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let label = WindowAddress::new(&pending_key.window);
             let Some(doc) = self
                 .store
@@ -563,6 +565,9 @@ impl Vault {
             crate::deletion::TombstoneReason::UserHardDelete => {
                 Some(HydratedShortIdDeletionReason::UserHardDelete)
             }
+            crate::deletion::TombstoneReason::OwnerErase => {
+                Some(HydratedShortIdDeletionReason::OwnerErase)
+            }
             crate::deletion::TombstoneReason::GdprDelete => {
                 Some(HydratedShortIdDeletionReason::GdprDelete)
             }
@@ -625,9 +630,8 @@ impl Store {
 
         #[cfg(feature = "sync")]
         {
-            use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_map_contains_id,
-            };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
+            use crate::store::loro_tombstones::tombstone_map_contains_id;
             let window_label = WindowAddress::new(&pending_key.window);
 
             // The window doc is rebuilt from the rows THIS transaction sees

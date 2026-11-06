@@ -11,12 +11,15 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
-use crate::secret_custody::{
-    CustodyTier, RevealAuthority, SecretCustodyAdmission, SecretCustodyFloor,
-    read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn, reveal_value_in_txn,
-};
+use crate::secret_custody::RevealAuthority;
+use crate::secret_custody::reveal_value_in_txn;
+use crate::secret_record::CustodyTier;
+use crate::secret_record::SecretCustodyAdmission;
+use crate::secret_record::SecretCustodyFloor;
+use crate::secret_record::read_secret_custody_admission_in_txn;
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------
@@ -431,10 +434,10 @@ fn write_t1_lease_rows_in_txn(
     write_materialization_receipt_in_txn(&vault.store, wtxn, &receipt)?;
     write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
     // A vault that is not running wakes to expire the lease and remove its file.
-    crate::housekeeping::note_wake_in_txn(
+    crate::store::housekeeping_wake::note_wake_in_txn(
         &vault.store,
         wtxn,
-        crate::housekeeping::HousekeepingSweep::SecretLeaseExpiry,
+        crate::store::housekeeping_schedule::HousekeepingSweep::SecretLeaseExpiry,
         expires_at,
     )?;
     Ok(lease)
@@ -488,7 +491,8 @@ pub(crate) fn erase_lease_actor_in_txn(
             super::grant::retire_lease_in_txn(&vault.store, wtxn, &lease.lease_id, now)?;
             lease.status = SecretLeaseStatus::Revoked;
         }
-        lease.binding_effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+        lease.binding_effector =
+            reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);
         write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
     }
     Ok(())
@@ -506,7 +510,8 @@ pub(crate) fn erase_receipt_actor_in_txn(
     let effector = reveal_effector(&actor.to_hex());
     for (key, mut receipt) in SECRET_MATERIALIZATION_RECEIPT.scan(&vault.store, wtxn)? {
         if receipt.effector == effector {
-            receipt.effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+            receipt.effector =
+                reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);
             SECRET_MATERIALIZATION_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
         }
     }

@@ -4,85 +4,19 @@
 //! these same Vault doors, so a button, an agent's call and the REST write
 //! make one write.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 use super::batch::CoreWriteLane;
 use super::shape::{
-    AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
-    core_write_times, entity_id, stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times,
+    encode_core_body, entity_id, stage_core_put, text_pairs, write_id,
 };
+use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::conversation::ConversationBody;
+use crate::claim::ScopedRead;
 use crate::edge::EdgeActorClass;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};
-
-/// A conversation to create. A body that names members also authors the
-/// room's membership ledger, its creator and its role grants, as the
-/// writing actor; a body with none is a plain put.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConversationCreateInput {
-    /// The conversation's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// Unix seconds; defaults to `learned_at`.
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    /// Unix seconds; defaults to `occurred_start`.
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    /// Unix seconds; defaults to now.
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    /// The conversation body: kind, members, roles, title and the rest.
-    pub body: Value,
-    /// Explicit text-index fields; when omitted, the body's top-level strings.
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// One TURN to put under a conversation, with its checked ChildOf edge.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConversationTurnCreateInput {
-    /// The CONVERSATION the TURN belongs to.
-    pub conversation: String,
-    /// The TURN's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    pub body: Value,
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// The entity a core write stored: its id, its type, the learned time it
-/// sampled and the body as stored.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreEntityWriteReceipt {
-    pub id: String,
-    pub entity_type: u8,
-    pub learned_at: u64,
-    pub body: Value,
-}
-
-impl CoreEntityWriteReceipt {
-    fn new(id: EntityId, entity_type: u8, learned_at: u64, body: Value) -> Self {
-        Self {
-            id: id.to_hex(),
-            entity_type,
-            learned_at,
-            body,
-        }
-    }
-}
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 impl Vault {
     /// Creates a conversation, held to `lane` (FIX 10781): an id a stored
@@ -126,7 +60,7 @@ impl Vault {
             // the same transaction.
             self.with_write_txn_grouped(|txn| {
                 admitted(txn)?;
-                crate::conversation::create_in_txn(
+                self.store.core_write_operations.create_conversation_in_txn(
                     self,
                     txn,
                     id,
@@ -171,8 +105,9 @@ impl Vault {
     /// owner ([`Vault::turn_doors_owner`]) writes only into a conversation
     /// its own lane reads, judged in the batch's own writer (FIX 5939); the
     /// owner writes as before. Such a TURN sits in no private thread: its
-    /// thread keys are refused here, and its one edge is to the
-    /// conversation, which no thread holds. Nor does it put over a row its
+    /// thread keys are refused here. A fresh TURN joins the conversation's
+    /// actual local HEAD in this same writer; a re-put keeps its placement.
+    /// Nor does it put over a row its
     /// lane does not read: an id it names that a stored row holds is judged
     /// against that row first, in the same writer, before the put or its
     /// ChildOf lands (FIX 6068).
@@ -236,13 +171,15 @@ impl Vault {
         let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
             return Ok(false);
         };
-        let owner =
-            crate::memory::actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
-                .map_err(|refusal| {
-                    crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                        refusal,
-                    )))
-                })?;
+        let owner = self
+            .store
+            .core_write_operations
+            .actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
+            .map_err(|refusal| {
+                crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    refusal,
+                )))
+            })?;
         Ok(owner && self.capability_slip_is_live_in_txn(txn, proof)?)
     }
 
@@ -268,8 +205,8 @@ impl Vault {
         // A thread binding is its room door's to stamp (FIX 2951), and an
         // audience edit its thread's audience door's (FIX 5545).
         if [
-            crate::workspace_roster::ROOM_THREAD_KEY,
-            crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+            crate::store::conversation_body::ROOM_THREAD_KEY,
+            crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY,
         ]
         .iter()
         .any(|key| input.body.get(*key).is_some())
@@ -280,7 +217,11 @@ impl Vault {
         }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
+        let normalized_body = core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement);
+        let encoded_body = encode_core_body(&normalized_body)?;
+        let text_fields = core_text_pairs(input.text.as_deref().map(text_pairs), &normalized_body);
         let outside = std::cell::Cell::new(false);
+        let existed = std::cell::Cell::new(false);
         let committed = stage_core_put(
             self.batch(),
             &id,
@@ -291,13 +232,58 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation, &id)? {
-                return Ok(());
-            }
-            outside.set(true);
-            Err(crate::Error::EntityNotFound)
-        });
+        .commit_with_target_guard_and_hooks(
+            |txn| {
+                if admits(txn, &conversation, &id)? {
+                    existed.set(crate::ports::EntityStoreRead::port_entity_present(
+                        &self.store,
+                        txn,
+                        &id,
+                    )?);
+                    if existed.get()
+                        && crate::conversation_dag::exact_core_turn_retry_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                            &conversation,
+                            times.occurred,
+                            times.learned_at,
+                            &encoded_body,
+                        )?
+                        && crate::store::text_index::index::source_fields_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                        )?
+                        .unwrap_or_default()
+                            == text_fields
+                    {
+                        return Ok(false);
+                    }
+                    return Ok(true);
+                }
+                outside.set(true);
+                Err(crate::Error::EntityNotFound)
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::permit_core_turn_in_txn(self, txn, &conversation, id)?;
+                }
+                Ok(())
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::join_core_turn_in_txn(
+                        self,
+                        txn,
+                        &conversation,
+                        id,
+                        times.learned_at,
+                    )?;
+                }
+                Ok(())
+            },
+        );
         if outside.get() {
             return Ok(None);
         }
@@ -306,40 +292,7 @@ impl Vault {
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
-            core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
+            normalized_body.into_owned(),
         )))
-    }
-}
-
-impl Memory<'_> {
-    /// `vault.conversations.create`: a conversation, its membership
-    /// authored as the bound actor, held to this handle's write lane (FIX
-    /// 10781): its read, or the bounds of what a credential that grants no
-    /// read may write to.
-    /// # Errors
-    /// As [`Vault::write_core_conversation`], and the write lane's refusal.
-    pub fn conversations_create(
-        &self,
-        input: &ConversationCreateInput,
-    ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let actor = self.write_actor();
-        let lane = self.core_write_lane()?;
-        self.vault()
-            .write_core_conversation(input, Some(actor), &lane)
-    }
-
-    /// `vault.conversations.turns.create`: one TURN under a conversation,
-    /// held to this handle's own read lane (FIX 5939), a platform
-    /// announcement only while the bound actor is a live owner.
-    /// # Errors
-    /// As [`Vault::write_core_conversation_turn`].
-    pub fn conversations_turns_create(
-        &self,
-        input: &ConversationTurnCreateInput,
-    ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
-        self.vault()
-            .write_core_conversation_turn(input, &lane, announcement)
     }
 }

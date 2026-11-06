@@ -12,8 +12,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::claim::ClaimSource;
+use super::fold_kinds::{FoldByKind, FoldKind, FoldedOutput};
 use crate::entity_id::EntityId;
+use oneiron_contracts::claim::ClaimSource;
 
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the
@@ -21,24 +22,34 @@ use crate::entity_id::EntityId;
 ///
 /// The guest call is positional, `self.fold(span, {note?})` (ARCH-0067
 /// #folds, Docs Q25): its wire input is the span alone, `[from, through]`, or
-/// the span and its options, `[[from, through], {note?}]`. This struct is the
-/// normalized mark both decode into.
+/// the span and its options, `[[from, through], {note?}]`. A fold by kind
+/// (owner 2026-11-03) is one object, `{kind, before?, from?, through?,
+/// note?}`: it folds only that kind of content in each step of its span,
+/// such as `self.fold({kind: "repl_output", before: "t40"})`. This struct is
+/// the normalized mark every spelling decodes into.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "FoldMarkWire")]
 pub struct FoldMarkInput {
     pub from: u64,
+    /// The last step; a fold by kind with no bound reaches the current step.
     pub through: u64,
-    /// What the fold's summary must keep.
+    /// What the fold's summary must keep; on a fold by kind, the agent's
+    /// own note on it.
     #[serde(default)]
     pub note: Option<String>,
+    /// The one kind of content the fold folds in each step; `None` folds
+    /// whole steps.
+    #[serde(default)]
+    pub kind: Option<FoldKind>,
 }
 
-/// The two positional wire spellings of one `self.fold` call.
+/// The wire spellings of one `self.fold` call.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum FoldMarkWire {
     Span([u64; 2]),
     SpanWithOptions([u64; 2], FoldMarkOptions),
+    Kind(FoldByKind),
 }
 
 #[derive(Deserialize)]
@@ -49,17 +60,19 @@ struct FoldMarkOptions {
 }
 
 impl TryFrom<FoldMarkWire> for FoldMarkInput {
-    type Error = std::convert::Infallible;
+    type Error = String;
 
     fn try_from(wire: FoldMarkWire) -> std::result::Result<Self, Self::Error> {
         let ([from, through], note) = match wire {
             FoldMarkWire::Span(span) => (span, None),
             FoldMarkWire::SpanWithOptions(span, options) => (span, options.note),
+            FoldMarkWire::Kind(wire) => return wire.normalize(),
         };
         Ok(Self {
             from,
             through,
             note,
+            kind: None,
         })
     }
 }
@@ -96,6 +109,9 @@ pub enum SelfFoldCall {
         from: u64,
         through: u64,
         note: Option<String>,
+        /// A fold by kind; absent on a whole-step fold.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<FoldKind>,
     },
     Compact {
         note: Option<String>,
@@ -127,6 +143,9 @@ pub struct FoldMarked {
     pub through: u64,
     /// Always true: the log does not change until a pass folds it.
     pub pending: bool,
+    /// The kind it folds; absent on a whole-step fold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `self.compact`'s answer: the marks its batch folds, and when.
@@ -161,6 +180,9 @@ pub struct FoldSpan {
     pub fold: String,
     pub from: u64,
     pub through: u64,
+    /// The kind it folds; absent on a whole-step fold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// One pending mark in [`FoldList`].
@@ -172,6 +194,9 @@ pub struct FoldPending {
     pub note: Option<String>,
     /// Why its last pass did not fold it.
     pub failed: Option<String>,
+    /// The kind it folds; absent on a whole-step mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
 }
 
 /// `describe({fold})`'s answer: a fold whole, or a mark still pending.
@@ -182,13 +207,23 @@ pub enum FoldDescription {
         fold: String,
         from: u64,
         through: u64,
-        /// The stub the log shows in the span's place.
+        /// The stub the log shows in the span's place; for a fold by kind,
+        /// its head line, and `outputs` the stub each folded step shows.
         stub: String,
         source: String,
         /// Every id the span's turns name.
         ids: Vec<String>,
         /// Every result handle the span covers.
         handles: Vec<String>,
+        /// The kind it folds; absent on a whole-step fold.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<FoldKind>,
+        /// The agent's own note on a fold by kind.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        /// Each step a fold by kind folded, with what its stub keeps.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        outputs: Vec<FoldedOutput>,
     },
     Pending {
         fold: String,
@@ -198,6 +233,9 @@ pub enum FoldDescription {
         pending: bool,
         note: Option<String>,
         failed: Option<String>,
+        /// The kind it folds; absent on a whole-step mark.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<FoldKind>,
     },
 }
 
@@ -250,6 +288,13 @@ pub struct FoldMark {
     /// Why its last pass did not fold it. A failed mark waits for the
     /// agent's next `self.compact`, not for the next breakpoint.
     pub failed: Option<String>,
+    /// A mark by kind; `None` folds whole steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
+    /// The step the agent marked it at: how old its span was then, which
+    /// the Coach reads to suggest a fold default per agent type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marked_at: Option<u64>,
 }
 
 /// `self.compact`'s ask, until a pass takes it.
@@ -288,19 +333,39 @@ pub struct FoldRecord {
     /// snapshot. `None` for every other writer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::CompactionExecution>,
+    /// A fold by kind: the one kind of content it folds in each step of its
+    /// span. Such a fold has no summary and no sources: the engine writes
+    /// each step's stub from the step's own typed output, with no model
+    /// call. `None` on a whole-step fold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FoldKind>,
+    /// The agent's own note on a fold by kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Each step a fold by kind folded, with what its stub keeps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<FoldedOutput>,
+    /// The step its mark was made at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marked_at: Option<u64>,
 }
 
 /// The most ids a stub lists itself; `describe({fold})` lists them all.
-const STUB_IDS: usize = 64;
+pub(super) const STUB_IDS: usize = 64;
 
 impl FoldRecord {
     /// The one stub the log shows in the span's place: its handle and span,
     /// the accepted summary (model output), the ids its turns name that the
     /// summary does not, and a handle to every result the span covers. The
     /// same bytes at every render, so the cached log holds, until the
-    /// summary is withdrawn; then it keeps only the references.
+    /// summary is withdrawn; then it keeps only the references. A fold by
+    /// kind answers its head line; each folded step shows its own stub
+    /// ([`FoldRecord::output_stub`]).
     #[must_use]
     pub fn stub(&self) -> String {
+        if let Some(kind) = self.kind {
+            return self.kind_head(kind);
+        }
         let mut stub = format!(
             "⟨{} · t{}–t{}⟩ ",
             fold_handle(self.fold),
@@ -357,12 +422,13 @@ pub struct FoldUnfold {
 }
 
 impl FoldLedger {
-    /// The fold that covers step `seq`, if one does.
+    /// The whole-step fold that covers step `seq`, if one does. A fold by
+    /// kind never hides a step: see [`FoldLedger::kind_covering`].
     #[must_use]
     pub fn covering(&self, seq: u64) -> Option<&FoldRecord> {
         self.folds
             .iter()
-            .find(|fold| fold.from <= seq && seq <= fold.through)
+            .find(|fold| fold.kind.is_none() && fold.from <= seq && seq <= fold.through)
     }
 
     #[must_use]
@@ -433,8 +499,9 @@ impl FoldLedger {
         if self.folds.is_empty() && self.marks.is_empty() {
             return None;
         }
-        let span = |fold: u64, from: u64, through: u64| {
-            format!("{} t{from}–t{through}", fold_handle(fold))
+        let span = |fold: u64, from: u64, through: u64, kind: Option<FoldKind>| match kind {
+            Some(kind) => format!("{} {} t{from}–t{through}", fold_handle(fold), kind.as_str()),
+            None => format!("{} t{from}–t{through}", fold_handle(fold)),
         };
         let mut line = String::from("Folds:");
         if self.folds.is_empty() {
@@ -442,14 +509,14 @@ impl FoldLedger {
         }
         for fold in &self.folds {
             line.push(' ');
-            line.push_str(&span(fold.fold, fold.from, fold.through));
+            line.push_str(&span(fold.fold, fold.from, fold.through, fold.kind));
             line.push(';');
         }
         if !self.marks.is_empty() {
             line.push_str(" pending marks:");
             for mark in &self.marks {
                 line.push(' ');
-                line.push_str(&span(mark.fold, mark.from, mark.through));
+                line.push_str(&span(mark.fold, mark.from, mark.through, mark.kind));
                 if mark.failed.is_some() {
                     line.push_str(" (failed)");
                 }
@@ -483,8 +550,14 @@ impl FoldLedger {
                 from,
                 through,
                 note,
+                kind,
             } => {
-                let (from, through) = (*from, *through);
+                // A fold by kind reaches at most the current step: "before
+                // t40" asked at step 30 folds what has run.
+                let (from, through) = match kind {
+                    Some(_) => (*from, (*through).min(step)),
+                    None => (*from, *through),
+                };
                 if from > through {
                     return Err(format!("a span runs forward: t{from}–t{through} is empty"));
                 }
@@ -499,15 +572,21 @@ impl FoldLedger {
                         prefix_end.unwrap_or_default()
                     ));
                 }
+                // Whole-step folds never overlap each other. A fold by kind
+                // folds part of each step, so it may lie over any fold: a
+                // step a whole-step fold hides shows that fold's stub.
                 let overlap = self
                     .folds
                     .iter()
+                    .filter(|fold| fold.kind.is_none())
                     .map(|fold| (fold.fold, fold.from, fold.through))
                     .chain(
                         self.marks
                             .iter()
+                            .filter(|mark| mark.kind.is_none())
                             .map(|mark| (mark.fold, mark.from, mark.through)),
                     )
+                    .filter(|_| kind.is_none())
                     .find(|(_, first, last)| from <= *last && *first <= through);
                 if let Some((fold, first, last)) = overlap {
                     return Err(format!(
@@ -522,12 +601,15 @@ impl FoldLedger {
                     through,
                     note: note.clone(),
                     failed: None,
+                    kind: *kind,
+                    marked_at: Some(step),
                 });
                 Ok(json!(FoldMarked {
                     fold: fold_handle(self.last),
                     from,
                     through,
                     pending: true,
+                    kind: *kind,
                 }))
             }
             SelfFoldCall::Compact { note } => {
@@ -580,6 +662,7 @@ impl FoldLedger {
                         fold: fold_handle(fold.fold),
                         from: fold.from,
                         through: fold.through,
+                        kind: fold.kind,
                     })
                     .collect(),
                 pending: self
@@ -591,6 +674,7 @@ impl FoldLedger {
                         through: mark.through,
                         note: mark.note.clone(),
                         failed: mark.failed.clone(),
+                        kind: mark.kind,
                     })
                     .collect(),
                 compact_asked: self.compact.is_some(),
@@ -605,6 +689,9 @@ impl FoldLedger {
                         source: record.source.as_str().to_owned(),
                         ids: record.ids.clone(),
                         handles: record.handles.clone(),
+                        kind: record.kind,
+                        note: record.note.clone(),
+                        outputs: record.outputs.clone(),
                     }));
                 }
                 let mark = self
@@ -619,6 +706,7 @@ impl FoldLedger {
                     pending: true,
                     note: mark.note.clone(),
                     failed: mark.failed.clone(),
+                    kind: mark.kind,
                 }))
             }
         }

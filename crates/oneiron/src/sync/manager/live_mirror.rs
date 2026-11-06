@@ -225,6 +225,14 @@ impl WindowManager {
                 &key,
                 rows,
             );
+            // FIX 6870: a CODE row that lands after its manifest's head
+            // finds the head here.
+            crate::sync::repo_manifests::merge_committed_repo_manifests(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             if !carriers.is_empty()
                 && key.world().is_none()
                 && let Err(error) = crate::sync::room_facts::mirror_carriers(
@@ -421,7 +429,7 @@ impl WindowManager {
     /// Drains the setup window's remat markers: each waiting row lands now,
     /// or keeps its marker and waits on.
     fn retry_setup_rows(&self) {
-        let window = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+        let window = WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT);
         if let Err(error) = super::super::quarantine::drain_remat_markers_of(
             &self.vault,
             &self.user_id,

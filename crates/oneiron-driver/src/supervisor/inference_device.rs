@@ -9,10 +9,13 @@
 //! Unknown capacity admits and records under the R4 ruling; a known capacity
 //! with an incomplete declaration does not invent room.
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
-use oneiron::llm::ResourceClass;
+use oneiron::llm::{ResourceClass, SessionResidency};
+
+use super::session_allocations::SessionAllocation;
 
 /// What a worker declared it would hold on its device, in MiB, part by part.
 /// A part the declaration left out is `None`.
@@ -111,6 +114,9 @@ pub struct DeviceSnapshot {
     pub resident_mib: Option<u64>,
     pub holds_mib: u64,
     pub class_used_mib: Option<HashMap<ResourceClass, u64>>,
+    /// Fact-only session ownership rows (FIX10370): who holds what, as the
+    /// coordinator observed it. Never a capacity charge; in token order.
+    pub session_allocations: Vec<SessionAllocation>,
 }
 
 /// The result of an atomic admission reservation.
@@ -133,6 +139,7 @@ struct LedgerState {
     rows: BTreeMap<String, DeviceRow>,
     holds: BTreeMap<String, DeviceHold>,
     class_budgets_mib: HashMap<ResourceClass, u64>,
+    session_allocations: BTreeMap<u64, SessionAllocation>,
 }
 
 /// One physical device's ledger, shared by the supervisors of the workers
@@ -141,6 +148,11 @@ struct LedgerState {
 #[derive(Debug)]
 pub struct DeviceLedger {
     device: String,
+    /// Grant IDs drawn across every queue generation on this device. A
+    /// recreated queue restarts its own counters, but this ledger survives
+    /// removals, so its counter keeps old guard drops from deleting a new
+    /// call's same-numbered `work:<id>` hold.
+    next_grant: AtomicU64,
     state: Mutex<LedgerState>,
 }
 
@@ -151,11 +163,13 @@ impl DeviceLedger {
     pub fn new(device: impl Into<String>, capacity_mib: Option<u64>) -> Self {
         Self {
             device: device.into(),
+            next_grant: AtomicU64::new(1),
             state: Mutex::new(LedgerState {
                 capacity_mib,
                 rows: BTreeMap::new(),
                 holds: BTreeMap::new(),
                 class_budgets_mib: HashMap::new(),
+                session_allocations: BTreeMap::new(),
             }),
         }
     }
@@ -164,6 +178,13 @@ impl DeviceLedger {
     #[must_use]
     pub fn device(&self) -> &str {
         &self.device
+    }
+
+    /// Draws the next grant ID for this device, starting at 1. Gaps from
+    /// failed reservations are harmless: IDs only need device-wide
+    /// uniqueness across queue generations.
+    pub fn next_grant_id(&self) -> u64 {
+        self.next_grant.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Sets the device's measured capacity. `None` means unknown and admits
@@ -371,7 +392,45 @@ impl DeviceLedger {
                 .values()
                 .fold(0_u64, |total, hold| total.saturating_add(hold.mib)),
             class_used_mib: class_used_mib(&state),
+            session_allocations: state.session_allocations.values().cloned().collect(),
         }
+    }
+
+    /// Records a fact-only session ownership row (FIX10370) and answers its
+    /// token, drawn from the existing grant counter. The row charges no
+    /// capacity and moves no room, class use or admission state.
+    pub(crate) fn insert_session_allocation(&self, allocation: SessionAllocation) -> u64 {
+        let token = self.next_grant_id();
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .session_allocations
+            .insert(token, allocation);
+        token
+    }
+
+    /// Replaces one ownership row's report with `report`. Only that token's
+    /// row changes; an unknown token changes nothing.
+    pub(crate) fn observe_session_allocation(&self, token: u64, report: Option<SessionResidency>) {
+        if let Some(entry) = self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .session_allocations
+            .get_mut(&token)
+        {
+            entry.report = report;
+        }
+    }
+
+    /// Removes one ownership row. Only that token's row goes; an unknown
+    /// token removes nothing.
+    pub(crate) fn remove_session_allocation(&self, token: u64) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .session_allocations
+            .remove(&token);
     }
 }
 

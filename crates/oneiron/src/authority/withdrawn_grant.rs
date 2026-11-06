@@ -18,7 +18,15 @@
 //! The owner-agent Grant enumeration every reader shares
 //! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
 //! Grant re-put at its id gives no read or principal standing either.
+//!
+//! A membership change that deletes a Grant an owner's signed mint made also
+//! logs the host's signed withdrawal of it
+//! ([`crate::Vault::log_membership_grant_withdrawal_in_txn`], FIX 7135), so
+//! the authority audit pairs that mint with a revoke. With no host issuer to
+//! sign it, the change's carrier-signed membership execution record names
+//! the Grant instead, pending until it counts (FIX 12335).
 
+use super::{AuthorityOp, HostSlipIssuer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -69,6 +77,17 @@ pub(crate) fn withdraw_grant_row_in_txn(
     else {
         return Ok(());
     };
+    // The Grant's scope, bound to this withdrawal's tombstone, while its row
+    // is still live (FIX 11780): a narrower grant's selector export then
+    // carries the tombstone too, as whole-vault member sync does. A capture
+    // never fails the withdrawal (deletion/tombstone_scope.rs).
+    let request_id = *grant.as_bytes();
+    crate::deletion::tombstone_scope::capture_deleted_scope_in_store_txn(
+        store,
+        wtxn,
+        &grant,
+        Some(&request_id),
+    );
     mark_withdrawn_grant_in_txn(store, wtxn, grant)?;
     let withdrawn_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::deletion::stage_engine_row_hard_erasure_in_txn(
@@ -79,7 +98,7 @@ pub(crate) fn withdraw_grant_row_in_txn(
         &crate::deletion::TombstoneValueV2 {
             reason: crate::deletion::TombstoneReason::UserHardDelete,
             deleted_at: withdrawn_at,
-            request_id: *grant.as_bytes(),
+            request_id,
         },
     )
 }
@@ -114,5 +133,38 @@ pub(crate) fn grant_known_withdrawn_in_txn(
         Err(_) => match ISOLATION_NEW_CHECK_ERROR_MODE {
             NewCheckErrorMode::KeepExistingPath => false,
         },
+    }
+}
+
+impl crate::Vault {
+    /// The host's signed withdrawal of `grant`, a Grant an owner's signed
+    /// mint made (a GitPush grant or an owner's agent grant) that a
+    /// shared-vault membership change deletes in the caller's writer `txn`
+    /// (FIX 7135): the `SlipGrantRevoke` a guest revoke also logs, signed by
+    /// `issuer` as the host that carried the change, never as an owner act.
+    /// The authority audit lists it as that Grant's revoke beside its signed
+    /// mint, and every replica's fold withdraws any slip minted under it.
+    /// An issuer that is no live host of this vault's roster signs nothing
+    /// and refuses nothing: `false`, and the change lands with the Grant
+    /// named in its pending carrier-signed record (FIX 12335).
+    ///
+    /// # Errors
+    /// A store, fold or clock failure, or an entry the fold did not count.
+    pub(crate) fn log_membership_grant_withdrawal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant: EntityId,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if super::slip_vault::require_host(&fold, issuer).is_err() {
+            return Ok(false);
+        }
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipGrantRevoke { grant_ref: grant },
+        )?;
+        Ok(true)
     }
 }

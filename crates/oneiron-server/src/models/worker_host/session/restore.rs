@@ -35,8 +35,8 @@ use oneiron::llm::{
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
-use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, host_room, identity_part, mib};
-use super::registry::{self, HostCopy, Phase, Place, Session, send};
+use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity_part, mib};
+use super::registry::{self, HostCopy, HostReservation, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
 
@@ -117,13 +117,16 @@ fn turn_authority(turn: &ManifestDigest) -> Option<Arc<dyn CheckpointAuthority>>
         .and_then(Weak::upgrade)
 }
 
-/// The newest kept snapshot of `vault` the turn keyed by `key` may restore.
+/// The newest kept snapshot of `vault` the turn keyed by `key` may restore:
+/// only its conversation's rows are read (FIX 11286).
 async fn candidate(vault: &Arc<Vault>, key: &SessionKey) -> Option<SnapshotRecord> {
     let reading = Arc::clone(vault);
-    let records = tokio::task::spawn_blocking(move || reading.inference_snapshot_records())
-        .await
-        .ok()?
-        .ok()?;
+    let conversation = key.anchor.conversation;
+    let records =
+        tokio::task::spawn_blocking(move || reading.inference_snapshot_records_for(&conversation))
+            .await
+            .ok()?
+            .ok()?;
     let wanted = identity_part(&key.identity, &key.conditioning);
     records
         .into_iter()
@@ -176,23 +179,28 @@ impl Restore<'_> {
     }
 
     /// The restore, in order. `Err` with whether the session it registered
-    /// holds the snapshot's pin now. Its host copy (the plaintext, then the
-    /// region made of it) runs only while it fits beside the headroom, as a
-    /// park's does; the device room is honoured where the ledger knows it,
-    /// and elsewhere the worker's own answer decides (`snapshot_busy` is
-    /// cold).
+    /// holds the snapshot's pin now. The initial reservation is unchanged
+    /// through core open. The opened buffer's actual capacity is then counted
+    /// live, and the guard retains enough credit for the region before it is
+    /// allocated. Each registration consumes its covered credit, so a racer
+    /// cannot reuse it or charge it twice. The device room is
+    /// honoured where the ledger knows it, and elsewhere the worker's own
+    /// answer decides (`snapshot_busy` is cold).
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
         let ledger = super::super::device_ledger(self.worker_id);
-        if host_room(bytes) != Some(true) || !device_room(ledger.as_deref(), bytes) {
+        if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
+        // The canonical wire body and plaintext overlap while the body opens.
+        let peak = bytes.saturating_add(self.record.sealed_bytes);
+        let mut host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
         }
-        let restored = self.import().await;
+        let restored = self.import(&mut host_reserved).await;
         if let Some(ledger) = &ledger {
             ledger.release_hold(&holder);
         }
@@ -228,8 +236,8 @@ impl Restore<'_> {
 
     /// Decrypts the snapshot, imports it into a fresh session, rechecks it
     /// and publishes it ready.
-    async fn import(&self) -> Result<Restored, (Cold, bool)> {
-        let plaintext = self.open().await.ok_or((COLD, false))?;
+    async fn import(&self, host_reserved: &mut HostReservation) -> Result<Restored, (Cold, bool)> {
+        let plaintext = self.open(host_reserved).await.ok_or((COLD, false))?;
         let created = self.create().await.ok_or((COLD, false))?;
         let target = SessionTarget {
             handle: created.handle,
@@ -238,7 +246,8 @@ impl Restore<'_> {
         // From here the session holds the pin: its release drops it.
         let region = SnapshotRegion::from_bytes(plaintext.get()).map_err(|_| (COLD, true))?;
         drop(plaintext);
-        let region = HostCopy::hold(self.key.anchor.vault, region);
+        let region_len = region.len();
+        let region = host_reserved.hold(self.key.anchor.vault, region, region_len);
         let body = SessionImport {
             target: target.clone(),
             stamp: SessionOpStamp {
@@ -251,7 +260,7 @@ impl Restore<'_> {
         };
         let place = self.place;
         let imported = session_import(
-            &place.socket,
+            &place.launch,
             &place.epoch,
             &body,
             region.get(),
@@ -289,7 +298,10 @@ impl Restore<'_> {
 
     /// The snapshot's plaintext, opened under the turn's admission: a body
     /// that does not open retires its row as it is read.
-    async fn open(&self) -> Option<HostCopy<Zeroizing<Vec<u8>>>> {
+    async fn open(
+        &self,
+        host_reserved: &mut HostReservation,
+    ) -> Option<HostCopy<Zeroizing<Vec<u8>>>> {
         let vault = Arc::clone(&self.vault);
         let admission = self.admission;
         let id = self.record.id;
@@ -302,7 +314,14 @@ impl Restore<'_> {
         .ok()?
         .ok()??;
         lifecycle::count(Counted::Open);
-        Some(HostCopy::hold(self.key.anchor.vault, opened))
+        let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
+        let opened_capacity = u64::try_from(opened.capacity()).unwrap_or(u64::MAX);
+        let plaintext = host_reserved.hold(self.key.anchor.vault, opened, opened_capacity);
+        // The wire body has dropped; only the upcoming region needs reserved credit.
+        host_reserved.release_excess(opened_len);
+        // Count the buffer before awaiting more credit; its region is not allocated yet.
+        host_reserved.ensure(opened_len).await?;
+        Some(plaintext)
     }
 
     /// A fresh session for the turn's key on this incarnation, registered
@@ -316,12 +335,19 @@ impl Restore<'_> {
         let created: SessionCreated = send(self.place, SessionOp::Create, &body, None)
             .await
             .ok()?;
-        let session = Session {
+        let target = SessionTarget {
+            handle: created.handle,
+            binding: self.key.binding(),
+        };
+        let mut session = Session {
             key: self.key.clone(),
             handle: created.handle,
             generation: created.generation,
             published: None,
             residency: SessionResidency::default(),
+            // No residency report was observed for it yet: its row starts
+            // unreported, never a fabricated default.
+            owner: registry::mint_owner(self.place, self.key.anchor.vault, target, None),
             pending: None,
             stale: None,
             path: Vec::new(),
@@ -337,7 +363,9 @@ impl Restore<'_> {
                 worker.sessions.insert(self.key.binding(), session);
                 None
             } else {
-                Some(worker.owe(self.key.anchor.vault, session.target(), session.residency))
+                // The cold path still owns this pin until a restore is admitted.
+                session.lease = None;
+                Some(worker.owe_session(session))
             }
         };
         if let Some((target, at)) = refused {
@@ -364,7 +392,7 @@ impl Restore<'_> {
             })?;
         session.published = Some(checkpoint.clone());
         session.generation = published.generation;
-        session.residency = published.residency;
+        session.observe(published.residency);
         session.path = self.path.to_vec();
         session.phase = Phase::Ready;
         session.restored = Some(checkpoint.frontier_tokens);

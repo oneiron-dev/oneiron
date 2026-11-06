@@ -100,7 +100,11 @@ fn note_body<'b>(
     body: &'b [u8],
 ) -> Result<Cow<'b, [u8]>> {
     if entity_type == ENTITY_TYPE_NOTE
-        && crate::note::decode_note_body_using(body, crate::note::NoteKind::wire).is_ok()
+        && crate::store::note_body::decode_note_body_using(
+            body,
+            crate::store::note_body::NoteKind::wire,
+        )
+        .is_ok()
     {
         return crate::note::live_body_in_txn(&vault.store, rtxn, id, entity_type, body);
     }
@@ -190,9 +194,11 @@ pub(super) fn asset_folded(vault: &Vault, rtxn: &RoTxn<'_>, body: &RowBody<'_>) 
     let Some(body) = body.bytes() else {
         return Ok(false);
     };
-    Ok(crate::receipt::is_receipt_archive_source(body)
-        || crate::skill_hub::decode_source_carrier(body)?.is_some()
-        || !crate::agent_def::birth_source_exportable(&vault.store, rtxn, body)?)
+    Ok(
+        crate::store::receipt_identity::is_receipt_archive_source(body)
+            || crate::store::skill_source_carrier::decode_source_carrier(body)?.is_some()
+            || !crate::agent_def::birth_source_exportable(&vault.store, rtxn, body)?,
+    )
 }
 
 /// Whether row `id`, which this snapshot holds and whose header has parsed,

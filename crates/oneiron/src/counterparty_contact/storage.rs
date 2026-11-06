@@ -11,8 +11,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use sha2::Digest;
 
@@ -43,25 +44,7 @@ pub(super) fn counterparty_contact_index_key_for_record(
     counterparty_contact_index_key_parts(&record.identity_ref, &record.counterparty)
 }
 
-/// Canonical channel-class normalization for the party-channel index.
-///
-/// Shared by index writers, the contact/comm gate, campaign compliance, and
-/// outbound sender/window handling. Provider-specific email rails and the
-/// `mail` spelling of inbound mail are one recipient-facing class, not
-/// aliases for connector authorization: grants, transport routing and intent
-/// ledgers still use each exact connector key.
-#[must_use]
-pub fn normalize_channel_class(channel: &str) -> String {
-    let channel = channel.trim().to_ascii_lowercase();
-    if matches!(
-        channel.as_str(),
-        "mail" | "email_resend" | "email_ses" | "email_postmark"
-    ) {
-        "email".to_owned()
-    } else {
-        channel
-    }
-}
+pub use crate::store::channel_class::normalize_channel_class;
 
 fn party_channel_digest(party_ref: &str, channel_class: &str) -> Result<[u8; 32]> {
     let party = normalize_counterparty(party_ref.to_owned())?;
@@ -462,7 +445,7 @@ pub(super) fn contact_deleted_in_txn(
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, contact_id)?.deleted)
 }
 
-fn claim_body_in_txn(
+pub(super) fn claim_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

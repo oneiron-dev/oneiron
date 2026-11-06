@@ -5,23 +5,32 @@
 //! frozen one, so a header's reply is checked inside the narrowing the
 //! declaration was admitted in, and inside nothing once its credential is no
 //! longer live. A lane that read as its requester's own adds nothing to the
-//! declaration, which stays the one every other door declares.
+//! declaration, which stays the one every other door declares. A narrowed
+//! lane must read every source its summary plans, judged in the plan's own
+//! snapshot (FIX 11829): a requester summarizes only what it reads. NOTE
+//! planning also rebuilds this lane in the plan's own snapshot (FIX 6322).
 
 use rmpv::Value;
 
 use super::super::codec::invalid;
 use super::super::derivation;
+use super::super::doors::RequesterReadBasis;
 use super::{
     ScopeSummaryPlan, ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget,
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
 use crate::Vault;
-use crate::claim::{ClaimReadStatus, FrozenReadLane, ScopedRead};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
+use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::error::Result;
+use crate::ports::ClaimReadStatus;
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 
 /// The declaration key a narrowed requester's frozen lane rides under.
 const REQUESTER_LANE_KEY: &str = "requester_lane";
+/// The actual live key's owner-exemption eligibility, not its holder's identity.
+const REQUESTER_OWNER_EXEMPTION_KEY: &str = "requester_owner_exemption";
+/// Whether the actual key uses the relationship-only grant gate.
+const REQUESTER_RELATIONSHIP_GRANTS_KEY: &str = "requester_relationship_grants";
 /// The purpose a NOTE set's summary takes unless its caller names another
 /// (FIX 5757): never a session recap.
 const NOTE_SET_PURPOSE: &str = "note_summary";
@@ -46,12 +55,14 @@ pub(super) fn default_purpose(target: &ScopeSummaryTarget) -> &'static str {
 impl Vault {
     /// [`Self::request_scope_summary`], or [`Self::request_scope_summary_for`]
     /// with `purpose`, declared under `lane`, the requester's own live read
-    /// lane at its door: a narrowed lane rides the declaration frozen, and
-    /// every landing's reply lane is narrowed by it.
+    /// lane at its door: a narrowed lane rides the declaration frozen, every
+    /// landing's reply lane is narrowed by it, and it must read every source
+    /// the plan names.
     ///
     /// # Errors
-    /// As the request it stands for, and [`FrozenReadLane::freeze`]'s
-    /// refusal of a lane whose bound has no frozen form.
+    /// As the request it stands for, [`FrozenReadLane::freeze`]'s refusal of
+    /// a lane whose bound has no frozen form, and a narrowed lane's refusal
+    /// of a planned source it does not read.
     pub fn request_scope_summary_in_lane(
         &self,
         request: &ScopeSummaryRequest,
@@ -66,6 +77,9 @@ impl Vault {
             };
         }
         let frozen = lane_value(&frozen)?;
+        // The lane's grant clock settles before the write opens, so its
+        // sources are judged in the plan's own snapshot.
+        lane.persist_grant_clock()?;
         let queued = self.with_write_txn_grouped(|txn| {
             let purpose = purpose.unwrap_or_else(|| default_purpose(&request.target));
             let previous = derivation::current_in_txn(self, txn, request, purpose)?;
@@ -73,8 +87,17 @@ impl Vault {
                 return Err(invalid("summary request must be a map"));
             };
             fields.push((Value::from(REQUESTER_LANE_KEY), frozen));
+            fields.push((
+                Value::from(REQUESTER_OWNER_EXEMPTION_KEY),
+                Value::Boolean(lane.actor_key().facets_owner_exempt_in(self, txn)?),
+            ));
+            fields.push((
+                Value::from(REQUESTER_RELATIONSHIP_GRANTS_KEY),
+                Value::Boolean(lane.actor_key().uses_relationship_grants()),
+            ));
             let input = Value::Map(fields);
-            plan_in_txn(self, txn, &input)?;
+            let plan = plan_in_txn(self, txn, &input)?;
+            require_sources_in_lane(lane, txn, &plan)?;
             let now = self.store.clock.now_recorded_at();
             let queued = enqueue_with_lineage_in_txn(self, txn, input, None, None, now)?;
             crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
@@ -83,6 +106,26 @@ impl Vault {
         self.store.notify_attempt_observers();
         Ok(queued)
     }
+}
+
+/// Refuses a plan naming a source `lane` does not read, judged in `txn`, the
+/// plan's own snapshot (FIX 11829).
+///
+/// # Errors
+/// A planned source the lane does not read, and a store, fold or clock
+/// failure judging one.
+fn require_sources_in_lane(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    plan: &ScopeSummaryPlan,
+) -> Result<()> {
+    let policy = lane.live_policy_manifest_in(txn)?;
+    for source in &plan.sources {
+        if !lane.is_ref_readable_with_policy_in(txn, &policy, source)? {
+            return Err(invalid("summary source outside the requester's read lane"));
+        }
+    }
+    Ok(())
 }
 
 /// `lane`, the requester's actor-level reply lane for `plan`, narrowed by
@@ -121,7 +164,7 @@ fn lane_value(frozen: &FrozenReadLane) -> Result<Value> {
 }
 
 /// The lane a declaration froze; its requester's own when it froze none.
-fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
+pub(super) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     let Value::Map(fields) = input else {
         return Err(invalid("summary request must be a map"));
     };
@@ -135,4 +178,61 @@ fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid("summary requester lane invalid"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid("summary requester lane invalid"))
+}
+
+/// The actual native base a NOTE declaration's frozen narrowing is met with.
+/// Non-principal declarations require both producer-captured facts; an owner
+/// id alone never restores an exemption a transferred credential did not hold.
+pub(super) fn declared_read_basis(
+    input: &Value,
+    lane: &FrozenReadLane,
+) -> Result<RequesterReadBasis> {
+    if lane.is_principal() {
+        return Ok(RequesterReadBasis::Principal);
+    }
+    let Value::Map(fields) = input else {
+        return Err(invalid("summary request must be a map"));
+    };
+    let flag = |name| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .and_then(|(_, value)| value.as_bool())
+            .ok_or_else(|| invalid("summary requester read basis missing or invalid"))
+    };
+    Ok(RequesterReadBasis::Narrowed {
+        owner_exemption: flag(REQUESTER_OWNER_EXEMPTION_KEY)?,
+        relationship_grants: flag(REQUESTER_RELATIONSHIP_GRANTS_KEY)?,
+    })
+}
+
+/// Preserve the producer's exact narrowing on a NOTE re-declaration. These
+/// are bounds, not new read authority; the native planner checks them again.
+pub(in crate::scope_summary) fn inherit_note_requester_lane(
+    original: &Value,
+    declaration: &mut Value,
+) -> Result<()> {
+    let lane = declared_lane(original)?;
+    if lane.is_principal() {
+        return Ok(());
+    }
+    declared_read_basis(original, &lane)?;
+    let originals = original
+        .as_map()
+        .ok_or_else(|| invalid("summary request must be a map"))?;
+    let Value::Map(fields) = declaration else {
+        return Err(invalid("summary request must be a map"));
+    };
+    for name in [
+        REQUESTER_LANE_KEY,
+        REQUESTER_OWNER_EXEMPTION_KEY,
+        REQUESTER_RELATIONSHIP_GRANTS_KEY,
+    ] {
+        let field = originals
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .ok_or_else(|| invalid("summary requester read basis missing or invalid"))?;
+        fields.push(field.clone());
+    }
+    Ok(())
 }

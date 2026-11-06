@@ -28,12 +28,13 @@ pub mod coordination;
 pub mod doors;
 pub mod estimate;
 pub mod evidence;
+mod frozen;
 pub mod honesty;
 pub mod judge;
 mod pack_erase;
 pub mod prior;
 pub mod project;
-pub(crate) mod ranking;
+pub(crate) use oneiron_base::learning_ranking as ranking;
 pub mod read;
 pub mod retest;
 mod scope_carriers;
@@ -70,30 +71,8 @@ pub(crate) use scope_carriers::{
 };
 pub(crate) use scope_erase::erase_learning_scope_in_txn;
 
-/// How often a thing worked.
-pub const PREDICATE_LEARNING_RELIABILITY: &str = "learning.reliability";
-/// How much people had to fix.
-pub const PREDICATE_LEARNING_EDIT_COST: &str = "learning.edit_cost";
-/// How often a judge disagrees with itself.
-pub const PREDICATE_LEARNING_RETEST_NOISE: &str = "learning.retest_noise";
-/// The fitted value of a named knob.
-pub const PREDICATE_LEARNING_SETTING: &str = "learning.setting";
-
-/// The whole family, an exact table: an unknown future `learning.*`
-/// predicate is not silently read as one of these.
-pub const LEARNING_PREDICATES: &[&str] = &[
-    PREDICATE_LEARNING_RELIABILITY,
-    PREDICATE_LEARNING_EDIT_COST,
-    PREDICATE_LEARNING_RETEST_NOISE,
-    PREDICATE_LEARNING_SETTING,
-];
-
-/// The family's namespace, engine-reserved.
-pub const LEARNING_NAMESPACE: &str = "learning";
-
-/// Whether `predicate` is in the `learning` namespace. Companion memory reads
-/// exclude every such claim: learning views only.
-#[must_use]
-pub fn is_learning_predicate(predicate: &str) -> bool {
-    predicate.split('.').next() == Some(LEARNING_NAMESPACE)
-}
+pub use crate::write_envelope::learning_predicate::{
+    LEARNING_NAMESPACE, LEARNING_PREDICATES, PREDICATE_LEARNING_EDIT_COST,
+    PREDICATE_LEARNING_RELIABILITY, PREDICATE_LEARNING_RETEST_NOISE, PREDICATE_LEARNING_SETTING,
+    is_learning_predicate,
+};

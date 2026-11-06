@@ -280,6 +280,12 @@ pub(super) fn checkpoint_image_bytes_in_txn(
     CHECKPOINT_IMAGE.get(store, txn, id)
 }
 
+/// The full `vault_meta` key one kept image's bytes are stored under: what a
+/// read of a vault off its disk, with no `Store`, reads them by (FIX 11823).
+pub(super) fn checkpoint_image_row_key(id: &[u8; 32]) -> Vec<u8> {
+    CHECKPOINT_IMAGE.key_bytes(id)
+}
+
 /// The local checkpoint head and the rows its image covers, read without
 /// trusting it: naming a hash as covered history to fetch is not trust.
 pub(super) fn checkpoint_head_coverage_in_txn(
@@ -348,15 +354,16 @@ impl Vault {
     ) -> Result<CheckpointWrite> {
         let (image, head, accounted, reused) = {
             let txn = self.store.env.read_txn()?;
-            let mut image = match super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(
-                &self.store,
-                &txn,
-            )? {
-                Some(adopted) => {
-                    self.build_authority_checkpoint_from_adopted_in_txn(&txn, &adopted)?
-                }
-                None => self.build_authority_checkpoint_v2_in_txn(&txn)?,
-            };
+            let mut image =
+                match super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(
+                    &self.store,
+                    &txn,
+                )? {
+                    Some(adopted) => {
+                        self.build_authority_checkpoint_from_adopted_in_txn(&txn, adopted.as_ref())?
+                    }
+                    None => self.build_authority_checkpoint_v2_in_txn(&txn)?,
+                };
             let accounted = HISTORY_TOTALS
                 .get(&self.store, &txn, &())?
                 .unwrap_or_default();

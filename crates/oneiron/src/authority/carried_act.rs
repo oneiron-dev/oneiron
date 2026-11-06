@@ -22,8 +22,6 @@
 //! naming no such act holds the act back, without effect; one this install
 //! does not hold trusts the carrier.
 
-use std::collections::BTreeMap;
-
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -57,15 +55,22 @@ impl AgentCarriedAct {
     }
 }
 
-/// The agent-carried acts in `acts` whose Grant `store` holds refused at the
+/// The agent-carried acts in `fold` whose Grant `store` holds refused at the
 /// act's time ([`grant_standing_in_txn`]). A Grant that does not read is
-/// logged and keeps today's trust in the carrier (rubric 1).
+/// logged and keeps today's trust in the carrier (rubric 1). A NOW-refused
+/// native WorldPrivacy act a later counted signed owner-agent revoke saw
+/// (FIX 4703, [`super::past_grant_standing`]) is omitted from this
+/// Grant-only refused list; every other act keeps its NOW judgment, and any
+/// missing history or read fault keeps the original list.
 pub(super) fn grant_refused_agent_acts(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    acts: &BTreeMap<AuthorityEntryHash, AgentCarriedAct>,
+    fold: &AuthorityFold,
+    use_past_standing: bool,
 ) -> Vec<AuthorityEntryHash> {
-    acts.iter()
+    let acts = &fold.agent_carried_acts;
+    let now_refused: Vec<AuthorityEntryHash> = acts
+        .iter()
         .filter(|(hash, act)| {
             match grant_standing_in_txn(store, txn, act.grant, act.agent, act.act, act.at) {
                 Ok(standing) => standing == GrantStanding::Refused,
@@ -80,7 +85,35 @@ pub(super) fn grant_refused_agent_acts(
             }
         })
         .map(|(hash, _)| *hash)
-        .collect()
+        .collect();
+    if now_refused.is_empty() || !use_past_standing {
+        return now_refused;
+    }
+    let world_candidates: Vec<AuthorityEntryHash> = now_refused
+        .iter()
+        .copied()
+        .filter(|hash| {
+            acts.get(hash)
+                .is_some_and(|act| act.act == OwnerActKind::WorldPrivacy)
+        })
+        .collect();
+    if world_candidates.is_empty() {
+        return now_refused;
+    }
+    match super::past_grant_standing::preserved_world_acts(store, txn, fold, &world_candidates) {
+        Ok(preserved) if !preserved.is_empty() => now_refused
+            .into_iter()
+            .filter(|hash| !preserved.contains(hash))
+            .collect(),
+        Ok(_) => now_refused,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "past grant standing did not read; the NOW-refused list stands"
+            );
+            now_refused
+        }
+    }
 }
 
 /// `fold` with each of `refused` held back, a setting act among them

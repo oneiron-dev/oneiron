@@ -296,6 +296,37 @@ impl Owed {
     }
 }
 
+/// Whether a local write still owes `window` a row's carrier or an edge's
+/// removal (FIX 14534): until the mirror takes it, the window's persisted
+/// document lacks it, so a copy dropped now would lose it.
+///
+/// # Errors
+/// Store errors.
+pub(crate) fn window_owes_mirror_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    window: &WindowKey,
+) -> Result<bool> {
+    let prefix = format!("{}:", window.as_str());
+    let mut owed = PENDING_MIRROR.iter_raw_from(&vault.store, txn, prefix.as_bytes())?;
+    Ok(owed.next().transpose()?.is_some())
+}
+
+/// Deletes every marker that names `window`, in `wtxn`: the owner discarded
+/// this install's copy of the window, and what its local writes owed it goes
+/// with it (FIX 14534). Returns how many went.
+///
+/// # Errors
+/// Store errors.
+pub(crate) fn discard_window_mirrors_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    window: &WindowKey,
+) -> Result<usize> {
+    let prefix = format!("{}:", window.as_str());
+    PENDING_MIRROR.delete_from(&vault.store, wtxn, prefix.as_bytes())
+}
+
 /// The windows the pending-mirror markers name, each once, in key order.
 pub(super) fn owed_windows(vault: &Vault) -> Result<Vec<WindowKey>> {
     let rtxn = vault.store.env.read_txn()?;

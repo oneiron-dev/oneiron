@@ -14,11 +14,12 @@
 //! `vault.consent.registry` with its own one-tap revoke.
 //!
 //! A mint may also give the agent repo bounds (FIX 6867): one CODE anchor
-//! (a CODE_ARTIFACT) in the PROJECT it belongs to, full Git ref names, and
-//! separate readable and editable globs (`*` and `?` inside one path
-//! component, `**` across components). Omitted, the grant delegates no repo
-//! access of its own and behaves exactly as before; with no editable globs
-//! it edits nothing, and reading a path never lets the agent edit it.
+//! (a CODE_ARTIFACT) in the PROJECT it belongs to, full Git ref names or
+//! ref prefix rules (`refs/heads/run/*`, FIX 6895), and separate readable
+//! and editable globs (`*` and `?` inside one path component, `**` across
+//! components). Omitted, the grant delegates no repo access of its own and
+//! behaves exactly as before; with no editable globs it edits nothing, and
+//! reading a path never lets the agent edit it.
 use serde::{Deserialize, Serialize};
 
 use super::revision_shape;

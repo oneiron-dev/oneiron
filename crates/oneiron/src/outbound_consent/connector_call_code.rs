@@ -13,14 +13,21 @@
 //! terminal outcome settles the wait and wakes the parked run.
 
 use crate::Vault;
-use crate::code_run::{
-    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
-    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
-    CodeConsentWaitView, code_consent_admission_in_txn, mint_code_consent_wait_in_txn,
-    offered_choices, original_authority_holds_in_txn, read_code_consent_wait_in_txn,
-    refuse_code_consent_wait_in_txn, settle_code_consent_wait_listing_in_txn,
-};
-use crate::connector_key::SlateDisposition;
+use crate::code_run::CodeConsentConnectorCall;
+use crate::code_run::CodeConsentDraft;
+use crate::code_run::CodeConsentPendingEffect;
+use crate::code_run::CodeConsentPrincipal;
+use crate::code_run::CodeConsentRememberOffer;
+use crate::code_run::CodeConsentWaitView;
+use crate::code_run::code_consent_admission_in_txn;
+use crate::code_run::mint_code_consent_wait_in_txn;
+use crate::code_run::offered_choices;
+use crate::code_run::original_authority_holds_in_txn;
+use crate::code_run::read_code_consent_wait_in_txn;
+use crate::code_run::refuse_code_consent_wait_in_txn;
+use crate::code_run::settle_code_consent_wait_listing_in_txn;
+use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
+use crate::consent::code_wait_state::CodeConsentCallSite;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::ExternalEffectGateInput;
@@ -85,6 +92,7 @@ pub(super) struct HeldFacts {
     grant_id: EntityId,
     key_id: EntityId,
     call: ScopedMcpCallContext,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     manifest_hash: [u8; 32],
     protocol_revision: String,
 }
@@ -131,6 +139,7 @@ pub(super) fn before_send(
                 grant_id,
                 key_id,
                 call: prepared.call().clone(),
+                remember_context: prepared.remember_context(),
                 manifest_hash: binding.manifest_hash,
                 protocol_revision: binding.protocol_revision.clone(),
             });
@@ -207,7 +216,7 @@ impl Vault {
             return Ok(None);
         }
         let remember_offer = if reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK) {
-            self.connector_stop_asking_offer(&facts.key_id, &facts.call.tool)?
+            self.connector_stop_asking_offer(&facts.key_id, &facts.call, facts.remember_context)?
         } else {
             None
         };
@@ -221,6 +230,8 @@ impl Vault {
             server: facts.call.server.clone(),
             tool: facts.call.tool.clone(),
             endpoint: facts.call.resolved_endpoint.clone(),
+            payload_data_class: facts.call.payload_data_class,
+            remember_context: facts.remember_context,
             manifest_hash: facts.manifest_hash,
             protocol_revision: facts.protocol_revision.clone(),
             credential_record: pending.credential,
@@ -244,33 +255,31 @@ impl Vault {
         )))
     }
 
-    /// The stop-asking offer for `tool` under the governing key `key_id`
-    /// (CALLS: stop-asking for connector.call): the tool's row on the slate
-    /// that key meets, at its current revision, when that row asks always.
-    /// The answer flips that one row back to `auto`; the tool's own scoped
-    /// grant already covers its consent.
+    /// The current connection/class/project box a stop-asking answer can
+    /// remember without changing the shared catalog setting or any narrow.
     fn connector_stop_asking_offer(
         &self,
         key_id: &EntityId,
-        tool: &str,
+        call: &ScopedMcpCallContext,
+        context: Option<crate::connector_key::ConnectorToolRememberContext>,
     ) -> Result<Option<CodeConsentRememberOffer>, IntentLedgerError> {
-        let Some(key) = self.get_connector_key(key_id)? else {
+        let Some(context) = context else {
             return Ok(None);
         };
         let txn = self.store.env.read_txn().map_err(Error::from)?;
-        let Some((slate_ref, slate)) =
-            crate::connector_key::governing_slate_in_txn(&self.store, &txn, &key)?
-        else {
+        let Some(key) = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_id)? else {
             return Ok(None);
         };
-        Ok(
-            (slate.row(tool).is_some() && slate.tool_setting(tool) == SlateDisposition::AlwaysAsk)
-                .then(|| CodeConsentRememberOffer {
-                    slate_ref,
-                    slate_revision: slate.revision(),
-                    tool: tool.to_owned(),
-                }),
-        )
+        Ok(crate::connector_key::connector_tool_remember_bound_in_txn(
+            &self.store,
+            &txn,
+            key_id,
+            &key,
+            call,
+            context,
+            false,
+        )?
+        .map(|(settings_act, _)| CodeConsentRememberOffer { settings_act }))
     }
 
     /// Opens the owner's question for the code consent wait a fresh hold
@@ -310,7 +319,7 @@ impl Vault {
         };
         let asked = self
             .code_consent_question_text(wait_id)
-            .map_err(crate::memory::MemoryError::from)
+            .map_err(oneiron_contracts::memory::MemoryError::from)
             .and_then(|text| memory.ask_code_consent(wait_id, &text));
         if let Err(error) = asked {
             tracing::warn!(
@@ -328,6 +337,93 @@ impl Vault {
             }
         }
         outcome
+    }
+
+    /// Retries the typed code consent ask of every held call whose wait
+    /// never got its question, and returns how many it asked (an attach to
+    /// a question that landed between the read and the ask counts too).
+    /// Record-keeping rows only: a sealed row (FIX 9159, the stored NoRecord
+    /// signal) keeps its exact status quo of generic fallback, release and
+    /// expiry, since a rebuilt surface would alter its hook and receipt
+    /// retention. A failed retry warns and leaves the held-call ask
+    /// standing in; it never refuses, withdraws, answers, sends, or resets
+    /// the row's hold.
+    pub fn repair_connector_code_consent_asks(&self) -> Result<usize, IntentLedgerError> {
+        let rows = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            PENDING_CALLS.scan(&self.store, &txn)?
+        };
+        let mut asked = 0;
+        for (call_ref, pending) in rows {
+            let Some(wait_id) = pending.code_consent_wait else {
+                continue;
+            };
+            if pending.settled.is_some()
+                || pending.input_outcome(call_ref).is_some()
+                || pending.sealed_arguments.is_some()
+            {
+                continue;
+            }
+            let row = {
+                let txn = match self.store.env.read_txn().map_err(Error::from) {
+                    Ok(txn) => txn,
+                    Err(error) => {
+                        tracing::warn!(
+                            wait = %wait_id.to_hex(),
+                            %error,
+                            "code consent ask not retried; the wait was not read"
+                        );
+                        continue;
+                    }
+                };
+                match read_code_consent_wait_in_txn(self, &txn, wait_id) {
+                    Ok(row) => row,
+                    Err(error) => {
+                        tracing::warn!(
+                            wait = %wait_id.to_hex(),
+                            %error,
+                            "code consent ask not retried; the wait was not read"
+                        );
+                        continue;
+                    }
+                }
+            };
+            let Some(row) = row else { continue };
+            if row.ask.is_some()
+                || row.settlement.is_some()
+                || row.binding.pending.connector_call().is_none()
+            {
+                continue;
+            }
+            let class =
+                match crate::edge::EdgeActorClass::try_from_u8(row.binding.original.actor_class) {
+                    Some(class) => class,
+                    None => {
+                        tracing::warn!(
+                            wait = %wait_id.to_hex(),
+                            class = row.binding.original.actor_class,
+                            "code consent ask not retried; the stored class byte names no class"
+                        );
+                        continue;
+                    }
+                };
+            let memory = self.memory(row.binding.original.actor_ref, class);
+            let retry = self
+                .code_consent_question_text(wait_id)
+                .map_err(oneiron_contracts::memory::MemoryError::from)
+                .and_then(|text| memory.ask_code_consent(wait_id, &text));
+            if let Err(error) = retry {
+                tracing::warn!(
+                    wait = %wait_id.to_hex(),
+                    code = %error.code,
+                    message = %error.message,
+                    "code consent ask not retried; the held-call ask stands in"
+                );
+            } else {
+                asked += 1;
+            }
+        }
+        Ok(asked)
     }
 
     /// The wording of a code consent wait's question: the one place it
@@ -388,6 +484,8 @@ impl Vault {
             self.settle_code_wait(wait_id, &outcome, pending.source_rows.as_deref())?;
             return Ok((outcome, pending.source_rows));
         }
+        // Expiry commits an existing held row with its wait. Keep the
+        // receipt-only fallback when that row disappeared before the writer.
         if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
             self.settle_code_wait(wait_id, &expired, pending.source_rows.as_deref())?;
             return Ok((expired, pending.source_rows));
@@ -433,9 +531,10 @@ impl Vault {
                 frozen_digest: row.binding.frozen_input_digest,
             }));
         }
-        let (outcome, rows) = self.drive_connector_call(Some(*call_ref), None, pending, host)?;
-        self.settle_code_wait(wait_id, &outcome, rows.as_deref())?;
-        Ok((outcome, rows))
+        // Every terminal row the drive commits settles this wait in that same
+        // writer (FIX 4518), with the live outcome, so no second writer runs
+        // here. A settled row's receipt-only recovery above is unchanged.
+        self.drive_connector_call(Some(*call_ref), None, pending, host)
     }
 
     /// Settles wait `wait_id` with `outcome` in a writer of its own, when the

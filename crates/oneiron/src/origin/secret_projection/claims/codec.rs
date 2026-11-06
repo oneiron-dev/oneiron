@@ -9,10 +9,11 @@ use super::{
     REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionAudience, RepoProjectionClaim,
     RepoProjectionPlace, RepoProjectionRecord, RepoProjectionRevealBinding, corrupt,
 };
-use crate::claim::{ClaimBody, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
+use crate::write_envelope::claim_body::ClaimBody;
+use oneiron_contracts::claim::ClaimSource;
 
 /// A copy every masked reader is served, as a record names it.
 const AUDIENCE_MASKED: &str = "masked";
@@ -180,6 +181,14 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             (
                 "canonical_store",
                 Value::from(ingress.canonical_store.to_hex()),
+            ),
+        ],
+        RepoProjectionRecord::CommitOriginals { copy, originals } => vec![
+            ("kind", Value::from("commit_originals")),
+            ("copy", oid(copy)),
+            (
+                "originals",
+                Value::Array(originals.iter().map(oid).collect()),
             ),
         ],
     }

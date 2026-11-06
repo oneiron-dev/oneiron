@@ -16,7 +16,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
-use crate::llm::{BudgetGuard, BudgetLease, BudgetLeaseState};
+use oneiron_model::llm::{BudgetGuard, BudgetLease, BudgetLeaseState};
 
 /// The wake passes running on one open vault, by wake ref (DOOR-144).
 pub(crate) struct ActiveWakes {
@@ -289,7 +289,7 @@ impl ObservedCall<'_> {
     /// Which call this step's terminal claim closes.
     pub(crate) fn terminal(&self) -> StepTerminal {
         StepTerminal::Fresh {
-            bound: self.bound.is_some(),
+            key: self.bound.as_ref().map(|bound| bound.key),
         }
     }
 

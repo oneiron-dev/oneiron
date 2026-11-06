@@ -1,3 +1,6 @@
+//! TASK creation door with admission, hooks, and rate limiting.
+//! Entry [`Memory::tasks_create`]; dispatched from the `verbs` agent-verb surface.
+//! Owned by `task_verb`; validation lives in `create_validation`, specs in `create_spec`.
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
@@ -12,7 +15,6 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
 use crate::gate::PolicyApprovalCeiling;
-use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -20,6 +22,7 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 use super::consts::{
     TASK_CREATE_PROPOSAL_PREDICATE, TASK_REALIZE_ATTEMPT_KIND, TASK_VERB_BODY_SCHEMA_VERSION,
@@ -681,12 +684,15 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
+        // FIX 11687: freeze who queued this realization, as a dispatch
+        // does; a positive withdrawal ends it before admission runs it.
+        let requester = crate::agent_dispatch::QueuedRequester::of_memory(self);
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
-                payload: encode_task_realization_input(spec)?,
+                payload: encode_task_realization_input(spec, requester.as_ref())?,
                 dedupe_key: Some(task_route_dedupe_key(task_ref)),
                 run_id: None,
                 now,

@@ -9,16 +9,19 @@ use crate::build_cache::{
     BuildAction, BuildCache, BuildCacheError, BuildInputRoot, BuildPlatform, CachedActionResult,
     DeclaredOutputPath, ExtraInputDigest, FrozenBuildCommand,
 };
-use crate::code_revision::{CodeRevision, read_code_revision_blobs};
+use crate::code_document::CodeDocumentFrontier;
 use crate::code_view::{CodeViewSet, ViewReceipt};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::git_wire::GitWire;
-use crate::memory::repo_secret_reads::project_repo_file;
-use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
+use crate::memory::repo_secret_reads::{document_file_sourced_opaque, project_repo_file};
+use crate::origin::secret_projection::{
+    RepoBodyProjection, RepoSecretAudience, materialize_masked_repo_sourced,
+};
 use crate::{EdgeActorClass, EntityId};
+use crate::{code_revision::read_code_revision_blobs, store::code_revision_record::CodeRevision};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
@@ -47,11 +50,18 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// The tested tree a view is made from: its snapshot, each path's
+    /// stored bytes, and the document state of each path a code document
+    /// holds (a queue revision's untouched blobs are none).
     fn view_source(
         &self,
         repo: EntityId,
         tested: EntityId,
-    ) -> MemoryResult<(CodebaseSnapshot, BTreeMap<String, Vec<u8>>)> {
+    ) -> MemoryResult<(
+        CodebaseSnapshot,
+        BTreeMap<String, Vec<u8>>,
+        BTreeMap<String, CodeDocumentFrontier>,
+    )> {
         self.view_readable(repo)?;
         self.view_readable(tested)?;
         let body = self
@@ -65,8 +75,12 @@ impl Memory<'_> {
             .ok_or_else(|| MemoryError::not_found("finalized tested revision not found"))?;
         self.view_readable(revision.session_id)?;
         let mut contents = BTreeMap::new();
+        let mut documents = BTreeMap::new();
+        // The repository's code-document identity, as its writers key it
+        // (FIX 12761).
+        let identity = self.vault.resolve_repo_identity(&repo_ref)?;
         for frontier in revision.file_frontiers.values() {
-            if frontier.repo != repo_ref.canonical() {
+            if frontier.repo != identity.as_str() {
                 return Err(MemoryError::bad_request(
                     "tested file belongs to another repository",
                 ));
@@ -75,6 +89,7 @@ impl Memory<'_> {
             if contents.insert(frontier.path.clone(), bytes).is_some() {
                 return Err(MemoryError::bad_request("duplicate tested path"));
             }
+            documents.insert(frontier.path.clone(), frontier.clone());
         }
         // A tested queue revision's untouched paths are files of its tree too (FIX 9940).
         if !revision.blob_frontiers.is_empty() {
@@ -97,8 +112,9 @@ impl Memory<'_> {
                 )
             })
             .collect();
-        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, entries)?;
-        Ok((snapshot, contents))
+        let commit_hash = repo_ref.commit_hash().map(str::to_owned);
+        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, commit_hash, entries)?;
+        Ok((snapshot, contents, documents))
     }
 
     /// The untouched blobs of tested queue revision `revision` of `repo`,
@@ -158,7 +174,7 @@ impl Memory<'_> {
         audience: &RepoSecretAudience<'_>,
     ) -> MemoryResult<CodeWorkingView> {
         self.view_owner(owner, input.account)?;
-        let (snapshot, contents) = self.view_source(input.repo, input.tested)?;
+        let (snapshot, contents, documents) = self.view_source(input.repo, input.tested)?;
         let mut selected = BTreeMap::new();
         // Validate the policy even if it selects no files.
         if input.policy.version != 1 {
@@ -171,7 +187,11 @@ impl Memory<'_> {
                 selected.insert(path, bytes);
             }
         }
-        let selected = materialize_masked_repo(self.vault, selected, audience)?.into_contents();
+        // A masked reader's copy of a tested file reads by that document
+        // state's history: an edit of a marked file is its placeholder,
+        // never its stored text (FIX 8967).
+        let selected = materialize_masked_repo_sourced(self.vault, selected, &documents, audience)?
+            .into_contents();
         BuildCache::bind_owner_account(self.vault, owner, &input.account.to_hex())
             .map_err(cache_error)?;
         let set = CodeViewSet::open(self.vault)?;
@@ -216,7 +236,7 @@ impl Memory<'_> {
     ) -> MemoryResult<(CodeViewSet<'a>, ViewReceipt, CodebaseSnapshot)> {
         self.view_owner(owner, input.account)?;
         BuildCache::for_owner(self.vault, owner, &input.account.to_hex()).map_err(cache_error)?;
-        let (snapshot, _) = self.view_source(input.repo, input.tested)?;
+        let (snapshot, _, _) = self.view_source(input.repo, input.tested)?;
         let set = CodeViewSet::open(self.vault)?;
         let receipt = set
             .receipt(input.view)?
@@ -277,11 +297,30 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeViewReadRequest,
     ) -> MemoryResult<CodeViewFileBytes> {
-        if let Some(why) = input.why.clone() {
-            return self.code_view_read_with_why(owner, input, &why);
-        }
+        let view = input.view.clone();
+        let why = input.why.clone();
         let file = self.code_view_read_as(owner, input)?;
-        let projected = project_repo_file(self.vault, file.bytes)?;
+        // A view file a code document holds reads by that document state's
+        // history first, whoever made the view: an edit of a marked file is
+        // its placeholder, and a `why` reveals only the stored blob a grant
+        // was committed for, never an edit of it (FIX 8967).
+        let tested = self
+            .vault
+            .get_code_revision(&view.tested)?
+            .ok_or_else(|| MemoryError::not_found("finalized tested revision not found"))?;
+        let document = tested
+            .file_frontiers
+            .values()
+            .find(|frontier| frontier.path == file.path);
+        let sourced = match document {
+            Some(document) => document_file_sourced_opaque(self.vault, document, &file.bytes)?,
+            None => None,
+        };
+        let projected = match (sourced, why) {
+            (Some(opaque), _) => RepoBodyProjection::Opaque(opaque),
+            (None, Some(why)) => return self.code_view_read_with_why(owner, view, file, &why),
+            (None, None) => project_repo_file(self.vault, file.bytes)?,
+        };
         let projection = projected.view();
         let bytes = projected.into_bytes();
         Ok(CodeViewFileBytes {
@@ -299,11 +338,10 @@ impl Memory<'_> {
     fn code_view_read_with_why(
         &self,
         owner: &AuthenticatedOwner,
-        input: CodeViewReadRequest,
+        view: CodeViewRequest,
+        file: CodeViewFileBytes,
         why: &str,
     ) -> MemoryResult<CodeViewFileBytes> {
-        let view = input.view.clone();
-        let file = self.code_view_read_as(owner, input)?;
         let readmit = || -> crate::error::Result<()> {
             self.admitted_view(owner, &view)
                 .map(|_| ())

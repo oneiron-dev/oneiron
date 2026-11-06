@@ -2,11 +2,9 @@
 
 use super::{EncodedFrame, TransportError, checked_encoded_frame_len};
 use crate::EntityId;
+use crate::store::framing::validate_document_kind as validate_kind;
 
-/// Entity text-plane frame: `[tag][entity:16][kind:1][payload]`.
-pub const TAG_DOCUMENT: u8 = 11;
-/// Document batch: `[tag][len:4BE][document frame]...`. Nesting is forbidden.
-pub const TAG_BATCH: u8 = 12;
+pub use crate::store::document_frame_tags::{TAG_BATCH, TAG_DOCUMENT};
 
 /// The members one batch this node sends carries at most: a sender's
 /// processing quantum, never a receiver's refusal. A receiver takes every
@@ -15,24 +13,7 @@ const MAX_BATCH_DOCUMENTS: usize = 256;
 /// Maximum proposals carried by one node tick. Excess waits for its next tick.
 pub const MAX_NODE_BATCH_MEMBERS: usize = MAX_BATCH_DOCUMENTS;
 
-/// Document payload kinds. A state copy replaces the receiver's document.
-pub mod document_sub_tags {
-    pub const UPDATE: u8 = 0;
-    pub const STATE: u8 = 1;
-    /// Payload is a selector request envelope, with the peer's document VV.
-    pub const REQUEST: u8 = 2;
-    /// Receiver VV after a durable import.
-    pub const ACK: u8 = 3;
-    /// Authenticated semantic NOTE command. Actor is bound out of band.
-    pub const NOTE_OPS: u8 = 4;
-    /// Idempotent NOTE command result, sent only to the requesting connection.
-    pub const NOTE_RECEIPT: u8 = 5;
-    /// An own device's pinned artifact pointer change, with the rows that
-    /// serve it. Owner lane only; the entity names the channel and artifact.
-    pub const ARTIFACT_PUBLICATION: u8 = 6;
-    /// The sync server's answer to one publication: its digest and outcome.
-    pub const ARTIFACT_RECEIPT: u8 = 7;
-}
+pub use crate::store::document_frame_tags::document_sub_tags;
 
 /// Borrowed, validated entity-document frame.
 #[derive(Debug, PartialEq, Eq)]
@@ -42,18 +23,47 @@ pub struct DocumentFrame<'a> {
     pub payload: &'a [u8],
 }
 
+/// The initiating operation of a nonterminal document open wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DocumentWaitedOut {
+    Update = document_sub_tags::UPDATE,
+    Request = document_sub_tags::REQUEST,
+}
+
+impl TryFrom<u8> for DocumentWaitedOut {
+    type Error = TransportError;
+
+    fn try_from(kind: u8) -> Result<Self, Self::Error> {
+        match kind {
+            document_sub_tags::UPDATE => Ok(Self::Update),
+            document_sub_tags::REQUEST => Ok(Self::Request),
+            _ => Err(TransportError::InvalidPayload(
+                "invalid document wait initiator",
+            )),
+        }
+    }
+}
+
+/// No body, vector, acknowledgement or settlement accompanies this answer.
+pub fn encode_document_waited_out(entity: EntityId, waited: DocumentWaitedOut) -> EncodedFrame {
+    encode_document(entity, document_sub_tags::WAITED_OUT, &[waited as u8])
+}
+
+/// Exactly one initiating-kind byte; all other payload shapes are invalid.
+pub fn decode_document_waited_out(payload: &[u8]) -> Result<DocumentWaitedOut, TransportError> {
+    let [kind] = payload else {
+        return Err(TransportError::InvalidPayload(
+            "invalid document wait payload",
+        ));
+    };
+    DocumentWaitedOut::try_from(*kind)
+}
+
 pub fn encode_document(entity: EntityId, kind: u8, payload: &[u8]) -> EncodedFrame {
-    let result = (|| {
-        checked_encoded_frame_len(18, payload.len())?;
-        validate_kind(kind)?;
-        let mut frame = Vec::with_capacity(18 + payload.len());
-        frame.push(TAG_DOCUMENT);
-        frame.extend_from_slice(entity.as_bytes());
-        frame.push(kind);
-        frame.extend_from_slice(payload);
-        Ok(frame)
-    })();
-    EncodedFrame(result)
+    EncodedFrame(crate::store::framing::encode_document(
+        entity, kind, payload,
+    ))
 }
 
 /// Decodes bytes after the document tag, including size and kind checks.
@@ -69,20 +79,6 @@ pub fn decode_document(data: &[u8]) -> Result<DocumentFrame<'_>, TransportError>
         kind: data[16],
         payload: &data[17..],
     })
-}
-
-fn validate_kind(kind: u8) -> Result<(), TransportError> {
-    match kind {
-        document_sub_tags::UPDATE
-        | document_sub_tags::STATE
-        | document_sub_tags::REQUEST
-        | document_sub_tags::ACK
-        | document_sub_tags::NOTE_OPS
-        | document_sub_tags::NOTE_RECEIPT
-        | document_sub_tags::ARTIFACT_PUBLICATION
-        | document_sub_tags::ARTIFACT_RECEIPT => Ok(()),
-        _ => Err(TransportError::InvalidPayload("unknown document kind")),
-    }
 }
 
 pub fn encode_document_batch(frames: &[Vec<u8>]) -> EncodedFrame {

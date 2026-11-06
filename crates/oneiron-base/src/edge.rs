@@ -1,0 +1,548 @@
+//! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`.
+
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use oneiron_contracts::affect::Vad;
+
+/// Defined in `oneiron-contracts`: the write actor names it.
+pub use oneiron_contracts::edge::EdgeActorClass;
+
+pub const EDGE_KEY_LEN: usize = 33;
+
+pub const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
+
+pub const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
+
+pub const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
+
+mod kind;
+pub mod kind_tables;
+pub use self::kind::EdgeKind;
+
+const CODE_SYMBOL_RELATION_WEIGHT: f32 = 1.0;
+
+impl EdgeKind {
+    /// Returns the default STORED edge weight for this edge kind — the
+    /// LITERAL `pprWeight` column of the contract's `edgeKinds` table
+    /// (oneiron-docs `site/src/data/oneiron-contracts.ts`, ARCH-0019 PPR
+    /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
+    /// rows exactly: `child_of`, `assigned_to`, and `blocked_by` carry no
+    /// stored-weight prior, so callers writing such edges must choose a
+    /// weight explicitly. `same_as` joins that set: an identity link carries
+    /// no retrieval prior at all, and its owning door writes an explicit
+    /// `0.0`.
+    ///
+    /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
+    /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
+    /// from this prior for the five world-model kinds, and `ChildOf` /
+    /// `AssignedTo` / `BlockedBy` are never traversed by PPR regardless of
+    /// the weight stored on their edges.
+    pub const fn default_weight(self) -> Option<f32> {
+        match self {
+            Self::Calls | Self::Imports | Self::Refs => Some(CODE_SYMBOL_RELATION_WEIGHT),
+            Self::BelongsTo => Some(1.0),
+            Self::ParticipatesIn => Some(1.0),
+            Self::Attached => Some(0.8),
+            Self::AuthoredBy => Some(0.9),
+            Self::Mentions => Some(0.6),
+            Self::About => Some(0.5),
+            Self::Supports => Some(1.0),
+            Self::Opposes => Some(0.0),
+            Self::ClaimOf => Some(1.0),
+            Self::ScopedTo => Some(0.7),
+            Self::Supersedes => Some(0.3),
+            Self::DerivedFrom => Some(0.2),
+            Self::PartOf => Some(0.8),
+            Self::EmployedBy => Some(0.8),
+            Self::HasFacet => Some(0.7),
+            Self::InWorld => Some(0.7),
+            Self::FacetOf => Some(0.7),
+            Self::SetIn => Some(0.7),
+            Self::ChildOf => None,
+            Self::AssignedTo => None,
+            Self::BlockedBy => None,
+            Self::SameAs
+            | Self::Parent
+            | Self::SpawnedBy
+            | Self::AddressedTo
+            | Self::RepliesTo
+            | Self::Regenerates => None,
+            // Identity-plumbing prior mirroring `supersedes` (0.3).
+            Self::MergedInto => Some(0.3),
+            Self::SplitInto => Some(0.3),
+            // ONE-1608 deviation, recorded deliberately: the contract's u8-24
+            // `blocks` row carries `pprWeight: null` / "Not traversed.", and
+            // that row governs PPR TRAVERSAL, which this kind never enters
+            // (`lambda_for_kind` is `None`). This column is the STORED prior
+            // the dedicated door writes into the 12-byte value, and the
+            // ONE-1608 blueprint pins it at `1.0` so `insert_blocks_edge`
+            // takes no caller weight at all. The two layers are independent;
+            // both hold.
+            Self::Blocks => Some(1.0),
+            // CMT-4 (ONE-1541): the brief-fulfillment pair joins the
+            // `pprWeight: null` set. Neither kind is traversed, and the one
+            // validated door that may write them carries an explicit `1.0`
+            // per edge rather than inheriting a prior from here.
+            Self::Fulfills | Self::DischargedBy => None,
+        }
+    }
+}
+
+/// Storage layout class for an edge value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeValueLayout {
+    Structural,
+    SemanticBare,
+    SemanticProvenanced,
+}
+
+impl EdgeValueLayout {
+    #[must_use]
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::Structural => EDGE_VALUE_STRUCTURAL_LEN,
+            Self::SemanticBare => EDGE_VALUE_SEMANTIC_LEN,
+            Self::SemanticProvenanced => EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+        }
+    }
+
+    fn from_len(len: usize) -> Option<Self> {
+        match len {
+            EDGE_VALUE_STRUCTURAL_LEN => Some(Self::Structural),
+            EDGE_VALUE_SEMANTIC_LEN => Some(Self::SemanticBare),
+            EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => Some(Self::SemanticProvenanced),
+            _ => None,
+        }
+    }
+}
+
+/// Hot confirmation flag cached on a 26-byte semantic-provenanced edge.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeConfirmationStatus {
+    Proposed = 0,
+    Confirmed = 1,
+    Disputed = 2,
+    Retracted = 3,
+}
+
+impl EdgeConfirmationStatus {
+    fn try_from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Proposed),
+            1 => Some(Self::Confirmed),
+            2 => Some(Self::Disputed),
+            3 => Some(Self::Retracted),
+            _ => None,
+        }
+    }
+}
+
+/// Two hot provenance flags derived from the `edge.provenance` Claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeProvenanceFlags {
+    pub confirmation_status: EdgeConfirmationStatus,
+    pub actor_class: EdgeActorClass,
+}
+
+/// Decoded fixed-width edge value fields.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecodedEdgeValue {
+    pub layout: EdgeValueLayout,
+    pub weight: f32,
+    pub created_at: u64,
+    pub vad: Option<Vad>,
+    pub provenance: Option<EdgeProvenanceFlags>,
+}
+
+/// Selects the value layout for writes. Reads dispatch on value length.
+pub fn edge_value_layout_for_kind(kind: EdgeKind, has_provenance_claim: bool) -> EdgeValueLayout {
+    match kind {
+        EdgeKind::AuthoredBy
+        | EdgeKind::ScopedTo
+        | EdgeKind::PartOf
+        | EdgeKind::Supersedes
+        | EdgeKind::BelongsTo
+        | EdgeKind::ClaimOf
+        | EdgeKind::ChildOf
+        | EdgeKind::AssignedTo
+        | EdgeKind::DerivedFrom
+        | EdgeKind::MergedInto
+        | EdgeKind::SplitInto
+        | EdgeKind::BlockedBy
+        | EdgeKind::Blocks
+        | EdgeKind::Fulfills
+        | EdgeKind::DischargedBy
+        | EdgeKind::Parent
+        | EdgeKind::SpawnedBy
+        | EdgeKind::AddressedTo
+        | EdgeKind::RepliesTo
+        | EdgeKind::Regenerates
+        | EdgeKind::SameAs
+        | EdgeKind::Calls
+        | EdgeKind::Imports
+        | EdgeKind::Refs => EdgeValueLayout::Structural,
+        EdgeKind::Mentions
+        | EdgeKind::About
+        | EdgeKind::Supports
+        | EdgeKind::Opposes
+        | EdgeKind::ParticipatesIn
+        | EdgeKind::Attached
+        | EdgeKind::EmployedBy
+        | EdgeKind::HasFacet
+        | EdgeKind::FacetOf
+        | EdgeKind::InWorld
+        | EdgeKind::SetIn => {
+            if has_provenance_claim {
+                EdgeValueLayout::SemanticProvenanced
+            } else {
+                EdgeValueLayout::SemanticBare
+            }
+        }
+    }
+}
+
+/// Edge info for hydrated context entities.
+#[derive(Debug, Clone)]
+pub struct EdgeInfo {
+    pub kind: EdgeKind,
+    pub target: EntityId,
+    pub target_short_id: Option<String>,
+    pub weight: f32,
+    pub created_at: u64,
+    pub vad: Option<Vad>,
+    pub provenance: Option<EdgeProvenanceFlags>,
+}
+
+fn read_f32_le(value: &[u8], offset: usize) -> crate::error::Result<f32> {
+    let bytes = value
+        .get(offset..offset + 4)
+        .and_then(|b| b.try_into().ok())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    Ok(f32::from_le_bytes(bytes))
+}
+
+fn read_u64_le(value: &[u8], offset: usize) -> crate::error::Result<u64> {
+    let bytes = value
+        .get(offset..offset + 8)
+        .and_then(|b| b.try_into().ok())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn read_vad(value: &[u8]) -> crate::error::Result<Vad> {
+    Ok(Vad {
+        valence: read_f32_le(value, 12)?,
+        arousal: read_f32_le(value, 16)?,
+        dominance: read_f32_le(value, 20)?,
+    })
+}
+
+pub fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdgeValue> {
+    let layout = EdgeValueLayout::from_len(value.len())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    let weight = read_f32_le(value, 0)?;
+    if !weight.is_finite() {
+        return Err(crate::error::Error::CorruptedIndex("edge value"));
+    }
+    let created_at = read_u64_le(value, 4)?;
+    let vad = match layout {
+        EdgeValueLayout::Structural => None,
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => {
+            let vad = read_vad(value)?;
+            if !vad.is_finite() || !vad.is_in_range() {
+                return Err(crate::error::Error::CorruptedIndex("edge value"));
+            }
+            Some(vad)
+        }
+    };
+    let provenance = match layout {
+        EdgeValueLayout::SemanticProvenanced => {
+            let confirmation_status = EdgeConfirmationStatus::try_from_u8(value[24])
+                .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+            let actor_class = EdgeActorClass::try_from_u8(value[25])
+                .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+            Some(EdgeProvenanceFlags {
+                confirmation_status,
+                actor_class,
+            })
+        }
+        EdgeValueLayout::Structural | EdgeValueLayout::SemanticBare => None,
+    };
+
+    Ok(DecodedEdgeValue {
+        layout,
+        weight,
+        created_at,
+        vad,
+        provenance,
+    })
+}
+
+pub fn decode_edge_value_for_kind(
+    kind: EdgeKind,
+    value: &[u8],
+) -> crate::error::Result<DecodedEdgeValue> {
+    let decoded = decode_edge_value(value)?;
+    let legal = match edge_value_layout_for_kind(kind, false) {
+        EdgeValueLayout::Structural => decoded.layout == EdgeValueLayout::Structural,
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => matches!(
+            decoded.layout,
+            EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced
+        ),
+    };
+
+    if !legal {
+        return Err(crate::error::Error::CorruptedIndex("edge value"));
+    }
+
+    Ok(decoded)
+}
+
+/// Fully parsed strict edge row shared by fail-closed graph readers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StrictEdgeRecord {
+    pub source: EntityId,
+    pub kind: EdgeKind,
+    pub target: EntityId,
+    pub decoded: DecodedEdgeValue,
+}
+
+impl StrictEdgeRecord {
+    pub fn into_edge_info(self) -> EdgeInfo {
+        EdgeInfo {
+            kind: self.kind,
+            target: self.target,
+            target_short_id: None,
+            weight: self.decoded.weight,
+            created_at: self.decoded.created_at,
+            vad: self.decoded.vad,
+            provenance: self.decoded.provenance,
+        }
+    }
+}
+
+/// Parses one `edges_out` / `edges_in` row fail-closed.
+///
+/// A key that is not `EDGE_KEY_LEN` bytes, an unknown edge-kind byte,
+/// a reserved/invalid source or peer id, or a value that does not decode as
+/// a valid layout for the kind (12/24/26 B per ARCH-0034) is normalized to
+/// `Error::CorruptedIndex("edge record")`.
+pub fn parse_strict_edge_record(
+    key: &[u8],
+    value: &[u8],
+) -> crate::error::Result<StrictEdgeRecord> {
+    let (source, kind, target) = parse_strict_edge_record_key(key)?;
+    let decoded = decode_edge_value_for_kind(kind, value).map_err(|_| edge_record_error())?;
+
+    Ok(StrictEdgeRecord {
+        source,
+        kind,
+        target,
+        decoded,
+    })
+}
+
+pub fn parse_strict_edge_record_key(
+    key: &[u8],
+) -> crate::error::Result<(EntityId, EdgeKind, EntityId)> {
+    if key.len() != EDGE_KEY_LEN {
+        return Err(edge_record_error());
+    }
+
+    let source = EntityId::from_bytes(
+        key[..ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| edge_record_error())?,
+    )
+    .map_err(|_| edge_record_error())?;
+    let kind = EdgeKind::try_from_u8(key[ENTITY_ID_LEN]).ok_or_else(edge_record_error)?;
+    let target = EntityId::from_bytes(
+        key[ENTITY_ID_LEN + 1..EDGE_KEY_LEN]
+            .try_into()
+            .map_err(|_| edge_record_error())?,
+    )
+    .map_err(|_| edge_record_error())?;
+
+    Ok((source, kind, target))
+}
+
+fn edge_record_error() -> crate::error::Error {
+    crate::error::Error::CorruptedIndex("edge record")
+}
+
+/// Rejects edge kinds whose topology writes are reserved to an engine door:
+/// `merged_into` / `split_into` carry redirect-shell lifecycle meaning
+/// derived at read time, so a raw public write could forge or tear shell
+/// state (ARCH-0055). Applied by the public batch edge builders; the
+/// identity-topology door and sync replay materialize through internal ops.
+///
+/// `blocks` joins them (ARCH-0050 R6 L2 / ONE-1608): a readiness dependency
+/// is only meaningful once its actor entity has been bound to the asserted
+/// class, its `ClaimSource` cleared, and acyclicity proven, and NONE of that
+/// is expressible through a raw builder edge. One arm here reserves BOTH
+/// generic doors — creation through [`validate_public_edge_creation_kind`]
+/// (which delegates here) and deletion through `Vault::delete_edge` (a
+/// one-op batch delete) — leaving `code_memory::insert_blocks_edge` /
+/// `remove_blocks_edge` as the sole write and retirement doors.
+///
+/// The CMT-4 `fulfills` / `discharged_by` pair (ONE-1541) joins them on the
+/// same terms: the ruled directions are only meaningful once BOTH endpoint
+/// classes have been proven (a task brief on one side, an OPEN
+/// `commitment.record` CLAIM on the other) and both rows have been written in
+/// ONE transaction. A raw builder edge proves neither and can write one
+/// direction without the other, so the pair stays reachable only through
+/// `commitment_lifecycle::link_brief_fulfillment`. As with the arms above,
+/// one arm reserves BOTH generic doors — creation and deletion.
+pub fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
+    match kind {
+        EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo => {
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::ReservedEdgeKind("conversation_dag"),
+            ))
+        }
+        EdgeKind::MergedInto => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("merged_into"),
+        )),
+        EdgeKind::SplitInto => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("split_into"),
+        )),
+        EdgeKind::Blocks => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("blocks"),
+        )),
+        EdgeKind::Fulfills => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("fulfills"),
+        )),
+        EdgeKind::DischargedBy => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("discharged_by"),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Rejects edge kinds a public caller may not CREATE: everything
+/// [`validate_public_edge_kind`] reserves, plus `same_as` (ONE-1414).
+///
+/// A coreference link means nothing apart from the status Claim written with
+/// it, so `federation::put_coreference_link` — which writes both in ONE
+/// actor-gated transaction — is its only write door. A raw builder edge would
+/// mint an unattributed identity assertion with no status, and the export
+/// filter reads a link's consent rather than its provenance, so that forged
+/// link becomes exportable the moment a consent Claim names it. The facade and
+/// code-mode `vault.edges.put` doors already refuse the kind; this is the same
+/// refusal at the engine's own edge builders.
+///
+/// Deliberately SEPARATE from [`validate_public_edge_kind`] rather than folded
+/// into it, on two axes:
+///
+/// * RECEIVE side. Sync admission, remat, and the export selector all gate on
+///   the narrower predicate, and a consented link arriving from a peer is
+///   legitimate traffic — quarantining it would break federated coreference at
+///   exactly the point it is meant to work.
+/// * DELETE side. Nothing reserves `same_as` removal to a door (there is no
+///   revoke door to route it through), and dropping a link only ever narrows
+///   disclosure, so deletes keep the narrower gate too. A kind that can be
+///   created but never removed is a wedge, not a door.
+///
+/// `regenerates` joins `same_as` here, and only here (FIX 5972). Its link says
+/// a Retry's reply answers its source again, which only the message stream
+/// proves, so the stream's terminal write is its one creator. On the receive
+/// side a carried link is admitted by [`regeneration_pair`] on the topology
+/// its materializer applies, never by this refusal; on the delete side an
+/// existing link keeps its delete, weight and VAD doors.
+pub fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
+    validate_public_edge_kind(kind)?;
+    match kind {
+        EdgeKind::SameAs => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("same_as"),
+        )),
+        EdgeKind::Regenerates => Err(reserved_regenerates()),
+        _ => Ok(()),
+    }
+}
+
+/// What the stored rows say of a `regenerates` link (FIX 5972): the stream's
+/// own source checks, shared with every carrier that admits one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Regeneration {
+    /// Every fact the link asserts is stored and holds.
+    Admits,
+    /// A MESSAGE row, or one of its sole axes, is not stored yet.
+    Pending,
+    /// A MESSAGE is a deleted shell, with no body left to prove the link by.
+    Erased,
+    /// A stored fact refutes the link.
+    Refuses,
+}
+
+/// The refusal for a `regenerates` link the stream did not prove.
+pub fn reserved_regenerates() -> crate::error::Error {
+    crate::error::Error::Registry(crate::error::RegistryError::ReservedEdgeKind("regenerates"))
+}
+
+/// Validates a stored edge weight against the contract-pinned range.
+///
+/// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs
+/// `site/src/data/oneiron-contracts.ts` `edgeKinds` — every non-null
+/// `pprWeight` prior lives in this closed interval, and the weight gloss pins
+/// the stored range). NaN, ±infinity, and finite values outside \[0, 1\] are
+/// rejected with the typed [`Error::InvalidEdgeWeight`] on EVERY write path
+/// (public batch ops and sync replay materialization alike); the read path is
+/// unchanged.
+///
+/// [`Error::InvalidEdgeWeight`]: crate::error::Error::InvalidEdgeWeight
+pub fn validate_edge_weight(weight: f32) -> crate::error::Result<()> {
+    if !(0.0..=1.0).contains(&weight) {
+        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
+    }
+    Ok(())
+}
+
+pub fn encode_edge_value(
+    kind: EdgeKind,
+    weight: f32,
+    created_at: u64,
+    vad: Vad,
+    provenance: Option<EdgeProvenanceFlags>,
+) -> crate::error::Result<Vec<u8>> {
+    validate_edge_weight(weight)?;
+    if let Some((component, value)) = vad.invalid_component() {
+        return Err(crate::error::Error::InvalidVad { component, value });
+    }
+    if provenance.is_some()
+        && edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural
+    {
+        return Err(crate::error::Error::InvariantViolation(
+            "structural edges do not carry provenance hot flags",
+        ));
+    }
+    if vad != Vad::NEUTRAL && edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural
+    {
+        return Err(crate::error::Error::InvariantViolation(
+            "structural edges do not carry VAD",
+        ));
+    }
+
+    let layout = edge_value_layout_for_kind(kind, provenance.is_some());
+    let mut value = vec![0_u8; layout.bytes()];
+    value[0..4].copy_from_slice(&weight.to_le_bytes());
+    value[4..12].copy_from_slice(&created_at.to_le_bytes());
+
+    match layout {
+        EdgeValueLayout::Structural => {}
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => {
+            value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+            value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+            value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
+        }
+    }
+
+    if let Some(flags) = provenance {
+        value[24] = flags.confirmation_status as u8;
+        value[25] = flags.actor_class as u8;
+    }
+
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests;

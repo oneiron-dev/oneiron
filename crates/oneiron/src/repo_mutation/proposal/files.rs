@@ -7,29 +7,7 @@ use super::{RepoProposal, RepoProposalOperation, invalid};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-/// One reviewed file of a proposal. An ordinary operation's file has its
-/// bytes and no source; a received bundle's names its source operation
-/// and its exact Git state change, and `None` bytes remove it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoProposedFile {
-    pub path: String,
-    pub content: Option<Vec<u8>>,
-    pub source_operation: Option<EntityId>,
-    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
-}
-
-impl RepoProposedFile {
-    /// An ordinary operation's one file.
-    #[must_use]
-    pub fn ordinary(path: String, content: Vec<u8>) -> Self {
-        Self {
-            path,
-            content: Some(content),
-            source_operation: None,
-            metadata_edit: None,
-        }
-    }
-}
+pub use crate::store::repo_proposal_record::RepoProposedFile;
 
 impl RepoProposal {
     /// The one file an ordinary operation changes, with its bytes. A

@@ -44,14 +44,31 @@ const SHELL_GRAMMAR: &[char] = &[
 ];
 
 /// The context of the decision on claim `id` written as `body`, by the run
-/// `run` when a Dreamer run wrote it.
-pub(super) fn claim_decision_context(
+/// `run` when a Dreamer run wrote it. Infallible: writer anchors attach via
+/// [`crate::conversation::gate_claim_anchors_store_in`], and any unknown,
+/// ambiguous, cyclic, malformed, unsupported, or errored capture stores the
+/// single incomplete empty value. Nothing here refuses the write.
+pub(super) fn claim_decision_context_store_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &ClaimBody,
     run: Option<&str>,
+    attempt: Option<[u8; 16]>,
+    pending_prompt: Option<&[EntityId]>,
 ) -> GateDecisionContext {
     GateDecisionContext {
         read: GateDecisionReadContext::claim(id, body)
+            .map(|read| {
+                let anchors = crate::conversation::gate_claim_anchors_store_in(
+                    store,
+                    txn,
+                    id,
+                    body,
+                    pending_prompt,
+                );
+                read.with_anchors(anchors)
+            })
             .into_iter()
             .collect(),
         links: run
@@ -59,7 +76,7 @@ pub(super) fn claim_decision_context(
                 GateLoopLink::action(
                     GateLoopSource::Runner,
                     Some(run.to_owned()),
-                    None,
+                    attempt,
                     GateLoopOrigin::Unresolved,
                 )
             })

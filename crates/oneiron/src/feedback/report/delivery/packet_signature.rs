@@ -17,7 +17,8 @@ use super::metadata::{compiled_stack, exact_u32, host_stack_id};
 use crate::edit_distance::attribution::{ArtifactPublisher, TriagePacket, TriageSubject};
 use crate::edit_distance::publisher::{CountKey, IssueCategory, IssueSignature};
 use crate::error::{Error, Result};
-use crate::{EntityId, ModelId, Vault};
+use crate::{EntityId, Vault};
+use oneiron_model::llm::ModelId;
 
 impl Vault {
     /// Builds the content-free issue signature `packet` earns, read in
@@ -94,7 +95,7 @@ impl Vault {
             (CountKey::Amended, judged.saturating_sub(rejected)),
             (CountKey::Rejected, rejected),
         ];
-        let canonical = crate::llm::canonical_json_bytes(packet)
+        let canonical = oneiron_model::llm::canonical_json_bytes(packet)
             .map_err(|_| Error::InvariantViolation("triage packet encode"))?;
         let content_hash = blake3::hash(&canonical).to_hex().to_string();
         Ok(IssueSignature::new(

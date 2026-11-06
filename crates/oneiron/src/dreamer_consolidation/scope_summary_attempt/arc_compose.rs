@@ -27,10 +27,11 @@ use crate::EntityId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{
-    DurableStepContext, DurableStepError, LlmResponse, StepOutcome, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ArcPendingCause, ComposedSummary, ScopeSummaryPlan};
+use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeSet;
 
 /// The identity an Arc's composition is known by.
@@ -210,6 +211,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
                 }
                 Err(other) => {
+                    if let DurableStepError::SpentLlm { usage, .. }
+                    | DurableStepError::SpentFallback { usage, .. } = &other
+                    {
+                        charges.record_usage(usage);
+                    }
                     return Ok(
                         charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
                     );

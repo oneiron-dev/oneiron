@@ -20,15 +20,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::ConversationTurnSpan;
 use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
 use crate::claim::ScopedRead;
+use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 use crate::compaction::self_writer::hex32;
 use crate::compaction::{CompactionWindowMessage, decode_epoch_summary_body};
-use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text_in};
+use crate::conversation::{TurnActionAttempt, TurnActionContext, TurnActionLine};
+use crate::dreamer_consolidation::conversation_span_text_in;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::memory::{
-    MAX_TRANSCRIPT_PAGE_TURNS, Memory, MemoryResult, TranscriptTurn, WitnessAuthor,
-};
+use crate::memory::{Memory, TranscriptTurn, WitnessAuthor};
+use crate::store::conversation_span::ConversationSpanRead;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{EntityId, Error, Vault, WriteActor};
+use oneiron_contracts::memory::MemoryResult;
 
 /// One line of a self agent's model-facing chat log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +60,7 @@ pub(crate) struct ChatLogWindow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatLog {
     pub conversation: EntityId,
-    /// The branch read: a DAG conversation's HEAD.
+    /// The branch read: a DAG conversation's HEAD, or a retry action's TARGET turn.
     pub branch: Option<EntityId>,
     /// The model-facing lines, oldest first.
     pub lines: Vec<ChatLogLine>,
@@ -483,4 +485,198 @@ fn window(
             sources,
             spans,
         }))
+}
+
+/// Reads `action`'s retry-target pinned log as `memory`'s reader: the raw
+/// retained turns on the branch to the action's TARGET turn, cut at the
+/// action's user turn, capped to `history_lines` raw lines exactly as a turn
+/// action's history is, and required to equal `expected` (the context the
+/// action's call was assembled from) line for line before any pin is built.
+/// `None` keeps the cold path as it was: a room's audience, a target or user
+/// turn that no longer reads as admitted, any contributing racing edit,
+/// reorder or extra line, or any turn whose projection no longer pins. The
+/// log carries raw lines only, never HEAD, never summaries, never a window:
+/// it keeps a seed, it starts no flight.
+///
+/// # Errors
+///
+/// Storage errors, and a conversation the reader may not read.
+pub fn read_action_pinned_log(
+    memory: &Memory<'_>,
+    action: &TurnActionAttempt,
+    expected: &TurnActionContext,
+    history_lines: usize,
+) -> MemoryResult<Option<ChatLog>> {
+    let vault = memory.vault();
+    let conversation = action.conversation;
+    let target = action.assistant_turn;
+    {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
+        if roster.is_some_and(|members| !members.is_empty())
+            || vault.room_has_live_call(conversation)
+        {
+            return Ok(None);
+        }
+    }
+    let dag = {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        crate::conversation_dag::keeps_dag_topology(&vault.store, &txn, &conversation)?
+    };
+    // The turns strictly before TARGET on its branch, in order.
+    let target_hex = target.to_hex();
+    let mut turns: Vec<TranscriptTurn> = Vec::new();
+    let mut target_seen = false;
+    if dag {
+        let page = memory.turn_action_branch_transcript(&conversation, &target)?;
+        for turn in page.map(|page| page.turns).unwrap_or_default() {
+            if turn.id == target_hex {
+                target_seen = true;
+                break;
+            }
+            turns.push(turn);
+        }
+    } else {
+        let mut after: Option<String> = None;
+        'pages: loop {
+            let page = memory
+                .conversation_transcript(
+                    &conversation,
+                    after.as_deref(),
+                    MAX_TRANSCRIPT_PAGE_TURNS,
+                )?
+                .value;
+            for turn in page.turns {
+                if turn.id == target_hex {
+                    target_seen = true;
+                    break 'pages;
+                }
+                turns.push(turn);
+            }
+            match page.next {
+                Some(next) => after = Some(next),
+                None => break 'pages,
+            }
+        }
+    }
+    if !target_seen {
+        return Ok(None);
+    }
+    // Each turn's raw lines, exactly as `walk_to_turn` reads them.
+    let mut per_turn: Vec<Vec<TurnActionLine>> = Vec::new();
+    for turn in &turns {
+        let turn_source = EntityId::from_hex(&turn.id).ok();
+        per_turn.push(
+            turn.messages
+                .iter()
+                .filter_map(|message| {
+                    let author = WitnessAuthor::parse(&message.role)?;
+                    (author != WitnessAuthor::System && !message.text.is_empty()).then(|| {
+                        TurnActionLine {
+                            author,
+                            text: message.text.clone(),
+                            sources: turn_source
+                                .zip(EntityId::from_hex(&message.id).ok())
+                                .map(|(turn, message)| vec![turn, message]),
+                        }
+                    })
+                })
+                .collect(),
+        );
+    }
+    // The last turn holding a user line, required to be the action's own.
+    let Some(user_at) = per_turn
+        .iter()
+        .rposition(|lines| lines.iter().any(|line| line.author == WitnessAuthor::User))
+    else {
+        return Ok(None);
+    };
+    if turns[user_at].id != action.user_turn.to_hex() {
+        return Ok(None);
+    }
+    let user_lines: Vec<&TurnActionLine> = per_turn[user_at]
+        .iter()
+        .filter(|line| line.author == WitnessAuthor::User)
+        .collect();
+    let user_text = user_lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut user_sources: Option<Vec<EntityId>> = Some(Vec::new());
+    for line in &user_lines {
+        match (&mut user_sources, &line.sources) {
+            (Some(rows), Some(sources)) => rows.extend_from_slice(sources),
+            _ => {
+                user_sources = None;
+                break;
+            }
+        }
+    }
+    if user_text != expected.user_text || user_sources != expected.user_sources {
+        return Ok(None);
+    }
+    // The complete capped history before the user turn, exactly as the walk caps it.
+    let mut history: Vec<TurnActionLine> = per_turn[..user_at].iter().flatten().cloned().collect();
+    if history.len() > history_lines {
+        history.drain(..history.len() - history_lines);
+    }
+    if history != expected.history {
+        return Ok(None);
+    }
+    // Which history turns the cap keeps lines of; the oldest may be partial.
+    let total: usize = per_turn[..user_at].iter().map(Vec::len).sum();
+    let skip = total.saturating_sub(history.len());
+    let mut held: Vec<usize> = Vec::new();
+    let mut at = 0;
+    for (index, lines) in per_turn[..user_at].iter().enumerate() {
+        for _ in lines {
+            if at >= skip && !held.contains(&index) {
+                held.push(index);
+            }
+            at += 1;
+        }
+    }
+    let reader = memory.write_actor();
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let mut sources = Vec::new();
+    for &index in &held {
+        let read = read_turn(&turns[index])?;
+        match pin(vault, &txn, reader, &read)? {
+            Some((span, _)) => sources.push(span),
+            None => return Ok(None),
+        }
+    }
+    // The user turn verifies too, but stays ephemeral: sources hold history only.
+    let user_read = read_turn(&turns[user_at])?;
+    if pin(vault, &txn, reader, &user_read)?.is_none() {
+        return Ok(None);
+    }
+    let session =
+        crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &action.user_turn)?;
+    let mut lines = Vec::new();
+    let mut message_ids = Vec::new();
+    for line in &history {
+        lines.push(ChatLogLine::Message {
+            author: line.author,
+            text: line.text.clone(),
+        });
+        message_ids.push(
+            line.sources
+                .as_ref()
+                .and_then(|sources| sources.get(1).copied()),
+        );
+    }
+    Ok(Some(ChatLog {
+        conversation,
+        branch: dag.then_some(target),
+        lines,
+        message_ids,
+        sources,
+        summaries: Vec::new(),
+        pinned: true,
+        session,
+        uncompacted_tokens: 0,
+        window: None,
+    }))
 }

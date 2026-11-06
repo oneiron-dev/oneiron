@@ -25,7 +25,7 @@ use super::trend::{
 use super::trend_policy::{DetectionDialChanges, SECONDS_PER_DAY};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
-use crate::self_heal::{
+use crate::store::diagnostic_record::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body,
 };

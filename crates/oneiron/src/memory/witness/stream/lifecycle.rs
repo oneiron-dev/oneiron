@@ -1,9 +1,9 @@
 //! Terminal transitions and the host-driven quiet-stream pump.
 use super::*;
-use crate::FinishReason;
 use crate::error::Error;
 use crate::memory::{MemoryResult, WitnessAssertions};
 use crate::store::Callback;
+use oneiron_model::llm::FinishReason;
 
 mod terminal;
 
@@ -14,6 +14,9 @@ use self::terminal::*;
 pub struct MessageStreamPump {
     pub finalized: Vec<MessageStreamReceipt>,
     pub refused: Vec<(EntityId, MessageStreamError)>,
+    /// Native caller-private streams, including truthful unretained completion.
+    pub session_finalized: Vec<SessionStreamOutcome>,
+    pub session_refused: Vec<(EntityId, MessageStreamError)>,
 }
 /// A host's own condition on a terminal write, judged inside that write's
 /// transaction (the credential a stream answers is still live, say).
@@ -35,6 +38,7 @@ impl Memory<'_> {
             None,
             &WitnessAssertions::default(),
             None,
+            None,
         )
     }
     /// [`Self::finalize_stream`], committed only while `admit` holds inside
@@ -55,6 +59,7 @@ impl Memory<'_> {
             ),
             None,
             &WitnessAssertions::default(),
+            None,
             Some(&admit),
         )
     }
@@ -76,6 +81,38 @@ impl Memory<'_> {
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, None, finish_reason, assertions, admit)
+    }
+
+    /// [`Self::finalize_model_stream_if`] for a model reply whose ordered
+    /// output parts are witnessed with its text: the same finish, finality
+    /// and gate semantics, with `parts` carried transiently into the new
+    /// MESSAGE as birth facts. The witnessed text stays what the caller
+    /// already saved through the stream; parts never enter the checkpoint,
+    /// the receipt, metadata or any other row. On a continuation, `parts`
+    /// is only this generation's suffix: the stored prefix stays verbatim,
+    /// and the same writer appends the suffix with its text. An empty suffix
+    /// leaves today's text-only continuation unchanged. Internal until the
+    /// parts admission and server call-site wiring land.
+    pub(crate) fn finalize_model_stream_parts_if(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Vec<crate::ContentPart>,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, Some(parts), finish_reason, assertions, admit)
+    }
+
+    fn finalize_model_stream_with_parts(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Option<Vec<crate::ContentPart>>,
         finish_reason: FinishReason,
         assertions: &WitnessAssertions,
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
@@ -116,6 +153,7 @@ impl Memory<'_> {
             outcome,
             Some(finish_reason),
             assertions,
+            parts,
             gate,
         )
     }
@@ -144,6 +182,7 @@ impl Memory<'_> {
             (StreamFinality::Cancelled, reason),
             None,
             &WitnessAssertions::default(),
+            None,
             None,
         )
     }
@@ -181,6 +220,10 @@ impl Memory<'_> {
     }
 }
 impl Vault {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stream close joins its outcome, parts, assertions and its gate"
+    )]
     fn finish_stream_entry(
         &self,
         entry: &Arc<Mutex<State>>,
@@ -188,6 +231,7 @@ impl Vault {
         outcome: (StreamFinality, StreamFinalityReason),
         finish_reason: Option<FinishReason>,
         assertions: &WitnessAssertions,
+        parts: Option<Vec<crate::ContentPart>>,
         gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
@@ -199,6 +243,7 @@ impl Vault {
             outcome,
             finish_reason,
             assertions,
+            parts,
             false,
             gate,
         )?;
@@ -222,7 +267,19 @@ impl Vault {
             .cloned()
             .collect();
         let mut report = MessageStreamPump::default();
-        for entry in entries {
+        for resident in entries {
+            let entry = match resident {
+                Resident::Recorded(entry) => entry,
+                Resident::Session(entry) => {
+                    let stream_id = lock(&entry)?.stream_id;
+                    match session::pump(self, &entry, now) {
+                        Ok(Some(outcome)) => report.session_finalized.push(outcome),
+                        Ok(None) => {}
+                        Err(error) => report.session_refused.push((stream_id, error)),
+                    }
+                    continue;
+                }
+            };
             // Keep this entry locked from the deadline decision through commit:
             // an append cannot make the decision stale while we wait for LMDB.
             let mut state = lock(&entry)?;
@@ -246,6 +303,7 @@ impl Vault {
                     (StreamFinality::Partial, reason),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     false,
                     None,
                 )
@@ -386,6 +444,7 @@ impl Vault {
                     ),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     true,
                     None,
                 ) && !state.terminal

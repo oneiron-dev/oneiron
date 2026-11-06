@@ -1,4 +1,4 @@
-//! The `endpoint` provider: a tagger server on this machine that speaks the
+//! The `endpoint` provider: a host-configured tagger server that speaks the
 //! slot's contract.
 //!
 //! `GET {url}/v1/model` answers with a model card (identity and what the model
@@ -9,6 +9,7 @@
 //! The client follows the embedder endpoint's rules: a loopback host is
 //! on-device, one attempt per call, no redirects, a bounded body, and errors
 //! that carry the failure class and never vault text. It takes no proxy.
+//! A network endpoint needs an explicit locality and per-call vault/host admission.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -16,7 +17,8 @@ use std::time::Duration;
 
 use oneiron::ModelId;
 use oneiron::embed::EmbedderLocality;
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput, EncoderRegister};
+use oneiron::llm::TaggerCallContext;
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput, EncoderRegister, ExtractionWork};
 use serde::Deserialize;
 
 use crate::config::OneironerConfig;
@@ -103,6 +105,7 @@ pub(crate) enum ProbeError {
 pub(crate) struct HttpTagger {
     base: String,
     model: ModelId,
+    locality: EmbedderLocality,
     expected_checkpoint: String,
     /// The pinned stack, when the section pins one.
     expected_stack: Option<String>,
@@ -146,13 +149,18 @@ impl HttpTagger {
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|ip| ip.is_loopback())
         });
-        // A tagger reads every turn. Off the device it would carry vault text
-        // away, which extraction may do only behind the host egress
-        // predicate, and no tagger door has one yet.
-        if !loopback {
+        let locality = match config.locality {
+            crate::config::EmbedderLocality::OnDevice => EmbedderLocality::OnDevice,
+            crate::config::EmbedderLocality::OwnerServer => EmbedderLocality::OwnerServer,
+            crate::config::EmbedderLocality::ThirdParty => EmbedderLocality::ThirdParty,
+        };
+        if locality == EmbedderLocality::OnDevice && !loopback {
             return Err(invalid(
-                "the oneironer endpoint must be a loopback address; a network tagger needs the host egress predicate",
+                "an on-device oneironer endpoint must be a loopback address",
             ));
+        }
+        if !loopback && url.scheme() != "https" {
+            return Err(invalid("network oneironer endpoints require HTTPS"));
         }
         let expected_checkpoint = config
             .checkpoint_sha16
@@ -162,9 +170,7 @@ impl HttpTagger {
             .map_err(|_| invalid("oneironer.checkpoint_sha16 does not form a model id"))?;
         // One attempt, no redirects, bounded body: the worker loop is the
         // retry, and a retry here would hide a dead tagger behind a stall.
-        // No proxy either: the loopback check above is the egress boundary,
-        // and a proxy from the environment or the system would carry every
-        // turn's text off the device past it.
+        // A system/environment proxy must not change the attested transport.
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -175,6 +181,7 @@ impl HttpTagger {
         Ok(Self {
             base,
             model,
+            locality,
             expected_checkpoint,
             expected_stack: config.stack_sha16.clone(),
             expected_label_count: config.label_count.unwrap_or_default(),
@@ -183,10 +190,6 @@ impl HttpTagger {
             compress: AtomicBool::new(true),
             contract: AtomicU32::new(CONTRACT_VERSION),
         })
-    }
-
-    pub(crate) fn base(&self) -> &str {
-        &self.base
     }
 
     /// Checks the tagger's identity and reads what it returns.
@@ -271,7 +274,21 @@ impl HttpTagger {
         &self,
         url: &str,
         plain: Vec<u8>,
-    ) -> reqwest::Result<reqwest::blocking::Response> {
+        input: &EncoderInput,
+        work: ExtractionWork,
+        context: Option<&TaggerCallContext>,
+    ) -> oneiron::Result<reqwest::blocking::Response> {
+        let send = |request: reqwest::blocking::RequestBuilder| {
+            if self.locality != EmbedderLocality::OnDevice {
+                let context = context.ok_or_else(|| {
+                    failure("nonlocal extraction needs host egress authorization".to_owned())
+                })?;
+                context.authorize(input, work, &self.model, self.locality)?;
+            }
+            request
+                .send()
+                .map_err(|error| transport_error("extract", &error))
+        };
         let request = || {
             self.client
                 .post(url)
@@ -282,19 +299,20 @@ impl HttpTagger {
             .filter(|_| self.compress.load(Ordering::Relaxed))
             .and_then(|codec| Some((codec, crate::models::encode_request_body(codec, &plain)?)));
         let Some((codec, encoded)) = encoded else {
-            return request().body(plain).send();
+            return send(request().body(plain));
         };
         let token = crate::models::codec_token(codec);
-        let response = request()
-            .header(reqwest::header::CONTENT_ENCODING, token)
-            .body(encoded)
-            .send()?;
+        let response = send(
+            request()
+                .header(reqwest::header::CONTENT_ENCODING, token)
+                .body(encoded),
+        )?;
         if !matches!(response.status().as_u16(), 400 | 415) {
             return Ok(response);
         }
         let refused = response.status();
         drop(response);
-        let response = request().body(plain).send()?;
+        let response = send(request().body(plain))?;
         if response.status() != refused {
             self.compress.store(false, Ordering::Relaxed);
             tracing::warn!(
@@ -306,7 +324,12 @@ impl HttpTagger {
         Ok(response)
     }
 
-    fn post_extract(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+    fn post_extract(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        context: Option<&TaggerCallContext>,
+    ) -> oneiron::Result<EncoderOutput> {
         let url = format!("{}/v1/extract", self.base);
         // A version 3 tagger reads the input whole (FIX 10704). Version 2
         // reads earlier context only: a conversation register goes as its
@@ -314,18 +337,18 @@ impl HttpTagger {
         // cuts (FIX 9520); its later turns stay here.
         let whole = input.register.is_live()
             || self.contract.load(Ordering::Relaxed) == FOLLOWING_CONTRACT_VERSION;
-        let plain = if whole {
-            serde_json::to_vec(input)
+        let mut earlier;
+        let input = if whole {
+            input
         } else {
-            let mut earlier = input.clone();
+            earlier = input.clone();
             earlier.following.clear();
             earlier.register = EncoderRegister::Live;
-            serde_json::to_vec(&earlier)
-        }
-        .map_err(|_| failure("tagger extract request did not encode".to_owned()))?;
-        let response = self
-            .send_extract(&url, plain)
-            .map_err(|error| transport_error("extract", &error))?;
+            &earlier
+        };
+        let plain = serde_json::to_vec(input)
+            .map_err(|_| failure("tagger extract request did not encode".to_owned()))?;
+        let response = self.send_extract(&url, plain, input, work, context)?;
         let status = response.status();
         if !status.is_success() {
             // A tagger that refuses a register's later turns may no longer
@@ -366,13 +389,21 @@ impl HttpTagger {
     }
 
     pub(crate) fn locality(&self) -> EmbedderLocality {
-        // `from_config` admits loopback hosts only.
-        EmbedderLocality::OnDevice
+        self.locality
     }
 
     /// One extract call and the card read that vouches for its answer.
     pub(crate) fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
-        let output = self.post_extract(input)?;
+        self.infer_in(input, ExtractionWork::Bulk, None)
+    }
+
+    pub(crate) fn infer_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        context: Option<&TaggerCallContext>,
+    ) -> oneiron::Result<EncoderOutput> {
+        let output = self.post_extract(input, work, context)?;
         // The answer names no checkpoint, and it settles under the configured
         // one; so the card is read again once the answer is in. A tagger that
         // is no longer the configured one fails the call, and its marker

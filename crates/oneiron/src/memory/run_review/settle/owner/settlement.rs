@@ -31,6 +31,7 @@ impl Memory<'_> {
             now,
         };
         let mut changes = Vec::new();
+        let mut decision_members = Vec::new();
         let mut stored = Vec::new();
         let mut metrics = Vec::new();
         let mut vad = Vec::new();
@@ -47,6 +48,15 @@ impl Memory<'_> {
                 &mut metrics,
                 &mut vad,
             )?;
+            match member {
+                RunReviewChange::Claim { claim_ref } => {
+                    decision_members.push(EntityId::from_hex(claim_ref)?);
+                }
+                RunReviewChange::Edge { provenance_ref } => {
+                    decision_members.push(EntityId::from_hex(provenance_ref)?);
+                }
+                _ => {}
+            }
             changes.push(RunChangeOutcome {
                 change: member.change().to_owned(),
                 verdict,
@@ -65,8 +75,15 @@ impl Memory<'_> {
         } else {
             RunSettlementReason::OwnerRejected
         };
-        let record =
-            self.record_settlement_decision_in_txn(txn, actor, &review, run, approve, now)?;
+        let record = self.record_settlement_decision_in_txn(
+            txn,
+            actor,
+            &review,
+            run,
+            approve,
+            now,
+            &decision_members,
+        )?;
         let reference = format!("gate:{}", record.decision_id.to_hex());
         let settlement = owner_run_settlement(run, reference, changes, approve, reason);
         SETTLEMENTS.put(

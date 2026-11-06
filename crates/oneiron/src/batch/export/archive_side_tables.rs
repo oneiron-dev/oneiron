@@ -104,10 +104,10 @@ fn lent_tables() -> Vec<LentSideTable> {
     tables.extend(crate::origin::lfs::archive_lfs_tables());
     tables.extend(crate::codebase::archive_codebase_tables());
     tables.extend(crate::code_revision::archive_revision_tables());
-    tables.push(crate::code_revision::archive_promotion_table());
+    tables.push(crate::store::code_revision_record::tables::archive_promotion_table());
     tables.push(crate::code_revision::archive_proposal_table());
     tables.extend(crate::code_document::archive_document_tables());
-    tables.extend(crate::code_memory::archive_code_memory_tables());
+    tables.extend(crate::store::code_memory_values::archive_code_memory_tables());
     tables
 }
 
@@ -1215,13 +1215,16 @@ impl SideContext {
                 let Some(snapshot) = id_at(key, 0) else {
                     return Ok(Travel::Orphan);
                 };
-                let Ok(decoded) = crate::codebase::decode_codebase_snapshot(value) else {
+                let Ok(decoded) = crate::store::code_snapshot::decode_codebase_snapshot(value)
+                else {
                     return Ok(Travel::Broken(snapshot));
                 };
                 let carriers = decoded
                     .files
                     .iter()
-                    .map(|file| crate::codebase::archive_codebase_asset_id(&file.content_hash))
+                    .map(|file| {
+                        crate::store::code_snapshot::archive_codebase_asset_id(&file.content_hash)
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 Travel::With(snapshot, carriers)
             }

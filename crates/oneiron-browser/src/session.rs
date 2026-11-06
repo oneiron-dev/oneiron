@@ -103,6 +103,7 @@ use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::request::{BrowserRequestHandler, Custody};
 use crate::retention::HandleRetention;
+use crate::row::href_recipient;
 use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
@@ -390,9 +391,10 @@ impl BrowserSession {
         // A send on a payment step is a payment (FIX 8009).
         let class = effect_class_on(&target.row.name, source.url.as_deref());
         let page = source.url.as_deref();
-        // The counterparty the send reports (FIX 11907): the origin of
-        // the page it acts on, the one the browser can name.
-        let audience = source.origin.clone();
+        // The counterparty the send reports (FIX 11907, 12395): a
+        // mailto:/tel: link's href recipient, else the origin of the page
+        // it acts on.
+        let audience = href_recipient(&target.row).or(source.origin.clone());
         let press = self.press_or_hold(
             "click",
             &input,
@@ -434,8 +436,11 @@ impl BrowserSession {
         let class = row
             .as_ref()
             .and_then(|row| effect_class_on(&row.name, page));
-        // The counterparty the send reports (FIX 11907), as a click's.
-        let audience = source.origin.clone();
+        // The counterparty the send reports (FIX 11907, 12395), as a click's.
+        let audience = row
+            .as_ref()
+            .and_then(href_recipient)
+            .or(source.origin.clone());
         let press = self.press_or_hold(
             "click_at",
             &input,

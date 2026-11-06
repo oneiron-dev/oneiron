@@ -27,13 +27,18 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
-pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
+pub use crate::store::critic_lens::CRITIC_LENS_CATALOG_SCHEMA_VERSION;
 
 /// Private run-tree-scoped critique artifact for one branch attempt, written independently by
 /// both the generic critic reviewer and the Dreamer tournament with the identical prefix and key
 /// layout. Key: id16(branch attempt) + u16be(artifact id length) + string(artifact id).
 pub(crate) const CRITIQUE_ARTIFACT: SideTable<CritiqueArtifactKey, CritiqueArtifact, Named> =
     SideTable::new(&side_table::CRITIC_ARTIFACT);
+
+/// Native value validation for the lift sweep, shared by both artifact writers.
+pub(crate) fn critique_artifact_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CritiqueArtifact, Named>(bytes)
+}
 
 /// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
 /// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
@@ -66,11 +71,11 @@ impl SideKey for CritiqueArtifactKey {
     }
 }
 
-const MAX_CATALOG_LENSES: usize = 64;
-const MAX_ID_BYTES: usize = 64;
-const MAX_DOMAIN_BYTES: usize = 64;
-const MAX_CONTRACT_BYTES: usize = 4096;
-const MAX_OUTPUT_SCHEMA_BYTES: usize = 4096;
+use crate::store::critic_lens::MAX_CATALOG_LENSES;
+use crate::store::critic_lens::MAX_CONTRACT_BYTES;
+use crate::store::critic_lens::MAX_DOMAIN_BYTES;
+use crate::store::critic_lens::MAX_ID_BYTES;
+use crate::store::critic_lens::MAX_OUTPUT_SCHEMA_BYTES;
 const MAX_ARTIFACT_ID_BYTES: usize = 128;
 const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
@@ -83,94 +88,7 @@ const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
 /// and a colon, then an opaque id of its own that hashes no actor.
 const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
 
-pub const OF366_SEED_LENS_CATALOG_JSON: &str = r#"{
-  "schema_version": 1,
-  "lenses": [
-    {
-      "id": "groundedness",
-      "prompt_contract": "Check that every asserted candidate token is grounded in the supplied evidence pack and supported by evidence refs.",
-      "output_schema": "critique.v1 { verdict, severity, evidence_refs, suggested_edit, hard_check_passed }",
-      "hard_check": true,
-      "domain": "claim_authoring"
-    },
-    {
-      "id": "overreach",
-      "prompt_contract": "Check that the candidate scope and confidence do not exceed the supplied evidence scope.",
-      "output_schema": "critique.v1 { verdict, severity, evidence_refs, suggested_edit }",
-      "hard_check": false,
-      "domain": "claim_authoring"
-    },
-    {
-      "id": "temporal",
-      "prompt_contract": "Check temporal validity: occurred_at, learned_at, and generalization freshness must match the evidence pack.",
-      "output_schema": "critique.v1 { verdict, severity, evidence_refs, suggested_edit }",
-      "hard_check": false,
-      "domain": "claim_authoring"
-    },
-    {
-      "id": "redundancy",
-      "prompt_contract": "Check that the candidate is not a supersession duplicate of an existing claim in the evidence pack.",
-      "output_schema": "critique.v1 { verdict, severity, evidence_refs, suggested_edit }",
-      "hard_check": false,
-      "domain": "claim_authoring"
-    }
-  ]
-}"#;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CriticLens {
-    pub id: String,
-    pub prompt_contract: String,
-    pub output_schema: String,
-    pub hard_check: bool,
-    pub domain: String,
-}
-
-impl CriticLens {
-    pub fn new(
-        id: impl Into<String>,
-        prompt_contract: impl Into<String>,
-        output_schema: impl Into<String>,
-        hard_check: bool,
-        domain: impl Into<String>,
-    ) -> Result<Self> {
-        let lens = Self {
-            id: id.into(),
-            prompt_contract: prompt_contract.into(),
-            output_schema: output_schema.into(),
-            hard_check,
-            domain: domain.into(),
-        };
-        validate_lens(&lens)?;
-        Ok(lens)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LensCatalog {
-    pub schema_version: u64,
-    pub lenses: Vec<CriticLens>,
-}
-
-impl LensCatalog {
-    pub fn from_json_str(data: &str) -> Result<Self> {
-        let catalog: Self = serde_json::from_str(data)
-            .map_err(|_| invalid_critic_config("critic lens catalog is not valid JSON"))?;
-        validate_catalog(&catalog)?;
-        Ok(catalog)
-    }
-
-    pub fn of366_seed() -> Result<Self> {
-        Self::from_json_str(OF366_SEED_LENS_CATALOG_JSON)
-    }
-
-    #[must_use]
-    pub fn lens(&self, id: &str, domain: &str) -> Option<&CriticLens> {
-        self.lenses
-            .iter()
-            .find(|lens| lens.id == id && lens.domain == domain)
-    }
-}
+pub use crate::store::critic_lens::{CriticLens, LensCatalog, OF366_SEED_LENS_CATALOG_JSON};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

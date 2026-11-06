@@ -4,10 +4,10 @@
 
 use super::{
     Arc, BTreeMap, BTreeSet, BrokerSite, BudgetExhaustionPolicy, BudgetGuard, BudgetLease,
-    FatalLlmError, HostAccount, KeyDoor, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
-    LlmResult, LlmStreamResult, LoggedReceipts, MEDIA_RUN, MediaHttp, MediaRow, MediaRuntime,
-    MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns,
-    OfferLadder, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
+    FatalLlmError, HostAccount, HttpReleaseError, KeyDoor, LlmBackend, LlmError, LlmGenerateFuture,
+    LlmRequest, LlmResult, LlmStreamResult, LoggedReceipts, MEDIA_RUN, MediaHttp, MediaRow,
+    MediaRuntime, MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat,
+    OfferCooldowns, OfferLadder, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture, ProgramLine,
     RunReceiptSink, RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend,
     VoiceReferenceUploadGuard, Wire, ladder_locality, media_backends, media_rung, media_seat_model,
@@ -75,6 +75,38 @@ impl OpenAiMediaTransport for MediaHttp {
             })
         })
     }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> OpenAiMediaTransportFuture<'a> {
+        Box::pin(async move {
+            let OpenAiMediaHttpRequest { method, path, body } = request;
+            match (method, body, release) {
+                (OpenAiMediaMethod::Post, OpenAiMediaBody::Json(body), Some(release)) => {
+                    let reply = self
+                        .http
+                        .send_json_released(&path, body, release, lease)
+                        .await
+                        .map_err(|error| match error {
+                            HttpReleaseError::Transport(failure) => transport(failure),
+                            HttpReleaseError::Release(error) => error,
+                        })?;
+                    Ok(OpenAiMediaHttpResponse {
+                        status: reply.status,
+                        headers: reply.headers,
+                        body: reply.body,
+                    })
+                }
+                (method, body, _) => {
+                    self.execute(OpenAiMediaHttpRequest { method, path, body }, lease)
+                        .await
+                }
+            }
+        })
+    }
 }
 
 impl MediaRuntime {
@@ -85,6 +117,7 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            replay_runs: Default::default(),
             store: None,
             job_rungs: BTreeMap::new(),
             rests: None,
@@ -163,6 +196,7 @@ impl MediaRuntime {
                 role: format!("media.{}", operation.as_str()),
                 seat_model: seat_model.as_ref().map(ToString::to_string),
                 state,
+                reason: None,
                 rungs: rung_status,
             });
             let Some(seat_model) = seat_model.filter(|_| !rungs.is_empty()) else {
@@ -182,6 +216,7 @@ impl MediaRuntime {
                 wire: Wire::Media(*operation),
                 stays_on_device: false,
                 configured: seat.rungs.len(),
+                locality_ceiling: None,
             };
             let alone = rungs
                 .iter()

@@ -19,12 +19,13 @@ use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::header;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::inference_snapshot::SnapshotLockReceipt;
 use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, VaultKeyWrapInfo};
 use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -41,6 +42,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key",
                 summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
                 row: None,
+                shape: None,
             },
             get(status),
         ),
@@ -50,6 +52,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/signer",
                 summary: "This install's checkpoint signer, the pin another host trusts this vault's backups by.",
                 row: None,
+                shape: None,
             },
             get(signer),
         ),
@@ -59,6 +62,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/prf-input",
                 summary: "The PRF input a passkey of that name is asked at.",
                 row: None,
+                shape: None,
             },
             get(prf_input),
         ),
@@ -68,8 +72,19 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/unlock",
                 summary: "Holds the vault key on this server, from the password or a passkey's PRF output.",
                 row: None,
+                shape: Some(RestShape::json(unlock_body_schema, vault_key_report_schema)),
             },
             post(unlock),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/lock",
+                summary: "Drops this server's vault key after closing snapshot admission and asking the runtime to release its copies; reports the actual release outcome.",
+                row: None,
+                shape: Some(RestShape::no_body(snapshot_lock_receipt_schema)),
+            },
+            post(lock),
         ),
         (
             OwnerRoute {
@@ -77,6 +92,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/password",
                 summary: "Sets the vault password, replacing an earlier one.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_password_body_schema,
+                    vault_key_wrap_info_schema,
+                )),
             },
             post(set_password),
         ),
@@ -86,6 +105,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/passkeys",
                 summary: "Wraps the vault key to a passkey by its PRF output.",
                 row: None,
+                shape: Some(RestShape::json(
+                    add_passkey_body_schema,
+                    vault_key_wrap_info_schema,
+                )),
             },
             post(add_passkey),
         ),
@@ -95,6 +118,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/device",
                 summary: "Wraps the vault key to this install's keystore.",
                 row: None,
+                shape: Some(RestShape::no_body(vault_key_wrap_info_schema)),
             },
             post(add_device),
         ),
@@ -104,6 +128,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/remove",
                 summary: "Removes one wrap; the last one stays.",
                 row: None,
+                shape: Some(RestShape::json(
+                    remove_wrap_body_schema,
+                    wrap_removed_schema,
+                )),
             },
             post(remove),
         ),
@@ -113,6 +141,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/retire-escrow",
                 summary: "Retires an escrow recipient whose secret was released.",
                 row: None,
+                shape: Some(RestShape::json(
+                    retire_escrow_body_schema,
+                    escrow_retirement_schema,
+                )),
             },
             post(retire_escrow),
         ),
@@ -157,6 +189,18 @@ async fn prf_input(
     let query = query_params(query)?;
     let input = blocking(move || Ok(view::prf_input(server.vault(), &query.credential)?)).await?;
     Ok(Json(input))
+}
+
+/// `POST /v1/owner/vault-key/lock`: closes snapshot admission, asks the
+/// attached runtime to release its state, then drops this handle's vault key.
+/// The native receipt retains any timeout or outstanding-copy outcome.
+async fn lock(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<SnapshotLockReceipt> {
+    owner(&auth, &server)?;
+    let receipt = server.vault().lock_vault_key().await;
+    Ok(Json(receipt))
 }
 
 /// Secret text a request carries, read straight into a guard that wipes it
@@ -495,6 +539,47 @@ pub(crate) fn retire_escrow_body_schema() -> serde_json::Value {
 /// (FIX 11611): [`EscrowRetirement`].
 pub(crate) fn escrow_retirement_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<EscrowRetirement>()
+}
+
+/// The native lock receipt's wire shape. The core type is Serialize-only.
+fn snapshot_lock_receipt_schema() -> serde_json::Value {
+    let counter = serde_json::json!({"type": "integer", "format": "uint64", "minimum": 0.0});
+    serde_json::json!({
+        "type": "object",
+        "required": ["closed_generation", "bound_ms", "release"],
+        "properties": {
+            "closed_generation": counter,
+            "bound_ms": {"type": ["integer", "null"], "format": "uint64", "minimum": 0.0},
+            "release": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "required": ["released", "aborted", "timed_out", "elapsed_ms", "host_copies", "host_copies_left"],
+                        "properties": {
+                            "released": counter,
+                            "aborted": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["worker_id", "epoch", "reaped"],
+                                    "properties": {
+                                        "worker_id": {"type": "string"},
+                                        "epoch": {"type": "string"},
+                                        "reaped": {"type": "boolean"}
+                                    }
+                                }
+                            },
+                            "timed_out": {"type": "boolean"},
+                            "elapsed_ms": counter,
+                            "host_copies": counter,
+                            "host_copies_left": counter
+                        }
+                    }
+                ]
+            }
+        }
+    })
 }
 
 /// The OpenAPI schema of `POST /v1/owner/vault-key/unlock`'s body

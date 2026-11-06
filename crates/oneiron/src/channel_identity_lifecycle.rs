@@ -5,6 +5,9 @@
 //! (`approval`).
 
 mod approval;
+mod paced;
+
+pub(crate) use crate::store::lifecycle_receipt_ref;
 
 pub use self::approval::channel_identity_lifecycle_approve_once_digest;
 pub(crate) use self::approval::{
@@ -241,23 +244,10 @@ pub struct ChannelIdentityLifecycleResult {
     /// FIX 6424 part 3: the request's ref, its nonce: a retry naming it is
     /// a true retry of exactly this request. `None` for a request with none.
     pub request_ref: Option<EntityId>,
-}
-
-impl ChannelIdentityLifecycleResult {
-    /// FIX 6424 part 3: `; approve-once digest <hex> (request <ref>)` for a
-    /// request the Gate held naming one, else nothing: what a landing that
-    /// reports a hold in words appends after its own, unchanged.
-    #[must_use]
-    pub fn held_approval_note(&self) -> String {
-        match (self.approval_digest.as_deref(), self.request_ref) {
-            (Some(digest), Some(request_ref)) => format!(
-                "; approve-once digest {digest} (request {})",
-                request_ref.to_hex()
-            ),
-            (Some(digest), None) => format!("; approve-once digest {digest}"),
-            (None, _) => String::new(),
-        }
-    }
+    /// FIX 8686: when a full count-bound budget window paces the request,
+    /// the instant it opens, Unix seconds on the engine's clock: nothing was
+    /// applied or charged, and a retry naming `request_ref` then is this one.
+    pub paced_until: Option<u64>,
 }
 
 /// The outcome of a lifecycle request the Gate held.
@@ -346,7 +336,10 @@ impl Vault {
             return Ok(done);
         }
         let snapshot = match &request.intent {
-            ChannelIdentityLifecycleIntent::Provision(intent) => intent.identity.clone(),
+            ChannelIdentityLifecycleIntent::Provision(intent) => {
+                intent.identity.validate()?;
+                intent.identity.clone()
+            }
             _ => self.read_channel_identity_in_txn(&wtxn, &identity_id)?,
         };
         let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
@@ -354,7 +347,27 @@ impl Vault {
         // An allowed lifecycle intent is applied immediately in this same
         // txn, so it is always admitted for execution.
         let (gate_decision_id, decision, _effector_charge) =
-            gate::check_external_effect_policy(&self.store, &mut wtxn, &effect, &policy, true)?;
+            match gate::check_external_effect_policy_paced(
+                &self.store,
+                &mut wtxn,
+                &effect,
+                &policy,
+            )? {
+                gate::ExternalEffectCheck::Decided(id, decision, charge) => (id, decision, charge),
+                // FIX 8686: a full count-bound window paces the request: its
+                // receipt names the wait, and nothing is applied or charged.
+                gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                    let result = self.paced_lifecycle_in_txn(
+                        &mut wtxn,
+                        request,
+                        &snapshot,
+                        request_ref,
+                        next_eligible_at,
+                    )?;
+                    wtxn.commit()?;
+                    return Ok(LifecycleApplied::Applied(result));
+                }
+            };
         let mut reason_codes = decision
             .reason_codes()
             .iter()
@@ -426,6 +439,7 @@ impl Vault {
             identity_retiring: receipt.identity_retiring,
             approval_digest,
             request_ref,
+            paced_until: None,
         };
         // FIX 6424 part 3: the receipt a completed request answered is kept
         // with its apply.
@@ -514,6 +528,7 @@ impl Vault {
             identity_retiring: receipt.identity_retiring,
             approval_digest: None,
             request_ref: None,
+            paced_until: None,
         })
     }
 
@@ -765,10 +780,6 @@ impl Vault {
             .append_channel_identity_lifecycle_receipt_in_txn(wtxn, &receipt)?;
         Ok(receipt)
     }
-}
-
-pub(crate) fn lifecycle_receipt_ref(receipt_id: ChannelIdentityLifecycleReceiptId) -> String {
-    format!("identity_lifecycle:{}", receipt_id.to_hex())
 }
 
 #[cfg(test)]

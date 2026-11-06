@@ -34,11 +34,8 @@ use crate::skill::SkillLifecycle;
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault};
 
-/// Predicate of a proposed heal for a model finding's issue (OF-418 L3).
-pub const COACH_DIAGNOSTIC_PROPOSAL_PREDICATE: &str = "coach.diagnostic.proposal";
-/// Predicate of a proposed resolution of a model finding's issue, for the owner to confirm
-/// (OF-418 L3).
-pub const COACH_ISSUE_RESOLUTION_PREDICATE: &str = "coach.issue.resolution";
+pub use crate::attempt_queue::maintenance_predicate::COACH_DIAGNOSTIC_PROPOSAL_PREDICATE;
+pub use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_RESOLUTION_PREDICATE;
 /// The owner of the config a retrieval run records it ran under: its replay inputs' `config`.
 pub const RETRIEVAL_REPLAY_CONFIG: &str = "retrieval.replay_config";
 /// What an issue asks when no recorded link proves its producer.
@@ -626,8 +623,9 @@ fn skill_in_force(
 /// The manifest's row in force: present, read by a resolved policy that is not fail-closed,
 /// and among its contributors, trusted; each revision its body's digest (FIX 7344). It is in
 /// force from the second this vault first trusted that body, which a rewrite of the same body
-/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. A
-/// stamp with no time (the bootstrap seed's) counts from the pass that first proves it.
+/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. The
+/// bootstrap seed records its first-trusted second (FIX 11770). A stamp with no time counts
+/// from the pass that first proves it.
 fn manifest_in_force(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

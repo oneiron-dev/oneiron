@@ -2,7 +2,8 @@
 //! root's record, and its `Owned(Yours)` mark of a machine in its own chain.
 //! The anchor signs each alone; no roster key and no install key vouches.
 //! A frontier wider than one of them names is joined first by the anchor
-//! itself (FIX 8498, Engine 09:31), for its own rows alone.
+//! itself (FIX 8498, Engine 09:31), for its own rows alone, and so are its
+//! own side heads when they alone fill one (FIX 11868).
 
 use std::collections::BTreeSet;
 
@@ -34,23 +35,33 @@ impl Vault {
     /// may beside the anchor's own heads, each join signed by `anchor` itself
     /// (FIX 8498, Engine 09:31): the third join signer, for the anchor's own
     /// rows alone, which the fold admits only while it records `anchor` for a
-    /// stored root. The fold read back, else `None`: today's path.
+    /// stored root. Its own heads that leave no room for one main head are
+    /// joined first, among its own rows (FIX 11868). The fold read back, else
+    /// `None`: today's path.
     pub(crate) fn join_anchor_frontier_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         anchor: &SigningKey,
     ) -> Result<Option<AuthorityView>> {
-        let own = fold
-            .anchor_heads
-            .get(&anchor.verifying_key().to_bytes())
-            .map_or(0, BTreeSet::len);
-        self.prepare_authority_frontier_in_txn(
+        let key = anchor.verifying_key().to_bytes();
+        let own_heads = fold.anchor_heads.get(&key).cloned().unwrap_or_default();
+        let sided = self.join_scoped_heads_in_txn(
+            txn,
+            fold,
+            (&own_heads, FrontierJoinScope::AnchorSide),
+            FrontierSigner::Anchor(anchor),
+            MAX_PARENTS - 1,
+        )?;
+        let fold = sided.as_deref().unwrap_or(fold);
+        let own = fold.anchor_heads.get(&key).map_or(0, BTreeSet::len);
+        let joined = self.prepare_authority_frontier_in_txn(
             txn,
             fold,
             FrontierSigner::Anchor(anchor),
             MAX_PARENTS.saturating_sub(own),
-        )
+        )?;
+        Ok(joined.or(sided))
     }
 
     /// The root `record` describes, signed by its own `anchor` on this

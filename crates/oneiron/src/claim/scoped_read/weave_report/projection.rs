@@ -26,7 +26,8 @@ use crate::dreamer_runner::maintenance::agent_health::{
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 
 /// The policy row a due Owner schedule's report reads under: the Owner's
 /// own, as his open reads it.

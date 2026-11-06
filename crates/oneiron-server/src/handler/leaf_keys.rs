@@ -586,15 +586,15 @@ fn route(
 fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine, lane: &Lane) {
     let id = request.request_id();
     let (holder, executor) = (request.holder_machine(), request.executor_machine());
-    let answered =
-        match server.vault().answer_leaf_key_request(request, peer) {
-            Ok(answer) => encode_leaf_key_answer(&answer)
-                .into_result()
-                .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
-            // A fault, not a refusal: HolderOffline until L02's flip adds HolderFault.
-            Err(error) => Err(LeafKeyFailureCause::of_refusal(&error)
-                .unwrap_or(LeafKeyFailureCause::HolderOffline)),
-        };
+    let answered = match server.vault().answer_leaf_key_request(request, peer) {
+        Ok(answer) => encode_leaf_key_answer(&answer)
+            .into_result()
+            .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
+        // A fault, not a refusal: HolderFault keeps the ask pending (FIX 12131).
+        Err(error) => {
+            Err(LeafKeyFailureCause::of_refusal(&error).unwrap_or(LeafKeyFailureCause::HolderFault))
+        }
+    };
     let now_ms = crate::owner::stamp::now_unix_ms();
     let mut state = server.leaf_keys.state();
     let entry = state.in_flight.remove(&id);
@@ -730,6 +730,7 @@ fn cause_outcome(cause: &LeafKeyFailureCause) -> &'static str {
         LeafKeyFailureCause::Expired => "expired",
         LeafKeyFailureCause::Replayed => "replayed",
         LeafKeyFailureCause::HolderRefused(_) => "holder_refused",
+        LeafKeyFailureCause::HolderFault => "holder_fault",
     }
 }
 

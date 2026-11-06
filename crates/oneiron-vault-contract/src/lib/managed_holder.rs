@@ -14,12 +14,73 @@ use super::TokenHex;
 
 const DOMAIN: &str = "oneiron/managed-account-widen/v1";
 
+/// The header a supervisor sends a [`ManagedWidenAction`] in.
+pub const MANAGED_WIDEN_ACTION_HEADER: &str = "x-oneiron-managed-widen-action";
+
 /// A host assertion tied to one vault, exact body and authenticated holder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedWidenAction {
     pub holder_ref: String,
     pub mac: String,
+}
+
+/// The widen action's transcript of a request body that arrives in pieces:
+/// the same keyed hash over the same length-prefixed vault, holder and body
+/// that [`ManagedWidenAction`] signs and verifies whole. The counted body
+/// length goes in before its bytes, after the body is spooled and counted,
+/// never a length the request declares. It takes exactly that many bytes.
+pub struct ManagedWidenTranscript {
+    hasher: blake3::Hasher,
+    holder: String,
+    /// Body bytes still to take.
+    remaining: u64,
+    /// Whether more bytes came than the length it began with.
+    overrun: bool,
+}
+
+impl ManagedWidenTranscript {
+    /// Begins the transcript `holder_ref`'s widen action covers on `vault`,
+    /// for a body whose spool holds `body_len` bytes.
+    #[must_use]
+    pub fn new(spawn_token: &TokenHex, vault: &str, holder_ref: &str, body_len: u64) -> Self {
+        let mut key = blake3::derive_key(DOMAIN, spawn_token.expose().as_bytes());
+        let mut hasher = blake3::Hasher::new_keyed(&key);
+        key.zeroize();
+        for item in [vault.as_bytes(), holder_ref.as_bytes()] {
+            hasher.update(&(item.len() as u64).to_be_bytes());
+            hasher.update(item);
+        }
+        hasher.update(&body_len.to_be_bytes());
+        Self {
+            hasher,
+            holder: holder_ref.to_owned(),
+            remaining: body_len,
+            overrun: false,
+        }
+    }
+
+    /// Takes the body's next bytes.
+    pub fn update(&mut self, piece: &[u8]) {
+        let taken = piece.len() as u64;
+        self.overrun |= taken > self.remaining;
+        self.remaining = self.remaining.saturating_sub(taken);
+        self.hasher.update(piece);
+    }
+
+    /// Whether it took exactly the body's length.
+    fn complete(&self) -> bool {
+        self.remaining == 0 && !self.overrun
+    }
+
+    fn mac(self) -> String {
+        self.finish().1
+    }
+
+    /// Its holder, and the MAC it came to.
+    fn finish(self) -> (String, String) {
+        (self.holder, self.hasher.finalize().to_hex().to_string())
+    }
 }
 
 impl ManagedWidenAction {
@@ -35,6 +96,19 @@ impl ManagedWidenAction {
             holder_ref: holder_ref.to_owned(),
             mac: sign(spawn_token, vault, holder_ref, request_body),
         }
+    }
+
+    /// [`Self::sign_after_account_auth`] for a body that arrived in pieces,
+    /// once `transcript` took all of it; `None` when it took more or fewer
+    /// bytes than the counted length it began with. The supervisor signs
+    /// ONLY after the same account authentication and power check.
+    #[must_use]
+    pub fn sign_transcript_after_account_auth(transcript: ManagedWidenTranscript) -> Option<Self> {
+        if !transcript.complete() {
+            return None;
+        }
+        let (holder_ref, mac) = transcript.finish();
+        Some(Self { holder_ref, mac })
     }
 
     /// Refuse a forwarded/caller-chosen header unless the supervisor signed
@@ -54,6 +128,21 @@ impl ManagedWidenAction {
             return false;
         }
         let expected = sign(spawn_token, vault, &self.holder_ref, request_body);
+        bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
+    }
+
+    /// [`Self::verify`] for a body that arrived in pieces: true only when
+    /// `transcript` is this action's holder's, begun for the vault it names,
+    /// took exactly its counted body length, and comes to the signed MAC.
+    #[must_use]
+    pub fn verify_transcript(&self, transcript: ManagedWidenTranscript) -> bool {
+        if !action_well_formed(&self.holder_ref, &self.mac)
+            || transcript.holder != self.holder_ref
+            || !transcript.complete()
+        {
+            return false;
+        }
+        let expected = transcript.mac();
         bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
     }
 }
@@ -461,15 +550,9 @@ fn sign_request(
 }
 
 fn sign(token: &TokenHex, vault: &str, holder: &str, body: &[u8]) -> String {
-    let mut key = blake3::derive_key(DOMAIN, token.expose().as_bytes());
-    let mut h = blake3::Hasher::new_keyed(&key);
-    for item in [vault.as_bytes(), holder.as_bytes(), body] {
-        h.update(&(item.len() as u64).to_be_bytes());
-        h.update(item);
-    }
-    let mac = h.finalize().to_hex().to_string();
-    key.zeroize();
-    mac
+    let mut transcript = ManagedWidenTranscript::new(token, vault, holder, body.len() as u64);
+    transcript.update(body);
+    transcript.mac()
 }
 
 #[cfg(test)]

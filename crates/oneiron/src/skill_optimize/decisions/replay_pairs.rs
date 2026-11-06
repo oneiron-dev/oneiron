@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::Result;
-use crate::llm::decision::{AnswerContract, cut_text, fit_state};
+use crate::model_decision::{AnswerContract, cut_text, fit_state};
 use crate::skill_optimize::{HeldOutReplayNotes, JudgeRubric};
 
 use super::{ask, decided_score, put_rubric};

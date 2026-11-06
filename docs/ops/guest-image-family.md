@@ -32,7 +32,9 @@ they are.
 - `packages.toml` holds requests only: the tools tree, `[base]` and one
   overlay per variant.
 - `packages.lock.toml` is the resolved closure: every `.deb` by name,
-  version, arch, size and sha256.
+  version, arch, size and sha256, plus each scope's exact list of `.deb`
+  filenames. A scope's list includes shared dependencies, not only files
+  first downloaded while that scope ran.
 
 `python3 build.py validate` checks that the three agree. It needs no Linux
 host. It refuses a moving `latest`, a malformed hash or commit, a missing
@@ -107,9 +109,15 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
 
    The first run on a fresh mirror passes `--learn` and writes
    `packages.lock.toml`: a replacement lock, covering only the scopes that
-   run named, so name every variant. Commit that lock. A later fetch without `--learn`
+   run named, so name every variant. Each scope learns in a fresh isolated
+   package cache, whose packages then merge into the retained mirror. Its
+   file list is therefore its complete closure, including packages shared
+   with earlier scopes. Commit that lock. A later fetch without `--learn`
    refuses any `.deb` whose bytes differ from the lock, and any newly
-   downloaded `.deb` the lock does not name.
+   downloaded `.deb` the lock does not name. By default it verifies the
+   whole lock; `--only-requested` selects just tools and the `--variant`
+   scopes, using their learned file lists. `build --variant V` likewise
+   requires only tools and V from the mirror.
 2. **Build (offline).** `build.py build --variant base` re-enters a namespace
    with no network at all and works from the mirror alone:
    1. It unpacks the base layer as a bootstrap tree.
@@ -127,6 +135,12 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       its build overlay, so they link against the glibc the image ships. It
       runs `--locked --offline` with the mirror's clean `CARGO_HOME`,
       `--remap-path-prefix` for every build path, and `SOURCE_DATE_EPOCH`.
+      C and C++ that build scripts compile (cc, cmake) get the same maps as
+      `CFLAGS`/`CXXFLAGS` `-ffile-prefix-map`: the Rust remap never reaches a
+      C compiler, and tree-sitter's C keeps its assertions' `__FILE__`.
+      Cargo runs without mkosi's `DESTDIR`: a build script's CMake install
+      step honours it, and would put its output in the image instead of
+      where Cargo links it.
       An external source build runs after it, in `env -i` with only the
       variables it names: its own Rust and store, `--remap-path-prefix` and
       C `-ffile-prefix-map` for its source, store, toolchain and target dir,
@@ -134,7 +148,10 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       the two source SHAs its build script would otherwise ask git for).
       Default features, as the Docker recipe built it.
    4. `mkosi.postinst` places the guest account, pinned files, payloads,
-      launchers and links. An npm package is unpacked without npm or its
+      launchers, links, directories and empty files. An empty file (the
+      vault's `/etc/resolv.conf`) is an empty regular file at its mode: a
+      link at its path is removed, never followed, a parent that is a link
+      is refused, and `install -D -T` refuses a directory there. An npm package is unpacked without npm or its
       lifecycle scripts: `package/package.json` must name the pinned
       package and version, `package/` goes, a link or `..` member refuses
       it, and modes are normalized (directories 0755, files 0644, files the
@@ -195,12 +212,18 @@ digest. Signing them is the release signature's seam (`manifest.md`).
   in the built image; symlinked doc directories resolve inside the image.
   The rules:
   - Only a DEP-5 file (`Format:` copyright-format 1.0) is read.
-  - Each Files paragraph's `License:` must be a plain list of short names
-    joined by one operator, all `or` or all `and`. A comma, a
-    `with … exception` or mixed operators leave the package `NOASSERTION`.
+  - Each Files paragraph's `License:` is read as an expression. `, and` and
+    `, or` are DEP-5's comma-lowered operators; a bare comma is invalid and
+    stays `NOASSERTION`. Parentheses group, and nested expressions are
+    parenthesized explicitly in the SPDX output. `with … exception` uses an
+    exact id in `attest.DEBIAN_EXCEPTION_TO_SPDX` (including Bison, LLVM,
+    Linux-syscall-note, libtool, Texinfo and Autoconf generic); Autoconf and
+    Autoconf-data select 2.0 or 3.0 from the GPL base. An unknown or
+    version-ambiguous exception stays `NOASSERTION` rather than guessing.
   - A short name maps to an SPDX id only through `attest.DEBIAN_TO_SPDX`.
     That one table holds the names Debian's own list defines unambiguously:
-    GPL/LGPL/AGPL by version and `+`, Expat as MIT, BSD-2/3/4-clause,
+    GPL/LGPL/AGPL by version and `+` (plus the unambiguous `GPL3+` alias),
+    Expat as MIT, BSD-2/3/4-clause,
     Apache-2.0, Artistic-2.0, CC0-1.0, ISC, MPL, OFL-1.1, Python-2.0, Zlib,
     and SPDX's own `-only`/`-or-later` forms.
   - Any other name with its text in the file becomes
@@ -274,9 +297,9 @@ the raw value bytes. A value that is not UTF-8 goes out under
 **Checker store.** The checker ships the offline Cargo store at
 `/opt/queue-check/cargo-home`. A check never runs against it in place: the
 helper copies it into the plan's writable scratch `CARGO_HOME`
-(`.oneiron/checks.json`). `mkosi.finalize` normalizes the copy in the
-image, never the mirror, so that two fetches of one lock give the same
-bytes (FIX 9353):
+(`.oneiron/checks.json`). Normalization happens in the assembled image,
+never the mirror, so two fetches of one lock give the same bytes (FIX 9353).
+`mkosi.finalize` handles the git side:
 - it removes `.global-cache` (with `-wal` and `-shm`), cargo's SQLite record
   of last-use times; the scratch copy recreates it;
 - it first removes each checkout's `.git/index` (stat data) and `.git/logs`
@@ -294,7 +317,15 @@ bytes (FIX 9353):
 - it links a checkout pack byte-identical to its db's pack back to that
   pack (same name, `cmp`), as the fetch left them.
 
-Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects.
+Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects. After
+mkosi returns, the builder also normalizes the sparse registry index in the
+assembled tree (FIX 10649). Each binary cache entry is NUL-separated version
+and JSON metadata. The builder keeps only versions named by the pinned
+`Cargo.lock`, drops cache files for crates outside it, and refuses if a
+locked version is missing. The cache's five binary format bytes stay; its
+HTTP ETag becomes empty because that is online-revalidation state, not
+resolution data. The offline cache therefore depends on the lock rather
+than on what crates.io happened to publish before the fetch.
 
 ## Rebuild from the mirror, and retention
 
@@ -370,19 +401,32 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 | Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity (margin to 4 GiB) | ext4 allocated | Builder peak RSS (kel) |
 |---|---|---|---|---|---|---|---|
 | base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (111,010,816) | <= 256 MiB: within | 224.0 MiB (234,881,024; 3.78 GiB) | 131.3 MiB | 2.21 GiB |
-| browser | built-candidate | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,114,323) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.21 GiB |
-| desktop-cua | built-candidate | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,846) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.44 GiB |
-| checker | built-candidate | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
-| generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
+| browser | boot-proved | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,114,323) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.21 GiB |
+| desktop-cua | boot-proved | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,846) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.44 GiB |
+| checker | boot-proved | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
+| generic-agent | boot-proved | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
 
-- **Every output is new bytes, and none is `boot-proved`.** The engine pin
+- **Four outputs are `boot-proved` by their acceptance smokes**, all on
+  p5's images. On kel (10-22 21:3x-21:4x, `--network none`): the checker by L11-A's
+  offline-workspace-check smoke (5 of 5 legs, `cargo check --locked
+  --workspace --all-features` rc=0 in 670 s), desktop-cua by L11-B's image
+  legs (7 of 7: MCP initialize on stdio, 64 tools, the Xvfb display,
+  get_screen_size, get_desktop_state; peak 58.1 MiB), and generic-agent by
+  L11-B's image legs (9 of 9: python3, bun, tsrs and tsrs-wasm each
+  `--version`, a clean and a failing `.ts`; peak 188.6 MiB). Each output's
+  `note` names its host, time, run and image id. On nelly (10-23 01:05
+  JST, run `smoke-79a82238e311-1023-010505`): the browser by L11-B's OCI
+  Lightpanda acceptance leg (pack-verify, park, find, cancel; CAND-SMOKE
+  rc=0; peak guest RAM 13,641,973 bytes), after the archive's sha256
+  matched on nelly. Chromium is not measured.
+- **Every output was new bytes at this pin.** The engine pin
   moved from `95afa460192b…` to `79a82238e3…` (FIX 10353; the first main
   whose default oneiron-server build compiles, so the vault pack builds at
   this same pin): every native binary, the checker's Cargo store and the
-  OCI revision annotation change with it. The browser's Lightpanda smoke (b6's image) and the checker's
-  offline-check smoke (f1's image) proved layers these outputs do not have,
-  so both outputs are `built-candidate` until their smokes run again on
-  these images. Their earlier notes are in "Findings" below.
+  OCI revision annotation change with it. The browser's Lightpanda smoke
+  (b6's image) and the checker's first offline-check smoke (f1's image)
+  proved layers these outputs do not have; the checker's p5 smoke above
+  replaces its proof. Their earlier notes are in "Findings" below.
 - **desktop-cua** carries `/usr/local/bin/cua-driver` (58,739,952 bytes,
   sha256 `4ff2703f9ff5…`), built offline in the image's build overlay from
   trycua/cua `6d6c734c127025fb…` (driver 0.36.0) with rustc 1.97.1, default
@@ -391,14 +435,15 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   `libX11.so.6`, `libXi.so.6`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`
   and the loader: all in the variant's runtime packages. Its licence texts
   are in `/usr/share/doc/cua-driver`. The SBOM lists the driver and 381
-  Cargo packages of its own graph. Not measured: MCP, the display, or any
-  boot.
+  Cargo packages of its own graph. Its p5 OCI smoke passed all seven
+  MCP/display legs; Firecracker and cold boot were not measured.
 - **generic-agent** carries Bun 1.4.3 at `/usr/local/bin/bun` (88,979,072
   bytes, sha256 `7ce7d6b654ed…`, the zip member byte for byte), the three
   tsrs packages under `/opt/tsrs/node_modules` (46,145,435 bytes; the native
   `@tsrs/linux-x64-gnu/tsrs` is 28,708,944 bytes, 0555), the launchers
   `/usr/local/bin/tsrs` and `/usr/local/bin/tsrs-wasm`, and Debian's
-  python3 3.13. Not measured: any exec, Bun, tsrs or Python run, or a boot.
+  python3 3.13. Its p5 OCI smoke passed all nine Python/Bun/tsrs legs;
+  Firecracker and cold boot were not measured.
 - **The checker's store is hard-linked again (FIX 10348).** With the
   checkout index and reflogs removed before the repacks, each git
   dependency's checkout pack and its db's pack are the same bytes and the
@@ -428,8 +473,10 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   `GFDL-1.3-no-invariant` text pointing at
   `/usr/share/common-licenses/GFDL-3`, a file Debian does not ship; a
   missing file adds nothing, and the reader does not guess the one meant.
-- Writable and snapshot bytes, the guest's peak RAM and cold boot are
-  unmeasured: no candidate here has been booted.
+- Writable and snapshot bytes are unmeasured for every output, and cold boot
+  is unmeasured for every smoked output. Guest peak RAM was sampled for
+  browser (13,641,973 B), desktop-cua (58.1 MiB) and generic-agent
+  (188.6 MiB), not for checker; base has no boot proof.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
   15.8 GiB on kel (16,943,620,096 bytes, run p5) and 15.5 GiB on bel
   (16,669,384,704 bytes, run p6), at a 16 GiB booking for five variants
@@ -472,11 +519,18 @@ operator's part.
    variant's artifacts. Its paths are relative to its own directory.
 4. **Verify.** Each launch door runs `observe_release` before it starts a
    guest and records the result as `image_release` in the session manifest.
-   A Hypnos import is meant to run it as well (LC builds that call). Today
-   no host-owned binding from an image to its manifest exists, so every
-   launch records `image_release_manifest_absent` and
-   `image_signature_unavailable`. A signed manifest with no verifier
-   configured records `image_signature_unverifiable`.
+   The shared bound-release observer also emits one `tracing::info!` with
+   the selected image digest, manifest state, fact codes and admitted bit;
+   this is observation only, not a launch-policy change. A Hypnos import is
+   meant to run it as well (LC builds that call). The binding is host-owned:
+   `ONEIRON_IMAGE_RELEASE_BINDINGS` names a JSON map from the selected image
+   identity to its `image-release.json` (and envelope), read at every launch
+   and never cached (`images/manifest.md` Launch). A launch with no map entry
+   for its image records `image_release_manifest_absent` and
+   `image_signature_unavailable`. Live hosts still need LC's provisioning map
+   (FIX 9427); until it lands, their launches record absent. A
+   signed manifest with no verifier configured records
+   `image_signature_unverifiable`.
 5. **Policy.** `IMAGE_SIGNATURE_POLICY` is `ObserveOnly`, so these facts
    never refuse a launch or an install. Every existing pin, fence and
    image-match check still decides as before. Requiring a verified signature
@@ -493,13 +547,13 @@ host's Firecracker rootfs pin must equal). Compare the OCI digests with
 `crates/oneiron-container/guest/browser/build.sh` and
 `crates/oneiron-container/guest/checker/build.sh` each take three routes,
 chosen by flag, with no fallback between them:
-- **the image-family route (default):** `build.py fetch` (never `--learn`)
-  over every scope the lock covers, then `build`, `receipt` and `manifest`
-  for that variant, against the mirror and work dir in
-  `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK` (`ONEIRON_CHECKER_IMAGES_…` for
-  the checker); then `docker load` of the archive. Since the lock covers
-  desktop-cua and generic-agent, that fetch also takes the CUA source
-  archive, its Rust and its store, Bun and the npm tarballs;
+- **the image-family route (default):** `build.py fetch --variant V
+  --only-requested` (never `--learn`) over tools and that variant's learned
+  scope, then `build`, `receipt` and `manifest` for V, against the mirror
+  and work dir in `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK`
+  (`ONEIRON_CHECKER_IMAGES_…` for the checker); then `docker load` of the
+  archive. A browser-only or checker-only rebuild does not fetch the CUA
+  source archive, its Rust and its store, Bun or the npm tarballs;
 - **`--archive FILE`:** `docker load` of a built archive whose sha256 is the
   variant's `oci_archive_sha256` in `release.toml`. No rebuild;
 - **`--dockerfile`:** the Dockerfile recipe as it was (host Cargo, the
@@ -572,10 +626,11 @@ Booting the Firecracker rootfs is a separate step. It needs a host
 `ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
 this pack installs those.
 
-**The candidates (10-22, run p5).** All five stay on kel, loaded into its
-containerd-store docker as `oneiron-image-<variant>:candidate`, each archive
-with its receipt, release manifest, SBOM and provenance beside it under
-the run's artifacts directory. The loaded id is the manifest digest:
+**The four smoked candidates (10-22, run p5).** These four stay on kel,
+loaded into its containerd-store docker as `oneiron-image-<variant>:candidate`,
+each archive with its receipt, release manifest, SBOM and provenance beside
+it under the run's artifacts directory. Base stays built-candidate with no
+smoke; vault has no p5 output. The loaded id is the manifest digest:
 
 | Variant | Archive sha256 | Manifest (loaded id) | Config |
 |---|---|---|---|
@@ -591,8 +646,8 @@ that same commit. The browser entrypoint, the desktop entrypoint and the
 checker helper are the pinned repo files, byte for byte. The checker's
 `gst-ptp-helper` keeps its v2 `security.capability`.
 
-What each smoke has to show before its output is `boot-proved` again or
-for the first time: the browser's OCI Lightpanda leg (L11-B); the
+What each smoke showed for its now-boot-proved output (see the release.toml
+notes): the browser's OCI Lightpanda leg (L11-B); the
 checker's offline workspace check (L11-A); desktop-cua serving MCP on
 stdio with its Xvfb display (L11-B); generic-agent's exec of Python, Bun,
 `tsrs` (native) and `tsrs-wasm` with no registry (L11-B).
@@ -600,6 +655,66 @@ stdio with its Xvfb display (L11-B); generic-agent's exec of Python, Bun,
 Earlier candidates, for the record: run b6's browser (archive
 `5d900355867e…`) was smoked on nelly; run f1's checker (archive
 `27446d5730f7…`, engine `95afa460192b…`) was smoked on kel.
+
+## The vault candidate (phase 4)
+
+The vault variant builds like the others, with these differences:
+- **No guest plumbing.** There is no guest account, fence or guest agent,
+  and PID 1 is the pinned `deploy/firecracker/oneiron-vault-init` at
+  `/usr/sbin/oneiron-vault-init`, byte for byte.
+- **The engine binaries.** `oneiron-server`, `oneiron-broker`,
+  `oneiron-vm-init` and `oneiron-vm-outbox` (one Cargo invocation, default
+  features) compile in release in the image's build overlay:
+  build-essential, pkg-config and libexpat1-dev. expat-sys finds Debian's
+  Expat through pkg-config and links `libexpat.so.1` (libexpat1, in the
+  image), not the Expat 2.1.0 its crate bundles. DT_NEEDED, read from the ELF dynamic sections: oneiron-server links `libexpat.so.1`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and `ld-linux-x86-64.so.2`; oneiron-broker drops the Expat entry; oneiron-vm-init and oneiron-vm-outbox link only `libgcc_s.so.1`, `libc.so.6` and the loader. Every entry is present in `/usr/lib/x86_64-linux-gnu` in the rootfs.
+- **Memory.** A release build of oneiron-server ran out of memory above
+  22 GiB at one Cargo job. Run v6 on nelly at 48G and 8 threads was also
+  OOM-killed. Run v9 on gce-ci-3 used 96G, 32 threads and Cargo's default
+  `-j`: its largest process peaked at 40,156,364,800 B (37.40 GiB), and the
+  whole-job cgroup peaked at 84,632,231,936 B (78.82 GiB, anonymous memory
+  plus page cache).
+  Book vault release builds on gce-ci-3 at 96G, 32 threads and default `-j`;
+  kel, bel and mel cap a guest at 16G and cannot take that shape.
+- **What the init runs.** sh, cat, head and sync come with Debian's
+  essential set; mount and umount with `mount`. `reboot -f` is busybox's
+  reboot applet, through one root-owned link, `/usr/bin/reboot` ->
+  `/usr/bin/busybox` (no `--install`, no setuid). With `-f` it makes the
+  reboot call itself, with no init system asked.
+- **Mountpoints.** `/vault`, `/config`, `/restore` and `/etc/oneiron` are
+  0755 directories. `/etc/resolv.conf` is an empty regular file, 0644
+  root:root, which the guest network covers with a bind mount of its
+  runtime resolver file (`crates/oneiron-server/src/managed/vm_init/network.rs`).
+- **Capabilities.** No rootless guest runtime is staged. The receipt's
+  `vault_capabilities` says so in deploy/firecracker/build.py's rootfs-receipt
+  fields: `vm_guest_runtime_revision` 0, `guest_runtime` null, and
+  `vm_trusted_organ_builds_revision` 1 (the pinned init passes the config
+  drive's trusted-organ-builds to the engine). They are measured from
+  `rootfs.tar` by the same function as the manifest's `contracts.vault`
+  facts.
+
+**Export versus launch.** The vault's OCI archive is an export: every
+family output has one, but the vault runs only as a Firecracker microVM
+(`host.kvm` true), and nothing in this family launches it. LC's vault VM
+boots `rootfs.ext4` read-only as `/dev/vda` with an operator-supplied
+kernel, which the family does not build (`build.py manifest --kernel`
+lists one), and its own vault, config and restore disks. Hypnos today
+imports the standalone image from deploy/firecracker/build.py: its
+`manifest.json` and `rootfs-receipt.json`, which it checks agree. Taking
+this candidate instead is LC's `vault-family-artifact-import`, together
+with the kernel and LC's boot legs (health, provision, restore, outbox,
+resolver, shutdown). None of them ran here.
+
+**The candidate (run v9, gce-ci-3):**
+
+| OCI archive | Unpacked filesystem | Proposed payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS |
+|---|---|---|---|---|---|
+| 249.8 MiB (261,918,720 B) | 789.9 MiB (828,253,513 B) | 512 MiB: **OUTSIDE by 291,382,601 B** | 944.0 MiB (989,855,744 B); 3,305,111,552 B under the 4 GiB cap | 815.6 MiB (855,252,992 B) | 37.40 GiB (40,156,364,800 B) |
+
+The v8/v9 repeat comparison is not yet byte-clean: both runs have the same
+lock, tools tree, engine pin and 3,157-member set, but all four native
+engine binaries differ (FIX 12484). The other 3,153 members and all
+metadata match.
 
 ## Repeatability
 
@@ -617,6 +732,18 @@ A second, independent build compares payload hashes file by file
 not call an image reproducible until that comparison holds.
 
 ### Findings (10-22)
+
+**Run v4 (mel, 10-23 01:2x, the vault pack's builder with its C prefix maps
+and empty-files directive) against p5:** base, browser, desktop-cua and
+generic-agent are identical, member for member, with the same OCI ids, ext4
+and native binaries, so the three smoked variants' p5 proofs stand; base
+stays built-candidate. The checker's binaries,
+toolchain and member set are the same, but 39 files differ: every one is a
+crates.io sparse-index cache record in its store (the gix-* family and
+system-deps, 81,921 bytes more), refetched six hours after p5, once gix had
+published again. That is the cache finding below; a later rebuild of the
+checker has new bytes until the cache is normalized to the lock's entries
+or dropped.
 
 **Runs p5 (kel) and p6 (bel), at builder `0c86704876`, engine
 `79a82238e3`:** the same result as p2 and p3 below, for all five variants:

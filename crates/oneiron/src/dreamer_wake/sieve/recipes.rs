@@ -6,20 +6,26 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
 use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
 use crate::dreamer_consolidation::KeptDecision;
-use crate::llm::decision::EvidenceVersion;
+use crate::model_decision::EvidenceVersion;
 
+mod audit_erase;
+pub(crate) use audit_erase::forget_audit_candidate_in_txn;
 mod consumption;
 pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
+mod typing_batch;
+pub(crate) use typing_batch::{
+    TYPING_BATCH_ATTEMPT, TypingMember, typing_batch_turn, typing_member_key, typing_members,
+};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
@@ -181,6 +187,27 @@ pub(super) fn forget_in_txn(
     Ok(())
 }
 
+/// Drops spans of operator-excluded conversations before a caller's
+/// per-pass limit is applied, so they never consume the eligible-work
+/// budget; they stay queued and unspent while excluded.
+fn keep_unexcluded_spans(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spans: Vec<SieveSpan>,
+) -> Result<Vec<SieveSpan>> {
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    if excluded.is_empty() {
+        return Ok(spans);
+    }
+    let mut kept = Vec::with_capacity(spans.len());
+    for span in spans {
+        if !excluded.contains_turn(vault, txn, &span.turn)? {
+            kept.push(span);
+        }
+    }
+    Ok(kept)
+}
+
 pub(crate) fn recipe_spans_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -194,14 +221,16 @@ pub(crate) fn recipe_spans_in_txn(
         .map(|(_, span)| (span.turn, span.source))
         .collect::<Vec<_>>();
     let admission = chunks::admissions_in_txn(vault, txn, &pairs)?;
-    Ok(rows
+    let readable = rows
         .into_iter()
         .zip(admission)
         .filter_map(|((_, span), admission)| {
             (admission == chunks::Admission::Readable).then_some(span)
         })
-        .take(limit)
-        .collect())
+        .collect();
+    let mut spans = keep_unexcluded_spans(vault, txn, readable)?;
+    spans.truncate(limit);
+    Ok(spans)
 }
 
 pub(crate) fn spend_in_txn(
@@ -262,6 +291,11 @@ pub(crate) fn enqueue_rungs_in_txn(
         && crate::dreamer_wake::follower::route_in_txn(store, txn, Some(parent), span, now)?
     {
         return Ok(());
+    }
+    // A span that owes only its typing rung is read with its TURN's other
+    // such spans, several to a call (FIX 14711).
+    if !audit && typing_batch::typing_only(span) {
+        return typing_batch::route_typing_in_txn(store, txn, parent, span, now);
     }
     per_span_in_txn(store, txn, parent, span, audit, policy, now)
 }
@@ -335,14 +369,16 @@ pub(crate) fn audit_sample_in_txn(
         .map(|(_, span)| (span.turn, span.source))
         .collect::<Vec<_>>();
     let admitted = chunks::admissions_in_txn(vault, txn, &pairs)?;
-    Ok(sampled
+    let readable = sampled
         .into_iter()
         .zip(admitted)
         .filter_map(|((_, span), admission)| {
             (admission == chunks::Admission::Readable).then_some(span)
         })
-        .take(policy.audit_spans as usize)
-        .collect())
+        .collect();
+    let mut spans = keep_unexcluded_spans(vault, txn, readable)?;
+    spans.truncate(policy.audit_spans as usize);
+    Ok(spans)
 }
 
 pub(crate) fn retained_conversations_in_txn(

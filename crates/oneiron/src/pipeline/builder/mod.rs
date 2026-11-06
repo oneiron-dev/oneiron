@@ -40,7 +40,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) blend_weights_override: Option<crate::store::RetrievalBlendWeights>,
     pub(super) phonetic_search: Option<Vec<String>>,
     /// Typed media queries, one ranked list per declared space (OF-370).
-    pub(super) media_search: Vec<super::media_channel::MediaQuery>,
+    pub(super) media_search: super::media_query_memory::MediaQueries,
     pub(super) temporal_search: Option<TemporalSearchConfig>,
     pub(super) ppr_search: Option<(Vec<EntityId>, u32)>,
     pub(super) ppr_expand: Option<(Vec<EntityId>, u32)>,
@@ -124,7 +124,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) ppr_community: crate::config::PprCommunityConfig,
     /// The query side of emotion congruence. When unset, a run bound to a
     /// retrieval turn reads that turn's VAD annotation.
-    pub(super) query_affect: Option<crate::affect::Vad>,
+    pub(super) query_affect: Option<oneiron_contracts::affect::Vad>,
     pub(super) skip_vector_rescore: bool,
     /// The no-match floors the run judges, hashes and records by, read once
     /// when it starts ([`Self::no_match_floors`]).
@@ -148,7 +148,7 @@ impl<'a> PipelineBuilder<'a> {
             rank_profile: None,
             blend_weights_override: None,
             phonetic_search: None,
-            media_search: Vec::new(),
+            media_search: Default::default(),
             temporal_search: None,
             ppr_search: None,
             ppr_expand: None,
@@ -688,7 +688,7 @@ impl<'a> PipelineBuilder<'a> {
 
     /// The current turn's VAD, the query side of emotion congruence.
     /// Validated when the run starts.
-    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+    pub fn query_affect(mut self, vad: oneiron_contracts::affect::Vad) -> Self {
         self.query_affect = Some(vad);
         self
     }

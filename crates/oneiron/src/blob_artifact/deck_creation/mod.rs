@@ -1,13 +1,14 @@
 //! Typed outline approval, design and emission doors over the native deck engine.
 mod operations;
-pub mod outline;
-pub mod plan;
+pub use oneiron_store::blob_artifact::deck_creation::outline;
+pub use oneiron_store::blob_artifact::deck_creation::plan;
+pub use oneiron_store::blob_artifact::deck_creation::record;
 
-use crate::edit_roundtrip::deck_create::{
+use crate::blob_artifact::deck_creation::record::{
     ArtifactVersionRef, DeckCreationRecord, DesignSpec, EvidenceChange, KeptOutline,
     OutlineFreshness,
 };
-use crate::provenance::made_by::MadeByTrigger;
+use crate::write_envelope::provenance::made_by::MadeByTrigger;
 use outline::DeckOutline;
 use plan::DeckPlanView;
 use serde::{Deserialize, Serialize};

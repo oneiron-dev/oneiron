@@ -1,5 +1,6 @@
 //! `oneiron import <source> <path>`: the owner's own history, imported into a
-//! stopped vault (ARCH-0027).
+//! stopped vault, or through the folder routes of the `serve` holding it
+//! (ARCH-0027, FIX 11929).
 //!
 //! This is the host's half. It reads only under the path it was given and
 //! follows no symbolic link there; the engine decodes each file and lands each
@@ -859,8 +860,17 @@ fn events_session(log: &Path) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// Opens the configured, existing vault; a running `serve` holds it.
-fn open_vault(config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
+/// The configured vault opened directly, or the typed fact that a running
+/// `serve` holds its writer lease (FIX 11929).
+pub(super) enum VaultOpen {
+    Open(oneiron::Vault),
+    Held,
+}
+
+/// Opens the configured, existing vault, preserving the lease-held case for a
+/// caller that has a running-server door. Every other error is exactly the
+/// direct-open error today.
+pub(super) fn try_open_vault(config: &ServeConfig) -> anyhow::Result<VaultOpen> {
     let path = &config.vault_path;
     anyhow::ensure!(
         path.join("data.mdb").is_file(),
@@ -870,11 +880,22 @@ fn open_vault(config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths =
         super::resolve_dict_search_paths(&config.dict_search_paths).paths;
-    oneiron::Vault::open_owned(path, vault_config).map_err(|error| match error {
-        oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+    match oneiron::Vault::open_owned(path, vault_config) {
+        Ok(vault) => Ok(VaultOpen::Open(vault)),
+        Err(oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD)) => {
+            Ok(VaultOpen::Held)
+        }
+        Err(error) => Err(anyhow::anyhow!("open vault {}: {error}", path.display())),
+    }
+}
+
+/// Opens the configured, existing vault; a running `serve` holds it.
+fn open_vault(config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
+    match try_open_vault(config)? {
+        VaultOpen::Open(vault) => Ok(vault),
+        VaultOpen::Held => anyhow::bail!(
             "vault {} is open in a running `oneiron serve`; stop it, then import",
-            path.display()
+            config.vault_path.display()
         ),
-        error => anyhow::anyhow!("open vault {}: {error}", path.display()),
-    })
+    }
 }

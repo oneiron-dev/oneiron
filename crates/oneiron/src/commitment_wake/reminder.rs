@@ -12,22 +12,28 @@
 //! A promise an agent owes is no message: its wake dispatches the agent's own
 //! run ([`dispatch_obligor_agent_turn`]), and the host's agent run pump serves
 //! that turn.
+//!
+//! A route that names a voice has each reminder worded by the host's model
+//! before its send ([`super::reminder_wording`], FIX 12000); the fixed
+//! wording here is what the send reads until a wording is filed.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::AttemptId;
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord, CommitmentStatus};
+use crate::config::context_spec::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::consent::AuthenticatedOwner;
-use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
+use crate::delivery_window::OutboundScheduleContext;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::OutboundScheduleContext;
 use crate::side_table::{self, Named, SideTable};
 
+use super::reminder_wording::{CommitmentReminderVoice, queue_commitment_reminder_wording};
 use super::wake_event::{CommitmentWakeEvent, CommitmentWakePhase, validate_wake_string};
 use super::wake_proposal::{CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner};
 
@@ -51,7 +57,11 @@ const MAX_QUOTED_PROMISE_CHARS: usize = 400;
 /// when no zone resolves. The offset in force when a reminder is scheduled is
 /// frozen on its send, so the delivery window can read the owner's local
 /// time; with neither, an interrupt-class reminder holds under a window claim.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `voice`, when set, has the host's model word each reminder, the owner's
+/// own and a third party's nudge alike (FIX 12000); unset, reminders keep
+/// the fixed wording.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderRoute {
     pub channel: String,
@@ -61,6 +71,8 @@ pub struct CommitmentReminderRoute {
     pub utc_offset_minutes: Option<i16>,
     #[serde(default)]
     pub iana_timezone: Option<String>,
+    #[serde(default)]
+    pub voice: Option<CommitmentReminderVoice>,
 }
 
 impl CommitmentReminderRoute {
@@ -93,6 +105,9 @@ impl CommitmentReminderRoute {
                 "reminder route timezone label is invalid",
             ));
         }
+        if let Some(voice) = &self.voice {
+            voice.validate()?;
+        }
         Ok(())
     }
 
@@ -124,21 +139,24 @@ impl CommitmentReminderRoute {
 
 /// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
 /// for a zone the embedded database does not know.
-fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
-    let wall = crate::calendar::tz::utc_to_wall(at, zone).ok()?;
-    let local = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
-        .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?
-        .and_utc()
-        .timestamp();
-    let seconds = local.checked_sub(i64::try_from(at).ok()?)?;
-    i16::try_from(seconds / 60).ok()
+pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
+    crate::calendar::tz::ResolvedTimeZone::new(zone)
+        .ok()?
+        .offset_minutes_at(at)
 }
 
 impl Vault {
     /// The owner's reminder route, when one is set.
     pub fn commitment_reminder_route(&self) -> Result<Option<CommitmentReminderRoute>> {
         let txn = self.store.env.read_txn()?;
-        REMINDER_ROUTE.get(&self.store, &txn, &())
+        self.commitment_reminder_route_in_txn(&txn)
+    }
+
+    pub(crate) fn commitment_reminder_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<CommitmentReminderRoute>> {
+        REMINDER_ROUTE.get(&self.store, txn, &())
     }
 
     /// Sets (or, with `None`, clears) where the owner's reminders go. Only the
@@ -161,8 +179,9 @@ impl Vault {
     }
 
     /// The text a channel sends for a reminder content ref, `Ok(None)` when
-    /// the ref is not a reminder's. The promise must still be open: a reminder
-    /// for a kept or released promise is refused, not sent.
+    /// the ref is not a reminder's: the wording a worder filed for it, else
+    /// the fixed wording. The promise must still be open: a reminder for a
+    /// kept or released promise is refused, not sent.
     pub fn commitment_reminder_text(&self, content_ref: &str) -> Result<Option<String>> {
         let Some(reminder) = ReminderRef::parse(content_ref) else {
             return Ok(None);
@@ -175,6 +194,9 @@ impl Vault {
                 "reminder's commitment is no longer open",
             ));
         }
+        if let Some(worded) = self.filed_commitment_reminder_wording(content_ref)? {
+            return Ok(Some(worded));
+        }
         let offset = self
             .commitment_reminder_route()?
             .and_then(|route| route.utc_offset_minutes_at(reminder.due_at));
@@ -183,10 +205,10 @@ impl Vault {
 }
 
 /// A parsed reminder content ref.
-struct ReminderRef {
-    instance_id: EntityId,
-    phase: CommitmentWakePhase,
-    due_at: u64,
+pub(super) struct ReminderRef {
+    pub(super) instance_id: EntityId,
+    pub(super) phase: CommitmentWakePhase,
+    pub(super) due_at: u64,
 }
 
 impl ReminderRef {
@@ -199,7 +221,7 @@ impl ReminderRef {
         )
     }
 
-    fn parse(content_ref: &str) -> Option<Self> {
+    pub(super) fn parse(content_ref: &str) -> Option<Self> {
         let rest = content_ref.strip_prefix(COMMITMENT_REMINDER_CONTENT_PREFIX)?;
         let mut parts = rest.split(':');
         let instance_id = EntityId::from_hex(parts.next()?).ok()?;
@@ -218,14 +240,12 @@ impl ReminderRef {
 /// promised, and the promise is quoted as the owner recorded it, never
 /// passed off as their own words. An agent reads its own promise as the
 /// brief of the turn that keeps it.
-fn reminder_text(record: &CommitmentRecord, reminder: &ReminderRef, offset: Option<i16>) -> String {
-    let promise: String = record
-        .content
-        .text
-        .trim()
-        .chars()
-        .take(MAX_QUOTED_PROMISE_CHARS)
-        .collect();
+pub(super) fn reminder_text(
+    record: &CommitmentRecord,
+    reminder: &ReminderRef,
+    offset: Option<i16>,
+) -> String {
+    let promise = quoted_promise(record);
     let when = civil_time(reminder.due_at, offset);
     match (record.obligor.kind, reminder.phase) {
         (CommitmentObligorKind::ThirdParty, CommitmentWakePhase::Lead) => {
@@ -247,8 +267,19 @@ fn reminder_text(record: &CommitmentRecord, reminder: &ReminderRef, offset: Opti
     }
 }
 
+/// The promise as recorded, as much of it as a reminder quotes.
+pub(super) fn quoted_promise(record: &CommitmentRecord) -> String {
+    record
+        .content
+        .text
+        .trim()
+        .chars()
+        .take(MAX_QUOTED_PROMISE_CHARS)
+        .collect()
+}
+
 /// `due_at` in the owner's civil time when the route carries an offset, else UTC.
-fn civil_time(due_at: u64, offset: Option<i16>) -> String {
+pub(super) fn civil_time(due_at: u64, offset: Option<i16>) -> String {
     let Some(utc) = i64::try_from(due_at)
         .ok()
         .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
@@ -314,12 +345,21 @@ impl CommitmentWakeProposalPlanner for CommitmentReminderPlanner {
             // any planner runs.
             CommitmentObligorKind::Agent => return Ok(None),
         };
+        let content_ref = ReminderRef::content_ref(event);
+        // The owner's voice has the host word the reminder before its send;
+        // a replayed plan finds the wording already queued.
+        if let Some(voice) = vault
+            .commitment_reminder_route()?
+            .and_then(|route| route.voice)
+        {
+            queue_commitment_reminder_wording(vault, &content_ref, voice, vault.now_recorded_at())?;
+        }
         Ok(Some(CommitmentWakeProposalDraft {
             verb,
             channel,
             target,
             on_behalf_of: None,
-            content_ref: Some(ReminderRef::content_ref(event)),
+            content_ref: Some(content_ref),
             dedupe_key: None,
         }))
     }

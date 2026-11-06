@@ -64,10 +64,7 @@ enum MarkerScope {
     Mirror,
 }
 
-/// The forward pass's version, which a sealed window's landed mark names
-/// beside the mirror's (FIX 6509): bump it whenever a change to the pass
-/// changes which rows it lands or drops, so every window lands again once.
-pub(crate) const FORWARD_PASS_VERSION: u64 = 1;
+pub(crate) use crate::world_keys::forward_version::FORWARD_PASS_VERSION;
 
 pub fn forward_rematerialize(
     vault: &Vault,
@@ -380,6 +377,9 @@ impl ForwardRun {
             doc,
             window_key.as_str(),
         )?;
+        // Already-standing custody must be visible to secret scanning before an
+        // imported entity can mint a duplicate. Retry after edges as before.
+        crate::sync::custody::apply_custody_map(vault, doc, window_key);
         let plan = entity_pass::plan(&remat_ctx(
             vault,
             doc,
@@ -580,6 +580,9 @@ fn after_edges(ctx: &RematCtx<'_>) {
     // takes them. A document lands before the pins that quote it.
     crate::sync::message_docs::apply_message_doc_map(vault, doc, window_key);
     crate::sync::document_pins::apply_document_pin_map(vault, doc, window_key);
+    // FIX 6870: the repo manifests it carries, after their CODE rows and
+    // before the tombstones, so an erased repo takes its manifest.
+    crate::sync::repo_manifests::apply_repo_manifest_map(vault, doc, window_key);
 }
 
 /// The settle after the tombstone pass: the marker bookkeeping, the

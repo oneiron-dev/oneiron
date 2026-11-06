@@ -8,7 +8,8 @@ use crate::error::{Error, Result};
 use crate::pipeline::PipelineBuilder;
 use crate::pipeline::retrieval_policy::{
     RetrievalIntent, RetrievalPolicyAction, RetrievalPolicyChoices, RetrievalPolicyDecision,
-    RetrievalPolicyEnvelope, RetrievalPolicyTier, RetrievalPolicyTrace, choose_action,
+    RetrievalPolicyEnvelope, RetrievalPolicyEnvelopeExt, RetrievalPolicyTier, RetrievalPolicyTrace,
+    choose_action,
 };
 use crate::pipeline::support::{read_entity_metadata, resolve_sigma_secs};
 use crate::pipeline::trace::{merge_retrieval_diagnostics, telemetry_score_breakdown};
@@ -122,7 +123,7 @@ impl PipelineBuilder<'_> {
             let mut state = RetrievalState::one_shot(&breakdown);
             state.iteration = iteration;
             state.hops = hops;
-            state.last_action = last_action as u8;
+            state.last_action = last_action.state_tag();
             state.intent_class = options.intent as u8;
             state.budget_remaining = if self.deadline_reached() {
                 0

@@ -4,9 +4,9 @@ use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::{ReadMode, RevisionRef};
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::{DepthSearchRequest, short_ref_or_hex};
 
@@ -32,6 +32,14 @@ impl SessionScope {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.world_ref.is_none() && self.facet_ref.is_none() && self.document_short_ids.is_empty()
+    }
+
+    pub(crate) fn matches_short_ref(&self, stored: &str) -> bool {
+        self.document_short_ids.is_empty()
+            || self
+                .document_short_ids
+                .iter()
+                .any(|requested| short_ref_matches(stored, requested))
     }
 }
 
@@ -80,15 +88,10 @@ fn hit_in_session_scope(
     {
         return Ok(false);
     }
-    if !scope.document_short_ids.is_empty() {
-        let short_ref = short_ref_or_hex(scoped.vault(), id)?;
-        if !scope
-            .document_short_ids
-            .iter()
-            .any(|requested| short_ref_matches(&short_ref, requested))
-        {
-            return Ok(false);
-        }
+    if !scope.document_short_ids.is_empty()
+        && !scope.matches_short_ref(&short_ref_or_hex(scoped.vault(), id)?)
+    {
+        return Ok(false);
     }
     Ok(true)
 }
@@ -146,16 +149,6 @@ fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Re
 }
 
 impl DepthSearchRequest<'_> {
-    /// Fetch the bounded candidate window before session narrowing: a global
-    /// page is not a scoped page. The page is short when the window holds
-    /// fewer of the session's rows.
-    pub(super) fn channel_limit(&self) -> usize {
-        if self.session_scope.is_none_or(SessionScope::is_empty) {
-            return self.limit;
-        }
-        crate::memory::caps::narrowed_candidate_window(self.limit)
-    }
-
     pub(super) fn narrow_hits(
         &self,
         scoped: &ScopedRead<'_>,

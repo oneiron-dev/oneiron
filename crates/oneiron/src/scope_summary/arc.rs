@@ -11,9 +11,9 @@
 use super::arc_sources::ArcSources;
 use super::codec::{invalid, parse_scope};
 use super::request::{ScopeSummaryPlan, ScopeSummaryRequest, ScopeSummaryTarget};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_consolidation::ScopeSummaryEvidence;
 use crate::error::Result;
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use heed::RwTxn;
 use rmpv::Value;
@@ -55,7 +55,7 @@ pub(super) fn conversation_arc(conversation: EntityId) -> Result<ScopeSummaryReq
             },
         },
         requester: WriteActor::new(
-            crate::dreamer_runner::authority::dreamer_actor_id()?,
+            crate::store::base_agent::dreamer_actor_id()?,
             EdgeActorClass::System,
         ),
     })

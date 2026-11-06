@@ -57,17 +57,14 @@ pub use self::verified_send::{
     LinkedInVerifiedSendPlan,
 };
 
-/// Stable Oneiron channel key for LinkedIn.
-pub const LINKEDIN_CHANNEL: &str = "linkedin";
+pub use crate::outbound::linkedin_policy::LINKEDIN_CHANNEL;
 
 /// Stable connector key for the wrapped LinkedIn MCP server.
 pub const LINKEDIN_MCP_CONNECTOR_KEY: &str = "linkedin_mcp";
 
-/// OF-327 connector verb for direct messages.
-pub const LINKEDIN_SEND_DM_VERB: &str = "send_dm";
+pub use crate::outbound::linkedin_policy::LINKEDIN_SEND_DM_VERB;
 
-/// OF-327 connector verb for connection requests.
-pub const LINKEDIN_CONNECT_REQUEST_VERB: &str = "connect_request";
+pub use crate::outbound::linkedin_policy::LINKEDIN_CONNECT_REQUEST_VERB;
 
 /// Upstream MCP tool backing `linkedin.send_dm`.
 pub const LINKEDIN_MCP_SEND_MESSAGE_TOOL: &str = "send_message";
@@ -75,22 +72,18 @@ pub const LINKEDIN_MCP_SEND_MESSAGE_TOOL: &str = "send_message";
 /// Upstream MCP tool backing `linkedin.connect_request`.
 pub const LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL: &str = "connect_with_person";
 
-/// Default D5 account-risk wall for one seat.
-pub const LINKEDIN_DEFAULT_DAILY_DM_CAP: u16 = 15;
+pub use crate::outbound::linkedin_policy::LINKEDIN_DEFAULT_DAILY_DM_CAP;
 
-/// Default D5 profile-read wall for one seat.
-pub const LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP: u16 = 25;
+pub use crate::outbound::linkedin_policy::LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP;
 
-/// Lower bound for human-cadence jitter between sends.
-pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS: u32 = 180;
+pub use crate::outbound::linkedin_policy::LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS;
 
-/// Upper bound for human-cadence jitter between sends.
-pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS: u32 = 900;
+pub use crate::outbound::linkedin_policy::LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS;
 
 /// Plain-words first-connect disclosure copy reviewed against OF-373 D5.
 pub const LINKEDIN_CONNECT_CONSENT_BODY: &str = "LinkedIn does not officially support this kind of automated sending. Oneiron will use your own logged-in browser session in a private sandbox; it does not need or store your password. Automated patterns can still get your LinkedIn account limited. The default cap is 15 DMs per day, sends are paced like a person, sweeps are not allowed, and you can turn LinkedIn off at any time. Turning it off deletes the sandbox and removes LinkedIn send/connect verbs for this seat.";
 
-const LINKEDIN_SEAT_VERB_CATALOG: &[&str] = &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
+use crate::outbound::linkedin_policy::LINKEDIN_SEAT_VERB_CATALOG;
 
 /// Durable attempt kind used by the scheduled LinkedIn inbox poller.
 pub const LINKEDIN_INBOX_SYNC_ATTEMPT_KIND: &str = "linkedin_inbox_sync";
@@ -109,7 +102,7 @@ const LINKEDIN_INBOX_SYNC_CLAIMED_VALUE: &[u8] = b"claimed";
 const LINKEDIN_INBOX_SYNC_CURSOR_KEY_PREFIX: &str = "cursor:";
 
 const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
-const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
+use crate::outbound::linkedin_policy::MAX_LINKEDIN_SESSION_REF_BYTES;
 const MAX_LINKEDIN_THREAD_ID_BYTES: usize = 256;
 const MAX_LINKEDIN_MESSAGE_ID_BYTES: usize = 512;
 const MAX_LINKEDIN_EVENT_ID_BYTES: usize = 384;
@@ -145,151 +138,11 @@ const RECEIPT_FIELD_RETRY_WINDOW: &str = "retry_window";
 const RECEIPT_FIELD_PRE_SEND_MATCH_COUNT: &str = "pre_send_match_count";
 const RECEIPT_FIELD_POST_SEND_MATCH_COUNT: &str = "post_send_match_count";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedInSandboxRuntime {
-    Container,
-    MicroVm,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedInSelectorDriver {
-    DeterministicMcp,
-    BrowserUse,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedInNetworkRoute {
-    StableDedicatedIp,
-    Browserbase,
-    ResidentialBox,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedInManagedTransport {
-    Unipile,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedInPasswordCustody {
-    MemberOnly,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInMcpServerHarness {
-    pub command_ref: String,
-    pub persistent_browser_profile: bool,
-}
-
-impl LinkedInMcpServerHarness {
-    pub fn new(command_ref: impl Into<String>) -> Result<Self> {
-        Ok(Self {
-            command_ref: normalize_non_blank(
-                command_ref.into(),
-                MAX_LINKEDIN_SESSION_REF_BYTES,
-                "LinkedIn MCP server command ref must be non-empty",
-                "LinkedIn MCP server command ref exceeds maximum length",
-            )?,
-            persistent_browser_profile: true,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInLoginHandoff {
-    pub one_time_remote_browser: bool,
-    pub member_completes_2fa: bool,
-    pub password_custody: LinkedInPasswordCustody,
-}
-
-impl LinkedInLoginHandoff {
-    #[must_use]
-    pub const fn one_time_remote_browser() -> Self {
-        Self {
-            one_time_remote_browser: true,
-            member_completes_2fa: true,
-            password_custody: LinkedInPasswordCustody::MemberOnly,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInEscalationConfig {
-    pub selector_driver: LinkedInSelectorDriver,
-    pub network_route: LinkedInNetworkRoute,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed_transport: Option<LinkedInManagedTransport>,
-}
-
-impl Default for LinkedInEscalationConfig {
-    fn default() -> Self {
-        Self {
-            selector_driver: LinkedInSelectorDriver::DeterministicMcp,
-            network_route: LinkedInNetworkRoute::StableDedicatedIp,
-            managed_transport: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInSandboxHostConfig {
-    pub seat_ref: String,
-    pub sandbox_ref: String,
-    pub runtime: LinkedInSandboxRuntime,
-    pub mcp_server: LinkedInMcpServerHarness,
-    pub browser_profile_ref: String,
-    pub session_cookie_secret_ref: String,
-    pub login_handoff: LinkedInLoginHandoff,
-    pub escalation: LinkedInEscalationConfig,
-}
-
-impl LinkedInSandboxHostConfig {
-    pub fn new(
-        seat_ref: impl Into<String>,
-        sandbox_ref: impl Into<String>,
-        browser_profile_ref: impl Into<String>,
-        session_cookie_secret_ref: impl Into<String>,
-    ) -> Result<Self> {
-        Ok(Self {
-            seat_ref: bounded_ref(
-                seat_ref.into(),
-                "LinkedIn seat ref must be non-empty",
-                "LinkedIn seat ref exceeds maximum length",
-            )?,
-            sandbox_ref: bounded_ref(
-                sandbox_ref.into(),
-                "LinkedIn sandbox ref must be non-empty",
-                "LinkedIn sandbox ref exceeds maximum length",
-            )?,
-            runtime: LinkedInSandboxRuntime::Container,
-            mcp_server: LinkedInMcpServerHarness::new("harness:linkedin-mcp-server")?,
-            browser_profile_ref: bounded_ref(
-                browser_profile_ref.into(),
-                "LinkedIn browser profile ref must be non-empty",
-                "LinkedIn browser profile ref exceeds maximum length",
-            )?,
-            session_cookie_secret_ref: vault_scoped_secret_ref(session_cookie_secret_ref.into())?,
-            login_handoff: LinkedInLoginHandoff::one_time_remote_browser(),
-            escalation: LinkedInEscalationConfig::default(),
-        })
-    }
-
-    #[must_use]
-    pub const fn with_runtime(mut self, runtime: LinkedInSandboxRuntime) -> Self {
-        self.runtime = runtime;
-        self
-    }
-
-    #[must_use]
-    pub fn with_escalation(mut self, escalation: LinkedInEscalationConfig) -> Self {
-        self.escalation = escalation;
-        self
-    }
-}
+pub use crate::outbound::linkedin_policy::{
+    LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport,
+    LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody,
+    LinkedInSandboxHostConfig, LinkedInSandboxRuntime, LinkedInSelectorDriver,
+};
 
 /// Adapter for recorded `stickerdaniel/linkedin-mcp-server` messaging outputs.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,10 +3,10 @@
 //! current pair, but only while the inventory still reads that kit as
 //! current. A settle whose kit a later confirm already replaced leaves the
 //! current pair alone and deletes its own pending piece. The settles of one
-//! install take turns in this process, so two confirms racing on it never
-//! interleave their check and move: each move writes the kit current at its
-//! check, and the later kit's own settle runs after it. A settle waits on no
-//! network.
+//! install take turns, in this process and, under a file lock, across
+//! processes (FIX 12203), so two confirms racing on it never interleave their
+//! check and move: each move writes the kit current at its check, and the
+//! later kit's own settle runs after it. A settle waits on no network.
 //!
 //! Each settle then sweeps. The keystore cannot list its slots, so a confirm
 //! row names the kits it replaced whose pending piece may still be here
@@ -15,13 +15,18 @@
 //! each, and a kit leaves its list once the delete succeeds.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::{Condvar, Mutex, PoisonError};
 
-use super::KITS;
+use super::{KITS, UNLISTED_KITS};
 use crate::Vault;
 use crate::error::Result;
-use crate::recovery::{KitId, KitPiecePair, KitPieceStore, KitSecretKind};
 use crate::world_keys::keystore_error;
+use crate::{
+    recovery::KitPieceStore,
+    store::recovery_kit::KitSecretKind,
+    store::recovery_kit::{KitId, KitPiecePair},
+};
 
 /// The vault id and machine id that name one install's kit-piece slots.
 type VaultInstall = ([u8; 32], [u8; 16]);
@@ -32,12 +37,24 @@ static SETTLING: Mutex<BTreeSet<VaultInstall>> = Mutex::new(BTreeSet::new());
 /// Signalled each time a settle gives back its turn.
 static SETTLED: Condvar = Condvar::new();
 
+/// The settle turn's file-lock name in the vault directory. Deliberately its
+/// own file, never the writer lease's: two unrelated exclusions sharing one
+/// inode would make either hold silently deny the other.
+const SETTLE_LOCK_FILE: &str = "oneiron.kit-settle.lock";
+
 /// One install's turn to settle: taken once no other settle of that install
-/// runs in this process, and given back on drop.
-struct SettleTurn(VaultInstall);
+/// runs in this process, then, under the turn's file lock, once no other
+/// process settles this vault either (FIX 12203; LMDB allows multi-process
+/// opens, so the in-process turn alone could interleave two processes'
+/// check and move), and given back on drop. The order is one and global:
+/// the in-process turn first, the file lock second.
+struct SettleTurn {
+    install: VaultInstall,
+    lock: Option<std::fs::File>,
+}
 
 impl SettleTurn {
-    fn take(install: VaultInstall) -> Self {
+    fn take(install: VaultInstall, vault_path: &Path) -> Self {
         let mut settling = SETTLING.lock().unwrap_or_else(PoisonError::into_inner);
         while settling.contains(&install) {
             settling = SETTLED
@@ -45,18 +62,83 @@ impl SettleTurn {
                 .unwrap_or_else(PoisonError::into_inner);
         }
         settling.insert(install);
-        Self(install)
+        drop(settling);
+        let lock = settle_file_lock(vault_path);
+        Self { install, lock }
     }
 }
 
 impl Drop for SettleTurn {
     fn drop(&mut self) {
+        // Release in the reverse of the taking order. The file lock unlocks
+        // explicitly before its file closes on drop, so a forked child still
+        // holding an inherited copy of the descriptor cannot keep the vault
+        // locked after this process let go (as the writer lease does).
+        #[cfg(unix)]
+        if let Some(file) = &self.lock {
+            use std::os::fd::AsRawFd;
+            // SAFETY: `file` is a live, open file owned by this turn, so
+            // `as_raw_fd()` yields a valid descriptor; `flock` reads only
+            // that descriptor and the flag word.
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        }
         SETTLING
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.0);
+            .remove(&self.install);
         SETTLED.notify_all();
     }
+}
+
+/// The settle turn's exclusive lock on the vault directory's settle lock
+/// file, held for the turn's life. A settle is a few keystore operations and
+/// small transactions, so the wait is bounded by another settle's run, as
+/// the in-process turn's wait already is. `None` off unix, and when the file
+/// does not open or lock: the settle then keeps its in-process turn only,
+/// exactly as it ran before the file lock existed, and never refuses.
+#[cfg(unix)]
+fn settle_file_lock(vault_path: &Path) -> Option<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(vault_path.join(SETTLE_LOCK_FILE))
+    {
+        Ok(file) => file,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the kit-settle lock file did not open; settling in this process's turn only"
+            );
+            return None;
+        }
+    };
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        tracing::warn!("the kit-settle lock is not a file; settling in this process's turn only");
+        return None;
+    }
+    // SAFETY: `file` is a live, open file owned by this call, so
+    // `as_raw_fd()` yields a valid descriptor; `flock` reads only that
+    // descriptor and the flag word, and writes nothing through a pointer.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        let error = std::io::Error::last_os_error();
+        tracing::warn!(
+            kind = ?error.kind(),
+            "the kit-settle lock did not take; settling in this process's turn only"
+        );
+        return None;
+    }
+    Some(file)
+}
+
+#[cfg(not(unix))]
+fn settle_file_lock(_vault_path: &Path) -> Option<std::fs::File> {
+    None
 }
 
 impl Vault {
@@ -85,7 +167,7 @@ impl Vault {
                 return;
             }
         };
-        let _turn = SettleTurn::take(store.vault_install());
+        let _turn = SettleTurn::take(store.vault_install(), self.store.env.path());
         let current = match self.current_world_kit() {
             Ok(current) => current,
             Err(error) => {
@@ -109,18 +191,23 @@ impl Vault {
     /// is deleted, the current kit's excepted, and a kit leaves the row's list
     /// once its delete succeeds; a missing slot is a success. A kit whose
     /// delete failed stays listed. Only rows whose list shrank are written.
+    /// The same pass drains [`UNLISTED_KITS`], the kits no committed row names
+    /// (FIX 12202): each piece is deleted and its sweep row goes with it, in
+    /// the same write transaction.
     fn sweep_stale_pending_pieces(
         &self,
         store: &KitPieceStore,
         current: Option<KitId>,
     ) -> Result<()> {
-        let listed: Vec<(String, Vec<KitId>)> = {
+        let (listed, unlisted): (Vec<(String, Vec<KitId>)>, Vec<(String, KitId)>) = {
             let txn = self.store.env.read_txn()?;
-            KITS.scan(&self.store, &txn)?
+            let listed = KITS
+                .scan(&self.store, &txn)?
                 .into_iter()
                 .filter(|(_, row)| !row.stale_pending_pieces.is_empty())
                 .map(|(key, row)| (key, row.stale_pending_pieces))
-                .collect()
+                .collect();
+            (listed, UNLISTED_KITS.scan(&self.store, &txn)?)
         };
         let mut swept = Vec::new();
         for (key, kits) in listed {
@@ -132,7 +219,12 @@ impl Vault {
                 swept.push((key, gone));
             }
         }
-        if swept.is_empty() {
+        let unlisted_gone: Vec<String> = unlisted
+            .into_iter()
+            .filter(|(_, kit)| Some(*kit) == current || drop_pending_piece(store, *kit))
+            .map(|(key, _)| key)
+            .collect();
+        if swept.is_empty() && unlisted_gone.is_empty() {
             return Ok(());
         }
         self.with_write_txn(|txn| {
@@ -141,6 +233,9 @@ impl Vault {
                     row.stale_pending_pieces.retain(|kit| !gone.contains(kit));
                     KITS.put(&self.store, txn, key, &row)?;
                 }
+            }
+            for key in &unlisted_gone {
+                UNLISTED_KITS.delete(&self.store, txn, key)?;
             }
             Ok(())
         })

@@ -1,29 +1,38 @@
 //! The rows a saved weave period's copies depend on, for its erase index:
-//! the sources its own checks read, each loop row's refs, and the rows a
+//! the sources its own checks read, each loop row's refs, audit decision
+//! candidates, and the rows a
 //! health card's Coach draft was written from (FIX 8672). The draft's
 //! diagnosis and proposal are text copied out of the agent's TASK and its
 //! sealed pads, so the card's copy depends on every row its answer froze
 //! (FIX 9220). A hard delete of one scrubs the text from the period's
 //! copy (`rewrite.rs`); a served copy whose row is gone is scrubbed again
-//! at serve, so a missed index entry never serves erased text.
+//! at serve, so a missed index entry never serves erased text. A draft
+//! that predates `source_rows` names no rows; its live card's erase mark
+//! judges it at serve instead (FIX 10432).
 use std::collections::BTreeSet;
 
 use super::{ScopedRead, WeaveItem, WeaveReport, loop_decisions, report_sources};
 use crate::EntityId;
-use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
+use crate::dreamer_runner::maintenance::agent_health::{
+    AgentHealthCard, live_coach_draft_erased_in_txn,
+};
 use crate::error::Result;
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
 
 /// Every ref a saved period carries, for its erase index: the sources its
 /// checks read, each loop row's claim, actor and evidence refs, and the
-/// rows each card's unscrubbed draft text was written from. A hard delete
+/// rows each card's unscrubbed draft text was written from, plus audit
+/// decision candidates. A hard delete
 /// of a source erases the period; of any other ref, it rewrites the rows
 /// that name it (`rewrite.rs`).
 pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
     let mut sources = report_sources(report)?;
     for item in report.sections.iter().flat_map(|section| &section.items) {
         sources.extend(loop_decisions::row_refs(item));
+        if let WeaveItem::SieveAudit { audit, .. } = item {
+            sources.extend(audit.decision_candidate_refs());
+        }
         if let WeaveItem::AgentHealth {
             card,
             draft_erased: false,
@@ -41,6 +50,16 @@ pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>
 /// row and pads. None while the card holds no draft text.
 fn draft_sources(card: &AgentHealthCard) -> BTreeSet<EntityId> {
     card.draft_source_rows()
+}
+
+/// Whether `card`'s copy holds draft text from an answer that predates
+/// `source_rows` (FIX 10432): unknown provenance, which only the live
+/// card's erase mark can judge at serve.
+fn draft_predates_sources(card: &AgentHealthCard) -> bool {
+    card.coach
+        .as_ref()
+        .and_then(|ask| ask.answer.as_ref())
+        .is_some_and(|answer| answer.draft.is_some() && answer.source_rows.is_none())
 }
 
 /// Scrubs a card's draft text, its diagnosis and proposal, from this copy
@@ -67,7 +86,10 @@ pub(super) fn scrub_draft_of(item: &mut WeaveItem, source: &EntityId) -> bool {
 /// The serve-time recheck of each card's draft in a served copy: a draft
 /// written from a row now erased or stale, by its tombstone, is scrubbed
 /// from the copy served, whether or not the erase index named the period.
-/// The period and the card still serve.
+/// A draft that predates `source_rows` names no rows the tombstone check
+/// can judge, so the live card's erase mark judges it instead (FIX 10432):
+/// the text clears here, not just the flag. The period and the card still
+/// serve.
 fn scrub_erased_drafts_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -82,6 +104,10 @@ fn scrub_erased_drafts_in(
             continue;
         };
         if *draft_erased {
+            continue;
+        }
+        if draft_predates_sources(card) && live_coach_draft_erased_in_txn(store, txn, card)? {
+            scrub_draft(card, draft_erased);
             continue;
         }
         let mut gone = false;

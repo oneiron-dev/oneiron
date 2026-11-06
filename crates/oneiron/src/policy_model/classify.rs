@@ -17,8 +17,8 @@
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::gate::{self, PolicyManifestResolution};
-use crate::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
 use crate::store::GateSystemNoticeRecord;
+use oneiron_model::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
 
 use super::binding::{PolicyContentBinding, content_binding};
 use super::clock::PolicyCallClock;
@@ -474,7 +474,13 @@ impl Vault {
             && verdict.decision.skip_reason() == Some(PolicySkipReason::BudgetExhausted)
         {
             let line = budget.read().attempt_id;
-            self.budget_denied_hooks(&crate::llm::BudgetDenied::Exhausted, budget, &line, None);
+            self.budget_denied_hooks(
+                &oneiron_model::llm::BudgetDenied::Exhausted,
+                budget,
+                &line,
+                None,
+                None,
+            );
         }
         Ok(OwnerPlanePass { verdict, examined })
     }

@@ -297,8 +297,37 @@ impl Vault {
         holder: Destination,
         request: AuthorityEntryHash,
     ) -> Result<(bool, LatestRead)> {
+        self.read_latest_for_request_using(bundle, pads, holder, request, None)
+    }
+
+    /// The same named-generation observation, with supplied grants used only
+    /// after neither a reader capsule nor an in-object grant opens an object.
+    #[cfg(feature = "sync")]
+    pub(crate) fn read_latest_for_request_with_grant(
+        &self,
+        bundle: &super::SealedVaultBundle,
+        pads: &super::SealedKeyPads,
+        holder: Destination,
+        request: AuthorityEntryHash,
+        grant: &super::SealedPublicationGrant,
+    ) -> Result<(bool, LatestRead)> {
+        self.read_latest_for_request_using(bundle, pads, holder, request, Some(grant))
+    }
+
+    #[cfg(feature = "sync")]
+    fn read_latest_for_request_using(
+        &self,
+        bundle: &super::SealedVaultBundle,
+        pads: &super::SealedKeyPads,
+        holder: Destination,
+        request: AuthorityEntryHash,
+        grant: Option<&super::SealedPublicationGrant>,
+    ) -> Result<(bool, LatestRead)> {
         let me = self.machine_secret_outside_txn()?.machine;
-        let opened = self.open_bundle_to_publish(bundle, holder, Some(request));
+        let opened = match grant {
+            Some(grant) => self.open_bundle_to_publish_with_grant(bundle, holder, request, grant),
+            None => self.open_bundle_to_publish(bundle, holder, Some(request)),
+        };
         let named = opened
             .as_ref()
             .is_ok_and(|(opened, _)| opened.publisher == me && opened.request == Some(request));
@@ -312,7 +341,10 @@ impl Vault {
         };
         let read = LatestRead::Read {
             bundle: CapsuleRead::of_publication(&opened),
-            pads: CapsuleRead::of_publication(&self.open_pads_to_publish(pads, Some(request))),
+            pads: CapsuleRead::of_publication(&match grant {
+                Some(grant) => self.open_pads_to_publish_with_grant(pads, holder, request, grant),
+                None => self.open_pads_to_publish(pads, Some(request)),
+            }),
             awaiting_reader,
         };
         Ok((named, read))

@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::share_travel::BornWith;
+use oneiron_authority::share_travel::BornWith;
 
 /// `vault.shares.revoke`'s answer: the share, its status after the revoke,
 /// and the instant it stopped. A share already revoked answers its first

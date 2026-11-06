@@ -215,7 +215,7 @@ vm_restore_wire_revision = 1
 vm_anchor_wire_revision = 1
 vm_anchor_proxy_revision = 1
 vm_network_revision = 1
-vm_managed_profile_revision = 1
+vm_managed_profile_revision = 2
 # The trusted organ builds capability (FIX 7889, FIX 9344): the revision the
 # pinned vault-init carries when it hands each line of the config drive's
 # trusted-organ-builds to the engine. A fact, never a gate: the emitter names
@@ -435,7 +435,32 @@ cold_boot = "health <= 1 s; an actual vault read still meets its existing gates"
 ram = "256-512 MiB experiment range; hosted sizing unchanged"
 
 [variants.vault.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+builder_commit = "75e8e959545cebb4e02c997c7fa5f7c67f827628"
+engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
+host = "fleet-gce-ci-3.asia-northeast1-b.c.oneiron-ci.internal"
+tools_tree_sha256 = "8a18ff6616c547e81c08eeba661a8e071cf1e7d74744bfa6be8284b1d49151d4"
+packages_lock_sha256 = "ad0743641b75af8a46dad42ed5b4cb7fb0399f1de2b2a9660dfe9eb755d59277"
+oci_index_digest = "sha256:54a6fc7ca22adb230f015bdd6136bf40bce112ce966e799b8419138f886a6a2a"
+oci_manifest_digest = "sha256:bd314d746f7901f6776d23626bcb1e7f7b91329e35e902dac37ab5aa8f3f12f8"
+oci_config_digest = "sha256:02954a241c30cf84d2fdd815a8bc6a0c76af7c97fb086bdd4cfcc1470914df44"
+oci_layer_digest = "sha256:357f23c899df72be829d9e98cc7738138c83e279af26b0c3f607dcdb491880a4"
+oci_layer_diff_id = "sha256:3cff5a874f459b1d911d414f389fd928fbd67a88bf50d6cbacf1d3e30ab3e91f"
+oci_archive_sha256 = "8cef7d37c117d3d29f9faacd480662b2fe5f5d8441cc2b9d2349b1cb02a4c7cb"
+ext4_sha256 = "7367805a960148b03856532a75c184e6e917ece3e27e3503dba037f579e4c361"
+ext4_uuid = "26c1a599-2dbc-5290-8cf3-8608b89b4fbd"
+rootfs_tar_sha256 = "3cff5a874f459b1d911d414f389fd928fbd67a88bf50d6cbacf1d3e30ab3e91f"
+rootfs_members_sha256 = "746f5177df4943c6e5498db88c5bc3714df2a37434a65d2c5a4e86ab19fe48ae"
+compressed_bytes = 261918720
+oci_layer_bytes = 261902093
+unpacked_bytes = 828253513
+rootfs_tar_bytes = 830556160
+sparse_capacity_bytes = 989855744
+ext4_allocated_bytes = 855252992
+builder_peak_rss_bytes = 40156364800
+sbom_sha256 = "da1bc6912b1803e3e59256b90789e2f355e888452f865ff737f263e2c4c04134"
+provenance_sha256 = "679281d27288fee14f16d34a7b17bc223fa12c55571b4499bcf27dec3c51ffa7"
+receipt_sha256 = "2d09cb327bfbf628430bf96f6c52a33b39f725f60bc54155a01ae33a05d9cb8a"
 
 [variants.browser]
 role = "guest agent, fence, stdio relay and both browser engines (Lightpanda, Chromium)"
@@ -451,7 +476,8 @@ cold_boot = "CDP usable <= 2 s"
 ram = "2 GiB runtime default retained (crates/oneiron-server/src/config/browser.rs:63-65)"
 
 [variants.browser.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B OCI acceptance smoke (cand-smoke.sh, kind p5): nelly, 2026-10-23 01:05 JST, fleet job 1023-004220-bc28, run smoke-79a82238e311-1023-010505, SMOKE rc=0 and CAND-SMOKE rc=0, of run p5's archive (sha256 1af51098..., checked after the copy from kel), image sha256:6867151bc39779abb31ccbe8df6fc87f179e69ce5bb80badb3a39caad887d74d (nelly's store id; this output's manifest digest), with the server and the host fence built at engine 79a82238e3. Legs: pack-verify (verified, landlock-container), park, find (Lightpanda), cancel. Lightpanda leg only; peak guest RAM 13641973 B (docker stats). Chromium, Firecracker and cold boot were not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
@@ -492,7 +518,8 @@ cold_boot = "MCP and display usable <= 3 s"
 ram = "3 GiB runtime default retained (crates/oneiron-server/src/config/desktop.rs:33-35)"
 
 [variants.desktop-cua.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B image-legs smoke (harness imglegs/img_legs.py): kel, 2026-10-22 21:36 JST, fleet job 1022-213637-f012, OCI container run with --network none of run p5's image, image sha256:675ecb661643b1d42d85ec7bb0254fa6329afc8f6d4a5d54945e398ed6131fa3 (kel's store id; this output's manifest digest). 7 of 7 legs PASS: image id, MCP initialize on stdio (cua-driver 0.36.0), tools/list (64 tools), the X99 display (Xvfb, openbox, dbus, at-spi), get_screen_size (1366x900), get_desktop_state (image and text). Peak 58.1 MiB (job cgroup). Openbox warns of a missing menu file on stderr, harmlessly. Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
@@ -536,7 +563,8 @@ cold_boot = "helper ready <= 2 s; compilation timed separately"
 ram = "32 GiB memory / 16 GiB scratch retained (crates/oneiron-server/src/config/merge_queue.rs:23-36)"
 
 [variants.checker.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-A acceptance smoke (script checker-smoke/smoke-p5.sh): kel, 2026-10-22 21:4x JST, OCI container run of run p5's image, image sha256:f57f8a42c3a86288694411df755218814c012edaad90f7ad95a533836aff49e8 (kel's store id; this output's manifest digest), against engine 79a82238e3. 5 of 5 legs PASS: image id, contents (Rust 1.96, no rustup), helper hash (75d94024ab2f... in the image and at the source), source copy, and an offline `cargo check --locked --workspace --all-features` (--network none) from a scratch copy of the store, rc=0 in 670 s. Peak RAM not sampled. Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
@@ -581,7 +609,8 @@ cold_boot = "exec usable <= 1 s"
 ram = "explicit 512 MiB - 2 GiB sizes"
 
 [variants.generic-agent.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B image-legs smoke (harness imglegs/img_legs.py): kel, 2026-10-22 21:35 JST, fleet job 1022-213506-506b, OCI container run with --network none of run p5's image, image sha256:02daa36b48650a8fbd6c1e3808e3ab2f0d55640309fa25e4c155e05c10d8abeb (kel's store id; this output's manifest digest). 9 of 9 legs PASS: image id, python3 3.13.5, bun 1.4.3, and for each of tsrs native and tsrs-wasm: --version (tsrs 0.18.0, TypeScript 7.1.0-dev.20260930.4), a clean .ts rc=0, and a bad .ts rc=2 with TS2322. Peak 188.6 MiB (job cgroup). Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"

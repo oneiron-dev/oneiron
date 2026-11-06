@@ -6,7 +6,7 @@
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 //! A value is kept at any depth, and its archive form is flat (FIX 10097, [`tree`]).
 use std::borrow::Cow;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use rmpv::Value as Mp;
 use serde::{Deserialize, Serialize};
@@ -140,12 +140,15 @@ impl ExportBodyFile {
 pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
     entity_type == crate::registry::ENTITY_TYPE_ASSET
         && std::str::from_utf8(body).is_err()
-        && matches!(crate::skill_hub::decode_source_carrier(body), Ok(None))
+        && matches!(
+            crate::store::skill_source_carrier::decode_source_carrier(body),
+            Ok(None)
+        )
         && matches!(
             crate::skill_hub::pack_catalog::decode_source_body(body),
             Ok(None)
         )
-        && !crate::receipt::is_receipt_archive_source(body)
+        && !crate::store::receipt_identity::is_receipt_archive_source(body)
 }
 
 impl ExportBody {
@@ -157,7 +160,7 @@ impl ExportBody {
             };
         }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
-            match crate::skill_hub::decode_source_carrier(bytes) {
+            match crate::store::skill_source_carrier::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {
                     return super::ExportHubSource::from_package(&holder, &package)
                         .map_or(Self::Nulled, |source| Self::HubSource(Box::new(source)));
@@ -173,7 +176,8 @@ impl ExportBody {
             let mut exported = tree::export_value_tree(&value, entity_type, 0);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
-                if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
+                if let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(bytes, true)
+                {
                     export_scope_references(&body, &mut exported);
                     super::export_actor_references::export_actor_references(&body, &mut exported);
                 }
@@ -185,8 +189,10 @@ impl ExportBody {
             // Treating it as arbitrary opaque bytes would null it and make a live
             // edited NOTE's JSON archive impossible to decode on import.
             if entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && let Ok(note) =
-                    crate::note::decode_note_body_using(bytes, crate::note::NoteKind::wire)
+                && let Ok(note) = crate::store::note_body::decode_note_body_using(
+                    bytes,
+                    crate::store::note_body::NoteKind::wire,
+                )
             {
                 export_note_references(&note, &mut exported);
             }
@@ -209,16 +215,51 @@ impl ExportBody {
     }
 
     pub(crate) fn to_bytes(&self) -> Result<Vec<u8>> {
+        // Single code path: the streaming writer below produces exactly
+        // these bytes, so `validate`'s round trip self-checks the streaming
+        // form on every import too (FIX 11180).
+        let mut bytes = Vec::new();
+        self.write_bytes_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// The export bytes written straight to the caller (FIX 11180): the
+    /// MessagePack/Utf8 arms stream their frames with no output Vec, so an
+    /// archive writer carries a large admitted body without reassembling
+    /// it whole. The other arms keep their exact `to_bytes` behavior
+    /// (Pack/HubSource materialize in their own arms, File/Nulled error
+    /// identically). This mirrors the `read`/`with_reader` precedent:
+    /// small callers keep `to_bytes`, writers stream here. The transient
+    /// Mp tree stays: a tree-free encoder would re-implement rmpv width
+    /// framing and risk canonical-byte drift, explicitly out of scope.
+    /// Generic over the writer type because `rmpv::encode::write_value`
+    /// needs a sized writer: callers pass their concrete writer (`Vec`,
+    /// file, buffered stream) and the frames stream into it.
+    pub(crate) fn write_bytes_to<W: Write>(&self, out: &mut W) -> Result<()> {
         match self {
             Self::MessagePack(value) => {
-                let mut bytes = Vec::new();
-                rmpv::encode::write_value(&mut bytes, &value.to_msgpack()?)
+                rmpv::encode::write_value(out, &value.to_msgpack()?)
                     .map_err(|_| invalid("MessagePack encode failed"))?;
-                Ok(bytes)
+                Ok(())
             }
-            Self::Utf8(text) => Ok(text.as_bytes().to_vec()),
-            Self::Pack(value) => value.envelope()?.to_bytes(),
-            Self::HubSource(value) => value.to_bytes(),
+            Self::Utf8(text) => out
+                .write_all(text.as_bytes())
+                .map_err(|_| invalid("export body write failed")),
+            // REVIEW-5164 P1: explicit arms, never via `to_bytes` — the
+            // fallback calling `to_bytes` recursed through this writer
+            // forever for Pack/HubSource/File/Nulled. These arms keep the
+            // exact original behavior (each materializes in its own type's
+            // arm, File/Nulled error identically).
+            Self::Pack(value) => {
+                let bytes = value.envelope()?.to_bytes()?;
+                out.write_all(&bytes)
+                    .map_err(|_| invalid("export body write failed"))
+            }
+            Self::HubSource(value) => {
+                let bytes = value.to_bytes()?;
+                out.write_all(&bytes)
+                    .map_err(|_| invalid("export body write failed"))
+            }
             Self::File(_) => Err(invalid("a file body is read from its archive file")),
             Self::Nulled => Err(invalid(
                 "nulled opaque body needs its owning import adapter",
@@ -316,7 +357,10 @@ fn null_credential_references(value: &mut ExportValue) -> bool {
 
 // The record-position scope stamp is required on every CLAIM; the decoded body
 // proves these top-level positions hold ids, not opaque bytes.
-fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut ExportValue) {
+fn export_scope_references(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+    exported: &mut ExportValue,
+) {
     let ExportValue::Map(entries) = exported else {
         return;
     };
@@ -325,7 +369,9 @@ fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut Export
             continue;
         };
         let id = match key.as_str() {
-            "worldId" => body.world.unwrap_or_else(crate::claim::base_world_id),
+            "worldId" => body
+                .world
+                .unwrap_or_else(oneiron_contracts::claim::base_world_id),
             "scopeFacetId" => body.scope_facet,
             "scopeProjectId" => body.scope_project,
             "scopeRelationshipId" => {
@@ -347,7 +393,7 @@ fn export_scope_references(body: &crate::claim::ClaimBody, exported: &mut Export
 
 // The NOTE codec proves this one top-level binary revision is a reference,
 // not arbitrary payload. The author ref is a hex STRING and stays one.
-fn export_note_references(body: &crate::note::NoteBody, exported: &mut ExportValue) {
+fn export_note_references(body: &crate::store::note_body::NoteBody, exported: &mut ExportValue) {
     if scan_file_content("", &body.source_revision_ref).is_some() {
         return;
     }
@@ -390,16 +436,23 @@ fn export_substrate_reference(value: &Mp, exported: &mut ExportValue) {
 // binary reference fields. An equally named field in arbitrary evidence is
 // still subject to ordinary opaque-byte nulling.
 fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
-    let Ok(claim) = crate::claim::decode_claim_body(bytes, true) else {
+    let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(bytes, true) else {
         return;
     };
-    if claim.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE {
+    if claim.predicate != crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE {
         return;
     }
-    let Ok(record) = crate::provenance::decode_edge_provenance_body(&claim.value) else {
+    let Ok(record) =
+        crate::write_envelope::provenance::codec::decode_edge_provenance_body(&claim.value)
+    else {
         return;
     };
-    if crate::provenance::resolve_persisted_actor_class(&record, claim.evidence.as_ref()).is_err() {
+    if crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(
+        &record,
+        claim.evidence.as_ref(),
+    )
+    .is_err()
+    {
         return;
     }
     let ExportValue::Map(entries) = exported else {
@@ -487,7 +540,7 @@ fn reference_field(key: &str, bytes: &[u8], entity_type: u8, depth: usize) -> bo
         return false;
     }
     match key {
-        "subj" => crate::claim::ClaimSubject::decode(bytes).is_ok(),
+        "subj" => crate::write_envelope::claim_body::ClaimSubject::decode(bytes).is_ok(),
         "actor_entity_ref" => <[u8; 16]>::try_from(bytes)
             .ok()
             .is_some_and(|id| crate::entity_id::EntityId::from_bytes(id).is_ok()),

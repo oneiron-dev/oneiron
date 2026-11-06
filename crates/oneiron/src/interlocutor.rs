@@ -13,13 +13,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::conversation::ContainerAttendee;
+use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment};
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
 use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
 
 /// Display label for a supplied voice roster that could not be resolved. The
 /// entry exists so an unresolvable roster narrows disclosure instead of
@@ -672,6 +672,17 @@ impl Vault {
                                 &record.counterparty,
                                 record.first_touch,
                             )?
+                        }
+                        // FIX 9142 (L02 YES 12:33, reshaped per #4502 blind
+                        // P1s rounds 1+2 REVIEW-4502.md): Active-but-unadmitted
+                        // keeps an Unknown in the set so disclosure
+                        // enforcement still counts the party, stamped with the
+                        // caller-supplied counterparty fallback exactly like
+                        // the no-record and Revoked arms below, so the three
+                        // cases are observationally identical. No member hex
+                        // is echoed.
+                        Some((_, record)) if record.status == CounterpartyContactStatus::Active => {
+                            Interlocutor::unknown(counterparty.clone(), false)
                         }
                         _ => Interlocutor::unknown(counterparty.clone(), false),
                     }

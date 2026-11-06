@@ -16,9 +16,9 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 
-/// Each record one pact delivered at one epoch, with the world it sits in
-/// (16 raw bytes; empty for base reality). Key: hex64 (pact) ":" hex16
-/// (epoch) ":" hex32 (record). Read only here.
+/// Each record one pact delivered at one consent epoch, with its native
+/// admission metadata and world. Key: hex64 (pact) ":" hex16 (epoch)
+/// ":" hex32 (record). Read only here.
 const DELIVERED: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_DELIVERED_RECORD);
 
@@ -64,11 +64,9 @@ pub(crate) fn split_recipient_copies_in_txn(
             .ok()
             .filter(|id| id.to_hex() == record)
             .ok_or_else(corrupt)?;
-        let world = match <[u8; 16]>::try_from(place.as_slice()) {
-            Ok(bytes) => EntityId::from_bytes(bytes).map_err(|_| corrupt())?,
-            Err(_) if place.is_empty() => base,
-            Err(_) => return Err(corrupt()),
-        };
+        let world = super::delivery_record::decode_delivered_record(&place)?
+            .world
+            .unwrap_or(base);
         if epoch > epoch_cutoff
             || !wanted.contains(&record)
             || worlds

@@ -25,6 +25,8 @@ impl Store {
                 "retrieval end outcome skipped inside active write transaction",
             ));
         }
+        // Its runs' rows may still be queued detached writes (FIX 12023).
+        self.wait_for_deferred_commits();
         let contributing: HashSet<_> = outcome.retrieval_run_ids.iter().copied().collect();
         if contributing.len() != outcome.retrieval_run_ids.len() {
             return Err(Error::InvalidConfig(

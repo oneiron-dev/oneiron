@@ -21,11 +21,11 @@ use crate::dreamer_wake::follower::{
     Receipt, Sizing, Writer,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakeRecipePolicy};
-use crate::llm::{
-    DurableStepContext, DurableStepError, LlmRequest, LlmResponse, ModelLocality, StepOutcome,
-    call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result};
+use oneiron_model::llm::{LlmRequest, LlmResponse, ModelLocality};
 
 /// Why a follower call parks on a deterministic fallback.
 const FOLLOWER_FALLBACK: &str = "follower call requires a model reading";
@@ -332,7 +332,9 @@ impl ConsolidationExecutor<'_> {
                 )));
             }
             Err(error) if output::refused_request(&error) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &error {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
                     charges.record_usage(usage);
                 }
                 return hand_back(leg, work, charges);
@@ -513,7 +515,9 @@ impl ConsolidationExecutor<'_> {
             // A fold the provider refuses as a request cannot shrink the
             // prefix: every owed span goes back to its own rung.
             Err(error) if output::refused_request(&error) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &error {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
                     charges.record_usage(usage);
                 }
                 hand_back_owed(leg, charges)

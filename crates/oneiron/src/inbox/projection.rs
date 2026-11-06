@@ -5,16 +5,15 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::calendar::outcome::{DueOutcomeCheckIn, check_in_is_still_due};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    PREDICATE_CONFLICT_OPEN,
-};
-use crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::gate::GateReasonCode;
+use crate::store::gate_reason::GateReasonCode;
+use crate::store::plugin_section_predicate::PREDICATE_PLUGIN_SECTION_INSTALL;
 use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use crate::write_envelope::claim_predicate::PREDICATE_CONFLICT_OPEN;
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 use super::model::{
     INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY, INBOX_SUBCLUSTER_MIN_MEMBERS,
@@ -89,7 +88,7 @@ pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     normalized.evidence = None;
     normalized.source = None;
     normalized.stale = false;
-    let encoded = crate::claim::encode_claim_body(&normalized)?;
+    let encoded = crate::write_envelope::claim_body::encode_claim_body(&normalized)?;
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.inbox.claim_hash.v1");
     hasher.update(&encoded);

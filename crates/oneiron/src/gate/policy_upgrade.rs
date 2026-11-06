@@ -112,6 +112,7 @@ fn restage_claim(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
         super::GateWriteMode {
@@ -192,6 +193,7 @@ fn install_seeded_in_txn(
                 end: header.occurred_end,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,

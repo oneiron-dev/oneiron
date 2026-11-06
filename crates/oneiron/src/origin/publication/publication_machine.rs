@@ -3,14 +3,15 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
 use crate::origin::lfs::LfsOid;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;

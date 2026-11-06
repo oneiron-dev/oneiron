@@ -107,6 +107,8 @@ impl DesktopSession {
             press_holds: super::press_holds::PressHolds::default(),
             unread: None,
             input_sent: false,
+            input_unknown: false,
+            input_delivered: Cell::new(0),
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,

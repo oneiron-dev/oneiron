@@ -10,9 +10,10 @@ use std::collections::{HashMap, VecDeque};
 
 use super::BatchOp;
 use crate::Vault;
-use crate::bm25::AnalyzedText;
 use crate::entity_id::EntityId;
-use crate::hnsw::InsertPlan;
+use crate::hnsw::InsertPlanSearch;
+use crate::store::text_index::AnalyzedText;
+use crate::store::vector_insert_plan::InsertPlan;
 
 #[derive(Default)]
 pub(super) struct PreparedIndexWork {
@@ -29,7 +30,8 @@ impl PreparedIndexWork {
         for op in ops {
             match op {
                 BatchOp::Text { id, fields } => {
-                    let analyzed = crate::bm25::analyze_text(&vault.analyzer, fields).ok();
+                    let analyzed =
+                        crate::store::text_index::analyze_text(&vault.analyzer, fields).ok();
                     prepared.text.entry(*id).or_default().push_back(analyzed);
                 }
                 // Only the batch's first vector can meet the graph it was

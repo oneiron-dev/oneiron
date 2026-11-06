@@ -2,9 +2,6 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
-use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
-use crate::memory::{MemoryError, MemoryResult};
 use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::store::Store;
@@ -13,26 +10,17 @@ use crate::{
     EntityId, TimeRange,
     error::{Error, Result},
 };
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use rmpv::Value;
 use std::collections::BTreeSet;
 #[cfg(test)]
 mod tests;
 
-/// Reserved value for base reality. Defined in `oneiron-contracts`.
-pub use oneiron_contracts::claim::base_world_id;
-/// Reserved project value; projects are ids, not a new engine entity kind.
-pub fn default_project_id() -> EntityId {
-    EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2])
-        .expect("project scope id")
-}
-/// Stable substrate mask identity. Replaying PERSON creation mints the same mask.
-pub fn substrate_facet_id(person: EntityId) -> Result<EntityId> {
-    EntityId::derive(PERSON_SUBSTRATE_FACET, &[person.as_bytes()])
-}
-/// Engine-internal predicate of the vault default facet: subject the owner
-/// PERSON, value the FACET id as 16 binary bytes. A later set supersedes the
-/// earlier one, and claims sync, so every device reads the same default.
-pub const PREDICATE_VAULT_DEFAULT_FACET: &str = "vault.default_facet";
+use crate::write_envelope::claim_body::scope_stamp::{id_value, scope_id, subject_facet};
+pub use crate::write_envelope::claim_body::{
+    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+};
 
 /// The facet a write stamps when no mask is active: the newest active
 /// [`PREDICATE_VAULT_DEFAULT_FACET`] claim on the owner, else the owner's
@@ -156,48 +144,48 @@ impl crate::Vault {
     }
 }
 
-pub(super) fn subject_facet(subject: ClaimSubject) -> Result<EntityId> {
-    substrate_facet_id(match subject {
-        ClaimSubject::Entity(id) => id,
-        ClaimSubject::Edge { source, .. } => source,
-    })
-}
-pub(super) fn scope_id(value: &Value) -> Result<EntityId> {
-    let Value::Binary(bytes) = value else {
-        return Err(Error::InvalidClaimBody("scope id must be binary"));
-    };
-    EntityId::from_bytes(
-        bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| Error::InvalidClaimBody("scope id must be 16 bytes"))?,
-    )
-    .map_err(|_| Error::InvalidClaimBody("invalid scope id"))
-}
-pub(super) fn id_value(id: EntityId) -> Value {
-    Value::Binary(id.as_bytes().to_vec())
+/// The record-position Scope projection of a stored claim.
+pub trait ClaimRecordScope {
+    fn record_scope(&self, verb_class: &str) -> Scope;
 }
 
-impl ClaimBody {
+impl ClaimRecordScope for ClaimBody {
     /// The positively stamped record position used by the common Scope evaluator.
-    pub fn record_scope(&self, verb_class: &str) -> Scope {
-        let sensitivity = match super::claim_sensitivity_band(self) {
-            Some(0) => SensitivityCeiling::AtMost(Sensitivity::Public),
-            Some(1) => SensitivityCeiling::AtMost(Sensitivity::Private),
-            Some(2) => SensitivityCeiling::AtMost(Sensitivity::Sensitive),
-            Some(3) => SensitivityCeiling::AtMost(Sensitivity::Restricted),
-            _ => SensitivityCeiling::Bottom,
-        };
-        Scope {
-            worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(
-                self.world.unwrap_or_else(base_world_id),
-            )])),
-            facets: ScopeAxis::Some(BTreeSet::from([ScopeId(self.scope_facet)])),
-            bands: ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_CLAIM])),
-            audience: ScopeAxis::Some(BTreeSet::from([ScopeId(self.scope_project)])),
-            verbs: ScopeAxis::Some(BTreeSet::from([verb_class.to_owned()])),
-            sensitivity,
-        }
+    fn record_scope(&self, verb_class: &str) -> Scope {
+        record_scope_at(
+            self.world.unwrap_or_else(base_world_id),
+            self.scope_facet,
+            self.scope_project,
+            super::claim_sensitivity_band(self),
+            verb_class,
+        )
+    }
+}
+
+/// [`ClaimBody::record_scope`] from the stamps it reads: the claim's world
+/// (base reality as its id), its facet and project stamps, and its
+/// sensitivity band (`None` for an unreadable one).
+pub(crate) fn record_scope_at(
+    world: EntityId,
+    facet: EntityId,
+    project: EntityId,
+    band: Option<u8>,
+    verb_class: &str,
+) -> Scope {
+    let sensitivity = match band {
+        Some(0) => SensitivityCeiling::AtMost(Sensitivity::Public),
+        Some(1) => SensitivityCeiling::AtMost(Sensitivity::Private),
+        Some(2) => SensitivityCeiling::AtMost(Sensitivity::Sensitive),
+        Some(3) => SensitivityCeiling::AtMost(Sensitivity::Restricted),
+        _ => SensitivityCeiling::Bottom,
+    };
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(world)])),
+        facets: ScopeAxis::Some(BTreeSet::from([ScopeId(facet)])),
+        bands: ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_CLAIM])),
+        audience: ScopeAxis::Some(BTreeSet::from([ScopeId(project)])),
+        verbs: ScopeAxis::Some(BTreeSet::from([verb_class.to_owned()])),
+        sensitivity,
     }
 }
 

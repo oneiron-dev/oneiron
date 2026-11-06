@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 
 use heed::RoTxn;
 use loro::checkpoint::{Capture, Classify, Field, OwnerId};
-use loro::{LoroDoc, LoroValue, ValueOrContainer};
+use loro::json::{JsonOpContent, MapOp};
+use loro::{ContainerID, ContainerType, LoroDoc, LoroValue, ValueOrContainer};
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
@@ -36,8 +37,9 @@ pub(crate) struct CarrierInventory {
 impl CarrierInventory {
     /// The inventory of window `doc`, read before anything rewrites it: its
     /// current rows, and every value its retained history and shallow root
-    /// hold. A document the checkpoint does not take is read at its current
-    /// rows alone, as before, warned with no byte of it.
+    /// hold. A document the checkpoint does not take falls back to reading
+    /// its retained ops and shallow root directly (FIX 10681), warned with
+    /// no byte of it.
     pub(crate) fn of_window(doc: &LoroDoc) -> Self {
         let mut inventory = Self::default();
         for root in ID_ROOTS {
@@ -54,6 +56,7 @@ impl CarrierInventory {
             Capture::Classified(parts) => parts,
             Capture::Unclassified(_) => {
                 tracing::warn!("a window history the checkpoint does not take is read at its rows");
+                inventory.take_history(doc);
                 return inventory;
             }
         };
@@ -77,6 +80,44 @@ impl CarrierInventory {
             }
         }
         inventory
+    }
+
+    /// Takes every row the retained history and the shallow root of a
+    /// window the checkpoint does not take hold (FIX 10681): each insert and
+    /// deletion of its id roots since the shallow cut, and the shallow
+    /// root's own live rows, read from an isolated snapshot checked out at
+    /// those frontiers. A pad that lived only there would else tear unchecked
+    /// (FIX 3061).
+    fn take_history(&mut self, doc: &LoroDoc) {
+        let start = doc.shallow_since_vv().to_vv();
+        let history = doc.export_json_updates(&start, &doc.oplog_vv());
+        for op in history.changes.into_iter().flat_map(|change| change.ops) {
+            let Some(root) = ID_ROOTS
+                .iter()
+                .find(|root| op.container == ContainerID::new_root(root, ContainerType::Map))
+            else {
+                continue;
+            };
+            match op.content {
+                JsonOpContent::Map(MapOp::Insert { key, value }) => {
+                    self.take(root, &key, Some(&value));
+                }
+                JsonOpContent::Map(MapOp::Delete { key }) => self.take(root, &key, None),
+                _ => {}
+            }
+        }
+        if doc.is_shallow()
+            && let Ok(snapshot) = doc.export(loro::ExportMode::Snapshot)
+            && let Ok(root) = LoroDoc::from_snapshot(Zeroizing::new(snapshot).as_slice())
+            && root.checkout(&doc.shallow_since_frontiers()).is_ok()
+        {
+            for name in ID_ROOTS {
+                root.get_map(name).for_each(|key, value| match value {
+                    ValueOrContainer::Value(value) => self.take(name, key, Some(&value)),
+                    ValueOrContainer::Container(_) => self.take(name, key, None),
+                });
+            }
+        }
     }
 
     /// Takes the row `key` of root map `root`, and its value when that is a

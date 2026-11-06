@@ -15,10 +15,10 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
-use crate::habit::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 /// TASK-body subkind for sends executed by a connector actor.
 pub const CONNECTOR_SEND_TASK_SUBKIND: &str = "connector_send";
@@ -98,6 +98,11 @@ pub(super) struct ConnectorSendTaskBody {
     /// The ambient send the interrupt degrades to (FIX 7962).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) ambient_alternative: Option<super::OutboundAmbientAlternative>,
+    /// FIX 12100's selection, frozen at the schedule chokepoint: the
+    /// executor replays it instead of reselecting without it. Additive and
+    /// elided when absent, so every pre-change TASK body hydrates unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) selection: Option<super::OutboundSendSelection>,
     pub(super) occurred_at: u64,
 }
 
@@ -146,7 +151,7 @@ pub struct ConnectorSendTask {
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
     /// executor cannot derive a local minute and fails closed.
     pub utc_offset_minutes: Option<i16>,
-    /// Provenance label only. Execution never consults a timezone database.
+    /// Frozen IANA label; the delivery door re-resolves it at delivery time.
     pub iana_timezone: Option<String>,
     pub human_explicit_instant: bool,
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
@@ -162,6 +167,9 @@ pub struct ConnectorSendTask {
     pub deadline_at: Option<u64>,
     /// The ambient send the interrupt degrades to (FIX 7962).
     pub ambient_alternative: Option<super::OutboundAmbientAlternative>,
+    /// FIX 12100's selection, frozen at the schedule chokepoint and replayed
+    /// by the executor; `None` dispatches as every schedule did before it.
+    pub selection: Option<super::OutboundSendSelection>,
     pub occurred_at: u64,
 }
 
@@ -192,14 +200,14 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
-    schedule_context: &crate::memory::OutboundScheduleContext,
+    schedule_context: &crate::delivery_window::OutboundScheduleContext,
     continuation: &super::OutboundScheduleContinuation,
     calendar_invite: Option<&CalendarInvitePayload>,
     counterparty_ref: Option<&str>,
     occurred_at: u64,
 ) -> Result<(), Error> {
     if let Some(party) = counterparty_ref {
-        crate::comm::validate_comm_party_key(party)?;
+        crate::write_envelope::communication_record::validate_key_string(party)?;
         if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "noncanonical counterparty-bound connector verb",
@@ -238,6 +246,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         calendar_invite: calendar_invite.cloned(),
         deadline_at: continuation.deadline_at,
         ambient_alternative: continuation.ambient_alternative.clone(),
+        selection: continuation.selection.clone(),
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -329,7 +338,9 @@ impl Vault {
         if !has_connector_send_subkind(body_bytes)? {
             return Ok(None);
         }
-        if crate::habit::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
+        if crate::write_envelope::task_body::task_role_from_body_bytes(body_bytes)?
+            != TaskRole::Task
+        {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send must use the Task role",
             )));
@@ -357,11 +368,9 @@ impl Vault {
                 )));
             }
         };
-        if body
-            .counterparty_ref
-            .as_deref()
-            .is_some_and(|party| crate::comm::validate_comm_party_key(party).is_err())
-        {
+        if body.counterparty_ref.as_deref().is_some_and(|party| {
+            crate::write_envelope::communication_record::validate_key_string(party).is_err()
+        }) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "invalid connector send counterparty",
             )));
@@ -423,6 +432,7 @@ impl Vault {
             calendar_invite: body.calendar_invite,
             deadline_at: body.deadline_at,
             ambient_alternative: body.ambient_alternative,
+            selection: body.selection,
             occurred_at: body.occurred_at,
         }))
     }

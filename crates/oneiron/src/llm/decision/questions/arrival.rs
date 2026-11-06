@@ -14,6 +14,7 @@ use crate::gate::PolicyManifestResolution;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
+pub(super) use crate::store::decision_question_watches::{RESTS_ON, UNIT_WATCH};
 use crate::{EntityId, Error, Result};
 
 /// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
@@ -47,13 +48,8 @@ impl SideKey for WatchKey {
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
-pub(super) const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
-    SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
 pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_PENDING);
-/// Key: source + question + root unit.
-pub(super) const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
-    SideTable::new(&side_table::TYPED_QUESTION_RESTS_ON);
 pub(super) const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_ROOT_SOURCES);
 
@@ -169,25 +165,6 @@ fn predicate(source: &OutcomeSource) -> &str {
     }
 }
 
-/// Whether a question watches `unit` for arrivals. A batch that writes such a
-/// unit wakes the question pump after it commits, as a claim write does.
-pub(crate) fn unit_watched_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    unit: &EntityId,
-) -> Result<bool> {
-    Ok(UNIT_WATCH
-        .iter_from(store, txn, unit.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-        || RESTS_ON
-            .iter_from(store, txn, unit.as_bytes())?
-            .next()
-            .transpose()?
-            .is_some())
-}
-
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
 pub(crate) fn project_arrivals_in_txn(
@@ -197,6 +174,18 @@ pub(crate) fn project_arrivals_in_txn(
 ) -> Result<usize> {
     enqueue_arrivals(store, txn, ids)?;
     project(store, txn, ids, None)
+}
+
+/// Queues the batch's actual record and topology changes while projecting
+/// outcome facts only from the rows the batch materialized.
+pub(crate) fn project_arrivals_for_changes_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    materialized_ids: &std::collections::BTreeSet<EntityId>,
+    changed_ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<usize> {
+    enqueue_arrivals(store, txn, changed_ids)?;
+    project(store, txn, materialized_ids, None)
 }
 
 fn enqueue_arrivals(
@@ -473,7 +462,7 @@ pub(super) fn evaluate_fact(
     }
     let value = match &binding.source {
         OutcomeSource::Stage { campaign } => {
-            let stage = crate::campaign::claims::decode_crm_stage_value(&body.value)?;
+            let stage = crate::write_envelope::cohort_claims::decode_crm_stage_value(&body.value)?;
             if stage.campaign_ref.to_hex() != *campaign {
                 return Ok(None);
             }

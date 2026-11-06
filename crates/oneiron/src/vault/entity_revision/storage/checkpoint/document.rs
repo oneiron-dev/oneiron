@@ -7,7 +7,9 @@
 //! names no one. Any other kind, an unregistered one, a NOTE pointer or a
 //! spelling the core does not give back, two kinds in one history, a commit
 //! message and an operation outside the document's record and text fields
-//! keep the whole document under the vault-wide seal, its reason named.
+//! keep the whole document under the vault-wide seal, its reason named. An
+//! author carrier's document is not split here at all: the getter places it
+//! whole as its actor's actor-keyed row ([`check_carrier`], FIX 17143).
 //!
 //! No public revision ref changes (lead pick (b)). A ref hashed over its
 //! retained frontier stays, as the split keeps every operation. A ref hashed
@@ -30,14 +32,14 @@ use loro::{
 
 use super::super::super::{RevisionRef, pending_index, phonetic};
 use super::super::{
-    DOC, FRONTIER, IDENTITY, RevisionState, STATE, doc_raw, reference, text_fields,
+    DOC, FRONTIER, IDENTITY, RevisionState, STATE, common_binding, doc_raw, reference, text_fields,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, short_id_content_hash};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{join_core_row, split_core_row};
 use crate::note::decode_note_body_in_txn;
-use crate::provenance::decode_model_entity_body;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::store::ManifestDbs;
@@ -48,6 +50,7 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, RoundTripPolicy, RowLocator, RowPart,
     TypedRow, Unresolved,
 };
+use crate::write_envelope::provenance::actor_substrate::decode_model_entity_body;
 
 /// The round trip a revision document takes (Engine R1): the same history,
 /// in a container Loro may encode anew. Every ref the ledger keeps hashes a
@@ -248,6 +251,9 @@ struct History {
 /// A history read so far.
 #[derive(Default)]
 struct Reading {
+    /// Whether each raw row must be an author carrier, read whole and never
+    /// split ([`check_carrier`]), instead of a row the allowlist splits.
+    carriers: bool,
     kind: Option<u8>,
     raws: Vec<Vec<u8>>,
     /// The text fields the recorded rows' bodies hold.
@@ -300,7 +306,13 @@ impl Reading {
         if entity_type_registry_entry(kind).is_none() {
             return Err(Unresolved::UnknownKind);
         }
-        split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        if self.carriers {
+            if author_carrier_actor(raw).is_none() {
+                return Err(Unresolved::ActorSplit(UNSUPPORTED_KIND));
+            }
+        } else {
+            split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        }
         if *self.kind.get_or_insert(kind) != kind {
             return Err(Unresolved::ActorSplit(MIXED_KINDS));
         }
@@ -327,9 +339,13 @@ impl Reading {
 /// Reads every operation of `doc`'s history, not only the values that stand
 /// now. A commit message refuses: the ledger commits with none.
 fn read_history(doc: &LoroDoc) -> Admission<History> {
+    read_history_of(doc, Reading::default())
+}
+
+/// [`read_history`], each raw row read as `reading` reads it.
+fn read_history_of(doc: &LoroDoc, mut reading: Reading) -> Admission<History> {
     let start = VersionVector::default();
     let all = doc.export_json_updates_without_peer_compression(&start, &doc.oplog_vv());
-    let mut reading = Reading::default();
     for change in &all.changes {
         if change.msg.is_some() {
             return Err(Unresolved::ActorSplit(COMMIT_MESSAGE));
@@ -448,21 +464,46 @@ impl Bindings {
     /// it stays as it is under every opening of the document's actors, and
     /// each ref its state, its reverse rows and its `staged` inputs name is
     /// one of its retained frontiers.
-    fn keeps(&self, id: &EntityId, doc: &LoroDoc, staged: &[RevisionRef]) -> Admission<()> {
+    fn keeps(
+        &self,
+        id: &EntityId,
+        doc: &LoroDoc,
+        common: Option<&crate::entity_doc::EntityDoc>,
+        staged: &[RevisionRef],
+    ) -> Result<Admission<()>> {
         let unproved = Unresolved::ActorSplit(BINDING_UNPROVED);
-        let bound = self.entities.get(id).ok_or(unproved)?;
-        let state = bound.state.ok_or(unproved)?;
+        let Some(bound) = self.entities.get(id) else {
+            return Ok(Err(unproved));
+        };
+        let Some(state) = bound.state else {
+            return Ok(Err(unproved));
+        };
         let mut retained = BTreeSet::new();
         for (revision, encoded) in &bound.frontiers {
-            keeps_binding(id, doc, *revision, encoded)?;
+            if binding_origin(id, doc, *revision, encoded).is_some() {
+                if let Err(reason) = keeps_binding(id, doc, *revision, encoded) {
+                    return Ok(Err(reason));
+                }
+            } else {
+                // An invalid generic encoding keeps its original unclassified outcome.
+                if Frontiers::decode(encoded).is_err() {
+                    return Ok(Err(unproved));
+                }
+                let Some(common) = common else {
+                    return Ok(Err(unproved));
+                };
+                if !common_binding(id, common, *revision, encoded)? {
+                    return Ok(Err(unproved));
+                }
+            }
             retained.insert(*revision);
         }
         let mut named = state.iter().chain(&bound.identities).chain(staged);
-        if named.all(|revision| retained.contains(revision)) {
+        Ok(if named.all(|revision| retained.contains(revision)) {
             Ok(())
         } else {
             Err(unproved)
-        }
+        })
     }
 }
 
@@ -501,7 +542,10 @@ fn project(
         return Ok(Err(reason));
     }
     let staged = staged_revisions(dbs, txn, &row.key)?;
-    Ok(bindings.keeps(&row.key, &doc, &staged).map(|()| split))
+    let common = crate::entity_doc::record_document(dbs, txn, &row.key, None)?;
+    Ok(bindings
+        .keeps(&row.key, &doc, common.as_ref(), &staged)?
+        .map(|()| split))
 }
 
 /// A revision document's split, with the document and its history: a full
@@ -557,6 +601,22 @@ fn staged_revisions(
 pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     rows::check_row(DOC, at, value)?;
     match full_doc(value).and_then(|doc| read_history(&doc)) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(rows::bad_part()),
+    }
+}
+
+/// Refuses `value` at `at` unless it is an author carrier's revision
+/// document (FIX 17143): its key an entity, its bytes a full history whose
+/// every raw row is a carrier. Such a document is an actor's actor-keyed
+/// row, restored whole, never split.
+pub(super) fn check_carrier(at: &RowLocator, value: &[u8]) -> Result<()> {
+    rows::check_row(DOC, at, value)?;
+    let carriers = Reading {
+        carriers: true,
+        ..Reading::default()
+    };
+    match full_doc(value).and_then(|doc| read_history_of(&doc, carriers)) {
         Ok(_) => Ok(()),
         Err(_) => Err(rows::bad_part()),
     }
@@ -626,6 +686,11 @@ pub(super) fn preflight(
 fn staged_document(opened: &OpenedOwnerRows) -> Result<Option<EntityId>> {
     let mut entity = None;
     for part in &opened.rows {
+        // An author carrier's document is an actor-keyed row: its slot
+        // names no entity, and no binding of it is checked (FIX 17143).
+        if matches!(part, RowPart::ActorKeyed { .. }) {
+            continue;
+        }
         let at = part.at();
         if at.in_table(DOC.decl()) && entity.replace(table_key(DOC, at)?).is_some() {
             return Err(rows::bad_part());
@@ -668,11 +733,22 @@ pub(super) fn finish_restore_in_txn(
     let doc = full_doc(&bytes).map_err(|_| rows::bad_part())?;
     let state = STATE.get(dbs, txn, id)?.filter(|state| state.has_doc);
     let state = state.ok_or_else(rows::bad_part)?;
+    let common = crate::entity_doc::record_document(dbs, txn, id, None)?;
     let mut retained = BTreeSet::new();
     for ((_, revision), encoded) in FRONTIER.scan_from(dbs, txn, id.as_bytes())? {
         let reverse = IDENTITY.get(dbs, txn, &revision)?;
         let revision = RevisionRef(revision);
-        let bound = binding_origin(id, &doc, revision, &encoded).is_some();
+        let bound = if binding_origin(id, &doc, revision, &encoded).is_some() {
+            true
+        } else {
+            if Frontiers::decode(&encoded).is_err() {
+                return Err(rows::bad_part());
+            }
+            match common.as_ref() {
+                Some(common) => common_binding(id, common, revision, &encoded)?,
+                None => false,
+            }
+        };
         if !bound || reverse != Some(*id) {
             return Err(rows::bad_part());
         }

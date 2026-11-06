@@ -2,7 +2,6 @@
 
 use super::Vault;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
-use crate::bm25;
 use crate::config::VaultConfig;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result, StoreError};
@@ -118,7 +117,7 @@ pub struct VaultDoctorDbManifestReport {
 pub(super) struct Bm25FieldSchemaRecord {
     pub(super) field_id: u16,
     pub(super) channel_name: &'static str,
-    pub(super) length_policy: bm25::FieldLengthPolicy,
+    pub(super) length_policy: crate::config::bm25::FieldLengthPolicy,
     pub(super) permits_zero_doc_field_length: bool,
     pub(super) postings_value_format_version: u16,
 }
@@ -255,13 +254,13 @@ fn doctor_db_manifest(
 /// Scoring-only knobs such as weights and `b` are deliberately excluded.
 fn bm25_field_schema_hash() -> [u8; 32] {
     bm25_field_schema_hash_for_records(&bm25_field_schema_records(
-        &bm25::Bm25Config::default(),
-        bm25::POSTINGS_VALUE_FORMAT_VERSION,
+        &crate::config::bm25::Bm25Config::default(),
+        crate::store::text_index::POSTINGS_VALUE_FORMAT_VERSION,
     ))
 }
 
 pub(super) fn bm25_field_schema_records(
-    config: &bm25::Bm25Config,
+    config: &crate::config::bm25::Bm25Config,
     postings_value_format_version: u16,
 ) -> Vec<Bm25FieldSchemaRecord> {
     AnalyzerChannel::ALL_V1
@@ -353,7 +352,7 @@ fn text_index_residual_rows_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Resul
 /// no residual rows in any text DB. Used by `Vault::open` to decide
 /// whether bypassing the manifest handshake is safe.
 pub(super) fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    if bm25::read_total_docs(store, txn)? != 0 {
+    if crate::store::text_index::read_total_docs(store, txn)? != 0 {
         return Ok(false);
     }
     text_index_residual_rows_empty(store, txn)
@@ -391,7 +390,7 @@ pub(crate) fn verify_text_index_manifest(
     let current_field_schema_hash = bm25_field_schema_hash();
 
     let rtxn = store.env.read_txn()?;
-    let total_docs = bm25::read_total_docs(store, &rtxn)?;
+    let total_docs = crate::store::text_index::read_total_docs(store, &rtxn)?;
     if total_docs == 0 && !text_index_residual_rows_empty(store, &rtxn)? {
         return Err(Error::CorruptedIndex(
             "text index sentinel missing with residual rows",
@@ -435,7 +434,7 @@ pub(super) fn handshake_text_index_manifest(
     // the empty-index rewrite branch mutates. Take a read txn first and
     // upgrade only when we actually need to write.
     let rtxn = store.env.read_txn()?;
-    let total_docs = bm25::read_total_docs(store, &rtxn)?;
+    let total_docs = crate::store::text_index::read_total_docs(store, &rtxn)?;
 
     if total_docs == 0 {
         // The `total_docs` sentinel alone isn't sufficient to declare the

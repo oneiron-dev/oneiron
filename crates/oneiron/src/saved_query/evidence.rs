@@ -45,64 +45,10 @@ pub struct RelevantEvidence {
     pub scope_membership: QueryScope,
 }
 
-/// The `Of360DerivationEnvelope` shape, mirrored for saved-query verdicts.
-///
-/// Field-for-field the same envelope `extraction_eval.rs` established. It is
-/// copied rather than shared on purpose: generalizing that type into a common
-/// envelope would make one struct answerable to two evolving derivations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedQueryDerivationEnvelope {
-    /// Hex evidence hash the verdict was derived from.
-    pub content_hash: String,
-    /// Model id for a judged verdict, or the matcher kind token otherwise.
-    pub model_id: String,
-    /// Evaluator version token.
-    pub version: String,
-    /// Hex digest of the canonical matcher specification.
-    pub params_hash: String,
-}
+pub use crate::store::query_memos::SavedQueryDerivationEnvelope;
+pub use crate::store::query_memos::VerdictMemoKey;
 
-/// Memo identity: one verdict per (query, entity, evidence).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VerdictMemoKey {
-    /// The saved query.
-    pub query_ref: EntityId,
-    /// The entity evaluated.
-    pub entity_ref: EntityId,
-    /// Hash over the definition version, effective scope, and relevant evidence.
-    pub evidence_hash: [u8; EVIDENCE_HASH_LEN],
-}
-
-/// A stage-2 verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MatchVerdict {
-    /// The entity is a member.
-    Match,
-    /// The entity is not a member.
-    NoMatch,
-}
-
-impl MatchVerdict {
-    /// Wire token for this verdict.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Match => "match",
-            Self::NoMatch => "no_match",
-        }
-    }
-
-    /// Parses a wire token, rejecting anything outside the closed set.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "match" => Some(Self::Match),
-            "no_match" => Some(Self::NoMatch),
-            _ => None,
-        }
-    }
-}
+pub use crate::memory::query_records::MatchVerdict;
 
 /// A verdict plus the reason it was reached.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,44 +70,10 @@ pub struct EvaluationOutcome {
     pub memo_hit: bool,
 }
 
-/// Progress report for a bounded wake batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WakeEvaluationReport {
-    /// Entities evaluated in this batch.
-    pub evaluated: u32,
-    /// Evaluations answered by a memo.
-    pub memo_hits: u32,
-    /// Stage-2 judgements actually executed.
-    pub judges_run: u32,
-    /// Last entity visited when a bound stopped the batch early. `None` means
-    /// the candidate set was exhausted.
-    pub resume_after: Option<EntityId>,
-}
+pub use crate::store::query_health::WakeEvaluationReport;
 
-/// A persisted verdict memo.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerdictMemoRow {
-    /// Memo identity.
-    pub key: VerdictMemoKey,
-    /// Definition version at evaluation time.
-    pub definition_version: u64,
-    /// Memoized verdict.
-    pub verdict: MatchVerdict,
-    /// Memoized justification.
-    pub why: String,
-    /// Every row the evidence was read from (FIX 10089): the query, the
-    /// candidate, each claim, edge target, exemplar, world and facet. The
-    /// erase of any one takes this memo, its `why` included. `None` when the
-    /// set is not known whole, and then every erase takes it.
-    pub source_refs: Option<Vec<EntityId>>,
-    /// Local derivation envelope.
-    pub envelope: SavedQueryDerivationEnvelope,
-    /// Evaluation timestamp.
-    pub evaluated_at: u64,
-}
-
-/// SHA-256-sized evidence hashes, matching CA-01's derivation contract.
-pub const EVIDENCE_HASH_LEN: usize = 32;
+pub use crate::store::query_memos::EVIDENCE_HASH_LEN;
+pub use crate::store::query_memos::VerdictMemoRow;
 
 /// Hashes the definition version, its scope, and the relevant evidence.
 ///

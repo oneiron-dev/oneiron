@@ -23,6 +23,8 @@
 //! the TTL climb over every card. Its output is the nightly review's cards
 //! and DIAGNOSTICs, nothing else.
 
+mod pending;
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +34,7 @@ use super::{
     misalignment_findings, run_loop, silent_findings, unsupported_done_findings,
     widen_denial_findings,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{
@@ -355,14 +357,16 @@ impl Vault {
     /// Queues the agent-health review of the attempt this write settles
     /// (OF-568 L1), in a savepoint of that write: it never fails the write
     /// ([`soft`]). Only an agent dispatch is agent work: a maintenance job,
-    /// this review among them, is never reviewed, so a review never queues
-    /// another. Keyed by the attempt and the lease generation it settled
-    /// under.
+    /// this review among them, is never reviewed. A settling live review
+    /// drains an already retained wake for its target first (FIX 9224).
+    /// Keyed by the attempt and the lease generation it settled under.
     pub(crate) fn enqueue_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
     ) -> Result<()> {
+        self.redrive_feedback_sweep_in_txn(txn, record);
+        pending::drain(self, txn, record);
         if record.kind == MAINTENANCE_QUEUE_KIND || !agent_work(record) {
             return Ok(());
         }
@@ -394,9 +398,14 @@ impl Vault {
     /// (FIX 7869): a wake that finds a review of that generation not yet
     /// running joins it, which reads the newest state when it runs; one that
     /// finds it running joins the review queued behind it, queuing it first
-    /// when there is none. So at most two wait per attempt and generation, a
-    /// joined wake queues nothing, and many live attempts are many parts,
-    /// never one long pass.
+    /// when there is none. A wake that finds that generation's `:next`
+    /// review still waiting, not yet running, queues nothing either
+    /// (FIX 9223): the waiter reads the newest state when it runs, so a
+    /// fresh slot-0 ahead of it would run a review the waiter already makes
+    /// redundant. The waiter itself is never dropped. While both slots run,
+    /// the latest actual wake is retained until a settling slot queues or
+    /// joins a waiting follow-up (FIX 9224). There is no third review slot.
+    /// Many live attempts are many parts, never one long pass.
     pub(crate) fn enqueue_live_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -418,34 +427,8 @@ impl Vault {
             }
         };
         for (attempt, generation) in live {
-            let slot = format!(
-                "{LIVE_KEY}:{}:{generation}",
-                bytes_to_hex_lower(attempt.as_bytes())
-            );
-            let input = HealthReviewInput::Live {
-                attempt,
-                wake: wake.id,
-                generation,
-            };
-            let queue = |savepoint: &mut heed::RwTxn<'_>, key: String| {
-                enqueue(
-                    self,
-                    savepoint,
-                    &input,
-                    Some(wake.id),
-                    key,
-                    wake.run_id.clone(),
-                    now,
-                )
-            };
             soft(self, txn, attempt, |savepoint| {
-                if let EnqueueDreamerAttemptOutcome::Existing(status) =
-                    queue(savepoint, slot.clone())?
-                    && status.attempt.state.is_running()
-                {
-                    queue(savepoint, format!("{slot}:next"))?;
-                }
-                Ok(())
+                pending::enqueue_or_retain(self, savepoint, attempt, generation, wake, now)
             });
         }
         Ok(())

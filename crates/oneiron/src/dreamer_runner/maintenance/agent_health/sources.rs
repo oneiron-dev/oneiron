@@ -72,4 +72,16 @@ impl AgentHealthCard {
         rows.extend(ask.observed_brief.as_ref().map(|pin| pin.task));
         rows
     }
+
+    /// Every reviewer revision this card names: its current
+    /// `reviewer_revision` and each review receipt's (FIX 10434).
+    pub(crate) fn reviewer_revisions(&self) -> BTreeSet<EntityId> {
+        let mut rows: BTreeSet<EntityId> = self.reviewer_revision.iter().copied().collect();
+        rows.extend(
+            self.review_outcomes
+                .iter()
+                .filter_map(|held| held.reviewer_revision),
+        );
+        rows
+    }
 }

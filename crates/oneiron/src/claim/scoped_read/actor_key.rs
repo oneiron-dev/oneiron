@@ -1,7 +1,7 @@
 //! Authenticated identity carried by a scoped read.
 mod weave_admin;
 use crate::EntityId;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// `worlds` as a world-only Scope: that axis kept, every other axis top.
 /// The world checks meet and compare these projections alone (OF-453 B06);
@@ -36,7 +36,7 @@ pub struct ScopedReadActorKey {
     pub(super) proof: Option<crate::authority::VerifiedSlip>,
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
-    authority: Option<crate::federation::Scope>,
+    authority: Option<oneiron_authority::federation::Scope>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -51,7 +51,7 @@ pub struct ScopedReadActorKey {
     pub(super) room_facets: Option<EntityId>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
-    pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
+    pub(super) worlds: Option<crate::claim::world_access::WorldAuthoritySet>,
     /// Where the read's rows go: off this device or not, and each machine a
     /// connection proved beside that (mesh PR2b); see [`Self::at`] and
     /// [`Self::for_destination`].
@@ -70,19 +70,7 @@ pub struct ScopedReadActorKey {
     pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
 }
 
-/// Where a read's caller sits relative to this device (DEC-0005). Only the
-/// host decides it, from the connection the caller reached it on; nothing the
-/// caller sends sets it. A device that forwards its caller's search to the
-/// home states it there, signed with the request (FIX 3550).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CallerLocality {
-    /// On this device: the embedded host, or a caller on its local socket or
-    /// loopback.
-    OnDevice,
-    /// Anywhere else.
-    OffDevice,
-}
+pub use crate::settings::CallerLocality;
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
 /// every lane built from it reads inside the room's Scope and roster.
@@ -121,15 +109,16 @@ pub(crate) struct RoomTurnCeiling {
 pub(crate) struct RoomTerms {
     /// The room's world ceiling: every row it reads lies in it, public or
     /// not.
-    pub(crate) worlds: crate::federation::Scope,
+    pub(crate) worlds: oneiron_authority::federation::Scope,
     /// The facets the room limits its reads to (owner ruling FACET-READ): its
     /// project's slice facet, met with what each later snapshot finds there.
     /// `All` is a room with no facet.
-    pub(crate) facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
+    pub(crate) facets:
+        oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>,
     /// The met clearance of the members that bring one (ILDF2), and of an
     /// Owner or Admin reading a private thread off the room (FIX 6497):
     /// `None` while only the owner and the vault's own agents are in the meet.
-    pub(crate) clearance: Option<crate::federation::Scope>,
+    pub(crate) clearance: Option<oneiron_authority::federation::Scope>,
     /// Whether the clearance holds rows to P7. A turn does; a member's own
     /// read of the room outside a turn keeps only the world, audience and
     /// peer gates, and never takes a clearance.
@@ -139,7 +128,7 @@ pub(crate) struct RoomTerms {
 impl RoomTerms {
     /// The room's Scope: the world ceiling met with the clearance, in the
     /// room's facets. P7 judges no facet, so they only report the limit.
-    pub(crate) fn room_scope(&self) -> crate::federation::Scope {
+    pub(crate) fn room_scope(&self) -> oneiron_authority::federation::Scope {
         let mut scope = match &self.clearance {
             Some(clearance) => self.worlds.meet(clearance),
             None => self.worlds.clone(),
@@ -212,7 +201,7 @@ impl TurnTerms {
     }
 
     /// Meets one snapshot's clearance into the turn, if it holds rows to P7.
-    pub(crate) fn meet_clearance(&self, clearance: Option<&crate::federation::Scope>) {
+    pub(crate) fn meet_clearance(&self, clearance: Option<&oneiron_authority::federation::Scope>) {
         let Some(clearance) = clearance else {
             return;
         };
@@ -234,8 +223,8 @@ impl TurnTerms {
     /// facet mid-turn leaves the turn neither.
     pub(crate) fn meet_facets(
         &self,
-        facets: &crate::federation::ScopeAxis<crate::federation::ScopeId>,
-    ) -> crate::federation::ScopeAxis<crate::federation::ScopeId> {
+        facets: &oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>,
+    ) -> oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId> {
         let mut held = self
             .0
             .lock()
@@ -324,9 +313,9 @@ impl RoomTurnCeiling {
 
 /// Two clearance terms met; `None` is no term, so it never narrows.
 pub(crate) fn meet_clearance(
-    a: Option<&crate::federation::Scope>,
-    b: Option<&crate::federation::Scope>,
-) -> Option<crate::federation::Scope> {
+    a: Option<&oneiron_authority::federation::Scope>,
+    b: Option<&oneiron_authority::federation::Scope>,
+) -> Option<oneiron_authority::federation::Scope> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.meet(b)),
         (one, other) => one.or(other).cloned(),
@@ -476,7 +465,9 @@ impl ScopedReadActorKey {
     /// owner act does (`AuthenticatedOwner::revalidate_in_txn`: this vault, a
     /// live person who owns it now, any credential or host action the proof
     /// bound), so a key built before the owner lapsed reads nothing after.
-    /// Only [`crate::Vault::owner_proof_read_key`] builds one.
+    /// Built by [`crate::Vault::owner_proof_read_key`] or the queue-exhaust
+    /// reader's [`crate::Vault::queue_check_owner_read_key`], which also
+    /// retains the request's actual credential or host-action bounds.
     #[must_use]
     pub(crate) fn guarded_by_owner_proof(
         mut self,
@@ -529,11 +520,11 @@ impl ScopedReadActorKey {
     /// How a reader holding this key sees a stored key: as stored for the
     /// vault owner's own key, as its handle for every other. A door derives
     /// it from the key it reads under each time, never from a stored sight.
-    pub(crate) fn secret_sight(&self) -> crate::secret_custody::SecretSight {
+    pub(crate) fn secret_sight(&self) -> crate::file_secret_marks::SecretSight {
         if self.reads_as_vault_owner() {
-            crate::secret_custody::SecretSight::Owner
+            crate::file_secret_marks::SecretSight::Owner
         } else {
-            crate::secret_custody::SecretSight::Masked
+            crate::file_secret_marks::SecretSight::Masked
         }
     }
 
@@ -575,7 +566,10 @@ impl ScopedReadActorKey {
     /// other record as base reality. The ceiling only narrows: it meets any
     /// the key already holds.
     #[must_use]
-    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+    pub(crate) fn within_worlds(
+        mut self,
+        worlds: crate::claim::world_access::WorldAuthoritySet,
+    ) -> Self {
         self.worlds = Some(match self.worlds.take() {
             Some(held) => held.meet(&worlds),
             None => worlds,
@@ -661,6 +655,13 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// Whether this key uses the relationship-only grant gate, rather than
+    /// requiring access grants for unscoped rows too. Saved native work keeps
+    /// this basis beside its scope; the flag grants no authority on its own.
+    pub(crate) fn uses_relationship_grants(&self) -> bool {
+        self.enforce_access_grants && self.unscoped_rows_open
+    }
+
     /// A narrower credential of the vault owner's: it reads a relationship's
     /// rows as the owner does only while `owner` is still the vault's bound
     /// owner in the read's own snapshot, so a lane kept past a revocation
@@ -706,7 +707,7 @@ impl ScopedReadActorKey {
             proof.claims().actor_class.clone(),
         )?;
         let mut authority = Self::read_authority(proof.scope());
-        if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs {
+        if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut authority.verbs {
             verbs.insert("read".to_owned());
         }
         key.authority = Some(authority);
@@ -716,9 +717,11 @@ impl ScopedReadActorKey {
 
     /// A slip's Scope as every read door checks a proof of it: one that
     /// names `core:read` names `read` too.
-    pub(crate) fn read_authority(scope: &crate::federation::Scope) -> crate::federation::Scope {
+    pub(crate) fn read_authority(
+        scope: &oneiron_authority::federation::Scope,
+    ) -> oneiron_authority::federation::Scope {
         let mut authority = scope.clone();
-        if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs
+        if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut authority.verbs
             && verbs.contains("core:read")
         {
             verbs.insert("read".to_owned());
@@ -737,7 +740,7 @@ impl ScopedReadActorKey {
     /// The proof's Scope. A host slip spells the read verb `core:read`; every
     /// read door takes it as the `read` class it names, as
     /// [`Self::from_verified_slip`] already does.
-    pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
+    pub(crate) fn authority_scope(&self) -> Option<&oneiron_authority::federation::Scope> {
         self.authority.as_ref()
     }
 
@@ -761,9 +764,12 @@ impl ScopedReadActorKey {
 
     /// Whether the read's verified credential grants only some worlds.
     pub(crate) fn has_world_ceiling(&self) -> bool {
-        self.authority
-            .as_ref()
-            .is_some_and(|granted| !matches!(granted.worlds, crate::federation::ScopeAxis::All))
+        self.authority.as_ref().is_some_and(|granted| {
+            !matches!(
+                granted.worlds,
+                oneiron_authority::federation::ScopeAxis::All
+            )
+        })
     }
 
     #[must_use]

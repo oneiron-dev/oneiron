@@ -48,21 +48,7 @@ use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::world_strength::{full_strength, read_under, world_meet};
 use super::*;
 
-/// Where a world may be read, after every live edit is met.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveRead {
-    Everywhere,
-    MyMachines,
-    OneMachine(EntityId),
-    /// Concurrent one-machine picks named different machines: readable
-    /// nowhere until the owner re-picks from one of them.
-    Conflicted {
-        contenders: BTreeSet<EntityId>,
-    },
-}
+pub use crate::machine_destination::EffectiveRead;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
@@ -106,12 +92,7 @@ impl EffectiveWorldPrivacy {
     }
 }
 
-/// A machine a world's rows may go to, or one nobody proved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Destination {
-    Machine(EntityId),
-    Unknown,
-}
+pub use crate::machine_destination::Destination;
 
 /// One world's folded settings.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -510,7 +491,8 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 }
 
 /// The world a per-world side entry belongs to; `None` for a main-log entry.
-/// Only a world's key records ride a side branch, recipient-filtered. Its
+/// Only a world's key records ride a side branch, recipient-filtered, with
+/// the joins a carrier stages over the branch's leaves (FIX 11868). Its
 /// settings edits are main-log metadata every linked machine folds (the
 /// Engine call "OwnerAct world metadata to every linked machine"), so the
 /// main-log heads, sequence scopes, refold, retired-signer walk, import order
@@ -518,6 +500,10 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     match op {
         AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            scope: FrontierJoinScope::World(world),
+            ..
+        }) => Some(*world),
         _ => None,
     }
 }
@@ -554,7 +540,7 @@ pub(super) fn side_branch_violations(
 /// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
     rows: &[super::fold_resume::RowMeta<'_>],
-    valid: &BTreeSet<AuthorityEntryHash>,
+    valid: &ValidEntries,
     anchored: &BTreeSet<AuthorityEntryHash>,
     pinned_anchor: Option<[u8; 32]>,
 ) -> (
@@ -571,15 +557,13 @@ pub(super) fn main_log_heads(
         if !valid.contains(&hash) || row.world.is_some() {
             continue;
         }
-        match row.signer {
-            AuthorityKey::Ed25519(anchor)
-                if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
-            {
-                let (heads, own_named) = foreign.entry(*anchor).or_default();
+        match unpinned_anchor_of(row.signer, &hash, anchored, pinned_anchor) {
+            Some(anchor) => {
+                let (heads, own_named) = foreign.entry(anchor).or_default();
                 heads.insert(hash);
                 own_named.extend(row.parents.iter().copied());
             }
-            _ => {
+            None => {
                 main.insert(hash);
                 named.extend(row.parents.iter().copied());
             }
@@ -594,6 +578,26 @@ pub(super) fn main_log_heads(
         })
         .collect();
     (main, foreign)
+}
+
+/// The anchor whose own heads a valid main-log row joins in
+/// [`main_log_heads`]: its signer, when the row is one of that anchor's rows
+/// and this install does not pin that anchor. None for a row whose heads are
+/// the main log's.
+pub(super) fn unpinned_anchor_of(
+    signer: &AuthorityKey,
+    hash: &AuthorityEntryHash,
+    anchored: &BTreeSet<AuthorityEntryHash>,
+    pinned_anchor: Option<[u8; 32]>,
+) -> Option<[u8; 32]> {
+    match signer {
+        AuthorityKey::Ed25519(anchor)
+            if anchored.contains(hash) && pinned_anchor != Some(*anchor) =>
+        {
+            Some(*anchor)
+        }
+        _ => None,
+    }
 }
 
 /// The live world edits, grant travel choices, owner and person choices and
@@ -619,6 +623,8 @@ pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<Auth
             &fold.home_pick,
             machine,
         ))
+        .chain(fold.origin_cuts.live_choices_by(machine))
+        .chain(fold.device_successions.live_choices_by(machine))
         .chain(fold.conversation_training.live_choices_by(machine))
         .chain(fold.conversation_training_vault.live_choices_by(machine))
         .chain(fold.policy_settings.live_choices_by(machine))

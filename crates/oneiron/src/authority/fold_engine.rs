@@ -411,7 +411,7 @@ pub(super) fn fold_authority_log_once(
             revoked_actor_keys: BTreeSet::new(),
             slips: SlipAuthorityState::default(),
             vault_id: None,
-            valid_entries: BTreeSet::new(),
+            valid_entries: ValidEntries::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
             host_custody: BTreeSet::new(),
@@ -435,6 +435,8 @@ pub(super) fn fold_authority_log_once(
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy::default(),
             home_pick: super::home_pick::FoldedHomePick::default(),
+            origin_cuts: super::origin_cut::FoldedOriginCuts::default(),
+            device_successions: super::device_succession::FoldedDeviceSuccessions::default(),
             conversation_training:
                 super::conversation_training::FoldedConversationTraining::default(),
             conversation_training_vault:
@@ -456,7 +458,7 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
     let mut merged: Option<FoldState> = None;
-    let mut valid_entries = BTreeSet::new();
+    let mut valid_entries = ValidEntries::new();
     for (hash, state) in &states {
         valid_entries.insert(*hash);
         merged = Some(match merged {

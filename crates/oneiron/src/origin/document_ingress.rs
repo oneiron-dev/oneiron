@@ -1,14 +1,17 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
 use super::document_candidate_types::{ReceivedRefIngress, ReceivedRefSource};
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
-use crate::code_document::{CodeEditReceipt, CodeFileEdit, CodeFileIngress};
-use crate::codebase::entity_id_from_hash_material;
+use crate::code_document::CodeFileIngress;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
-use crate::receipt::ERASED_CALL_IDENTITY;
-use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::store::EngineScan;
+use crate::store::code_document_receipt::CodeEditReceipt;
+use crate::store::code_document_values::CodeFileEdit;
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use crate::store::scan_count::ScanCount;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -38,6 +41,35 @@ pub struct ReceivedFileOperation {
 /// NUL, exactly the shape this row has always spelled.
 pub(super) const CODE_OPERATIONS: SideTable<ProvenanceRefKey, ReceivedRefIngress, LegacyCompact> =
     SideTable::new(&side_table::ORIGIN_CODE_OPERATIONS);
+
+/// Each received ref update by its exact (store, ref, old, new) and then the push that
+/// carried it, written with that push's [`CODE_OPERATIONS`] row (FIX 7595).
+pub(super) const RECEIVED_UPDATES: SideTable<([u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_RECEIVED_UPDATE);
+
+/// The [`RECEIVED_UPDATES`] key prefix of one exact ref update in the object store `store`.
+pub(super) fn received_update_hash(
+    store: &str,
+    ref_name: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:received-update:v1");
+    for part in [Some(store), Some(ref_name), old, new] {
+        match part {
+            Some(part) => {
+                hasher.update(&[1]);
+                hasher.update(&(part.len() as u64).to_be_bytes());
+                hasher.update(part.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
 
 pub(super) struct ProvenanceRefKey {
     pub(super) provenance: EntityId,
@@ -107,6 +139,16 @@ impl Vault {
             Some(crate::registry::ENTITY_TYPE_SESSION) => (),
             Some(_) => return Err(Error::CorruptedIndex("push session identity occupied")),
         }
+        // The pusher writes as its own class, a person or an agent; any
+        // other principal writes as the system (FIX 7131).
+        let actor = WriteActor::new(
+            attribution.actor_id,
+            match self.get_entity_type(&attribution.actor_id)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => EdgeActorClass::Human,
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+                _ => EdgeActorClass::System,
+            },
+        );
         let mut operations = Vec::new();
         let mut ingress = Vec::new();
         {
@@ -123,13 +165,29 @@ impl Vault {
                 .transpose()?
                 .unwrap_or_default();
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
-            // The repository's own scope, as every local writer spells it:
-            // one document per path whatever ref a push moves (FIX 12199).
-            let scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+            // The repository's code-document identity, the one its symbols
+            // are keyed by: one document per path whatever ref a push moves
+            // (FIX 12199), its standing portable id when one stands (FIX
+            // 12761).
+            let scope = self
+                .resolve_repo_identity(
+                    &crate::git_wire::mutation_commands::canonical_mutation_repo_ref(
+                        repo.repo_root(),
+                    )?,
+                )?
+                .as_str()
+                .to_owned();
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
-            let mut renames =
-                received_renames(self, &scope, &old, &new, update, attribution, session)?;
+            let mut renames = received_renames(
+                self,
+                &scope,
+                &old,
+                &new,
+                update,
+                (attribution.provenance_claim_id, actor),
+                session,
+            )?;
             let renamed: BTreeSet<String> = renames.values().map(|(to, _)| to.clone()).collect();
             for path in paths {
                 let before = bytes(&old, &path);
@@ -181,10 +239,7 @@ impl Vault {
                                 session: document,
                                 edit: CodeFileEdit::between(&path, &base, after),
                                 metadata_edit: None,
-                                actor: WriteActor::new(
-                                    attribution.actor_id,
-                                    EdgeActorClass::System,
-                                ),
+                                actor,
                                 expected_text: base,
                             });
                             true
@@ -244,11 +299,25 @@ impl Vault {
             // Both receipt layers commit together or the entire ref aborts.
             self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
             // A replay keeps the first receipt time and any attached candidate.
-            CODE_OPERATIONS.put(
-                &self.store,
+            let stored = held.as_ref().unwrap_or(&fresh);
+            CODE_OPERATIONS.put(&self.store, txn, &receipt_key, stored)?;
+            super::document_candidates::pending_index::index_received_row_in_txn(
+                self,
                 txn,
                 &receipt_key,
-                held.as_ref().unwrap_or(&fresh),
+                stored,
+            )?;
+            let update = received_update_hash(
+                &fresh.source.object_store,
+                &fresh.source.ref_name,
+                fresh.source.old_oid.as_deref(),
+                fresh.source.new_oid.as_deref(),
+            );
+            RECEIVED_UPDATES.put(
+                &self.store,
+                txn,
+                &(update, attribution.provenance_claim_id),
+                &(),
             )?;
             Ok(())
         })
@@ -362,14 +431,15 @@ fn file_operation_id(
 /// moves its document there under the removed path's operation. A pair
 /// whose added path already has a live document, or whose document another
 /// ref moved off the pushed base, is left out and lowers as a removal and
-/// an add. A replay lowers each pair as its first landing did.
+/// an add. A replay lowers each pair as its first landing did. `pusher`
+/// is the push's provenance and the actor its edits land as.
 fn received_renames(
     vault: &Vault,
     scope: &str,
     old: &BTreeMap<String, super::tree::OriginTreeFile>,
     new: &BTreeMap<String, super::tree::OriginTreeFile>,
     update: &RefUpdate,
-    attribution: &ReceivePackAttribution,
+    pusher: (EntityId, WriteActor),
     session: EntityId,
 ) -> Result<BTreeMap<String, (String, CodeFileIngress)>> {
     let mut removed: BTreeMap<(u32, &str), VecDeque<&str>> = BTreeMap::new();
@@ -383,8 +453,7 @@ fn received_renames(
                 .push_back(path.as_str());
         }
     }
-    let provenance = attribution.provenance_claim_id;
-    let actor = WriteActor::new(attribution.actor_id, EdgeActorClass::System);
+    let (provenance, actor) = pusher;
     let empty = *blake3::hash(b"").as_bytes();
     let mut renames = BTreeMap::new();
     for (to, file) in new {

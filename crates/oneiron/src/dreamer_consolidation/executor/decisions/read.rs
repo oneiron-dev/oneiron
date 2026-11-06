@@ -17,12 +17,16 @@ use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::{
-    AskTo, DecisionQuestion, DecisionRung, DecisionWireLabels, EvidenceVersion, GeneratedDecisions,
-    GeneratedRung, GeneratedStep, HumanAskReason, ProviderPin, Reversibility, TypedDecision,
+    AskTo, DecisionWireLabels, GeneratedDecisions, GeneratedRung, GeneratedStep, TypedDecision,
 };
-use crate::llm::{BudgetGuard, DurableStepContext, DurableStepResult, LlmRequest, LlmUsage};
+use crate::model_decision::{
+    DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
+};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepResult;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::WriteActor;
+use oneiron_model::llm::{BudgetGuard, LlmRequest, LlmUsage};
 
 /// What a typed read decides with: the host's ladder, dial, bands and wording, the Dreamer
 /// actor it reads as, and the guard its steps spend on.
@@ -75,7 +79,7 @@ impl Decider<'_> {
     /// `questions` over `read`'s state through the host's ladder, `read`'s role generation
     /// the dial's first read, on the time the pass has left, any ask going to `read.to` for
     /// the work `read.correlation` names. Each generation that finished is pushed onto
-    /// `spent` (its request hash and usage) as it finishes, whatever the pack's outcome. None
+    /// `spent` (its request hash, usage and memoized flag) as it finishes, whatever the pack's outcome. None
     /// when the step trapped: the attempt is parked.
     ///
     /// Every read shows the pack through `labels` (FIX 7506): the generation's questions by
@@ -90,7 +94,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();

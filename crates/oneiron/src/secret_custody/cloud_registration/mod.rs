@@ -25,8 +25,12 @@
 //! a logout stops the binding and empties the slot's value at rest, which
 //! is not an erase.
 
+mod erase_revoke;
 mod lifecycle;
 mod store;
+
+pub(crate) use self::erase_revoke::EraseRevokes;
+pub use self::erase_revoke::{CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,17 +43,12 @@ pub(crate) use self::lifecycle::{
     cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
 };
 
-/// Every slot's name starts with this: the engine's reserved namespace.
-const SLOT_PREFIX: &str = "oneiron.cloud-registration/";
+use crate::secret_record::SLOT_PREFIX;
 
 /// The binding row of each slot, by the slot's record id.
 const ROWS: SideTable<EntityId, Row, Named> = SideTable::new(&side_table::CLOUD_REGISTRATION);
 
-/// Whether `name` is a cloud registration slot's: the engine's own, under
-/// its reserved namespace.
-pub(crate) fn is_cloud_registration_slot(name: &str) -> bool {
-    name.starts_with(SLOT_PREFIX)
-}
+pub(crate) use crate::secret_record::is_cloud_registration_slot;
 
 /// The custody name of slot `slot`.
 fn slot_name(slot: &EntityId) -> String {

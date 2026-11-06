@@ -65,6 +65,7 @@ impl Memory<'_> {
             return ended_in(
                 projection.memory(),
                 turns.placed(),
+                turns.held(),
                 room,
                 threads,
                 members,
@@ -77,7 +78,15 @@ impl Memory<'_> {
             let projection = self.for_thread_projection(room, *thread)?;
             let memory = projection.memory();
             let one = BTreeSet::from([*thread]);
-            ended.extend(ended_in(memory, turns.placed(), room, &one, members, fold)?);
+            ended.extend(ended_in(
+                memory,
+                turns.placed(),
+                turns.held(),
+                room,
+                &one,
+                members,
+                fold,
+            )?);
         }
         Ok(ended)
     }
@@ -162,6 +171,7 @@ impl Memory<'_> {
             ended.extend(ended_in(
                 memory,
                 admitted.placed(),
+                admitted.held(),
                 room,
                 &one,
                 &members,
@@ -216,9 +226,11 @@ fn admitted_records(
 /// The fold itself: of `threads`, those `turns` hold whose direct-by-handle
 /// projection under the caller's `fold` lists them quiet, with the tasks
 /// bound to them read through `memory` for the room's `members` at its time.
+/// `held` are the ids among `turns` held back from the reader (FIX 5658).
 fn ended_in(
     memory: &Memory<'_>,
     turns: &[RoomTurn],
+    held: &BTreeSet<String>,
     room: EntityId,
     threads: &BTreeSet<EntityId>,
     members: &BTreeSet<String>,
@@ -240,12 +252,16 @@ fn ended_in(
     };
     let mut ended = BTreeSet::new();
     for thread in threads {
-        let held: Vec<_> = tasks
+        // FIX 5658: `thread_tasks` are this thread's TASK facts, not the held
+        // set `held` (bare places); the fold takes both explicitly.
+        let thread_tasks: Vec<_> = tasks
             .iter()
             .filter(|task| task.thread == *thread)
             .cloned()
             .collect();
-        if liveness::thread_is_live(turns, &edits, &held, room, *thread, fold)? == Some(false) {
+        if liveness::thread_is_live(turns, held, &edits, &thread_tasks, room, *thread, fold)?
+            == Some(false)
+        {
             ended.insert(*thread);
         }
     }

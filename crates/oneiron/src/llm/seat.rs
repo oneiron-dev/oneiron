@@ -1,13 +1,17 @@
 //! Seat-birth model routing above the raw LLM call seam.
 //! A host's ladder answers the typed pick; the engine owns eligibility, reuse and pinning.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 mod decisions;
 pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
+mod learning;
+pub use learning::SeatLearningContext;
+pub(crate) use learning::learned_models;
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 mod run;
+pub use crate::store::seat_model_description::ModelDescription;
 pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
@@ -64,18 +68,18 @@ fn routes_prefilter_admits(
     }
 }
 
-/// A description is keyed by the fully revisioned model ID. Absence is not a
-/// recommendation; the router cannot judge an undocumented model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelDescription {
-    pub model: ModelId,
-    /// Capability profile, not a provider, tier or model-family name.
-    pub facet: String,
-    pub owner: Option<String>,
-    pub measured: Option<String>,
-    pub benchmarks: Option<String>,
-    pub vendor: Option<String>,
+/// Whether the host's served set admits a seat model at a locality (FIX
+/// 2745): `None` admits all (the host supplied no set, as before); a set
+/// admits the models it serves at exactly this locality, mirroring the
+/// served-plus-locality conditions the send-time admission answers with
+/// (`admit_seat_bound`). The send-time exact-prompt check stays at the
+/// call, not here: served-plus-locality only.
+fn served_admits(
+    served: Option<&BTreeMap<ModelId, ModelLocality>>,
+    model: &ModelId,
+    locality: ModelLocality,
+) -> bool {
+    served.is_none_or(|set| set.get(model).is_some_and(|at| *at == locality))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -309,6 +313,23 @@ pub struct SeatTask {
     /// current routes.
     #[serde(skip)]
     pub worlds: Vec<EntityId>,
+    /// The models the host's router serves now, with where each runs (FIX
+    /// 2745): the birth admits only these, at the task's route. None: the
+    /// host supplied no set, and the birth admits all, as before.
+    /// Deliberately not task identity: the served set legitimately changes
+    /// as routes are configured and mesh peers come and go, and a changed
+    /// set must not brick durable re-entry by changing the pin hash (the
+    /// hash is blake3 over the serialized task, `seat/run.rs`). The skip is
+    /// load-bearing: a serialized served set bricks every re-entry on
+    /// config change. Re-derived per entry; the birth-time filter judges
+    /// the current set.
+    #[serde(skip)]
+    pub served: Option<BTreeMap<ModelId, ModelLocality>>,
+    /// Native dispatch context for the pick's scoped measured reads (FIX 6037).
+    /// Read-only input, not authority or durable pin identity. None keeps an
+    /// unprojected birth's decision state unchanged.
+    #[serde(skip)]
+    pub learning: Option<SeatLearningContext>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -559,8 +580,13 @@ impl SeatPool {
                 })
                 .unwrap_or(WorldModelRoutes::Ordered(Vec::new()))
         };
+        // The host's served set pre-filters the pick beside the worlds'
+        // order (FIX 2745): a candidate the host's router does not serve at
+        // the task's route seats no one, so the birth refuses here instead
+        // of bearing a seat every call refuses. No set inherits, as before.
         candidates.retain(|candidate| {
             routes_prefilter_admits(&routes, &candidate.model, candidate.locality)
+                && served_admits(task.served.as_ref(), &candidate.model, candidate.locality)
         });
         // With a list, no fallback: the wake holds rather than run unlisted.
         if candidates.is_empty() {
@@ -580,6 +606,7 @@ impl SeatPool {
                 && eligible.contains(&seat.model)
                 && list_admits(&task.listed, &seat.model)
                 && routes_prefilter_admits(&routes, &seat.model, seat.locality)
+                && served_admits(task.served.as_ref(), &seat.model, seat.locality)
                 && candidates
                     .iter()
                     .find(|candidate| candidate.model == seat.model)
@@ -598,12 +625,15 @@ impl SeatPool {
         }
         // Only a pre-admitted warm seat holds the fold (FIX 11768): a warm
         // seat the worlds' order no longer pre-admits retires, and the fresh
-        // pick below runs instead of refusing reuse with a fold error.
+        // pick below runs instead of refusing reuse with a fold error. A
+        // warm seat the host no longer serves retires the same way (FIX
+        // 2745).
         if self.seats.iter().any(|seat| {
             seat.warm
                 && seat.kind == task.kind
                 && seat.warm_scope == task.warm_scope
                 && routes_prefilter_admits(&routes, &seat.model, seat.locality)
+                && served_admits(task.served.as_ref(), &seat.model, seat.locality)
         }) {
             return Err(invalid("model or effort change requires an epoch fold"));
         }
@@ -612,7 +642,13 @@ impl SeatPool {
             decisions.budget.min(at.saturating_duration_since(started))
         });
         let deadline = RetrievalDeadline::hard(started, budget);
-        let (index, picked, readings) = decisions.pick_before(task, &candidates, &deadline)?;
+        let learned = learned_models(
+            vault,
+            task.learning.as_ref(),
+            candidates.iter().map(|candidate| candidate.model.clone()),
+        );
+        let (index, picked, readings) =
+            decisions.pick_before(task, &candidates, &learned, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,

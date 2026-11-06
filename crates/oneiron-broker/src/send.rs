@@ -2,9 +2,14 @@
 //! no content encoding, so the reply it strips is the reply the daemon reads.
 //! The one exception to "no redirect" is a shape row's own: one hop, to the
 //! path the row names under the same origin (scheme, host and port), with
-//! the key, which goes back only to the host it was already sent to.
+//! the key, which goes back only to the host it was already sent to. The one
+//! exception to "no retry" is a gzip-sent body answered 400 or 415: it goes
+//! once more, plain, with the exact checked bytes, before any redirect
+//! follow or reply guard (OF-603).
 
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use reqwest::header::{
@@ -46,12 +51,18 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
+    /// Whether gzip request bodies still go: on, until a gzip-sent body is
+    /// answered 400 or 415 and its one plain resend answers differently —
+    /// the encoding was the cause, so this process sends plain from then
+    /// on, as the daemon's provider leg latches off (OF-603).
+    gzip: AtomicBool,
 }
 
 impl Sender {
-    pub(crate) fn new(policy: &SendPolicy) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
         let mut builder = Client::builder()
             .use_rustls_tls()
             .https_only(true)
@@ -66,19 +77,29 @@ impl Sender {
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
             .timeout(policy.timeout);
         for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem)? {
+            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
                 builder = builder.add_root_certificate(root);
             }
         }
+        let client = builder.build().map_err(io::Error::other)?;
+        let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
-            client: builder.build()?,
+            client,
+            ws_tls,
             timeout: policy.timeout,
+            gzip: AtomicBool::new(true),
         })
     }
 
     /// The deadline of a call accepted now.
     pub(crate) fn deadline(&self) -> CallDeadline {
         CallDeadline::start(self.timeout)
+    }
+
+    /// The verified client a git exchange sends through, and its idle
+    /// bound: [`SendPolicy::timeout`] without progress.
+    pub(crate) fn git_client(&self) -> (&Client, Duration) {
+        (&self.client, self.timeout)
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
@@ -110,7 +131,14 @@ impl Sender {
                             empty,
                         );
                     }
-                    push_wiped(&mut raw, &chunk);
+                    if push_wiped(&mut raw, &chunk).is_err() {
+                        return (
+                            Outcome::Failed {
+                                reason: Failure::Send,
+                            },
+                            empty,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(error) => return (failed(&error), empty),
@@ -136,12 +164,13 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, secret, writer, deadline)
+            .stream_to(call, checked, body, whole, secret, writer, deadline)
             .await;
     }
 
@@ -150,10 +179,24 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) -> io::Result<()> {
+        if call.shape == crate::Shape::OpenAiResponses {
+            return crate::responses::responses_to(
+                &self.ws_tls,
+                call,
+                checked,
+                body,
+                whole,
+                secret,
+                writer,
+                deadline,
+            )
+            .await;
+        }
         let reached = match checked {
             Ok(url) => self.reach(call, url, body, secret, deadline).await,
             Err(reason) => Err(Outcome::Refused { reason }),
@@ -171,6 +214,11 @@ impl Sender {
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
+        // Relayed events go on as soon as the watch clears them, a frame at
+        // most at a time; other streamed bodies go in whole frames (FIX
+        // 15702). The watch still holds back any bytes that could begin a
+        // form of the key.
+        let eager = call.shape.relays_events();
         let cut = loop {
             let (passed, last) = match response.chunk().await {
                 Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
@@ -183,10 +231,13 @@ impl Sender {
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
             };
-            push_wiped(&mut cleared, &passed);
+            if push_wiped(&mut cleared, &passed).is_err() {
+                break Some(Failure::Send);
+            }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
+            while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len())
+            {
                 let end = cleared.len().min(sent + STREAM_CHUNK);
                 within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
                 sent = end;
@@ -195,7 +246,11 @@ impl Sender {
                 break None;
             }
             if sent > 0 {
-                cleared = Zeroizing::new(cleared[sent..].to_vec());
+                let mut remainder = Zeroizing::new(Vec::new());
+                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                    break Some(Failure::Send);
+                }
+                cleared = remainder;
             }
         };
         within(deadline, write_stream_end(writer, cut)).await
@@ -203,10 +258,14 @@ impl Sender {
 
     /// Sends the request once with the key, and for a shape that follows one
     /// redirect, follows it once: only to the row's path under the call's own
-    /// origin, with the key but none of the call's other headers. Returns the
-    /// response whose body is the reply, or the outcome that ends the call
-    /// before one. Each request gets only the send's time left, to the last
-    /// reply byte; a call with none left is not sent (FIX 8559).
+    /// origin, with the key but none of the call's other headers. A gzip-sent
+    /// body answered 400 or 415 goes once more, plain, with the exact checked
+    /// bytes; when that answer differs the encoding was the cause and gzip
+    /// turns off for this process. Any other answer stands, and a send that
+    /// never reached the provider is never resent. Returns the response whose
+    /// body is the reply, or the outcome that ends the call before one. Each
+    /// request gets only the send's time left, to the last reply byte; a call
+    /// with none left is not sent (FIX 8559).
     async fn reach(
         &self,
         call: &CallHeader,
@@ -219,7 +278,7 @@ impl Sender {
             reason: Failure::Timeout,
         };
         let left = deadline.send_left().ok_or_else(timed_out)?;
-        let request = self
+        let (request, plain) = self
             .request(call, url.clone(), body, secret, left)
             .map_err(|reason| Outcome::Refused { reason })?;
         let mut response = match self.client.execute(request).await {
@@ -232,6 +291,35 @@ impl Sender {
             }
             Err(error) => return Err(failed(&error)),
         };
+        // OF-603: the route may not decode gzip, so a gzip-sent body answered
+        // 400 or 415 goes once more, plain. Ahead of the redirect follow and
+        // the reply guards, so those read the final response.
+        if let Some(plain) = plain
+            && matches!(response.status().as_u16(), 400 | 415)
+        {
+            let refused = response.status();
+            drop(response);
+            let left = deadline.send_left().ok_or_else(timed_out)?;
+            let resend = self
+                .request_plain(call, url.clone(), plain, secret, left)
+                .map_err(|_| Outcome::Failed {
+                    reason: Failure::Send,
+                })?;
+            // The first 400 or 415 proves bytes reached the provider, so a
+            // resend that fails is `Failed`, never `Refused{Connect}`.
+            response = self
+                .client
+                .execute(resend)
+                .await
+                .map_err(|error| failed(&error))?;
+            if response.status() != refused {
+                self.gzip.store(false, Ordering::Relaxed);
+                eprintln!(
+                    "oneiron-broker: a provider refused a gzip request body with status {}; sending plain from now on",
+                    refused.as_u16()
+                );
+            }
+        }
         if let Some(prefix) = call.shape.redirect()
             && response.status().is_redirection()
         {
@@ -276,6 +364,8 @@ impl Sender {
         Ok(response)
     }
 
+    /// Builds the request, and the checked plain body when it goes gzip-sent:
+    /// what the one plain resend carries if a 400 or 415 answers.
     fn request(
         &self,
         call: &CallHeader,
@@ -283,7 +373,43 @@ impl Sender {
         mut body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         left: Duration,
-    ) -> Result<reqwest::Request, Refusal> {
+    ) -> Result<(reqwest::Request, Option<Zeroizing<Vec<u8>>>), Refusal> {
+        let builder = self.head(call, url, secret, left)?;
+        // A bodyless read or removal sends no body, not an empty one.
+        if body.is_empty() {
+            return builder
+                .build()
+                .map(|request| (request, None))
+                .map_err(|_| Refusal::Header);
+        }
+        // OF-603: past the plaintext checks and the digest binding.
+        match self.compressed(call, &body) {
+            Some(encoded) => builder
+                .header(CONTENT_ENCODING, "gzip")
+                .body(encoded)
+                .build()
+                .map(|request| (request, Some(body)))
+                .map_err(|_| Refusal::Header),
+            // The checked bytes themselves, moved, not copied: a body
+            // can run to `MAX_STREAM` (FIX 1895).
+            None => builder
+                .body(std::mem::take(&mut *body))
+                .build()
+                .map(|request| (request, None))
+                .map_err(|_| Refusal::Header),
+        }
+    }
+
+    /// The request's head — method, timeout, identity accept, the shape's
+    /// auth and the call's headers — shared by the first send and its one
+    /// plain resend, so the two are identical but for the encoding.
+    fn head(
+        &self,
+        call: &CallHeader,
+        url: Url,
+        secret: &[u8],
+        left: Duration,
+    ) -> Result<reqwest::RequestBuilder, Refusal> {
         let auth = auth_value(call, secret)?;
         let method = Method::from_bytes(call.method.as_bytes()).map_err(|_| Refusal::Method)?;
         let mut builder = self
@@ -295,18 +421,78 @@ impl Sender {
         for (name, value) in &call.headers {
             builder = builder.header(name.as_str(), value.as_str());
         }
-        // A bodyless read or removal sends no body, not an empty one.
-        if !body.is_empty() {
-            // OF-603: past the plaintext checks and the digest binding.
-            builder = match compressed(call, &body) {
-                Some(encoded) => builder.header(CONTENT_ENCODING, "gzip").body(encoded),
-                // The checked bytes themselves, moved, not copied: a body
-                // can run to `MAX_STREAM` (FIX 1895).
-                None => builder.body(std::mem::take(&mut *body)),
-            };
-        }
-        builder.build().map_err(|_| Refusal::Header)
+        Ok(builder)
     }
+
+    /// The identical request without `Content-Encoding`, carrying the exact
+    /// checked plain bytes: the one resend when a gzip-sent body is answered
+    /// 400 or 415. It always carries a body: gzip applies only past
+    /// [`MIN_COMPRESSED_BODY`].
+    fn request_plain(
+        &self,
+        call: &CallHeader,
+        url: Url,
+        mut body: Zeroizing<Vec<u8>>,
+        secret: &[u8],
+        left: Duration,
+    ) -> Result<reqwest::Request, Refusal> {
+        let builder = self.head(call, url, secret, left)?;
+        // Moved, not copied, as the first send moves them.
+        builder
+            .body(std::mem::take(&mut *body))
+            .build()
+            .map_err(|_| Refusal::Header)
+    }
+
+    /// `body` as gzip-1, just before send: only for Anthropic's Messages API
+    /// at [`GZIP_ORIGIN`], a body of at least [`MIN_COMPRESSED_BODY`], and
+    /// an encoding that is smaller. Never on a cloud node
+    /// ([`CallHeader::cloud`]), where gzip costs more on the link than it
+    /// saves, and never once a route has refused one and latched the process
+    /// plain. The call is checked and its digest bound to the plain bytes
+    /// already; the reply still arrives identity, so the strip reads plain
+    /// bytes.
+    fn compressed(&self, call: &CallHeader, body: &[u8]) -> Option<Vec<u8>> {
+        if !self.gzip.load(Ordering::Relaxed)
+            || call.cloud
+            || call.shape != crate::Shape::AnthropicMessages
+            || call.origin != GZIP_ORIGIN
+            || body.len() < MIN_COMPRESSED_BODY
+        {
+            return None;
+        }
+        let sink = crate::body::FallibleBody::with_capacity(body.len() / 2).ok()?;
+        let mut encoder = flate2::write::GzEncoder::new(sink, flate2::Compression::new(1));
+        io::Write::write_all(&mut encoder, body).ok()?;
+        let encoded = encoder.finish().ok()?.into_bytes();
+        (encoded.len() < body.len()).then_some(encoded)
+    }
+}
+
+/// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
+/// The HTTPS client has already validated every configured PEM bundle.
+fn ws_client_config(extra_roots: &[Vec<u8>]) -> io::Result<Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    for pem in extra_roots {
+        for cert in CertificateDer::pem_reader_iter(io::BufReader::new(pem.as_slice())) {
+            let cert = cert.map_err(io::Error::other)?;
+            roots.add(cert).map_err(io::Error::other)?;
+        }
+    }
+    // Match reqwest: respect an installed provider, otherwise use ring.
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
 }
 
 /// The origin whose Messages API takes a gzip request body (ARCH-0081 §6).
@@ -314,32 +500,17 @@ const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 /// The smallest request body worth compressing.
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
-/// `body` as gzip-1, just before send: only for Anthropic's Messages API at
-/// [`GZIP_ORIGIN`], a body of at least [`MIN_COMPRESSED_BODY`], and an
-/// encoding that is smaller. The call is checked and its digest bound to the
-/// plain bytes already; the reply still arrives identity, so the strip reads
-/// plain bytes.
-fn compressed(call: &CallHeader, body: &[u8]) -> Option<Vec<u8>> {
-    if call.shape != crate::Shape::AnthropicMessages
-        || call.origin != GZIP_ORIGIN
-        || body.len() < MIN_COMPRESSED_BODY
-    {
-        return None;
-    }
-    let mut encoder = flate2::write::GzEncoder::new(
-        Vec::with_capacity(body.len() / 2),
-        flate2::Compression::new(1),
-    );
-    io::Write::write_all(&mut encoder, body).ok()?;
-    let encoded = encoder.finish().ok()?;
-    (encoded.len() < body.len()).then_some(encoded)
+/// Whether `secret` is a key the strip rule is sure to find in a reply:
+/// long enough, short enough, ASCII in the rule's own alphabet.
+pub(crate) fn watchable(secret: &[u8]) -> bool {
+    secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
 }
 
 /// The shape's key header value for `secret`, marked sensitive.
-fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
+pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
-    if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
+    if !watchable(secret) {
         return Err(Refusal::Secret);
     }
     let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
@@ -352,7 +523,7 @@ fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> 
 /// Whether the body arrives under a coding the HTTP stack did not undo, so
 /// the strip would read encoded bytes: any content coding but `identity`, or
 /// any transfer coding but `chunked`, in any value of either header.
-fn encoded(headers: &HeaderMap) -> bool {
+pub(crate) fn encoded(headers: &HeaderMap) -> bool {
     let other = |name: reqwest::header::HeaderName, plain: &[&str]| {
         headers.get_all(name).iter().any(|value| {
             !value.to_str().is_ok_and(|codings| {
@@ -411,19 +582,29 @@ pub(crate) async fn answer<W: AsyncWrite + Unpin>(
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is
 /// wiped as it drops instead of freed with reply bytes in it.
-pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
-    let needed = buffer.len() + chunk.len();
+pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) -> io::Result<()> {
+    let needed = buffer
+        .len()
+        .checked_add(chunk.len())
+        .ok_or(io::ErrorKind::OutOfMemory)?;
     if needed > buffer.capacity() {
-        let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));
+        let mut grown = Zeroizing::new(Vec::new());
+        grown
+            .try_reserve_exact(needed.max(buffer.capacity().saturating_mul(2)))
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
         grown.extend_from_slice(buffer);
         *buffer = grown;
     }
     buffer.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// The reply's headers, each value stripped. A header whose name holds the
 /// key is dropped whole, and so is any past the bounds.
-fn reply_headers(headers: &reqwest::header::HeaderMap, secret: &[u8]) -> Vec<(String, String)> {
+pub(crate) fn reply_headers(
+    headers: &reqwest::header::HeaderMap,
+    secret: &[u8],
+) -> Vec<(String, String)> {
     let mut kept = Vec::new();
     let mut size = 0;
     for (name, value) in headers {

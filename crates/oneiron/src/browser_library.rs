@@ -56,7 +56,7 @@ pub use admission::{
     record_program_admission, record_undecodable_program_admission,
 };
 pub use coverage::solved_group_coverage_read;
-pub(crate) use coverage::{program_seen_in, solved_group_coverage_in};
+pub(crate) use coverage::{filing_anchor_in, program_seen_in, solved_group_coverage_in};
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
 pub use evidence::{
     CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
@@ -72,8 +72,9 @@ pub use index::{
     programs_with_failures, solved_group_coverage, solved_runs_in_group,
 };
 pub(crate) use index::{
-    erase_authority_actor_in_txn, erase_dirty_actor_in_txn, index_capture_in_txn,
-    invalidate_solved_source_in_txn, refresh_witness_in_txn, reindex_restored_source_in_txn,
+    browser_solved_dirty_accepts_masked, erase_authority_actor_in_txn, erase_dirty_actor_in_txn,
+    index_capture_in_txn, invalidate_solved_source_in_txn, refresh_witness_in_txn,
+    reindex_restored_source_in_txn,
 };
 pub(crate) use records::secret_param_names_in_txn;
 pub use records::{
@@ -101,6 +102,16 @@ struct WorkflowSite {
 /// takes a new one).
 const RETIRED: SideTable<EntityId, RetiredWorkflow, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW_RETIRED);
+/// Whether a masked copy of a `BROWSER_WORKFLOW_RETIRED` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn browser_workflow_retired_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<RetiredWorkflow, Named>(bytes)
+}
+/// Whether a masked copy of a `BROWSER_WORKFLOW` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn browser_workflow_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<WorkflowRecord, Named>(bytes)
+}
 
 /// Whether only the caller whose run filed a program may retire it. A filed
 /// program is the vault's: any caller the library serves may run or refile
@@ -362,16 +373,4 @@ pub enum Retired {
     NotFiler,
 }
 
-/// Where a program's ref leads now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkflowResolution {
-    /// The live program `id`: the one named, or its successor.
-    Active { id: EntityId },
-    /// The lineage ends at `id`, retired for `reason` with no successor.
-    Retired {
-        id: EntityId,
-        reason: Option<String>,
-    },
-    /// No program was ever filed under the ref.
-    Missing,
-}
+pub use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;

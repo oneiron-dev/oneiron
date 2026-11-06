@@ -10,13 +10,16 @@ use crate::batch::{BatchBuilder, BatchOp};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::note::{COMPACTION_INTENT_NOTE_KIND, NoteBody, NoteKind, encode_note_body};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::{MadeByClass, MadeByInputRole, MadeByTrigger};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::ManifestDbs;
+use crate::store::note_body::NoteBody;
+use crate::store::note_body::NoteKind;
+use crate::store::note_body::encode_note_body;
+use crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND;
+use crate::store::row_birth::RowBirth;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::{MadeByClass, MadeByInputRole, MadeByTrigger};
 
 use super::driver::{CompactionRequest, WindowLog};
 
@@ -72,7 +75,7 @@ pub(super) fn intent_note_body(
         kind: NoteKind::parse(COMPACTION_INTENT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the compaction intent NOTE kind is shipped",
         ))?,
-        author_ref: crate::note::NoteActor::Actor(author),
+        author_ref: crate::store::note_body::NoteActor::Actor(author),
         markdown,
         source_revision_ref: *summary.as_bytes(),
     })
@@ -133,22 +136,30 @@ pub(super) fn run_trigger_in(
         return Ok(None);
     };
     let trigger = MadeByTrigger::Run(run);
-    Ok(crate::provenance::birth::trigger_is_live_in_txn(store, txn, &trigger)?.then_some(trigger))
+    Ok(
+        crate::store::birth_record::trigger_is_live_in_txn(store, txn, &trigger)?
+            .then_some(trigger),
+    )
 }
 
-/// Whether any of `sources` was erased or withdrawn, as `store` reads it.
-pub(super) fn any_withdrawn_in(
+/// Those of `sources` that still stand as `store` reads them: their row
+/// present, neither erased nor withdrawn. A purged one has no row (FIX 3448).
+pub(super) fn standing_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     sources: &[EntityId],
-) -> Result<bool> {
+) -> Result<Vec<EntityId>> {
+    let mut standing = Vec::with_capacity(sources.len());
     for source in sources {
+        if store.entities().get(txn, source.as_bytes())?.is_none() {
+            continue;
+        }
         let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, source)?;
-        if state.deleted || state.stale {
-            return Ok(true);
+        if !(state.deleted || state.stale) {
+            standing.push(*source);
         }
     }
-    Ok(false)
+    Ok(standing)
 }
 
 /// The intent NOTE `intent`'s rows beside summary `summary`, for a room's
@@ -168,7 +179,7 @@ pub(super) fn intent_ops(
         kind,
         tgt,
         weight: edge_weight(kind),
-        vad: crate::affect::Vad::NEUTRAL,
+        vad: oneiron_contracts::affect::Vad::NEUTRAL,
     };
     let mut ops = vec![
         BatchOp::Put {
@@ -176,6 +187,7 @@ pub(super) fn intent_ops(
             entity_type: ENTITY_TYPE_NOTE,
             occurred: TimeRange { start: at, end: at },
             learned_at: at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,

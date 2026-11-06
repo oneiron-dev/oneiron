@@ -44,30 +44,24 @@ pub use turn_actions::{
     TurnActionReceipt, TurnActionRequest,
 };
 pub(crate) use visibility::{
-    AudienceCache, conversation_summary_covers, private_thread_word_turns_in,
+    AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
+    gate_claim_anchors_in, gate_claim_anchors_store_in, private_thread_word_turns_in,
     private_threads_readable_with_read_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};
 use crate::{EntityId, Error, Vault, WriteActor};
-use serde::{Serialize, de::DeserializeOwned};
 
-fn invalid(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidConversationBody(reason))
-}
+use crate::store::conversation_body::invalid;
 fn state(reason: &'static str) -> Error {
     Error::Record(RecordError::ConversationState(reason))
 }
 fn denied() -> Error {
     Error::Record(RecordError::ConversationDenied)
 }
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid("body encode"))
-}
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
-}
+use crate::store::conversation_body::decode;
+use crate::store::conversation_body::encode;
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);
@@ -93,3 +87,9 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
 
 #[cfg(test)]
 mod tests;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::chat_breakpoint::chat_breakpoint_accepts_masked;
+
+pub mod voice_roster;

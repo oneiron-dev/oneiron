@@ -8,7 +8,7 @@ use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent};
-use crate::sync::transport::{self, window_sub_tags};
+use crate::sync::transport;
 use crate::sync::types::parse_window_key_str;
 
 use crate::side_table::HexId;
@@ -29,6 +29,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         local_rx: &mut mpsc::UnboundedReceiver<LocalUpdate>,
+        debounce_buffer: &mut Vec<LocalUpdate>,
         promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
@@ -43,7 +44,6 @@ impl SyncConnection {
 
         // One node tick after its first edit; a busy writer cannot postpone it.
         let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
-        let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut document_buffer: Vec<Vec<u8>> = Vec::new();
         // Window updates and documents lead the tick's batch in turn (FIX 8870).
         let mut batch_turn = super::node_batch::NodeBatchTurn::default();
@@ -51,7 +51,8 @@ impl SyncConnection {
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
         let mut publication_slot = None;
-        let mut debounce_deadline: Option<Instant> = None;
+        let mut debounce_deadline = (!debounce_buffer.is_empty())
+            .then(|| Instant::now() + Duration::from_millis(debounce_ms));
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -79,11 +80,38 @@ impl SyncConnection {
             return LoopExit::Renegotiate;
         }
         let mut left_rx = self.left.subscribe();
+        // The host's admission for each batch, and its pause (FIX 12036).
+        let mut gate = self.batch_gate();
 
         // Every `break` is the run's shutdown; any other exit returns, and
         // its upkeep rounds run on beside the next connection.
         let exit = loop {
-            self.run_machine_history(&mut machine_history_tasks, &machine_history_due, event_tx);
+            // What the home sent, then the promotions asked, go first, in
+            // order, each under its own admission; a pause keeps the rest.
+            if let Err(exit) = self
+                .apply_held(
+                    &mut gate,
+                    client,
+                    &mut write,
+                    event_tx,
+                    &machine_history_due,
+                    debounce_buffer,
+                )
+                .await
+            {
+                if matches!(exit, LoopExit::Shutdown) {
+                    self.publish_leave_unqueued(debounce_buffer);
+                    break exit;
+                }
+                return exit;
+            }
+            self.run_machine_history(
+                &mut machine_history_tasks,
+                &machine_history_due,
+                event_tx,
+                &mut gate,
+            )
+            .await;
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -91,51 +119,23 @@ impl SyncConnection {
             };
 
             tokio::select! {
-                // WS message from server
-                msg = read.next() => {
+                // WS message from server; while paused, read until the
+                // frames held fill their room (FIX 12036).
+                msg = read.next(), if gate.reading() => {
                     match msg {
-                        Some(Ok(Message::Binary(data))) => {
-                            match client.handle_server_message(&data) {
-                                Ok(responses) => {
-                                    if crate::sync::machine_history::take_landed(&client.vault) {
-                                        machine_history_due.store(true, Ordering::Relaxed);
-                                    }
-                                    // Judged per frame: a device-only flag may turn while an
-                                    // earlier frame waits on the socket.
-                                    for resp in responses
-                                        .into_iter()
-                                        .filter(|frame| !client.frame_withheld(frame))
-                                    {
-                                        let send_result =
-                                            write.send(Message::Binary(resp.into())).await;
-                                        if let Err(e) = send_result {
-                                            return LoopExit::Disconnected(format!("Send failed: {e}"));
-                                        }
-                                    }
-                                    if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
-                                        && !client.residence_acks.is_empty()
-                                        && let Err(e) = self.clear_residence_acks(client)
-                                    {
-                                        return LoopExit::Disconnected(e);
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
-                                    if matches!(data.first(),
-                                        Some(&transport::TAG_WINDOW_SYNC)
-                                            | Some(&transport::TAG_BULK_TRANSFER)
-                                            | Some(&transport::TAG_BULK_TRANSFER_DONE)) {
-                                        // A missing causal prefix cannot be repaired by
-                                        // silently dropping one live delta. Reconnect repeats
-                                        // the VV handshake for every followed window.
-                                        flush_to_queue(&self.queue, &mut debounce_buffer);
-                                        return LoopExit::Disconnected(format!("Window sync error: {e}"));
-                                    }
-                                }
-                            }
-                        }
+                        // Applied at the loop's head, in order, under the
+                        // host's admission (FIX 12036).
+                        Some(Ok(Message::Binary(data))) => gate.hold_frame(data),
                         Some(Ok(Message::Ping(data))) => {
-                            let pong_result = write.send(Message::Pong(data)).await;
+                            let mut send_left = self.left.subscribe();
+                            let pong_result = tokio::select! {
+                                biased;
+                                () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                    self.publish_leave_unqueued(debounce_buffer);
+                                    break LoopExit::Shutdown;
+                                }
+                                result = write.send(Message::Pong(data)) => result,
+                            };
                             if let Err(e) = pong_result {
                                 return LoopExit::Disconnected(format!("Pong failed: {e}"));
                             }
@@ -144,22 +144,22 @@ impl SyncConnection {
                             // Flush debounce buffer before disconnecting; the
                             // close code tells a server fault from a refusal
                             // (FIX 5927).
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Closed(ServerClose::read(frame.as_ref()));
                         }
                         None => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
                         Some(Err(e)) => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
                     }
                 }
 
-                promotion = promotion_rx.recv() => {
+                promotion = promotion_rx.recv(), if !gate.paused() => {
                     let key = match promotion {
                         Ok(key) => key,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -169,50 +169,25 @@ impl SyncConnection {
                             return LoopExit::Disconnected("promotion channel closed".into());
                         }
                     };
-                    if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
-                        continue;
-                    }
-                    // A home that may not read the window's world is not asked to promote it,
-                    // nor for its vector; the `rp:w:` intent stays (FIX 922 item 11).
-                    if !client.home_may_promote(&key) || !client.home_may_request(&key) {
-                        continue;
-                    }
-                    let Some(selector) = client.config.residence_selector.as_ref() else {
-                        return LoopExit::Disconnected("promoted window missing grant selector".into());
-                    };
-                    let bytes = match crate::sync::encode_sync_selector(selector) {
-                        Ok(bytes) => bytes,
-                        Err(e) => return LoopExit::Disconnected(format!("promotion selector: {e}")),
-                    };
-                    let proof = match transport::encode_window_sync(
-                        key.as_str(), window_sub_tags::PROMOTION_REQUEST, &bytes,
-                    ).into_result() {
-                        Ok(frame) => frame,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    let window = match client.ensure_window(key.as_str()) {
-                        Ok(window) => window,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    let vv = match transport::encode_window_sync(
-                        key.as_str(), window_sub_tags::VV_REQUEST,
-                        &crate::sync::loro_support::doc_version_vector(&window.doc),
-                    ).into_result() {
-                        Ok(frame) => frame,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    for frame in [proof, vv] {
-                        if let Err(e) = write.send(Message::Binary(frame.into())).await {
-                            return LoopExit::Disconnected(e.to_string());
-                        }
-                    }
+                    // Sent at the loop's head under the host's admission.
+                    gate.hold_promotion(key);
                 }
 
-                partial = presence_rx.recv() => {
+                // Live and lossy: no admission, and none sent while paused.
+                partial = presence_rx.recv(), if !gate.paused() => {
                     match partial {
                         Ok(frame) => {
-                            if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                flush_to_queue(&self.queue, &mut debounce_buffer);
+                            let mut send_left = self.left.subscribe();
+                            let send_result = tokio::select! {
+                                biased;
+                                () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                    self.publish_leave_unqueued(debounce_buffer);
+                                    break LoopExit::Shutdown;
+                                }
+                                result = write.send(Message::Binary(frame.into())) => result,
+                            };
+                            if let Err(error) = send_result {
+                                self.queue_on_exit(&mut gate, debounce_buffer).await;
                                 return LoopExit::Disconnected(format!("Presence send failed: {error}"));
                             }
                         }
@@ -280,16 +255,25 @@ impl SyncConnection {
                 }
 
                 // Debounce timer fired — flush buffered updates
-                _ = debounce_sleep, if debounce_deadline.is_some() => {
+                _ = debounce_sleep, if debounce_deadline.is_some() && !gate.paused() => {
+                    // Held until the batch is sent; a pause keeps the
+                    // buffers for the tick after the thaw (FIX 12036).
+                    let Some(_batch) = gate.admit().await else {
+                        continue;
+                    };
                     debounce_deadline = None;
 
                     match self.flush_node_batch(
-                        &mut write, client, &mut debounce_buffer, &mut document_buffer,
+                        &mut write, client, debounce_buffer, &mut document_buffer,
                         &mut publication_slot, &mut batch_turn,
                     ).await {
-                        Err(error) => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
-                            return LoopExit::Disconnected(error);
+                        Err(LoopExit::Shutdown) => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        Err(exit) => {
+                            flush_to_queue(&self.queue, debounce_buffer);
+                            return exit;
                         }
                         Ok(Some((part, sent))) => {
                             client.artifact_publication_released(&mut publication_cursor, &part, sent);
@@ -305,17 +289,50 @@ impl SyncConnection {
                     }
                 }
 
-                _ = sealed_relay.tick() => {
+                _ = sealed_relay.tick(), if !gate.paused() => {
+                    // Each upkeep task holds the host's admission until its
+                    // last write; a pause leaves the tick due at the thaw
+                    // (FIX 12036).
+                    let (Some(tombstone_batch), Some(sealed_batch)) =
+                        (gate.admit().await, gate.admit().await)
+                    else {
+                        sealed_relay.reset_immediately();
+                        continue;
+                    };
                     // The home handoff's delivery round (FIX 5661 C2a).
                     self.home_handoff_wake.notify_one();
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
                         tombstone_task = Some(tokio::task::spawn_blocking(move || {
+                            let _batch = tombstone_batch;
                             if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Pending tombstone retry failed: {error}"
                                 )));
+                            }
+                            // A world the owner keeps on one other machine
+                            // leaves this one (FIX 14534).
+                            match crate::sync::residence::evict_worlds_placed_elsewhere(&vault) {
+                                Ok(eviction) if eviction.worlds > 0 => tracing::info!(
+                                    worlds = eviction.worlds,
+                                    windows_evicted = eviction.windows_evicted,
+                                    windows_busy = eviction.windows_busy,
+                                    windows_unconfirmed = eviction.windows_unconfirmed,
+                                    windows_with_local_members =
+                                        eviction.windows_with_local_members,
+                                    removed = eviction.removed,
+                                    kept = eviction.kept,
+                                    cached_items_removed = eviction.cached_items_removed,
+                                    cached_items_held = eviction.cached_items_held,
+                                    "world copies placed elsewhere evicted"
+                                ),
+                                Ok(_) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "World eviction failed: {error}"
+                                    )));
+                                }
                             }
                         }));
                     }
@@ -328,6 +345,7 @@ impl SyncConnection {
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         sealed_task = Some(tokio::spawn(async move {
+                            let _batch = sealed_batch;
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
                             // (OF-469). Any machine whose rows name history it
@@ -449,13 +467,33 @@ impl SyncConnection {
                     machine_history_due.store(true, Ordering::Relaxed);
                 }
 
-                // Loro's Rust EphemeralStore has no internal timer.
-                _ = ephemeral_housekeeping.tick() => {
+                // Loro's Rust EphemeralStore has no internal timer. Its
+                // sends and writes are one batch (FIX 12036).
+                _ = ephemeral_housekeeping.tick(), if !gate.paused() => {
+                    let Some(_batch) = gate.admit().await else {
+                        continue;
+                    };
                     client.remove_outdated_ephemeral();
-                    if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
-                        return LoopExit::Disconnected(e);
+                    let retries = client.retry_document_requests();
+                    if !retries.is_empty() {
+                        document_buffer.extend(retries);
+                        debounce_deadline.get_or_insert_with(||
+                            Instant::now() + Duration::from_millis(debounce_ms));
                     }
-                    if let Err(e) = crate::sync::client::send_leaf_key_requests(client, &mut write).await {
+                    let mut housekeeping_left_rx = self.left.subscribe();
+                    let send_result = tokio::select! {
+                        biased;
+                        () = async { let _ = housekeeping_left_rx.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        result = async {
+                            crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
+                            crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            crate::sync::client::send_sealed_updates(client, &mut write).await
+                        } => result,
+                    };
+                    if let Err(e) = send_result {
                         return LoopExit::Disconnected(e);
                     }
                     if let Err(error) = client.replay_deferred_federation_update() {
@@ -479,30 +517,65 @@ impl SyncConnection {
                     }
                 }
 
+                // The host thawed: what the pause held goes first (FIX 12036).
+                () = gate.thawed(), if gate.paused() => {}
+
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
-                        flush_to_queue(&self.queue, &mut debounce_buffer);
-                        let _ = write.send(Message::Close(None)).await;
+                        self.queue_on_exit(&mut gate, debounce_buffer).await;
+                        let mut send_left = self.left.subscribe();
+                        tokio::select! {
+                            biased;
+                            () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                self.publish_leave_unqueued(debounce_buffer);
+                                break LoopExit::Shutdown;
+                            }
+                            _ = write.send(Message::Close(None)) => {}
+                        }
                         return LoopExit::Renegotiate;
                     }
                 }
 
                 // A confirmed leave ends the lane for good (OF-158): what it
-                // buffered is queued, to be counted and discarded. The borrow
-                // `wait_for` returns goes before the close frame's await, so
-                // the loop stays `Send` for a host that spawns it.
+                // buffered gets one queue try, then the remaining valid buffer
+                // is published and cleared as the explicit owner discard BEFORE
+                // the close frame's await, so a blocked `Close` cannot delay
+                // the count past the 10s quiesce. The borrow `wait_for` returns
+                // goes before the close frame's await, so the loop stays `Send`
+                // for a host that spawns it.
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
-                    let _ = write.send(Message::Close(None)).await;
+                    self.queue_on_exit(&mut gate, debounce_buffer).await;
+                    self.publish_leave_unqueued(debounce_buffer);
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        _ = write.send(Message::Close(None)) => {}
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {}
+                    }
                     break LoopExit::Shutdown;
                 }
 
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    let mut shutdown_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = shutdown_left.wait_for(|left| *left).await; } => {
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
+                            self.publish_leave_unqueued(debounce_buffer);
+                        }
+                        _ = self.queue_on_shutdown(&mut gate, debounce_buffer) => {}
+                    }
                     // Send close frame
-                    let _ = write.send(Message::Close(None)).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                        }
+                        _ = write.send(Message::Close(None)) => {}
+                    }
                     break LoopExit::Shutdown;
                 }
             }
@@ -530,12 +603,14 @@ impl SyncConnection {
     /// Starts an owed machine-history round off this loop once one is due and
     /// a task is free (FIX 3820). Own residence only: the home answers it, a
     /// federation peer does not. A round that lands rows asks for another,
-    /// since a row it released may owe more.
-    fn run_machine_history(
+    /// since a row it released may owe more. Each round holds the host's
+    /// admission until it ends; a paused host leaves it due (FIX 12036).
+    async fn run_machine_history(
         &self,
         tasks: &mut Vec<tokio::task::JoinHandle<()>>,
         due: &std::sync::Arc<AtomicBool>,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        gate: &mut super::batch_admission::BatchGate<'_>,
     ) {
         tasks.retain(|task| !task.is_finished());
         if self.config.client_config.federation_peer.is_some()
@@ -544,11 +619,16 @@ impl SyncConnection {
         {
             return;
         }
+        let Some(batch) = gate.admit().await else {
+            due.store(true, Ordering::Relaxed);
+            return;
+        };
         let manager = std::sync::Arc::clone(&self.manager);
         let config = self.client_config();
         let events = event_tx.clone();
         let due = std::sync::Arc::clone(due);
         tasks.push(tokio::spawn(async move {
+            let _batch = batch;
             match crate::sync::client::fetch_owed_machine_history(&manager, &config).await {
                 Ok(0) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
                 Ok(_) => due.store(true, Ordering::Relaxed),

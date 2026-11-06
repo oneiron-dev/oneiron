@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 
 use super::diagnostic_codec::{encode_diagnostic_event_body, validate_token};
 use super::event::{
-    DIAGNOSTIC_EVENT_ID_DOMAIN, DeterministicDetector, DiagnosticEvent, DiagnosticObservation,
-    DiagnosticWorkingSet, MAX_REF_LEN, invalid_diagnostic,
+    DeterministicDetector, DiagnosticEvent, DiagnosticObservation, DiagnosticWorkingSet,
+    MAX_REF_LEN, invalid_diagnostic,
 };
 use super::untrusted_text::is_forbidden_text_scalar;
 use crate::Vault;
@@ -70,32 +70,7 @@ pub fn run_deterministic_detectors(
     Ok(ids)
 }
 
-/// Derives the stable event id for `(detector_id, canonical_body)`.
-///
-/// Admission requires `detector_id` to equal the identity persisted in the
-/// canonical body. Every local and replicated put checks this binding.
-///
-/// 16 raw domain-separated BLAKE3 bytes, so the id is reproducible from the
-/// detector identity and the canonical body alone. The detector id is
-/// length-prefixed so no two `(id, body)` pairs can concatenate to the same
-/// transcript. A prefix landing on a reserved sentinel (~2^-120) is perturbed
-/// rather than randomized, which keeps the derivation total without making it
-/// unreproducible.
-#[must_use]
-pub fn diagnostic_event_id(detector_id: &str, canonical_body: &[u8]) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DIAGNOSTIC_EVENT_ID_DOMAIN);
-    hasher.update(&(detector_id.len() as u64).to_be_bytes());
-    hasher.update(detector_id.as_bytes());
-    hasher.update(canonical_body);
-    let mut raw = [0_u8; 16];
-    raw.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).expect("perturbed diagnostic id is non-reserved")
-    })
-}
+pub use crate::store::diagnostic_record::diagnostic_event_id;
 
 impl Vault {
     /// The ONE engine-authored write door for DIAGNOSTIC entities.
@@ -144,6 +119,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_DIAGNOSTIC,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

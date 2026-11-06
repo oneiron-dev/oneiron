@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use crate::authority::InvocationSlipBinding;
 use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
-use crate::receipt::{CallOutcome, CallReceiptInput, CallTransport};
+use crate::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
@@ -354,11 +354,25 @@ pub trait VerbAskCredentialCheck: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct VerbAskDrainPermit {
     invocation: InvocationId,
+    /// The call is a paced call's turn (FIX 8753): its verb runs it rather
+    /// than holding it again.
+    paced: bool,
 }
 
 impl VerbAskDrainPermit {
     const fn new(invocation: InvocationId) -> Self {
-        Self { invocation }
+        Self {
+            invocation,
+            paced: false,
+        }
+    }
+
+    /// The leave for a paced call's turn.
+    pub(super) const fn paced(invocation: InvocationId) -> Self {
+        Self {
+            invocation,
+            paced: true,
+        }
     }
 
     #[must_use]
@@ -372,6 +386,9 @@ impl VerbAskDrainPermit {
     pub fn enter(&self) -> VerbAskDrainScope {
         VerbAskDrainScope {
             _scope: DrainScope::enter(self.invocation),
+            _turn: self
+                .paced
+                .then(|| super::paced::PacedTurnScope::enter(self.invocation)),
         }
     }
 }
@@ -380,6 +397,7 @@ impl VerbAskDrainPermit {
 #[must_use]
 pub struct VerbAskDrainScope {
     _scope: DrainScope,
+    _turn: Option<super::paced::PacedTurnScope>,
 }
 
 /// The witness the pre chain on this thread pins if its call asks, while held.
@@ -510,6 +528,7 @@ pub(super) struct RefusalReceipt {
     actor_class: String,
     credential_ref: Option<String>,
     request_digest: String,
+    inputs: Option<ActionInputs>,
 }
 
 impl RefusalReceipt {
@@ -519,6 +538,7 @@ impl RefusalReceipt {
         actor: EntityId,
         class: EdgeActorClass,
         args: &Value,
+        inputs: Option<ActionInputs>,
     ) -> Self {
         Self {
             transport: match reference.door {
@@ -533,6 +553,7 @@ impl RefusalReceipt {
                 VerbAskCredentialSource::AttestedOwner { .. } => None,
             },
             request_digest: crate::receipt::call_json_digest(args),
+            inputs,
         }
     }
 
@@ -550,9 +571,9 @@ impl RefusalReceipt {
             },
             request_digest: self.request_digest,
             result_digest: Some(crate::receipt::call_refusal_digest(code, message)),
-            // What the parked call read was not kept, and the drain cannot
-            // recover it (OF-568).
-            inputs: None,
+            // The input versions captured when the call parked (OF-568);
+            // `None` when they were not captured.
+            inputs: self.inputs,
             // The saved call kept no live-run witness (OF-568 L4).
             attempt: None,
             served: Vec::new(),

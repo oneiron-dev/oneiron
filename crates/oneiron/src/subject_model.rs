@@ -61,52 +61,9 @@ use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
-/// Subject-model vocabulary version. Claim bodies retain the generic claim ABI.
-pub const SUBJECT_MODEL_SCHEMA_VERSION: u64 = 1;
-
-/// The only entity kinds that can stand behind an actor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SubjectKind {
-    Person,
-    Org,
-}
-
-impl SubjectKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Person => "person",
-            Self::Org => "org",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "person" => Some(Self::Person),
-            "org" => Some(Self::Org),
-            _ => None,
-        }
-    }
-
-    fn from_entity_type(entity_type: Option<u8>) -> Result<Self> {
-        match entity_type {
-            Some(ENTITY_TYPE_PERSON) => Ok(Self::Person),
-            Some(ENTITY_TYPE_ORG) => Ok(Self::Org),
-            _ => Err(Error::InvalidClaimBody(
-                "actor.subject_ref subject must be a PERSON or ORG",
-            )),
-        }
-    }
-}
-
-/// An actor's singular subject, with its checked entity kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ActorSubjectAnchor {
-    pub actor_ref: EntityId,
-    pub subject_ref: EntityId,
-    pub subject_kind: SubjectKind,
-}
+pub use crate::write_envelope::subject_record::{
+    ActorSubjectAnchor, SUBJECT_MODEL_SCHEMA_VERSION, SubjectKind,
+};
 
 impl Vault {
     /// Writes one active anchor and stamps the host-authenticated writer.
@@ -150,51 +107,13 @@ impl Vault {
     }
 }
 
-/// Anchors an actor to the PERSON or ORG standing behind it.
-///
-/// Reserved `actor.*` namespace: writable only through [`anchor_actor_subject`]
-/// via the crate-internal reserved claim door, never through
-/// `Vault::put_claim`.
-pub const PREDICATE_ACTOR_SUBJECT_REF: &str = "actor.subject_ref";
+pub use crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF;
 
 /// Records whether a PERSON is `meat` or `model`.
 /// Engine-owned individually; other `person.*` predicates remain public.
-pub const PREDICATE_PERSON_SUBSTRATE: &str = "person.substrate";
+pub use crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE;
 
-/// What a PERSON is made of (ARCH-0063 R7).
-///
-/// Deliberately NOT an entity-type fork. A `Model` person is a person: it
-/// merges, consents, and holds relationships through exactly the same paths a
-/// `Meat` person does. The registry is untouched by this distinction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum PersonSubstrate {
-    /// A biological someone.
-    Meat,
-    /// A model-backed someone.
-    Model,
-}
-
-impl PersonSubstrate {
-    /// Stable wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Meat => "meat",
-            Self::Model => "model",
-        }
-    }
-
-    /// Parses the wire spelling. Exactly two are accepted.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "meat" => Some(Self::Meat),
-            "model" => Some(Self::Model),
-            _ => None,
-        }
-    }
-}
+pub use crate::write_envelope::subject_record::PersonSubstrate;
 
 /// Anchors `actor_ref` to `subject_ref`, superseding any prior anchor.
 ///
@@ -265,6 +184,7 @@ fn write_actor_subject_anchor(
                 "actor.subject_ref subject kind mismatch",
             ));
         }
+        body.scope_facet = actor_subject_facet_in_txn(vault, wtxn, actor_ref)?;
         write_head_in_txn(vault, wtxn, &claim_id, &body, at)
     })?;
     Ok(claim_id)
@@ -437,18 +357,15 @@ pub(crate) fn ensure_actor_subject_in_txn(
 ) -> Result<()> {
     validate_anchor_entities_in_txn(vault, txn, actor, subject)?;
     validate_writer_in_txn(vault, txn, writer)?;
-    ensure_fact_in_txn(
-        vault,
-        txn,
-        subject_fact(
-            PREDICATE_ACTOR_SUBJECT_REF,
-            actor,
-            Value::from(subject.to_hex()),
-            writer,
-            at,
-        )?,
+    let mut body = subject_fact(
+        PREDICATE_ACTOR_SUBJECT_REF,
+        actor,
+        Value::from(subject.to_hex()),
+        writer,
         at,
-    )
+    )?;
+    body.scope_facet = actor_subject_facet_in_txn(vault, txn, actor)?;
+    ensure_fact_in_txn(vault, txn, body, at)
 }
 
 /// An existing meat or malformed substrate is not an absent model fact.
@@ -512,6 +429,27 @@ fn ensure_fact_in_txn(
         };
     }
     write_head_in_txn(vault, txn, &vault.store.clock.entity_id()?, &body, at)
+}
+
+// Only PERSON puts create the constructor's subject-derived substrate FACET.
+// Other actors use the same stored birth-facet/default rule as provenance.
+fn actor_subject_facet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<EntityId> {
+    if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
+        return crate::claim::substrate_facet_id(actor);
+    }
+    match crate::federation::record_scope::birth_facet(&vault.store, txn, actor)? {
+        Some(facet)
+            if vault.get_entity_type_in_txn(txn, &facet)?
+                == Some(crate::registry::ENTITY_TYPE_FACET) =>
+        {
+            Ok(facet)
+        }
+        _ => crate::claim::default_facet_in(&vault.store, txn),
+    }
 }
 
 fn subject_fact(

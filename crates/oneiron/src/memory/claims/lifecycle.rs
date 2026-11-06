@@ -16,7 +16,7 @@ fn carried_proposal_admitted(
     actor: EntityId,
     position: crate::federation::record_scope::BirthPosition,
 ) -> Result<(), Error> {
-    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
     let axis = |id: Option<EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
             ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))
@@ -87,12 +87,22 @@ impl Memory<'_> {
         Ok((context, admitted))
     }
 
-    /// Commits claims through the gated candidate path, one individually
-    /// gated write per element (C3: per-element decisions; one bad element
-    /// never sinks the others). A refused element answers its typed refusal
-    /// and persists nothing (OF-063).
+    /// Commits claims through the gated candidate path as one atomic batch
+    /// (FIX 9403; ARCH-0040, ARCH-0045): each element is gated on its own and
+    /// takes its own decision, and every element lands or none does. A
+    /// refused element answers its typed refusal, every other element that
+    /// it was rolled back with it, and nothing persists (OF-063).
     pub fn commit(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitOutcome>> {
-        Ok(self.commit_all("vault.commit", claims, true, None))
+        let no_check: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error> = &|_| Ok(());
+        let batch: Vec<BatchClaim<'_>> = claims
+            .iter()
+            .map(|input| BatchClaim {
+                input,
+                in_writer: no_check,
+                birth: None,
+            })
+            .collect();
+        self.commit_claim_batch("vault.commit", &batch)
     }
 
     /// Commits one claim with single-cardinality auto-supersede (S3):

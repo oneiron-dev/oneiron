@@ -21,12 +21,15 @@
 //! the job pinned, and the job alone files the final answer. Nothing is cut
 //! away, and every answer is kept.
 use oneiron::attempt_queue::AttemptRecord;
-use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerRunnerStore};
+use oneiron::dreamer_runner::{
+    DreamerAdmittedAttempt, DreamerParkedAttemptRecord, DreamerRunnerStore,
+};
 use oneiron::feedback::{
     COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER, FeedbackInboxNote,
     FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageNodeInput,
-    FeedbackTriageNodeJob, FeedbackTriageOutput, FeedbackTriagePin, FeedbackTriageSourceRef,
-    FeedbackTriageSplit, FeedbackTriageStep, FeedbackTriageWork, GithubIssueRevision,
+    FeedbackTriageNodeJob, FeedbackTriageOutput, FeedbackTriageParkOutcome, FeedbackTriagePin,
+    FeedbackTriageSourceRef, FeedbackTriageSplit, FeedbackTriageStep, FeedbackTriageWork,
+    GithubIssueRevision,
 };
 use oneiron::limit_ask::EngineLimit;
 use oneiron::skill::LoadedSkillPack;
@@ -213,12 +216,21 @@ pub(super) fn yielded(
     admitted: &DreamerAdmittedAttempt,
     now: u64,
 ) -> oneiron::Result<bool> {
+    Ok(yielded_park(store, admitted, now)?.is_some())
+}
+
+/// The native park created by this revision run, with its stored cause and reason.
+pub(super) fn yielded_park(
+    store: &DreamerRunnerStore<'_>,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<Option<DreamerParkedAttemptRecord>> {
     if admitted.status.payload.attempt_type != COACH_FEEDBACK_TRIAGE_FACET {
-        return Ok(false);
+        return Ok(None);
     }
     Ok(store
         .parked_attempt(admitted.status.attempt.id)?
-        .is_some_and(|park| {
+        .filter(|park| {
             park.park_owner == COACH_FEEDBACK_TRIAGE_PARK_OWNER && park.parked_at >= now
         }))
 }
@@ -292,8 +304,9 @@ fn run_node(
 }
 
 /// The next step of a revision already cut (FIX 7549). From here its job is
-/// never failed for a step: a step that errs parks the job on its graph,
-/// and its last child or the next sweep wakes it again.
+/// never failed for a step while its graph still owes children: a step that
+/// errs parks the job on its graph, and its last child or the next sweep wakes
+/// it again. A complete graph keeps the original error instead of parking.
 fn resume(
     run: &Run<'_>,
     models: &HostModels<'_>,
@@ -310,13 +323,14 @@ fn resume(
         FeedbackTriageStep::Wait,
         run.now,
     ) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(error),
+        Ok(FeedbackTriageParkOutcome::Parked(_)) => Ok(()),
+        Ok(FeedbackTriageParkOutcome::Ready(_)) | Err(_) => Err(error),
     }
 }
 
-/// Plans the revision's next step on its graph and parks its job on it, or
-/// files the final answer once one answer stands or no batch joins two.
+/// Plans the revision's next step on its graph and parks its job on it, files
+/// the final answer once one answer stands or no batch joins two, or continues
+/// once when a `Wait` finds its current level already complete.
 fn advance(
     run: &Run<'_>,
     models: &HostModels<'_>,
@@ -344,21 +358,15 @@ fn advance(
         return parts::begin(run, input, &loaded, &instruction, window);
     };
     let instruction = instruction(&loaded)?;
-    let step = if work.owed() {
-        if window.input_tokens == work.pin.input_tokens {
-            FeedbackTriageStep::Wait
-        } else {
-            repartition(input, &work, &instruction, window)?
-        }
-    } else {
+    let finish = |work: &FeedbackTriageWork| -> oneiron::Result<Option<FeedbackTriageStep>> {
         let level: Vec<_> = work.current().collect();
-        let batches = synthesis::batches(input, &work, &level, &window, &instruction)?;
+        let batches = synthesis::batches(input, work, &level, &window, &instruction)?;
         if !batches.iter().any(|batch| batch.len() > 1) {
             let (output, served) = synthesis::assemble(&level);
             let result = vault.run_coach_feedback_triage(
                 run.admitted,
                 &output,
-                (work.pin.entity, work.pin.version),
+                (work.pin.entity, work.pin.version.clone()),
                 &served,
                 run.now,
             )?;
@@ -366,13 +374,66 @@ fn advance(
                 findings = result.findings.len(),
                 "the Coach triaged one long feedback item in parts"
             );
-            return Ok(());
+            return Ok(None);
         }
-        FeedbackTriageStep::Synthesis { batches }
+        Ok(Some(FeedbackTriageStep::Synthesis { batches }))
     };
-    vault
-        .park_coach_feedback_triage(run.admitted, step, run.now)
-        .map(drop)
+    let step = if work.owed() {
+        if window.input_tokens == work.pin.input_tokens {
+            FeedbackTriageStep::Wait
+        } else {
+            repartition(input, &work, &instruction, window.clone())?
+        }
+    } else {
+        let Some(step) = finish(&work)? else {
+            return Ok(());
+        };
+        step
+    };
+    let waiting = matches!(&step, FeedbackTriageStep::Wait);
+    // FIX 12546 (L07-A YES-with-conditions H1-H7 09:20): planned pin of an
+    // empty-split Repartition; emptiness alone never implies complete.
+    let repartition_pin = match &step {
+        FeedbackTriageStep::Repartition { pin, splits } if splits.is_empty() => Some(pin.clone()),
+        _ => None,
+    };
+    match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
+        FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+        FeedbackTriageParkOutcome::Ready(fresh) if waiting => {
+            if fresh.owed() || fresh.generation != work.generation || fresh.pin != work.pin {
+                return Err(unavailable(
+                    "feedback triage Wait returned an owed or changed graph",
+                ));
+            }
+            let Some(step) = finish(&fresh)? else {
+                return Ok(());
+            };
+            match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
+                FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+                FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+                    "feedback triage park outcome does not match its step",
+                )),
+            }
+        }
+        FeedbackTriageParkOutcome::Ready(fresh)
+            if repartition_pin.as_ref().is_some_and(|pin| {
+                !fresh.owed() && fresh.generation == work.generation && fresh.pin == *pin
+            }) =>
+        {
+            let Some(step) = finish(&fresh)? else {
+                return Ok(());
+            };
+            match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
+                FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+                FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+                    "feedback triage park outcome does not match its step",
+                )),
+            }
+        }
+        FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+            "feedback triage park outcome does not match its step",
+        )),
+    }
 }
 
 /// The window changed under owed nodes: each unanswered node that no longer

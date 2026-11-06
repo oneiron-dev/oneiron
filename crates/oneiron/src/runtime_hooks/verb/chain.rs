@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::receipt::hex_lower;
+use crate::receipt::{ReceiptKind, hex_lower};
 use crate::runtime_hooks::block::HookBlock;
 use crate::runtime_hooks::lineage::LineageLink;
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
@@ -38,6 +38,52 @@ use run::RunRecord;
 
 /// Receipts the input's tail carries.
 const RECEIPT_TAIL: usize = 8;
+/// The tail's kinds: the full receipt family (FIX 1429).
+const RECEIPT_TAIL_KINDS: [ReceiptKind; 13] = [
+    ReceiptKind::Outbound,
+    ReceiptKind::Gate,
+    ReceiptKind::IdentityLifecycle,
+    ReceiptKind::ScopedRead,
+    ReceiptKind::Share,
+    ReceiptKind::ArtifactSettle,
+    ReceiptKind::ProposalOutcome,
+    ReceiptKind::CommitmentLifecycle,
+    ReceiptKind::Extraction,
+    ReceiptKind::ServedForm,
+    ReceiptKind::Hook,
+    ReceiptKind::ReferenceRefusal,
+    ReceiptKind::TaskLifecycle,
+];
+/// A room chain's receipt tail: base's family tail and the room's own Hook
+/// receipts, one per receipt (the room's wins), newest first, cut at
+/// [`RECEIPT_TAIL`] (FIX 5429). With no room receipt, base's tail as it is.
+fn merged_tail(
+    base: Vec<crate::memory::MemoryReceipt>,
+    room: Vec<crate::memory::MemoryReceipt>,
+) -> Vec<crate::memory::MemoryReceipt> {
+    if room.is_empty() {
+        return base;
+    }
+    let mut tail = room;
+    for receipt in base {
+        if !tail
+            .iter()
+            .any(|kept| kept.kind == receipt.kind && kept.receipt_ref == receipt.receipt_ref)
+        {
+            tail.push(receipt);
+        }
+    }
+    tail.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.receipt_ref.cmp(&right.receipt_ref))
+    });
+    tail.truncate(RECEIPT_TAIL);
+    tail
+}
+
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
@@ -95,12 +141,54 @@ pub(super) fn pre(
     resume: Option<&VerbResume>,
     turn: Option<Arc<TaskWorkTurn>>,
 ) -> Result<Stopped<VerbHookPre>> {
+    pre_with_saved(vault, storage, call, args, check, resume, turn, false)
+}
+
+/// The caller-only retry of a retained call. No path may turn a missing
+/// saved ask into a new call, including the nested-boundary fast paths.
+pub(super) fn pre_retained(
+    vault: &Vault,
+    storage: VerbHookStorage<'_>,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    turn: Option<Arc<TaskWorkTurn>>,
+) -> Result<Stopped<VerbHookPre>> {
+    pre_with_saved(vault, storage, call, args, check, None, turn, true)
+}
+
+fn pre_with_saved(
+    vault: &Vault,
+    storage: VerbHookStorage<'_>,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    resume: Option<&VerbResume>,
+    turn: Option<Arc<TaskWorkTurn>>,
+    require_saved: bool,
+) -> Result<Stopped<VerbHookPre>> {
+    let unavailable = || {
+        Ok(Err(VerbHookStop::Skipped {
+            hook: String::new(),
+            reason: "this invocation's saved hook call is unavailable".to_owned(),
+        }))
+    };
     if depth() > 0 {
-        return through(call, args);
+        return if require_saved {
+            unavailable()
+        } else {
+            through(call, args)
+        };
     }
     let state = &vault.verb_hook_state;
     let mark = match state.enter(call.invocation, call.actor) {
-        Entered::Nested => return through(call, args),
+        Entered::Nested => {
+            return if require_saved {
+                unavailable()
+            } else {
+                through(call, args)
+            };
+        }
         Entered::Draining(group) => return Ok(Err(ask::pending(call.invocation, group))),
         Entered::Fresh(mark) => mark,
     };
@@ -125,6 +213,7 @@ pub(super) fn pre(
     let expired =
         matches!(storage, VerbHookStorage::Canonical) && state.take_expired(call.invocation);
     let resumed = match saved {
+        ask::Retry::Fresh if require_saved => return unavailable(),
         ask::Retry::Fresh => None,
         ask::Retry::Stop(stop) => return Ok(Err(stop)),
         ask::Retry::Resume {
@@ -191,6 +280,8 @@ pub(super) fn pre(
             carry: Some(carry),
             landing: None,
             session: None,
+            resumed_ask: None,
+            read_capture: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -211,6 +302,7 @@ pub(super) fn pre(
     );
     chain.landing = landing.as_mut();
     chain.expired = expired;
+    let resumed_ask = token.clone();
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -218,6 +310,8 @@ pub(super) fn pre(
         carry: Some(carry),
         landing,
         session: None,
+        resumed_ask,
+        read_capture: None,
     }))
 }
 
@@ -230,7 +324,11 @@ pub(super) fn post(
     result: Value,
 ) -> Result<Stopped<Value>> {
     let VerbHookPre {
-        call, args, carry, ..
+        call,
+        args,
+        carry,
+        read_capture,
+        ..
     } = pre;
     let state = &vault.verb_hook_state;
     let Some(carry) = carry else {
@@ -252,7 +350,7 @@ pub(super) fn post(
         return Ok(Ok(result));
     };
     let _depth = HookDepth::enter();
-    let ended = Chain::new(
+    let mut chain = Chain::new(
         vault,
         storage,
         &call,
@@ -260,8 +358,9 @@ pub(super) fn post(
         runtime,
         carry.now,
         None,
-    )
-    .post(&hooks, &args, result);
+    );
+    chain.read_capture = read_capture;
+    let ended = chain.post(&hooks, &args, result);
     // A nested boundary of this invocation passes through until here.
     drop(carry.mark);
     ended
@@ -274,6 +373,8 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         carry: None,
         landing: None,
         session: None,
+        resumed_ask: None,
+        read_capture: None,
     }))
 }
 
@@ -330,6 +431,9 @@ struct Chain<'c> {
     /// The newest receipts, as JSON: each hook reads them only as its own
     /// input shows them ([`projection`], FIX 10084).
     tail: Value,
+    /// The source rows of each room Hook receipt in the tail, by its ref: a
+    /// hook reads one only while its own view shows them all (FIX 5429).
+    room_sources: Vec<(String, Vec<EntityId>)>,
     runs: Vec<RunRecord<'c>>,
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
     /// Queued outcomes, each with the proposal it lands, if any.
@@ -347,6 +451,7 @@ struct Chain<'c> {
     /// Set on a recorded call's pre chain its retry runs as new, after the
     /// drain's pass forgot the ask it named: each receipt says so (FIX 5693).
     expired: bool,
+    read_capture: Option<crate::memory::read_capture::ReadCapture>,
 }
 
 impl<'c> Chain<'c> {
@@ -359,10 +464,29 @@ impl<'c> Chain<'c> {
         now: u64,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Self {
-        let tail = vault
+        let kinds = RECEIPT_TAIL_KINDS.map(|kind| kind.as_str().to_owned());
+        let base = vault
             .memory(call.actor, filter::edge_class(call.class))
-            .receipts(RECEIPT_TAIL)
-            .ok()
+            .receipts_of_kinds(RECEIPT_TAIL, &kinds)
+            .ok();
+        // A chain in a room also reads the room's own Hook receipts, which
+        // base's family does not hold, each with its source rows (FIX 5429).
+        let (records, sources): (Vec<_>, Vec<_>) = match &storage {
+            VerbHookStorage::Session(hooks) => hooks
+                .room_hook_receipts(vault, call.reader.as_ref(), RECEIPT_TAIL)
+                .unwrap_or_default()
+                .into_iter()
+                .unzip(),
+            VerbHookStorage::Canonical => (Vec::new(), Vec::new()),
+        };
+        let room = crate::memory::Memory::room_tail_receipts(records);
+        let room_sources = room
+            .iter()
+            .map(|receipt| receipt.receipt_ref.clone())
+            .zip(sources)
+            .collect();
+        let tail = base
+            .map(|base| merged_tail(base, room))
             .and_then(|receipts| serde_json::to_value(receipts).ok())
             .unwrap_or_else(|| Value::Array(Vec::new()));
         Self {
@@ -373,6 +497,7 @@ impl<'c> Chain<'c> {
             runtime,
             now,
             tail,
+            room_sources,
             runs: Vec::new(),
             blocks: Vec::new(),
             intents: Vec::new(),
@@ -381,6 +506,7 @@ impl<'c> Chain<'c> {
             turn,
             landing: None,
             expired: false,
+            read_capture: None,
         }
     }
 
@@ -542,6 +668,9 @@ impl<'c> Chain<'c> {
             }
             match self.run(id, binding, args, Some(&view), None)? {
                 Some(HookOutcome::Redact { paths }) => {
+                    if let Some(capture) = &self.read_capture {
+                        capture.changed();
+                    }
                     for path in &paths {
                         redact::hide(&mut view, path);
                     }
@@ -549,6 +678,9 @@ impl<'c> Chain<'c> {
                 Some(_) => {}
                 None if binding.selector.blocking => {
                     if self.call.domain == VerbDomain::Read {
+                        if let Some(capture) = &self.read_capture {
+                            capture.changed();
+                        }
                         hidden = Some(self.hide(binding));
                         break;
                     }

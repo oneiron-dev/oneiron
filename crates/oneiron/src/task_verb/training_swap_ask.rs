@@ -5,10 +5,12 @@
 //! its checks allow a proposal, the Coach asks each owner about it in its own
 //! name: one System question in that owner's private conversation with the
 //! Coach, carrying the result in brief, and an ask on its TURN that offers the
-//! swap beside keep and holds by default. The ids are reserved once per run,
-//! owner and result digest, so a retry lands the same question; a result
-//! whose digest moved (another model took the role) is asked afresh, and the
-//! questions about the older digest close.
+//! swap beside keep and holds by default. The ids are reserved once per
+//! generation under one run, owner and result digest, so a retry lands the
+//! same question; a result whose digest moved (another model took the role) is
+//! asked afresh, and the questions about the older digest close. A
+//! Deadline-held question may renew as a new generation that keeps every
+//! prior route.
 //!
 //! Only the asked owner's own word settles it, in the ask's settling commit:
 //! a counted Human word under that owner's live proof, given on the node that
@@ -16,10 +18,12 @@
 //! question froze. `approve_swap` binds the checkpoint through the training
 //! pack's swap core in that commit; `keep` records the answer and binds
 //! nothing. A deadline, default, abstention, or agent or companion word
-//! approves nothing. Either answer cuts the run's other open asks Stale, and
-//! an answered run is not asked again; the owner's direct swap door still
-//! serves it. Embedder runs are not asked: their swap stages a re-embed
-//! through a space move.
+//! approves nothing. A swap or keep cuts the run's other open asks Stale;
+//! a setup refusal records NeedsSetup on that ask alone. A swapped run, or a
+//! kept result at the same digest, is not asked again, but a changed result
+//! may be asked afresh; the owner's direct swap door still serves it.
+//! Embedder runs are not asked: their swap stages a re-embed through a space
+//! move.
 
 use std::collections::BTreeMap;
 
@@ -39,22 +43,24 @@ use crate::memory::{
     WitnessTurn,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::training_pack::{SwapChoice, SwapExpectation, TrainingRun, TrainingState};
+use crate::skill_optimize::training_choice::SwapChoice;
+use crate::skill_optimize::training_choice::TrainingState;
+use crate::training_pack::{SwapExpectation, TrainingRun};
 use crate::{EntityId, Vault};
 
 mod question;
 use question::{candidate_in, swap_question_text};
 
 /// Every training swap ask's intent key starts so:
-/// `training_swap/<run hex>/<digest>/<owner hex>`.
+/// `training_swap/<run hex>/<digest>/<owner hex>/<turn hex>`.
 const INTENT_PREFIX: &str = "training_swap/";
-/// The message type of the witnessed question.
-pub(crate) const SWAP_QUESTION_TYPE: &str = "training_swap_question";
-/// The question message's metadata keys: the swap tuple. It locates the
-/// reservation and proves nothing by itself.
+pub(crate) use crate::gate::training_ask_kind::SWAP_QUESTION_TYPE;
+/// The question message's metadata keys: the swap tuple plus the generation's
+/// turn. It locates the reservation and proves nothing by itself.
 const META_RUN: &str = "training_swap_run";
 const META_DIGEST: &str = "training_swap_digest";
 const META_OWNER: &str = "training_swap_owner";
+const META_TURN: &str = "training_swap_turn";
 
 /// What an owner's answer does to the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +83,7 @@ const OPTIONS: [(&str, SwapAnswer, &str); 2] = [
 ];
 
 /// Where one owner's question about one result stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwapAskState {
     /// Reserved or asked, with no answer yet.
@@ -86,12 +92,22 @@ pub enum SwapAskState {
     Swapped,
     /// This owner's `keep` kept the current model.
     Kept,
+    /// The owner's swap word reached a setup refusal; nothing bound.
+    NeedsSetup { reason: String },
     /// Another answer, the owner's direct swap or a newer result closed it.
     Closed,
 }
 
 /// `(run, owner, result digest)`: one owner asked about one result.
 type SwapAskKey = (EntityId, EntityId, String);
+
+/// `(run, owner, digest, turn)`: one generation of that question, named by
+/// its exact reserved turn. The turn is the generation identity.
+type SwapQuestionKey = (EntityId, EntityId, String, EntityId);
+
+fn base_key(question: &SwapQuestionKey) -> SwapAskKey {
+    (question.0, question.1, question.2.clone())
+}
 
 /// One owner's question about one result: ids and time reserved before the
 /// witness, the expectation an approval binds against, the ask group once
@@ -142,8 +158,9 @@ struct Unasked {
     owners: Vec<EntityId>,
 }
 
-/// `(run, owner, digest)` → that owner's question about that result.
-const ASKS: SideTable<SwapAskKey, SwapAskRoute, Named> =
+/// `(run, owner, digest)` → that owner's questions about that result, oldest
+/// first. A renewal appends a generation; no prior route is dropped.
+const ASKS: SideTable<SwapAskKey, Vec<SwapAskRoute>, Named> =
     SideTable::new(&side_table::TASK_TRAINING_SWAP_ASK);
 
 /// `ask group` → the reservation it carries.
@@ -160,65 +177,78 @@ pub(crate) fn is_training_swap_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
-fn intent_key(key: &SwapAskKey) -> String {
+fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
     let (run, owner, digest) = key;
     format!(
-        "{INTENT_PREFIX}{}/{digest}/{}",
+        "{INTENT_PREFIX}{}/{digest}/{}/{}",
         run.to_hex(),
-        owner.to_hex()
+        owner.to_hex(),
+        turn.to_hex()
     )
 }
 
-/// The swap tuple a training swap ask's intent key names, read whole and in
-/// canonical form; `None` for any other key.
-pub(crate) fn training_swap_ask_key(intent_key: &str) -> Option<SwapAskKey> {
+/// The swap question a training swap ask's intent key names, read whole and
+/// in canonical form; `None` for any other key.
+pub(crate) fn training_swap_ask_key(intent_key: &str) -> Option<SwapQuestionKey> {
     let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(run), Some(digest), Some(owner), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+    let (Some(run), Some(digest), Some(owner), Some(turn), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return None;
     };
     Some((
         canonical_id(run)?,
         canonical_id(owner)?,
         canonical_digest(digest)?,
+        canonical_id(turn)?,
     ))
 }
 
-/// The swap tuple a question message's metadata names: exactly the three
+/// The swap question a question message's metadata names: exactly the four
 /// keys the Coach writes, each once, in canonical form.
-pub(crate) fn swap_question_key(metadata: &rmpv::Value) -> Option<SwapAskKey> {
+pub(crate) fn swap_question_key(metadata: &rmpv::Value) -> Option<SwapQuestionKey> {
     let rmpv::Value::Map(entries) = metadata else {
         return None;
     };
-    if entries.len() != 3 {
+    if entries.len() != 4 {
         return None;
     }
     Some((
         canonical_id(single_str(entries, META_RUN)?)?,
         canonical_id(single_str(entries, META_OWNER)?)?,
         canonical_digest(single_str(entries, META_DIGEST)?)?,
+        canonical_id(single_str(entries, META_TURN)?)?,
     ))
 }
 
-fn swap_question_metadata(key: &SwapAskKey) -> serde_json::Value {
+fn swap_question_metadata(key: &SwapAskKey, turn: &EntityId) -> serde_json::Value {
     let (run, owner, digest) = key;
     let mut metadata = serde_json::Map::new();
     metadata.insert(META_RUN.to_owned(), run.to_hex().into());
     metadata.insert(META_DIGEST.to_owned(), digest.clone().into());
     metadata.insert(META_OWNER.to_owned(), owner.to_hex().into());
+    metadata.insert(META_TURN.to_owned(), turn.to_hex().into());
     serde_json::Value::Object(metadata)
 }
 
-/// The route and run `key` names while its question still waits: reserved
-/// and open, asked of a live vault owner, the run still one the Coach may
-/// ask about, at the expectation and digest the question froze.
+/// The route and run `key` names while its question still waits: the history
+/// route with its exact turn, reserved and open, asked of a live vault owner,
+/// the run still one the Coach may ask about, at the expectation and digest
+/// the question froze.
 fn pending_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    key: &SwapAskKey,
+    key: &SwapQuestionKey,
 ) -> Result<Option<(SwapAskRoute, TrainingRun)>> {
-    let Some(route) = ASKS.get(&vault.store, txn, key)? else {
+    let base = base_key(key);
+    let Some(history) = ASKS.get(&vault.store, txn, &base)? else {
+        return Ok(None);
+    };
+    let Some(route) = history.into_iter().find(|route| route.turn == key.3) else {
         return Ok(None);
     };
     if route.state != SwapAskState::Open
@@ -245,7 +275,7 @@ fn pending_in(
 pub(crate) fn pending_swap_question_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    key: &SwapAskKey,
+    key: &SwapQuestionKey,
 ) -> Result<Option<PendingSwapQuestion>> {
     let Some((route, run)) = pending_in(vault, txn, key)? else {
         return Ok(None);
@@ -276,7 +306,7 @@ fn swap_ask_spec(key: &SwapAskKey, turn: EntityId) -> MemoryResult<TaskAskSpec> 
     what.options = options;
     let who = TaskAskTarget::Responder(TaskAssignee::Human { actor_ref: key.1 });
     let mut spec = TaskAskSpec::shorthand(Some(who), what, None, TaskAskDefault::Hold);
-    spec.intent_key = intent_key(key);
+    spec.intent_key = intent_key(key, &turn);
     Ok(spec)
 }
 
@@ -285,7 +315,8 @@ fn swap_ask_spec(key: &SwapAskKey, turn: EntityId) -> MemoryResult<TaskAskSpec> 
 /// admitted it and it is not settled, is cut Stale in `txn`, so its words
 /// settle nothing and it stops waiting for its deadline. A held ask, or one
 /// another node admitted, keeps to its deadline; its words are refused. A
-/// Stale cut decides nothing, so it never swaps.
+/// Stale cut decides nothing, so it never swaps. Histories keep every other
+/// route untouched.
 fn close_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -294,28 +325,58 @@ fn close_in(
     now: u64,
     closes: impl Fn(&SwapAskKey) -> bool,
 ) -> Result<()> {
-    for (key, mut route) in ASKS.scan_from(&vault.store, txn, run.as_bytes())? {
-        if route.state != SwapAskState::Open
-            || !closes(&key)
-            || except.is_some_and(|except| route.group == Some(*except))
-        {
+    for (key, history) in ASKS.scan_from(&vault.store, txn, run.as_bytes())? {
+        if !closes(&key) {
             continue;
         }
-        route.state = SwapAskState::Closed;
-        ASKS.put(&vault.store, txn, &key, &route)?;
-        let Some(group) = route.group else {
-            continue;
-        };
-        if super::ask_settlement::read_result(vault, txn, group)?.is_some() {
-            continue;
+        let mut updated = history;
+        let mut changed = false;
+        let mut closed: Vec<Option<EntityId>> = Vec::new();
+        for route in &mut updated {
+            if route.state != SwapAskState::Open
+                || except.is_some_and(|except| route.group == Some(*except))
+            {
+                continue;
+            }
+            route.state = SwapAskState::Closed;
+            changed = true;
+            closed.push(route.group);
         }
-        let Some(asked) = ask_record::read_group(vault, txn, group)? else {
-            continue;
-        };
-        if ask_record::owns_revision(vault, txn, group, &asked)? {
-            super::ask_settlement::void_in(vault, txn, group, now)?;
+        if changed {
+            ASKS.put(&vault.store, txn, &key, &updated)?;
+        }
+        for group in closed.into_iter().flatten() {
+            if super::ask_settlement::read_result(vault, txn, group)?.is_some() {
+                continue;
+            }
+            let Some(asked) = ask_record::read_group(vault, txn, group)? else {
+                continue;
+            };
+            if ask_record::owns_revision(vault, txn, group, &asked)? {
+                super::ask_settlement::void_in(vault, txn, group, now)?;
+            }
         }
     }
+    Ok(())
+}
+
+/// The state of the generation `turn` of the reservation `key`, leaving every
+/// other history route untouched.
+fn set_route_state_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &SwapAskKey,
+    turn: &EntityId,
+    state: SwapAskState,
+) -> Result<()> {
+    let mut history = ASKS
+        .get(&vault.store, txn, key)?
+        .ok_or_else(ask_record::invalid)?;
+    let Some(route) = history.iter_mut().find(|route| route.turn == *turn) else {
+        return Err(ask_record::invalid());
+    };
+    route.state = state;
+    ASKS.put(&vault.store, txn, key, &history)?;
     Ok(())
 }
 
@@ -334,10 +395,14 @@ pub(crate) fn void_training_swap_asks_in(
     close_in(vault, txn, run, except, now, |_| true)
 }
 
-/// The reservation for `key`, its ids minted on first use, freezing
-/// `expected`. A new digest closes the run's open questions about an older
-/// one. An owner's later questions share the conversation of the first one
-/// the Coach asked them, offer or swap.
+/// The reservation for `key`: the latest generation, its ids minted on first
+/// use, freezing `expected`. A new digest closes the run's open questions
+/// about an older one. An owner's later questions share the conversation of
+/// the first one the Coach asked them, offer or swap. A bound latest renews
+/// only Open and Deadline-held with the run still proposing the same
+/// expectation and digest for a live owner, appending one generation;
+/// concurrent callers reuse the latest unbound generation, and an ineligible
+/// latest returns as is so the caller admits nothing.
 fn reserve(
     vault: &Vault,
     key: &SwapAskKey,
@@ -345,59 +410,125 @@ fn reserve(
     now: u64,
 ) -> Result<SwapAskRoute> {
     vault.with_write_txn_grouped(|txn| {
-        if let Some(route) = ASKS.get(&vault.store, txn, key)? {
-            return Ok(route);
+        let history = ASKS.get(&vault.store, txn, key)?;
+        let latest = history.as_ref().and_then(|history| history.last().cloned());
+        match latest {
+            None => {
+                let (run, owner, digest) = key;
+                close_in(vault, txn, run, None, now, |asked| asked.2 != *digest)?;
+                let conversation = match ASKS
+                    .scan(&vault.store, txn)?
+                    .into_iter()
+                    .flat_map(|(_, history)| history)
+                    .find(|route| route.owner == *owner)
+                {
+                    Some(route) => route.conversation,
+                    None => {
+                        match super::training_offer_ask::owner_conversation_in(vault, txn, owner)? {
+                            Some(conversation) => conversation,
+                            None => vault.store.clock.entity_id()?,
+                        }
+                    }
+                };
+                let route = SwapAskRoute {
+                    run: *run,
+                    digest: digest.clone(),
+                    owner: *owner,
+                    expected: expected.clone(),
+                    conversation,
+                    turn: vault.store.clock.entity_id()?,
+                    message: vault.store.clock.entity_id()?,
+                    at: now,
+                    group: None,
+                    state: SwapAskState::Open,
+                };
+                ASKS.put(&vault.store, txn, key, &vec![route.clone()])?;
+                Ok(route)
+            }
+            Some(latest) if latest.group.is_none() => Ok(latest),
+            Some(latest) => {
+                if latest.state != SwapAskState::Open {
+                    return Ok(latest);
+                }
+                let Some(bound) = latest.group else {
+                    return Ok(latest);
+                };
+                let expected_intent = intent_key(key, &latest.turn);
+                if !super::training_offer_ask::renewal_due_for_deadline_hold_in(
+                    vault,
+                    txn,
+                    bound,
+                    &key.1,
+                    Some(expected_intent.as_str()),
+                )? {
+                    return Ok(latest);
+                }
+                if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &key.1)? {
+                    return Ok(latest);
+                }
+                let Some(run) = crate::training_pack::training_run_in(vault, txn, &key.0)? else {
+                    return Ok(latest);
+                };
+                let manifest = crate::llm::manifest::read_manifest(&vault.store, txn)?;
+                let live = candidate_in(vault, txn, &run, manifest.as_ref())?;
+                let same = live.is_some_and(|(live_expected, live_digest)| {
+                    live_expected == latest.expected
+                        && live_digest == latest.digest
+                        && live_digest == key.2
+                        && live_expected == *expected
+                });
+                if !same {
+                    return Ok(latest);
+                }
+                let route = SwapAskRoute {
+                    run: key.0,
+                    digest: key.2.clone(),
+                    owner: key.1,
+                    expected: latest.expected.clone(),
+                    conversation: latest.conversation,
+                    turn: vault.store.clock.entity_id()?,
+                    message: vault.store.clock.entity_id()?,
+                    at: now,
+                    group: None,
+                    state: SwapAskState::Open,
+                };
+                let mut history = history.unwrap_or_default();
+                history.push(route.clone());
+                ASKS.put(&vault.store, txn, key, &history)?;
+                Ok(route)
+            }
         }
-        let (run, owner, digest) = key;
-        close_in(vault, txn, run, None, now, |asked| asked.2 != *digest)?;
-        let conversation = match ASKS
-            .scan(&vault.store, txn)?
-            .into_iter()
-            .find(|(_, route)| route.owner == *owner)
-        {
-            Some((_, route)) => route.conversation,
-            None => match super::training_offer_ask::owner_conversation_in(vault, txn, owner)? {
-                Some(conversation) => conversation,
-                None => vault.store.clock.entity_id()?,
-            },
-        };
-        let route = SwapAskRoute {
-            run: *run,
-            digest: digest.clone(),
-            owner: *owner,
-            expected: expected.clone(),
-            conversation,
-            turn: vault.store.clock.entity_id()?,
-            message: vault.store.clock.entity_id()?,
-            at: now,
-            group: None,
-            state: SwapAskState::Open,
-        };
-        ASKS.put(&vault.store, txn, key, &route)?;
-        Ok(route)
     })
 }
 
-/// Binds `group` to the reservation `key` and indexes it, once.
+/// Binds `group` to the generation `turn` of the reservation `key` and
+/// indexes it, once. A bound generation is never replaced.
 fn bind_group_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &SwapAskKey,
+    turn: &EntityId,
     group: EntityId,
 ) -> Result<()> {
-    let mut route = ASKS
+    let mut history = ASKS
         .get(&vault.store, txn, key)?
         .ok_or_else(ask_record::invalid)?;
+    let Some(route) = history.iter_mut().find(|route| route.turn == *turn) else {
+        return Err(ask_record::invalid());
+    };
     if route.group.is_none() {
         route.group = Some(group);
-        ASKS.put(&vault.store, txn, key, &route)?;
+        ASKS.put(&vault.store, txn, key, &history)?;
         GROUPS.put(&vault.store, txn, &group, key)?;
     }
     Ok(())
 }
 
 /// Each result the Coach may ask about, with the owners not asked about it
-/// yet. A run an owner answered is not asked again.
+/// yet. A swapped run is not asked again; a kept run is asked again only
+/// when its result digest changed. Only the latest generation per base reads:
+/// no history or an unbound latest retries, and a bound latest renews only
+/// Open at the same expectation and digest when its Deadline-held ask is due.
 fn unasked(vault: &Vault) -> Result<Vec<Unasked>> {
     let txn = vault.store.env.read_txn()?;
     let runs = crate::training_pack::training_runs_in(vault, &txn)?;
@@ -412,21 +543,47 @@ fn unasked(vault: &Vault) -> Result<Vec<Unasked>> {
             continue;
         };
         let routes = ASKS.scan_from(&vault.store, &txn, run.id.as_bytes())?;
-        if routes
-            .iter()
-            .any(|(_, route)| matches!(route.state, SwapAskState::Swapped | SwapAskState::Kept))
-        {
+        if routes.iter().flat_map(|(_, history)| history).any(|route| {
+            matches!(&route.state, SwapAskState::Swapped)
+                || (matches!(&route.state, SwapAskState::Kept)
+                    && route.digest.as_str() == digest.as_str())
+        }) {
             continue;
         }
-        let left = owners
-            .iter()
-            .copied()
-            .filter(|owner| {
-                !routes.iter().any(|((_, asked, at), route)| {
-                    asked == owner && *at == digest && route.group.is_some()
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut left = Vec::new();
+        for owner in &owners {
+            let base = (run.id, *owner, digest.clone());
+            let latest = routes
+                .iter()
+                .find(|(key, _)| *key == base)
+                .and_then(|(_, history)| history.last());
+            match latest {
+                None => left.push(*owner),
+                Some(route) if route.group.is_none() => left.push(*owner),
+                Some(route) => {
+                    if route.state != SwapAskState::Open
+                        || route.expected != expected
+                        || route.digest != digest
+                    {
+                        continue;
+                    }
+                    let Some(bound) = route.group else {
+                        left.push(*owner);
+                        continue;
+                    };
+                    let expected_intent = intent_key(&base, &route.turn);
+                    if super::training_offer_ask::renewal_due_for_deadline_hold_in(
+                        vault,
+                        &txn,
+                        bound,
+                        owner,
+                        Some(expected_intent.as_str()),
+                    )? {
+                        left.push(*owner);
+                    }
+                }
+            }
+        }
         if !left.is_empty() {
             unasked.push(Unasked {
                 run,
@@ -470,7 +627,8 @@ fn issue_one(
                 author: WitnessAuthor::System,
                 message_type: SWAP_QUESTION_TYPE.to_owned(),
                 content: swap_question_text(&row.run, &route.expected)?,
-                metadata: Some(swap_question_metadata(&key)),
+                parts: None,
+                metadata: Some(swap_question_metadata(&key, &route.turn)),
                 is_visible: true,
                 order: 0,
                 quote: None,
@@ -481,11 +639,11 @@ fn issue_one(
     }
     let spec = swap_ask_spec(&key, route.turn)?;
     let receipt = issuer.tasks_ask_with_txn_effect(&spec, |txn, group| {
-        bind_group_in(vault, txn, &key, group).map_err(MemoryError::from)
+        bind_group_in(vault, txn, &key, &route.turn, group).map_err(MemoryError::from)
     })?;
     if receipt.idempotent_replay {
         vault.with_write_txn_grouped(|txn| {
-            bind_group_in(vault, txn, &key, receipt.handle.group_ref)
+            bind_group_in(vault, txn, &key, &route.turn, receipt.handle.group_ref)
         })?;
     }
     Ok(!receipt.idempotent_replay)
@@ -497,6 +655,17 @@ fn issue_one(
 /// the next tuple goes on. A run that raises no ask still waits for the
 /// owner's direct swap door.
 pub(crate) fn issue_training_swap_asks(vault: &Vault, now: u64) -> usize {
+    // One issuer: only the elected home asks, while every device keeps its
+    // idempotent upkeep. Before the first home election every device keeps
+    // today's behavior. A failed home read asks nothing.
+    match crate::dreamer_runner::maintenance::coach::training_offers_at_home(vault) {
+        Ok(true) => {}
+        Ok(false) => return 0,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "training swap asks home check failed");
+            return 0;
+        }
+    }
     let unasked = match unasked(vault) {
         Ok(unasked) => unasked,
         Err(error) => {
@@ -543,7 +712,8 @@ pub(crate) fn issue_training_swap_asks(vault: &Vault, now: u64) -> usize {
 
 /// The reservation an ask group carries, with its key, when the Coach's
 /// issuance bound it; `None` for every other ask. A bound group whose
-/// reservation does not name it back fails closed.
+/// reservation does not name it back fails closed. Every generation keeps
+/// resolving its own route.
 fn routed_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -556,9 +726,14 @@ fn routed_in(
     let Some(key) = GROUPS.get(&vault.store, txn, &id)? else {
         return Ok(None);
     };
-    let route = ASKS
-        .get(&vault.store, txn, &key)?
-        .filter(|route| route.group == Some(id) && intent_key(&key) == group.requested.intent_key)
+    let Some(history) = ASKS.get(&vault.store, txn, &key)? else {
+        return Err(ask_record::invalid());
+    };
+    let route = history
+        .into_iter()
+        .find(|route| {
+            route.group == Some(id) && intent_key(&key, &route.turn) == group.requested.intent_key
+        })
         .ok_or_else(ask_record::invalid)?;
     Ok(Some((key, route)))
 }
@@ -580,7 +755,7 @@ pub(super) fn guard_word(
     word: &TaskAskWord,
     owner: Option<&AuthenticatedOwner>,
 ) -> Result<()> {
-    let Some((key, route)) = routed_in(vault, txn, id, group)? else {
+    let Some((base, route)) = routed_in(vault, txn, id, group)? else {
         return Ok(());
     };
     // The owner's own tap, never a word given for them or a soft confirm.
@@ -588,9 +763,10 @@ pub(super) fn guard_word(
         return Err(ask_record::invalid());
     }
     // A definitive answer names one option the ask offered, while the run
-    // still waits at the expectation the question froze.
+    // still waits at the expectation this generation froze.
+    let question = (base.0, base.1, base.2.clone(), route.turn);
     if word.option.as_ref().and_then(offered_answer).is_none()
-        || pending_in(vault, txn, &key)?.is_none()
+        || pending_in(vault, txn, &question)?.is_none()
     {
         return Err(ask_record::invalid());
     }
@@ -693,25 +869,41 @@ pub(super) fn resolve_answer_in(
     let Some(choice) = selected.word.option.as_ref().and_then(offered_answer) else {
         return Ok(());
     };
-    if pending_in(vault, txn, &key)?.is_none() {
+    let question = (key.0, key.1, key.2.clone(), route.turn);
+    if pending_in(vault, txn, &question)?.is_none() {
         return Ok(());
     }
     let state = match choice {
         SwapAnswer::Swap => {
-            vault.approve_training_role_swap_in_txn(
+            match vault.approve_training_role_swap_in_txn(
                 txn,
                 owner,
                 &route.run,
                 SwapChoice::Evaluated,
                 None,
                 Some(&route.expected),
-            )?;
-            SwapAskState::Swapped
+            ) {
+                Ok(_) => SwapAskState::Swapped,
+                Err(
+                    error @ (Error::InvalidConfig(_)
+                    | Error::Refused(_)
+                    | Error::Gate(_)
+                    | Error::EntityNotFound),
+                ) => {
+                    let state = SwapAskState::NeedsSetup {
+                        reason: error.to_string(),
+                    };
+                    set_route_state_in(vault, txn, &key, &route.turn, state)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
         }
         SwapAnswer::Keep => SwapAskState::Kept,
     };
     let run = route.run;
-    ASKS.put(&vault.store, txn, &key, &SwapAskRoute { state, ..route })?;
+    let turn = route.turn;
+    set_route_state_in(vault, txn, &key, &turn, state)?;
     void_training_swap_asks_in(vault, txn, &run, Some(&id), result.settlement.at)
 }
 
@@ -724,7 +916,8 @@ pub fn training_swap_asks(vault: &Vault, run: &EntityId) -> Result<Vec<TrainingS
     Ok(ASKS
         .scan_from(&vault.store, &txn, run.as_bytes())?
         .into_iter()
-        .map(|(_, route)| TrainingSwapAskView {
+        .flat_map(|(_, history)| history)
+        .map(|route| TrainingSwapAskView {
             owner: route.owner,
             digest: route.digest,
             expected: route.expected,

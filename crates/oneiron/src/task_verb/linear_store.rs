@@ -1,25 +1,19 @@
 //! Vault storage for the tracker mirror: replicated fields, local OCC and CAS links.
 use super::TaskExecutionState;
-use super::wire_decode::{task_body_has_typed_subkind, task_verb_body_in};
+use super::wire_decode::task_verb_body_in;
 use super::wire_encode::encode_task_verb_body;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::linear_sync::*;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::linear_task_revision::{DIRTY, WRITER, revision};
 use crate::{EntityId, Vault};
 
-const REVISIONS: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::LINEAR_TASK_REVISION);
-const DIRTY: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::LINEAR_TASK_DIRTY);
-/// Value: the task revision it stamps (u64be), the writer id16 and its actor class byte.
-const WRITER: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::LINEAR_TASK_WRITER);
 const ISSUE_REVERSE: SideTable<String, EntityId, Raw> =
     SideTable::new(&side_table::LINEAR_ISSUE_REVERSE);
 const PULL_CURSOR: SideTable<(), String, Raw> = SideTable::new(&side_table::LINEAR_PULL_CURSOR);
 
-fn revision(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<u64> {
-    Ok(REVISIONS.get(store, txn, &id)?.unwrap_or(0))
-}
 pub(crate) fn task_revision_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -78,23 +72,6 @@ fn writer_in_txn(
     }))
 }
 
-pub(crate) fn note_task_write(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    body: &[u8],
-) -> Result<()> {
-    if !task_body_has_typed_subkind(body)? {
-        return Ok(());
-    }
-    let revision = revision(store, txn, id)?
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("task revision"))?;
-    REVISIONS.put(store, txn, &id, &revision)?;
-    DIRTY.put(store, txn, &id, &revision)?;
-    WRITER.delete(store, txn, &id)?;
-    Ok(())
-}
 fn issue_key(issue: &LinearIssueRef) -> String {
     // issue ids are globally scoped; identifiers and teams may change.
     issue.issue_id.clone()

@@ -15,14 +15,14 @@ use serde::{Deserialize, Serialize};
 use super::verbs::{CodeChangeView, CodeOperationView, CodeStateView, OpRefs, state_view};
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::batch::secret_scan::LiftedKeys;
-use crate::code_symbol::{CodeAttributedChange, semantic_code_diff};
+use crate::code_symbol::{CodeAttributedChange, semantic_code_diff, whole_file_code_diff};
 use crate::codebase::{RepoRef, snapshot_asset_entity_id};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::RepoProposalStatus;
 use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// One repo proposal, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -137,10 +137,17 @@ pub struct CodeRepoDiffView {
     pub rendered: String,
 }
 
-/// One file of a tree: its text and, from a code revision, its tested state.
+/// One file of a tree: its text as the caller reads it and, from a code
+/// revision, its tested state.
 struct TreeFile {
     path: String,
     text: String,
+    /// The BLAKE3 of its stored bytes, whatever `text` shows: two files are
+    /// the same file only when these match (FIX 8967).
+    stored: [u8; 32],
+    /// Whether `text` is a projection of the stored text, which nothing
+    /// shown of it is then attributed to (FIX 8967).
+    projected: bool,
     tested: Option<(CodeDocumentFrontier, String)>,
 }
 
@@ -184,8 +191,17 @@ impl Memory<'_> {
         let mut files = Vec::with_capacity(proposal.files.len());
         let mut diff = String::new();
         for (index, file) in proposal.files.iter().enumerate() {
-            let old = masks.bytes(vault, base.read_file(&file.path)?.unwrap_or(b""))?;
-            let new = masks.bytes(vault, file.content.as_deref().unwrap_or(b""))?;
+            let base_bytes = base.read_file(&file.path)?.unwrap_or(b"");
+            let candidate = file.content.as_deref().unwrap_or(b"");
+            let old = masks.bytes(vault, base_bytes)?;
+            // The candidate was made from the file at the base: when that
+            // file is a marked blob the candidate no longer is, the
+            // candidate reads as its placeholder (FIX 8967).
+            let new =
+                masks.sourced_bytes(vault, candidate, &[*blake3::hash(base_bytes).as_bytes()])?;
+            // A side read as a projection is compared as one whole-file
+            // unit: a placeholder or a masked copy is no source to parse.
+            let projected = *old != *base_bytes || *new != *candidate;
             let (old, new) = (utf8(&old)?, utf8(&new)?);
             // An ordinary proposal lands under its own id; a bundle's file
             // under its deterministic child operation.
@@ -200,7 +216,12 @@ impl Memory<'_> {
                         sequence: receipt.sequence,
                         provenance: receipt.provenance,
                     });
-            let changes: Vec<CodeAttributedChange> = semantic_code_diff(&file.path, old, new)?
+            let compare = if projected {
+                whole_file_code_diff
+            } else {
+                semantic_code_diff
+            };
+            let changes: Vec<CodeAttributedChange> = compare(&file.path, old, new)?
                 .into_iter()
                 .map(|change| CodeAttributedChange {
                     inserted_by: landed
@@ -375,13 +396,22 @@ impl Memory<'_> {
                     return Ok(None);
                 }
                 self.produced_from([id]);
+                // A tested file reads as the caller reads its document
+                // state: by its own history, so an edit of a marked file is
+                // never its raw text to a masked reader (FIX 8967).
+                let masks = self.repo_read_masks()?;
                 revision
                     .file_frontiers
                     .into_values()
                     .map(|frontier| -> MemoryResult<TreeFile> {
+                        let stored = vault.code_document_at(&frontier)?;
+                        let hash = *blake3::hash(stored.as_bytes()).as_bytes();
+                        let served = masks.document(vault, &frontier, stored)?;
                         Ok(TreeFile {
                             path: frontier.path.clone(),
-                            text: vault.code_document_at(&frontier)?,
+                            text: served.text,
+                            stored: hash,
+                            projected: served.projected,
                             tested: Some((frontier, revision_ref.clone())),
                         })
                     })
@@ -415,11 +445,15 @@ impl Memory<'_> {
                         continue;
                     }
                     self.produced_from([asset]);
+                    let stored = *blake3::hash(bytes).as_bytes();
                     let bytes = masks.bytes(vault, bytes)?;
+                    let projected = matches!(bytes, std::borrow::Cow::Owned(_));
                     match std::str::from_utf8(&bytes) {
                         Ok(text) => files.push(TreeFile {
                             path: path.to_owned(),
                             text: text.to_owned(),
+                            stored,
+                            projected,
                             tested: None,
                         }),
                         Err(_) => not_text.push(path.to_owned()),
@@ -458,16 +492,23 @@ impl Memory<'_> {
                 CodeFileChange::Renamed,
                 Some(old.path.clone()),
             ),
-            (Some(old), Some(new)) if old.text == new.text => return Ok(None),
+            // Projections of two stored files can read alike: the stored
+            // bytes, not the shown text, say whether the file changed.
+            (Some(old), Some(new)) if old.stored == new.stored => return Ok(None),
             (Some(_), Some(new)) => (new.path.clone(), CodeFileChange::Modified, None),
             (None, Some(new)) => (new.path.clone(), CodeFileChange::Added, None),
             (Some(old), None) => (old.path.clone(), CodeFileChange::Removed, None),
             (None, None) => return Ok(None),
         };
+        let shown = |file: &Option<TreeFile>| file.as_ref().is_some_and(|file| file.projected);
+        let projected = shown(&old) || shown(&new);
         let changes = match (tested(&old), tested(&new)) {
-            // Two states of one document: each unit with the operations
-            // made between them.
-            (Some((before, _)), Some((after, _))) if before.document_id == after.document_id => {
+            // Two states of one document, both read as stored: each unit
+            // with the operations made between them. A projected side is
+            // compared as shown below, so no stored text is read again.
+            (Some((before, _)), Some((after, _)))
+                if before.document_id == after.document_id && !projected =>
+            {
                 vault.code_document_semantic_diff(before, after)?
             }
             // Otherwise the text is compared, and a newer unit names every
@@ -477,8 +518,10 @@ impl Memory<'_> {
                     file.as_ref()
                         .map_or_else(String::new, |file| file.text.clone())
                 };
+                // A projected newer side names no writers: its units are
+                // not the text the operations wrote (FIX 8967).
                 let writers: BTreeMap<String, Vec<CodeOpAttribution>> = match tested(&new) {
-                    Some((after, _)) => vault
+                    Some((after, _)) if !shown(&new) => vault
                         .code_document_symbol_blame(after)?
                         .into_iter()
                         .map(|unit| {
@@ -487,9 +530,16 @@ impl Memory<'_> {
                             (unit.symbol, ops)
                         })
                         .collect(),
-                    None => BTreeMap::new(),
+                    _ => BTreeMap::new(),
                 };
-                semantic_code_diff(&path, &text(&old), &text(&new))?
+                // A projected side is compared as one whole-file unit: a
+                // placeholder or a masked copy is no source to parse.
+                let compare = if projected {
+                    whole_file_code_diff
+                } else {
+                    semantic_code_diff
+                };
+                compare(&path, &text(&old), &text(&new))?
                     .into_iter()
                     .map(|change| CodeAttributedChange {
                         inserted_by: change

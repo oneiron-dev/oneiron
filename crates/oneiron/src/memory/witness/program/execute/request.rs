@@ -11,6 +11,7 @@ pub(super) struct ResolvedLanding<'a, 'v> {
     pub(super) saver: Option<crate::off_record::SaverCheck<'a, 'v>>,
     pub(super) admit: Option<Admit<'a>>,
     pub(super) room_speech: Option<(&'a OffRecordSession<'v>, EntityId)>,
+    pub(super) terminal: Option<&'a super::super::super::stream::SessionStreamTerminal>,
 }
 
 /// Resolves the target to its landing; a session target's write route is
@@ -24,6 +25,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
     let mut saver = None;
     let mut admit = None;
     let mut room_speech = None;
+    let mut terminal = None;
     let landing = match target {
         WitnessTarget::Base { route } => Landing::Base {
             route,
@@ -63,15 +65,27 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
         }
         WitnessTarget::Session {
             session,
+            route: captured_route,
             summary,
             admit: session_admit,
             rostered,
+            turn_vector,
+            terminal: stream_terminal,
         } => {
+            terminal = stream_terminal;
             on_record_session = Some(session);
             admit = session_admit;
-            let (route, session_saver) = session.landing_route()?;
-            saver = session_saver;
-            let session_route: &'a SessionWriteRoute = session_route.insert(route);
+            let session_route: &'a SessionWriteRoute = match captured_route {
+                Some(route) => {
+                    saver = session.saver_check_for(route)?;
+                    route
+                }
+                None => {
+                    let (route, session_saver) = session.landing_route()?;
+                    saver = session_saver;
+                    session_route.insert(route)
+                }
+            };
             // WitnessReceipt promises materialized turns and messages.
             // Anonymous sessions cannot fulfill that promise, so refuse
             // before shell reservation, transaction acquisition, or policy
@@ -97,6 +111,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                     session,
                     route: session_route,
                     summary,
+                    turn_vector,
                 }
             }
         }
@@ -107,6 +122,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
         saver,
         admit,
         room_speech,
+        terminal,
     })
 }
 
@@ -114,7 +130,7 @@ impl Memory<'_> {
     /// The turn's shape and origin: messages present and distinctly ordered,
     /// no guest turn ref on a host-bound session, and generated code speaking
     /// only as the companion.
-    pub(super) fn admit_witness_request(
+    pub(in crate::memory::witness::program) fn admit_witness_request(
         &self,
         turn: &WitnessTurn,
         door: WitnessDoor,

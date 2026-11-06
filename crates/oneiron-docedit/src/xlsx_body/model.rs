@@ -52,6 +52,12 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
     pub tables: Vec<XlsxTable>,
     pub visibility: XlsxSheetVisibility,
+    /// The rows with their own height or format, one each (FIX 9081).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<XlsxLines>,
+    /// The column ranges with their own width or format.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<XlsxLines>,
 }
 
 /// Whether a sheet's tab shows, as Excel's `<sheet state>` holds it. A
@@ -413,6 +419,13 @@ pub enum XlsxChange {
         column: String,
         name: String,
     },
+    /// The conditional formats the body added to worksheet `sheet`, in order
+    /// (FIX 3468): written after the cells, after the sheet's own, each look
+    /// added to the stylesheet's `dxfs`.
+    ConditionalFormats {
+        sheet: String,
+        formats: Vec<XlsxConditionalFormat>,
+    },
 }
 
 /// One worksheet of a sheet layout.
@@ -500,36 +513,36 @@ pub fn check_sheet_name(name: &str) -> Result<()> {
 /// `B12` → `(2, 12)`; `$` anchors and lower case are accepted.
 #[must_use]
 pub fn parse_a1(text: &str) -> Option<(u32, u32)> {
-    cell_ref(&text.trim().to_ascii_uppercase())
+    let cell = crate::a1::parse_cell(text)?;
+    // Today's lenient reader still refuses a leading-zero row (`B007`),
+    // as the strict stored-XML reader does: only case is folded here.
+    if text.bytes().find(|byte| byte.is_ascii_digit()) == Some(b'0') {
+        return None;
+    }
+    (cell.col <= MAX_COLUMN && (1..=MAX_ROW).contains(&cell.row)).then_some((cell.col, cell.row))
 }
 
 #[must_use]
 pub fn a1(col: u32, row: u32) -> String {
-    let mut letters = Vec::new();
-    let mut col = col;
-    while col > 0 {
-        letters.push(b'A' + ((col - 1) % 26) as u8);
-        col = (col - 1) / 26;
-    }
-    letters.reverse();
-    format!("{}{row}", String::from_utf8(letters).unwrap_or_default())
+    crate::a1::cell_text(col, row)
 }
 
-/// `$B$12` → `(2, 12)`.
+/// `$B$12` → `(2, 12)`. Strict stored-XML reader: unpadded uppercase,
+/// no leading zero, grid bounds (R1/R2/R4); over-long letters already fail
+/// the grid bound.
 pub(super) fn cell_ref(text: &str) -> Option<(u32, u32)> {
-    let text = text.strip_prefix('$').unwrap_or(text);
-    let split = text.find(|c: char| !c.is_ascii_uppercase())?;
-    let (letters, digits) = text.split_at(split);
-    let digits = digits.strip_prefix('$').unwrap_or(digits);
-    if letters.is_empty() || letters.len() > 3 || digits.starts_with('0') {
+    let cell = crate::a1::parse_cell(text)?;
+    // The core trims and folds case; stored refs are unpadded uppercase.
+    if text != text.trim() || text.bytes().any(|byte| byte.is_ascii_lowercase()) {
         return None;
     }
-    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let after_letters = text
+        .strip_prefix('$')
+        .unwrap_or(text)
+        .trim_start_matches(|c: char| c.is_ascii_uppercase());
+    let digits = after_letters.strip_prefix('$').unwrap_or(after_letters);
+    if digits.starts_with('0') {
         return None;
     }
-    let col = letters
-        .bytes()
-        .fold(0u32, |sum, byte| sum * 26 + u32::from(byte - b'A' + 1));
-    let row = digits.parse::<u32>().ok()?;
-    (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((col, row))
+    (cell.col <= MAX_COLUMN && (1..=MAX_ROW).contains(&cell.row)).then_some((cell.col, cell.row))
 }

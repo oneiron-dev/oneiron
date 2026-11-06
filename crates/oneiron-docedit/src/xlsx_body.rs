@@ -19,18 +19,24 @@
 
 mod attachments;
 mod axis;
+mod conditional;
 mod coordinates;
 mod header;
 mod insert;
 mod layout;
+mod links;
 mod model;
 mod project;
 mod read;
 mod retain;
 mod titles;
 
+pub use conditional::{
+    XlsxConditionalFormat, XlsxConditionalOperator, XlsxConditionalRule, check_conditional,
+    shift_conditional_range,
+};
 pub use header::header_rename;
-pub use insert::calculated_fill;
+pub use insert::{XlsxLines, calculated_fill, shift_lines};
 
 use crate::edit::xml::{
     Splice, escape_attribute, insert_end, next_part, replace_text, set_attribute, splice,
@@ -46,12 +52,14 @@ pub use crate::xlsx_shift::{
 use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
-    XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat, check_format,
+    XlsxBorder, XlsxColor, XlsxDifferentialFormat, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat,
+    XlsxNumberFormat, check_differential_format, check_format,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub use crate::a1::{A1, parse_cell};
 pub use crate::xlsx_error::XlsxBodyError;
 use model::{MAX_COLUMN, MAX_ROW, cell_ref, column_span, free_column_names};
 pub use model::{
@@ -429,23 +437,22 @@ fn moved_area(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
 /// edit deletes them all, `None` when the reference is neither.
 fn moved_lines(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
     let side = |text: &str| -> Option<(bool, XlsxAxis, u32)> {
-        let (fixed, rest) = match text.trim().strip_prefix('$') {
-            Some(rest) => (true, rest),
-            None => (false, text.trim()),
-        };
-        if !rest.is_empty() && rest.len() <= 3 && rest.bytes().all(|b| b.is_ascii_uppercase()) {
-            let col = rest
-                .bytes()
-                .fold(0u32, |sum, byte| sum * 26 + u32::from(byte - b'A' + 1));
-            return (col <= MAX_COLUMN).then_some((fixed, XlsxAxis::Column, col));
-        }
-        if rest.starts_with('0') || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        let trimmed = text.trim();
+        let parsed = crate::a1::parse_line_side(trimmed)?;
+        // Strict stored-XML reader: uppercase-only columns, no leading-zero
+        // rows (R1/R2); over-long letters already fail the grid bound.
+        if trimmed.bytes().any(|b| b.is_ascii_lowercase()) {
             return None;
         }
-        let row = rest.parse::<u32>().ok()?;
-        (1..=MAX_ROW)
-            .contains(&row)
-            .then_some((fixed, XlsxAxis::Row, row))
+        let rest = trimmed.strip_prefix('$').unwrap_or(trimmed);
+        match parsed {
+            crate::a1::LineSide::Col { col, fixed } => {
+                (col <= MAX_COLUMN).then_some((fixed, XlsxAxis::Column, col))
+            }
+            crate::a1::LineSide::Row { row, fixed } => (!rest.starts_with('0')
+                && (1..=MAX_ROW).contains(&row))
+            .then_some((fixed, XlsxAxis::Row, row)),
+        }
     };
     let (first, last) = reference.split_once(':')?;
     let ((first_fixed, axis, a), (last_fixed, other, b)) = (side(first)?, side(last)?);
@@ -458,11 +465,7 @@ fn moved_lines(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
     let write = |fixed: bool, at: u32| {
         let dollar = if fixed { "$" } else { "" };
         match axis {
-            // The column's letters: its row-1 cell without the `1`.
-            XlsxAxis::Column => {
-                let cell = a1(at, 1);
-                format!("{dollar}{}", &cell[..cell.len() - 1])
-            }
+            XlsxAxis::Column => format!("{dollar}{}", crate::a1::col_letters(at)),
             XlsxAxis::Row => format!("{dollar}{at}"),
         }
     };

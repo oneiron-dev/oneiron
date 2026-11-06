@@ -8,18 +8,12 @@
 //! its slip names; an embedded handle its own embedded owner, or its actor.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_dispatch::FanoutStatement;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::task_verb::{ConsultFanOutChoice, FanoutCheckChoice, FanoutLaunchReceipt};
+use crate::task_verb::{ConsultFanOutChoice, FanoutCheckChoice};
 
-/// `vault.fanout.launch`'s input: the launch to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FanoutLaunchRequest {
-    pub launch_ref: EntityId,
-}
+pub use crate::task_verb::fanout_batch::FanoutLaunchRequest;
 
 /// The owner's ruling on a held launch. A denial keeps the hold, visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -55,45 +49,7 @@ pub struct FanoutAckRequest {
     pub remembered_cap: Option<u64>,
 }
 
-/// The durable hold of a launch that waits.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FanoutLaunchHold {
-    pub surface_ref: String,
-    pub denied: bool,
-}
-
-/// What the launch doors answer: the launch as it stands, with the
-/// statement frozen before anything launched.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FanoutLaunchView {
-    pub launch_ref: EntityId,
-    pub plan_digest: String,
-    pub statement: FanoutStatement,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub held: Option<FanoutLaunchHold>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_row_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub choice_receipt_ref: Option<String>,
-    pub task_refs: Vec<EntityId>,
-}
-
-impl From<FanoutLaunchReceipt> for FanoutLaunchView {
-    fn from(receipt: FanoutLaunchReceipt) -> Self {
-        Self {
-            launch_ref: receipt.launch_ref,
-            plan_digest: bytes_to_hex_lower(&receipt.plan_digest),
-            statement: receipt.statement,
-            held: receipt.paused.map(|pause| FanoutLaunchHold {
-                surface_ref: pause.surface_ref,
-                denied: pause.denied,
-            }),
-            check_row_ref: receipt.check_row_ref,
-            choice_receipt_ref: receipt.choice_receipt_ref,
-            task_refs: receipt.task_refs,
-        }
-    }
-}
+pub use crate::task_verb::fanout_batch::{FanoutLaunchHold, FanoutLaunchView};
 
 /// `vault.fanout.launch`: one launch, for its own actor, the vault's owner or
 /// a live lead or board holder of its project; anything else reads as none.

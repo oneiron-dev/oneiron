@@ -74,18 +74,16 @@ pub(crate) struct AttemptActivityRuntime {
 
 impl AttemptActivityRuntime {
     /// Binds a run to `key`'s entry, making it when it is the first, with
-    /// `clock` as its stamps' clock. `None` when the entry did not take it.
-    fn register(&self, clock: &StoreClock, key: ActivityKey) -> Option<AttemptActivityBinding> {
+    /// `clock` as its stamps' clock.
+    fn register(&self, clock: &StoreClock, key: ActivityKey) -> AttemptActivityBinding {
         let witness = Arc::new(Witness {
             live: Arc::clone(&self.live),
             key,
             clock: clock.clone(),
         });
-        // Built only once the entry took it: its drop closes a binding.
-        if !witness.bind() {
-            return None;
-        }
-        Some(AttemptActivityBinding { witness })
+        // Its drop closes a binding.
+        witness.bind();
+        AttemptActivityBinding { witness }
     }
 
     /// What the runtime witnesses now of `attempt` at lease `generation`.
@@ -120,11 +118,10 @@ impl Witness {
     }
 
     /// Opens one binding on the entry, making it when it is the first.
-    fn bind(&self) -> bool {
+    fn bind(&self) {
         let mut live = self.lock();
         let entry = live.entry(self.key.clone()).or_default();
         entry.bindings = entry.bindings.saturating_add(1);
-        true
     }
 
     /// Closes one binding; the entry ends with its last.
@@ -226,7 +223,7 @@ const _: () = {
 impl HostSelfDispatcher<'_> {
     /// Binds this run to its vault's witness under the lease it was just
     /// bound to (OF-568 L5), for as long as the dispatcher lives. A run with
-    /// no lease or no canonical vault, or one the registry did not take,
+    /// no lease or no canonical vault
     /// stays unwitnessed: nothing here fails it.
     pub(super) fn witness_attempt_activity(&mut self) {
         let (ExecutorStorage::Canonical(vault), Some(lease)) = (&self.storage, &self.agent_lease)
@@ -234,7 +231,7 @@ impl HostSelfDispatcher<'_> {
             return;
         };
         let key = (lease.attempt, lease.generation, lease.owner.clone());
-        self.activity = vault.attempt_activity.register(&vault.store.clock, key);
+        self.activity = Some(vault.attempt_activity.register(&vault.store.clock, key));
     }
 
     /// Holds one call of this run open as a running tool until the guard

@@ -12,11 +12,12 @@ use super::kernel::{
 // gated so the name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::prompt::PromptRecompileStamp;
+use crate::receipt::prompt_stamp::PromptRecompileStamp;
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
@@ -341,6 +342,9 @@ pub fn append_task_type_fields(
             "typeRef node_id must not be empty",
         ));
     }
+    let learning_type = crate::learning::TypeRef::from(type_ref);
+    let encoded = serde_json::to_string(&learning_type)
+        .map_err(|_| Error::InvariantViolation("typeRef field encode failed"))?;
     receipt
         .fields
         .insert(FIELD_TYPE_REF_NODE.to_owned(), type_ref.node_id.clone());
@@ -348,6 +352,7 @@ pub fn append_task_type_fields(
         FIELD_TYPE_REF_TREE_VERSION.to_owned(),
         type_ref.tree_version.to_string(),
     );
+    receipt.fields.insert("typeRef".to_owned(), encoded);
     Ok(())
 }
 
@@ -496,7 +501,7 @@ impl ReceiptRecord {
 
     /// The OF-578 functional role the attempt's executor ran as, read from the
     /// recorded field alone. `None` when no role ran the attempt.
-    pub fn executor_role(&self) -> Result<Option<crate::llm::manifest::ModelRole>> {
+    pub fn executor_role(&self) -> Result<Option<crate::model_binding::ModelRole>> {
         self.fields
             .get(FIELD_EXECUTOR_ROLE)
             .map(|token| {
@@ -504,6 +509,25 @@ impl ReceiptRecord {
                     .map_err(|_| Error::InvalidClaimBody("malformed pack receipt executor role"))
             })
             .transpose()
+    }
+
+    /// Keeps the manifest and wire forms, removing only an erased entity's
+    /// retained-revision witness. Missing or malformed manifests stay unchanged.
+    pub(crate) fn erase_manifest_revision_pins(&mut self, erased: EntityId) -> bool {
+        let Some(mut manifest) = self.pack_manifest_entries() else {
+            return false;
+        };
+        if !crate::store::attempt_manifest::erase_manifest_revision_pins(&mut manifest, |entity| {
+            *entity == erased
+        }) {
+            return false;
+        }
+        let Ok(encoded) = serde_json::to_string(&manifest) else {
+            return false;
+        };
+        self.fields
+            .insert(FIELD_MANIFEST_ENTRIES.to_owned(), encoded);
+        true
     }
 
     /// The complete index/pull/claim sequence frozen by the terminal transaction.

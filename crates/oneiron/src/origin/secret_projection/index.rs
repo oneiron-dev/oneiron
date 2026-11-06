@@ -25,27 +25,32 @@
 //! ([`refresh_repo_index_projection_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use heed::RoTxn;
 
 use super::types::REPO_OPAQUE_FILE_BYTES;
 use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup, RepoSecretSource};
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 mod derived;
 mod invalidate;
 pub(crate) use derived::{
-    RepoDerivedIndexSources, repo_derived_dependents_in, repo_derived_index_sources_in,
-    repo_source_identity_in,
+    RepoDerivedIndexSources, bind_envelope_sources_in_txn, repo_derived_dependents_in,
+    repo_derived_index_sources_in, repo_source_identity_in,
 };
 pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 
 /// The domain of a copy stamp's fingerprint.
 const REPO_INDEX_STAMP_CONTEXT: &str = "oneiron.repo-index-projection.stamp.v1";
+
+/// The domain of a mark generation's digest.
+const REPO_MARK_GENERATION_CONTEXT: &str = "oneiron.repo-index-projection.mark-generation.v1";
 
 /// What a sync release does with a mark failure no blob is tied to (a mark
 /// claim that does not decode and names no blob, or a store failure in the
@@ -241,6 +246,26 @@ impl RepoIndexMarks {
         self.hashes.is_empty()
     }
 
+    /// What these marks are, as one digest (FIX 10736): every readable
+    /// mark's id and every blob whose marks do not decode. Equal digests
+    /// are equal marks, so a table derived from one serves every reader of
+    /// the same marks ([`RepoMarkGenerationCache`]).
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn generation(&self) -> Result<[u8; 32]> {
+        let ids = self.facts.ids()?;
+        let mut hasher = blake3::Hasher::new_derive_key(REPO_MARK_GENERATION_CONTEXT);
+        hasher.update(&(ids.len() as u64).to_be_bytes());
+        for id in &ids {
+            hasher.update(id.as_bytes());
+        }
+        for hash in &self.unreadable {
+            hasher.update(hash);
+        }
+        Ok(*hasher.finalize().as_bytes())
+    }
+
     /// Whether a mark covers the blob whose whole bytes hash to `raw_blake3`.
     pub(crate) fn is_marked(&self, raw_blake3: &[u8; 32]) -> bool {
         self.hashes.contains(raw_blake3)
@@ -249,6 +274,36 @@ impl RepoIndexMarks {
     /// The marked blob record `entity` is the snapshot ASSET of, if any.
     pub(crate) fn source_of(&self, entity: &EntityId) -> Option<[u8; 32]> {
         self.sources.get(entity).copied()
+    }
+
+    pub(crate) fn carried_source(
+        &self,
+        entity: &EntityId,
+        source: [u8; 32],
+        bytes: &[u8],
+    ) -> Result<[u8; 32]> {
+        self.readable(&source)?;
+        let prior = self.facts.for_hash(&source);
+        if prior.opaque() {
+            return Ok(source);
+        }
+        let own = *blake3::hash(bytes).as_bytes();
+        if own != source
+            && self.facts.for_hash(&own).marks().iter().any(|mark| {
+                matches!(mark.source, RepoSecretSource::SyncLanding { source } if source == *entity)
+                    && prior.marks().iter().any(|old| {
+                        old.operation_id == mark.operation_id
+                            && old.store_id == mark.store_id
+                            && old.store_identity == mark.store_identity
+                            && old.path == mark.path
+                            && old.content_kind == mark.content_kind
+                    })
+            })
+        {
+            Ok(own)
+        } else {
+            Ok(source)
+        }
     }
 
     /// Every marked blob's snapshot ASSET id with its whole BLAKE3 (FIX
@@ -269,14 +324,16 @@ impl RepoIndexMarks {
         vault: &Vault,
         txn: &RoTxn<'_>,
         source: &[u8; 32],
-    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+    ) -> Result<Option<crate::file_secret_marks::KeyPlaces>> {
         self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {
             return Ok(None);
         }
         let mut places = marks.places();
-        if let Some(row) = crate::secret_custody::masked_file_in_txn(&vault.store, txn, source)? {
+        if let Some(row) =
+            crate::store::file_key_masks::masked_file_in_txn(&vault.store, txn, source)?
+        {
             for (member, spans) in row.places() {
                 for span in spans {
                     crate::origin::secret_marks::add_place(&mut places, &member, span);
@@ -373,7 +430,7 @@ impl RepoIndexMarks {
             return Ok(RepoIndexInput::stored(bytes));
         }
         let mark_ids = marks.ids()?;
-        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes)? {
+        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes, None)? {
             RepoBodyProjection::Exact(bytes) => return Ok(RepoIndexInput::stored(bytes)),
             RepoBodyProjection::Masked { bytes, .. } => (RepoIndexCopyKind::Masked, bytes),
             RepoBodyProjection::Opaque(_) => {
@@ -428,7 +485,10 @@ impl RepoIndexMarks {
             return Ok(body);
         }
         Ok(match self.source_of(entity) {
-            Some(source) => self.source_input_in_txn(vault, txn, &source, body)?,
+            Some(source) => {
+                let source = self.carried_source(entity, source, &body)?;
+                self.source_input_in_txn(vault, txn, &source, body)?
+            }
             None => {
                 if let Some(text) = crate::embed::repo_derived_index_text_in(
                     vault,
@@ -448,7 +508,8 @@ impl RepoIndexMarks {
     /// The text fields record `entity` indexes, each as its copy. A marked
     /// blob's snapshot ASSET (or the document it owns) reads its first field,
     /// its body text, as the blob's copy: masked when it is the blob's exact
-    /// bytes, else the placeholder. Its other fields keep their text unless
+    /// bytes or a landed edit's marked bytes, else the placeholder. Its
+    /// other fields keep their text unless
     /// they are a marked blob's bytes, and an opaque blob's record reads the
     /// placeholder in every field, never its old title or tags. Any other
     /// record's field is a copy only when it is a marked blob's whole bytes,
@@ -479,6 +540,10 @@ impl RepoIndexMarks {
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))
                 .collect();
         };
+        let source = match fields.first() {
+            Some((_, value)) => self.carried_source(entity, source, value.as_bytes())?,
+            None => source,
+        };
         let opaque = self.facts.for_hash(&source).opaque();
         let mut out = Vec::with_capacity(fields.len());
         for (index, (name, value)) in fields.into_iter().enumerate() {
@@ -493,6 +558,49 @@ impl RepoIndexMarks {
             out.push((name, value));
         }
         Ok(out)
+    }
+}
+
+/// One table per mark generation (FIX 10736): a reader that derives a
+/// table from the marks (a copy generation, an alias table) keeps the last
+/// one it made, by its vault and the marks' [`RepoIndexMarks::generation`],
+/// and makes it again only when the marks move. It holds one table, so
+/// nothing past the newest marks stays.
+pub(crate) struct RepoMarkGenerationCache<T> {
+    kept: Mutex<Option<(PathBuf, [u8; 32], Arc<T>)>>,
+}
+
+impl<T> RepoMarkGenerationCache<T> {
+    /// An empty cache, for a `static`.
+    pub(crate) const fn new() -> Self {
+        Self {
+            kept: Mutex::new(None),
+        }
+    }
+
+    /// The table `vault`'s marks of `generation` derive: the kept one when
+    /// it is theirs, else what `make` derives now, kept in its place.
+    ///
+    /// # Errors
+    /// `make`'s.
+    pub(crate) fn get_or_make(
+        &self,
+        vault: &Vault,
+        generation: [u8; 32],
+        make: impl FnOnce() -> Result<T>,
+    ) -> Result<Arc<T>> {
+        let vault_path = vault.store.env.path().to_path_buf();
+        if let Some((path, kept, table)) =
+            &*self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+            && *path == vault_path
+            && *kept == generation
+        {
+            return Ok(Arc::clone(table));
+        }
+        let table = Arc::new(make()?);
+        *self.kept.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((vault_path, generation, Arc::clone(&table)));
+        Ok(table)
     }
 }
 

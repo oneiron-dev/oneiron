@@ -5,20 +5,24 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::batch::BatchOp;
-use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
-    attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
+    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd,
+    OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
+    capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
-use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
+use crate::edit_distance::miner::CompilationTargetValidation;
+use crate::edit_distance::miner::record_inbox_learning_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::receipt::gate_decision_receipt;
+use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::gate_receipt::gate_decision_receipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::ClaimBody;
+use oneiron_contracts::claim::ClaimApprovalStatus;
 
 use super::model::{
     INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
@@ -439,7 +443,7 @@ fn accept_member_with_amendment_in_txn(
     if raw.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
-    let reviewed = crate::claim::decode_claim_body(&raw.body, true)?;
+    let reviewed = crate::write_envelope::claim_body::decode_claim_body(&raw.body, true)?;
     require_preference_decider(&reviewed, learning)?;
 
     let (diff_handle, read_frontier_hash) =
@@ -453,8 +457,8 @@ fn accept_member_with_amendment_in_txn(
         .transpose()?;
     if let Some(amended) = &amended
         && crate::edit_distance::miner::is_mined_preference(&reviewed.predicate)
-        && crate::claim::claim_principal_id(amended)?
-            != crate::claim::claim_principal_id(&reviewed)?
+        && crate::write_envelope::claim_body::claim_principal_id(amended)?
+            != crate::write_envelope::claim_body::claim_principal_id(&reviewed)?
     {
         return Err(Error::InvalidClaimBody(
             "amendment changes the preference principal",
@@ -492,6 +496,7 @@ fn accept_member_with_amendment_in_txn(
                 end: raw.occurred.end,
             },
             learned_at: raw.learned_at,
+            row_version: None,
             data: approved,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -533,6 +538,11 @@ fn accept_member_with_amendment_in_txn(
         }
         None => (None, Vec::new()),
     };
+    // A Δ the door could not measure counts here (FIX 11542):
+    // `captured_amendment_delta` is read-only, so the bump rides this write.
+    if !delta_reasons.is_empty() {
+        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
+    }
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
@@ -550,6 +560,10 @@ fn accept_member_with_amendment_in_txn(
     let landed = amended.as_ref().unwrap_or(&reviewed);
     let context = crate::store::GateDecisionContext {
         read: crate::store::GateDecisionReadContext::claim(id, landed)
+            .map(|read| {
+                let anchors = crate::conversation::gate_claim_anchors_in(vault, &*wtxn, id, landed);
+                read.with_anchors(anchors)
+            })
             .into_iter()
             .collect(),
         ..crate::store::GateDecisionContext::answering(&original)
@@ -648,7 +662,9 @@ fn measured_amendment_in_txn(
     let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
         return Ok(None);
     };
-    let landed = approved_body(&crate::claim::decode_claim_body(&raw.body, true)?)?;
+    let landed = approved_body(&crate::write_envelope::claim_body::decode_claim_body(
+        &raw.body, true,
+    )?)?;
     let context = DeltaCaptureContext::from_bodies(
         MeasuredEnd {
             at: EndpointRef::approved_claim(*claim, reviewed_at),
@@ -667,7 +683,7 @@ fn measured_amendment_in_txn(
 fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
     let mut approved = body.clone();
     approved.approval = ClaimApprovalStatus::Approved;
-    crate::claim::encode_claim_body(&approved)
+    crate::write_envelope::claim_body::encode_claim_body(&approved)
 }
 
 /// Validates a decider's edit against the proposal it amends.
@@ -681,7 +697,7 @@ fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// it, which is a substitution wearing an edit's clothes. Everything else —
 /// value, confidence, validity, scope — is exactly what an edit is for.
 fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<ClaimBody> {
-    let amended = crate::claim::decode_claim_body(amended_body, true)?;
+    let amended = crate::write_envelope::claim_body::decode_claim_body(amended_body, true)?;
     if amended.predicate != reviewed.predicate {
         return Err(Error::InvalidClaimBody(
             "amendment changes the reviewed claim's predicate",
@@ -771,7 +787,7 @@ fn require_preference_decider(
     learning: Option<(WriteActor, &CompilationTarget)>,
 ) -> Result<()> {
     if crate::edit_distance::miner::is_mined_preference(&body.predicate)
-        && let Some(principal) = crate::claim::claim_principal_id(body)?
+        && let Some(principal) = crate::write_envelope::claim_body::claim_principal_id(body)?
         && learning.map(|(actor, _)| actor.entity_ref()) != Some(principal)
     {
         return Err(Error::InvalidClaimBody(
@@ -787,7 +803,7 @@ fn rebind_amended_consent(
     pending: &crate::store::PendingGateConsentRecord,
     approved: &[u8],
 ) -> Result<()> {
-    let edited = crate::claim::decode_claim_body(approved, true)?;
+    let edited = crate::write_envelope::claim_body::decode_claim_body(approved, true)?;
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, txn, &edited)?;
     let mut redemption = pending.clone();

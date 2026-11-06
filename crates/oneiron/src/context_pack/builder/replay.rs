@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use super::ContextPackBuilder;
 use crate::serialize::SerializeConfig;
+use crate::tokenizer::PackTokenizer;
 
 impl ContextPackBuilder<'_> {
     pub(super) fn pack_replay_config(&self) -> Value {
@@ -25,25 +26,29 @@ impl ContextPackBuilder<'_> {
                 "l2_summary_reader_present": self.l2_summary_reader.is_some(),
                 "signals_used": self.signals_used,
             },
-            "projection": projection_config(&SerializeConfig {
-                format: self.format,
-                profile: self.field_profile,
-                budget: self.token_budget,
-                allocation: self.token_allocation,
-                include_stats: self.include_stats,
-                merge_neighbors: self.merge_neighbors,
-                max_field_chars: self.max_field_chars,
-                max_item_tokens: self.max_item_tokens,
-            }),
+            "projection": projection_config(
+                &SerializeConfig {
+                    format: self.format,
+                    profile: self.field_profile,
+                    budget: self.effective_token_budget(),
+                    allocation: self.token_allocation,
+                    include_stats: self.include_stats,
+                    merge_neighbors: self.merge_neighbors,
+                    max_field_chars: self.max_field_chars,
+                    max_item_tokens: self.max_item_tokens,
+                },
+                self.tokenizer,
+            ),
         })
     }
 }
 
-pub(super) fn projection_config(config: &SerializeConfig) -> Value {
+pub(super) fn projection_config(config: &SerializeConfig, tokenizer: PackTokenizer) -> Value {
     json!({
         "format": format!("{:?}", config.format),
         "profile": format!("{:?}", config.profile),
         "token_budget": config.budget,
+        "tokenizer_id": tokenizer.id(),
         "allocation": {
             "claims": config.allocation.claims,
             "turns": config.allocation.turns,

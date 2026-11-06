@@ -12,9 +12,9 @@
 
 use std::ops::Range;
 
-use crate::llm::ScopeResource;
 use crate::note::ExtractionDefault;
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::ScopeResource;
 
 const FINGERPRINT_DOMAIN: &[u8] = b"oneiron:dreamer-note-text:v1";
 

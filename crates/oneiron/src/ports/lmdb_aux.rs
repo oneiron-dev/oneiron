@@ -1,10 +1,17 @@
 //! LMDB audit, dependency, content-addressed blob and queue adapters.
 use super::*;
-use crate::attempt_queue::*;
+use crate::attempt_queue::{
+    AttemptQueue, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
+};
 use crate::blob_artifact::{blob_artifact_asset_entity_id, blob_artifact_asset_ref_key};
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
 use crate::side_table::{Named, SideTable};
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::{EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 impl DependencyIndex for Vault {
@@ -188,6 +195,35 @@ fn list_changes(
     }
     Ok(result)
 }
+
+impl Vault {
+    /// [`BlobStore::port_blob_get`] with file-plane and plain inline ASSET
+    /// bytes admitted before their output allocation. Record-head projection
+    /// keeps its read path; the guard rides through the same type/hash checks.
+    pub(crate) fn blob_get_with_body_admission<G, E>(
+        &self,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(Vec<u8>, Option<G>)>, super::BodyReadError<E>> {
+        let id = blob_artifact_asset_entity_id(hash)?;
+        let Some(pair) =
+            self.live_entity_in_txn_with_body_admission(&self.store, txn, &id, admit)?
+        else {
+            return Ok(None);
+        };
+        if pair.0.entity_type != crate::registry::ENTITY_TYPE_ASSET
+            || blake3::hash(&pair.0.body).as_bytes() != hash
+        {
+            return Err(super::BodyReadError::Store(Error::CorruptedIndex(
+                "blob content hash",
+            )));
+        }
+        let (row, guard) = pair;
+        Ok(Some((row.body, guard)))
+    }
+}
+
 impl BlobStore for Vault {
     fn port_blob_put(
         &self,
@@ -209,6 +245,7 @@ impl BlobStore for Vault {
                 entity_type: crate::registry::ENTITY_TYPE_ASSET,
                 occurred,
                 learned_at,
+                row_version: 0,
                 body: bytes.to_vec(),
             },
         )?;
@@ -218,42 +255,32 @@ impl BlobStore for Vault {
         Ok(hash)
     }
     fn port_blob_get(&self, txn: &RoTxn<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
-        let id = blob_artifact_asset_entity_id(hash)?;
-        let Some(row) = self.port_entity_get(txn, &id)? else {
-            return Ok(None);
-        };
-        if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
-            || blake3::hash(&row.body).as_bytes() != hash
-        {
-            return Err(Error::CorruptedIndex("blob content hash"));
+        match self.blob_get_with_body_admission(txn, hash, |_| Ok::<(), Error>(())) {
+            Ok(Some((bytes, _guard))) => Ok(Some(bytes)),
+            Ok(None) => Ok(None),
+            Err(super::BodyReadError::Store(error)) => Err(error),
+            Err(super::BodyReadError::Admission(error)) => Err(error),
         }
-        Ok(Some(row.body))
     }
-    /// FIX 3677: the body streams into the body directory, and a long opaque
-    /// one is bound as its ASSET's body file; any other goes in its row, as
-    /// [`BlobStore::port_blob_put`] puts it.
+    /// FIX 3677: the body streams into the body directory, and a long one
+    /// the asset plane files is bound as its ASSET's body file, under an
+    /// instance of `mint` (FIX 6021); any other goes in its row, as
+    /// [`BlobStore::port_blob_put`] puts it. The staged file's own pin falls
+    /// when this returns, so a caller that passes `mint` holds
+    /// `Vault::pin_all_result_bodies` from before `txn` opens until it
+    /// commits (FIX 5399b); one that stages with
+    /// `Vault::stage_blob_body_in_txn` holds the staged body instead.
     fn port_blob_put_staged(
         &self,
         txn: &mut RwTxn<'_>,
         reference: &EntityId,
         body: &mut dyn std::io::Read,
+        mint: Option<&crate::store::BodyMint>,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<[u8; 32]> {
-        // FIX 5395: the stream is read against the values custody holds, as
-        // this transaction holds them.
-        let known = self.asset_stream_known_in_txn(txn)?;
-        let staged = self.stage_asset_body(body, None, known, None)?;
-        let hash = staged.facts().blake3;
-        let id = blob_artifact_asset_entity_id(&hash)?;
-        if id == *reference {
-            return Err(Error::InvariantViolation("blob cannot reference itself"));
-        }
-        self.put_asset_body_in_txn(txn, &id, occurred, learned_at, &staged)?;
-        self.store
-            .vault_meta
-            .put(txn, &blob_artifact_asset_ref_key(&hash, reference), &[])?;
-        Ok(hash)
+        let staged = self.stage_blob_body_in_txn(txn, body, mint)?;
+        self.put_staged_blob_in_txn(txn, reference, &staged, occurred, learned_at)
     }
     fn port_blob_reader(
         &self,
@@ -345,7 +372,7 @@ impl JobQueue for Vault {
     fn port_job_claim_id(
         &self,
         txn: &mut RwTxn<'_>,
-        id: crate::attempt_queue::AttemptId,
+        id: crate::store::attempt_id::AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
         AttemptQueue::new(self).port_job_claim_id(txn, id, input)
@@ -473,6 +500,55 @@ impl ChangeLogStoreRead for Vault {
     }
 }
 impl Vault {
+    /// The bytes `body` yields, staged for a blob put in `txn`, the writer
+    /// that puts them (FIX 3677): read against the values custody holds as
+    /// `txn` holds them (FIX 5395), and a long one the asset plane files
+    /// published under an instance of `mint`, minted before `txn` opened
+    /// (KS-2A, FIX 6021). Hold the staged body until `txn` has committed or
+    /// aborted.
+    ///
+    /// # Errors
+    ///
+    /// The staging errors.
+    pub(crate) fn stage_blob_body_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        body: &mut dyn std::io::Read,
+        mint: Option<&crate::store::BodyMint>,
+    ) -> Result<crate::store::StagedAssetBody> {
+        let known = self.asset_stream_known_in_txn(txn)?;
+        self.stage_asset_body(body, None, known, mint)
+    }
+
+    /// [`BlobStore::port_blob_put`] of `staged` under `reference`, in `txn`:
+    /// its content-addressed ASSET goes through the staged put (a published
+    /// file as its manifest, any other body as its bytes), and the reference
+    /// row beside it. Returns the body's BLAKE3.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvariantViolation`] for a blob that would reference itself,
+    /// and the staged put's errors.
+    pub(crate) fn put_staged_blob_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        reference: &EntityId,
+        staged: &crate::store::StagedAssetBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<[u8; 32]> {
+        let hash = staged.facts().blake3;
+        let id = blob_artifact_asset_entity_id(&hash)?;
+        if id == *reference {
+            return Err(Error::InvariantViolation("blob cannot reference itself"));
+        }
+        self.put_asset_body_in_txn(txn, &id, occurred, learned_at, staged)?;
+        self.store
+            .vault_meta
+            .put(txn, &blob_artifact_asset_ref_key(&hash, reference), &[])?;
+        Ok(hash)
+    }
+
     /// The borrowed twin of `port_blob_get`: the same liveness checks
     /// (tombstone, stale index, stale body, entity type), but the bytes stay
     /// in the store's pages whenever the store lends them. The caller checks the content hash when it

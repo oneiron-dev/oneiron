@@ -238,19 +238,9 @@ case "$route" in
   family)
     : "${ONEIRON_CHECKER_IMAGES_MIRROR:?the image-family route needs ONEIRON_CHECKER_IMAGES_MIRROR, the retained input mirror (README.md); --archive and --dockerfile are the other routes}"
     : "${ONEIRON_CHECKER_IMAGES_WORK:?the image-family route needs ONEIRON_CHECKER_IMAGES_WORK, a scratch and artifact directory (README.md)}"
-    # The fetch verifies (or fills) the whole mirror against the committed
-    # lock, so it names every scope the lock covers; never --learn here.
-    scopes=$(python3 - "$images/packages.lock.toml" <<'PY'
-import sys
-import tomllib
-
-with open(sys.argv[1], "rb") as stream:
-    print(" ".join(f"--variant {s}" for s in tomllib.load(stream)["scopes"] if s != "tools"))
-PY
-)
     family=(--repo "$repo" --mirror "$ONEIRON_CHECKER_IMAGES_MIRROR" --work "$ONEIRON_CHECKER_IMAGES_WORK")
-    # shellcheck disable=SC2086
-    python3 "$images/build.py" fetch "${family[@]}" $scopes >&2
+    # The lock's per-scope file lists bound this fetch to tools+checker; never --learn here.
+    python3 "$images/build.py" fetch "${family[@]}" --variant checker --only-requested >&2
     python3 "$images/build.py" build "${family[@]}" --variant checker >&2
     python3 "$images/build.py" receipt --work "$ONEIRON_CHECKER_IMAGES_WORK" --variant checker >&2
     python3 "$images/build.py" manifest --work "$ONEIRON_CHECKER_IMAGES_WORK" --variant checker >&2

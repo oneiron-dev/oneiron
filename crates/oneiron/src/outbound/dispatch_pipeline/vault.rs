@@ -15,11 +15,12 @@ impl Vault {
     pub fn dispatch_outbound_intent_from_step<S: OutboundExecutionSink>(
         &self,
         attempt_id: crate::attempt_queue::AttemptId,
-        step_request: &crate::llm::LlmRequest,
+        step_request: &oneiron_model::llm::LlmRequest,
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        let binding = crate::llm::StepEffectBinding::for_request(attempt_id, step_request)?;
+        let binding =
+            crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
         let result = OutboundDispatchPipeline.dispatch_from_step(self, request, sink, binding)?;
         crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
         Ok(result)

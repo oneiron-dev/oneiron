@@ -29,18 +29,27 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+pub use oneiron_store::blob_artifact::body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
 mod create;
+pub use oneiron_store::blob_artifact::deck_context;
 pub mod deck_creation;
 mod deck_doors;
+pub use oneiron_store::blob_artifact::deck_inspection;
+pub(crate) mod erase;
 mod family;
 mod holders;
 mod lifecycle;
 mod made_by;
+pub use oneiron_store::blob_artifact::native_output;
+pub use oneiron_store::blob_artifact::office_address;
 mod provenance;
 mod references;
+use oneiron_store::blob_artifact::review_request;
+pub use oneiron_store::blob_artifact::slide_review;
 mod store_keys;
+pub use oneiron_store::blob_artifact::unit_refusal;
 mod verbs;
 mod version_codec;
 mod version_rows;
@@ -52,24 +61,30 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
-pub(crate) use self::born_from::archive_born_from_table;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
+pub(crate) use self::born_from::{
+    agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
+};
 pub use self::create::ArtifactCreateRequest;
 pub use self::deck_doors::{
     DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection,
     DeckRejectionCheck, DeckRejectionReport,
 };
+pub(crate) use self::erase::project_version_erased_in_txn;
 pub(crate) use self::family::hash_hex;
 pub use self::family::{
     ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,
 };
 pub(crate) use self::holders::{
-    artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
-    held_content_hashes_in_txn,
+    LocalHashVersion, artifact_author_in_txn, artifact_payload_held_in_txn, carrier_content_hash,
+    content_holders_in_txn, held_content_hashes_in_txn, local_hash_versions_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
-pub(crate) use self::lifecycle::{hold_asset_reference_in_txn, release_asset_reference_in_txn};
+pub(crate) use self::lifecycle::{
+    discard_asset_reference_in_txn, discard_local_copy_in_txn, hold_asset_reference_in_txn,
+    release_asset_reference_in_txn,
+};
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
 pub use self::provenance::BlobVersionProvenance;
@@ -78,7 +93,10 @@ pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
 };
 #[cfg(feature = "sync")]
-pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
+pub(crate) use self::references::{
+    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
+};
+pub use self::review_request::SlideReviewLimitsInput;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
@@ -90,9 +108,14 @@ pub use self::verbs::{
 };
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
+// FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
+// minted/bound in the merge-queue finish writer; the MQ child names these via
+// this BLOB parent alias, never via the private versions child path.
 pub use self::versions::{
-    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,
+    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactAppendOutcome, BlobArtifactVersion, BlobBytes,
+    CalcEngineStamp,
 };
+pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 
 /// The closed deck transaction grammar a deck proposal carries.
 pub use oneiron_docedit::edit::transaction::DeckTransaction;

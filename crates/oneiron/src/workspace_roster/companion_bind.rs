@@ -82,7 +82,7 @@ pub(super) fn verify_brought_companion_in_txn(
     };
     let now = vault.store.clock.now_recorded_at();
     if crate::subject_model::person_substrate_in_txn(vault, txn, person, now)?
-        != Some(crate::subject_model::PersonSubstrate::Model)
+        != Some(crate::write_envelope::subject_record::PersonSubstrate::Model)
     {
         return Err(invalid("a brought companion must be a model-backed PERSON"));
     }
@@ -99,7 +99,7 @@ pub(super) fn verify_brought_companion_in_txn(
     let anchor = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, actor, now)?;
     if anchor.is_none_or(|anchor| {
         anchor.subject_ref != *person
-            || anchor.subject_kind != crate::subject_model::SubjectKind::Person
+            || anchor.subject_kind != crate::write_envelope::subject_record::SubjectKind::Person
     }) {
         return Err(invalid(
             "a brought companion's actor must be anchored to her PERSON",

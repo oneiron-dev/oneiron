@@ -108,7 +108,7 @@ fn change_id(owner: EntityId, base: u64, step: CoachStep, now: u64) -> Result<En
     let base = base.to_be_bytes();
     let now = now.to_be_bytes();
     let step = format!("{step:?}");
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         CHANGE_ID_DOMAIN,
         &[
             owner.as_bytes().as_slice(),
@@ -184,6 +184,69 @@ fn setting_change_event(
 }
 
 impl Vault {
+    /// The existing owner's cadence verdict and live notification witnesses,
+    /// for a Proposed shared-proactivity request. This reads no other owner,
+    /// edits no Weave setting and does not mark a Coach evaluation complete.
+    pub(crate) fn dreamer_proactivity_cadence_step_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+        now: u64,
+    ) -> Result<Option<(u64, Vec<EntityId>)>> {
+        let Some(wire) = owner_wire_in_txn(&self.store, txn, owner)? else {
+            return Ok(None);
+        };
+        let settings = settings_row_in_txn(&self.store, txn, owner)?;
+        let changes = owner_changes_in_txn(&self.store, txn, owner)?;
+        let refused: Vec<CoachStep> = changes
+            .iter()
+            .filter(|(_, change)| refused_under(change, settings.generation))
+            .filter_map(|(_, change)| step_of(change))
+            .collect();
+        let periods = self.owner_period_records_in_txn(txn, owner)?;
+        let before = settings_of(&wire);
+        let Some((CoachStep::Cadence(cadence), _)) = weave_digest_coach_step(&CoachInput {
+            now,
+            cadence: wire.cadence,
+            sections: &before.sections,
+            feedback: settings.feedback.as_ref(),
+            periods: &periods,
+            refused: &refused,
+        }) else {
+            return Ok(None);
+        };
+        let mut evidence = Vec::new();
+        for (scheduled_for, row) in owner_periods_in_txn(&self.store, txn, owner)? {
+            let Some(id) = row
+                .notice_ref
+                .as_deref()
+                .and_then(|id| EntityId::from_hex(id).ok())
+            else {
+                continue;
+            };
+            let crate::vault::LiveEntityRow::Live { entity_type, body } =
+                crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            if entity_type != crate::registry::ENTITY_TYPE_NOTIFICATION {
+                continue;
+            }
+            let Ok(notice) = crate::inbox::decode_notification_body(&body) else {
+                continue;
+            };
+            if notice.source.producer == WEAVE_DIGEST_NOTIFICATION_PRODUCER
+                && notice.recipient.as_deref() == Some(owner.to_hex().as_str())
+                && notice.source.result.as_deref() == Some(scheduled_for.to_string().as_str())
+            {
+                evidence.push(id);
+            }
+        }
+        evidence.sort();
+        evidence.dedup();
+        Ok(Some((cadence.seconds(), evidence)))
+    }
+
     /// The Coach's pass over every Owner schedule, from the digest timer on
     /// the home node after it served (FIX 5495). Each owner is evaluated in
     /// its own short write, at most once per

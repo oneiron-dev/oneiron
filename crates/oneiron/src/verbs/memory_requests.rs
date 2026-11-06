@@ -2,7 +2,6 @@
 use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
     ClaimInput, LexicalHit, Memory, MemoryError, MemoryResult, NeighborOpts, RecallResidence,
-    SafeDeleteReason,
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,31 +32,9 @@ pub struct ForgetPredicateRequest {
     pub predicate: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SafeDeleteRequest {
-    pub entity_ref: String,
-    pub reason: SafeDeleteReason,
-}
+pub use crate::vault::SafeDeleteRequest;
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydrateRequest {
-    pub refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EntityRequest {
-    pub entity_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct QueryBm25Request {
-    pub query: String,
-    pub limit: usize,
-}
+pub use crate::memory::{EntityRequest, HydrateRequest, QueryBm25Request};
 
 /// `vault.search.bm25`'s answer (FIX 3876): this device's own scoped hits
 /// with their read's receipt, and on a device that syncs only what it
@@ -135,12 +112,7 @@ pub struct ReadBlobVersionRequest {
     pub version: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateNoteRequest {
-    pub kind: String,
-    pub markdown: String,
-}
+pub use crate::memory::CreateNoteRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -229,7 +201,7 @@ pub struct BlobContent {
 pub(super) fn append_blob(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
-) -> MemoryResult<crate::memory::BlobVersionView> {
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     use base64::Engine as _;
     if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
         return Err(MemoryError::bad_request(

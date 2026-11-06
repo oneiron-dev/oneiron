@@ -22,15 +22,18 @@ use serde_json::{Value as JsonValue, json};
 use super::lifecycle::{self, Admitted};
 use super::park;
 use super::policy::{self, SuffixPlan};
+use super::prepare;
 use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
-use super::{AuthorityVerdict, CheckpointAuthority, ReplyCommit};
+use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit};
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
-/// successor and advances it on a task of its own.
+/// successor and advances it on a task of its own; once it is published,
+/// the next turn's tail `source` knows is prepared beside it (I1 = C).
 pub(super) fn reply_committed(
     manifest: &SegmentManifest,
     commit: ReplyCommit,
     authority: Arc<dyn CheckpointAuthority>,
+    source: Option<Arc<dyn NextTurnSource>>,
 ) {
     // A vault a lock closed advances nothing: its sessions are going.
     if manifest
@@ -43,7 +46,7 @@ pub(super) fn reply_committed(
         return;
     };
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        runtime.spawn(advance(claimed, commit, authority));
+        runtime.spawn(advance(claimed, commit, authority, source));
     }
 }
 
@@ -60,13 +63,56 @@ struct Claimed {
     admitted: Admitted,
 }
 
+/// A newly admitted rung supersedes every earlier pending attempt at the
+/// same admitted turn. Its own session opens later; a plain or non-native
+/// rung opens none, so its reply cannot steal an earlier rung's pending.
+pub(super) fn rung_admitted(digest: &ManifestDigest) {
+    let mut workers = registry::lock();
+    for worker in workers.values_mut() {
+        for session in worker.sessions.values_mut() {
+            if session
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.manifest == *digest)
+            {
+                session.pending = None;
+            }
+        }
+    }
+}
+
 /// Takes the pending turn `digest` names from its session, under the
 /// admission its vault grants now. A session whose fork showed it stale is
-/// dropped instead.
+/// dropped instead. Ambiguous pendings publish nothing: the digest alone
+/// cannot name the rung that answered (REVIEW-4386).
 fn claim(digest: &ManifestDigest) -> Option<Claimed> {
     let mut stale = None;
     let claimed = {
         let mut workers = registry::lock();
+        let matches = workers
+            .values()
+            .flat_map(|worker| worker.sessions.values())
+            .filter(|session| {
+                session
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.manifest == *digest)
+            })
+            .count();
+        if matches != 1 {
+            for worker in workers.values_mut() {
+                for session in worker.sessions.values_mut() {
+                    if session
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.manifest == *digest)
+                    {
+                        session.pending = None;
+                    }
+                }
+            }
+            return None;
+        }
         workers.iter_mut().find_map(|(worker_id, worker)| {
             let (binding, session) = worker.sessions.iter_mut().find(|(_, session)| {
                 session
@@ -116,7 +162,12 @@ fn successor(pending: PendingTurn, text: &str) -> JsonValue {
     conversation
 }
 
-async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn CheckpointAuthority>) {
+async fn advance(
+    claimed: Claimed,
+    commit: ReplyCommit,
+    authority: Arc<dyn CheckpointAuthority>,
+    source: Option<Arc<dyn NextTurnSource>>,
+) {
     let Claimed {
         worker_id,
         place,
@@ -233,6 +284,9 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
     // The successor is kept only where its session is still registered
     // under the admission the claim read; otherwise its handle is released.
     let candidate = basis.is_some();
+    // What the next turn's prepared tail extends (I1 = C).
+    let next = published.checkpoint.clone().zip(source);
+    let (next_target, next_generation) = (target.clone(), published.generation);
     let unkept = {
         let mut workers = registry::lock();
         let admits = lifecycle::admission(&vault) == Some(admitted);
@@ -247,7 +301,7 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
             Some(session) if admits => {
                 session.published = published.checkpoint;
                 session.generation = published.generation;
-                session.residency = published.residency;
+                session.observe(published.residency);
                 session.path = path;
                 session.phase = if candidate {
                     Phase::Candidate {
@@ -259,14 +313,37 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
                 session.basis = basis;
                 None
             }
-            Some(_) => worker.retire(&binding),
-            None => Some(worker.owe(vault, target, published.residency)),
+            Some(session) => {
+                // Unadmitted, so it retires; its row still keeps the fresh
+                // worker report it published against.
+                session.observe(published.residency);
+                worker.retire(&binding)
+            }
+            None => Some(worker.owe(
+                vault,
+                target,
+                published.residency,
+                Some(published.residency),
+            )),
         }
     };
+    let kept = unkept.is_none();
     match unkept {
         Some((target, at)) => registry::release_later(target, at, SessionInvalidation::Evicted),
         None if candidate => park::wake(),
         None => {}
+    }
+    if kept && let Some((checkpoint, source)) = next {
+        prepare::after_publish(prepare::Published {
+            worker_id,
+            place,
+            binding,
+            target: next_target,
+            generation: next_generation,
+            checkpoint,
+            conversation,
+            source,
+        });
     }
 }
 

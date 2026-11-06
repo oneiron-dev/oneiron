@@ -2,12 +2,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::claim::retrieval_scope::FacetMode;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult};
 use crate::corpus::CorpusScope;
 use crate::error::Result;
-use crate::pipeline::{FacetMode, ScoredEntity, WorldScope};
+use crate::pipeline::WorldScope;
 use crate::ports::EntityStoreRead;
 use crate::retrieval_depth::RetrievalDeadline;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::{
     FinalizedCandidates, PassOutput, SpeculativeFinal, SpeculativePartial, SpeculativePass,
@@ -19,6 +21,7 @@ pub(crate) struct SpeculativeReadScope {
     pub key: ScopedReadActorKey,
     pub worlds: WorldScope,
     pub corpus: CorpusScope,
+    pub conversations: Option<BTreeSet<crate::EntityId>>,
     pub facet: Option<crate::EntityId>,
     pub kinds: Option<Vec<u8>>,
 }
@@ -43,10 +46,16 @@ impl SpeculativeReadScope {
         deadline: Option<&RetrievalDeadline>,
     ) -> Result<PassOutput> {
         let lane = vault.scoped_read(self.key.clone());
-        let (filter, policy) = lane.recall_plan()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
         // The kinds here, then the actor gate under one authority per
         // snapshot (FIX 11648).
         let gate = lane.recall_candidate_gate(&policy, &filter);
+        let conversation_gate =
+            crate::memory::ConversationGate::new(&gate, vault, &self.conversations);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
                 let Some(row) = store.port_entity_record(txn, id)? else {
@@ -62,10 +71,10 @@ impl SpeculativeReadScope {
             .builder(vault, deadline)
             .world(self.worlds.clone())
             .corpus(self.corpus.clone())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(self.key.clone())
             .filter_candidates(&admitted)
-            .gate_candidates(&gate);
+            .gate_candidates(&conversation_gate);
         if let Some(facet) = &self.facet {
             builder = builder.facet(facet, FacetMode::Strict);
         }
@@ -80,9 +89,27 @@ impl SpeculativeReadScope {
         vault: &crate::Vault,
         scores: Vec<ScoredEntity>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        vault
+        let scoped = vault
             .scoped_read(self.key.clone())
-            .filter_scored_entities(scores)
+            .filter_scored_entities(scores)?;
+        let txn = vault.store.env.read_txn()?;
+        let store = vault.store.read();
+        let mut value = Vec::new();
+        for score in scoped.value {
+            if crate::memory::conversation_candidate_admits(
+                vault,
+                &store,
+                &txn,
+                &score.id,
+                &self.conversations,
+            )? {
+                value.push(score);
+            }
+        }
+        Ok(ScopedReadResult {
+            value,
+            receipt: scoped.receipt,
+        })
     }
 }
 
@@ -92,6 +119,10 @@ impl SpeculativeSession {
             || *blake3::hash(b"oneiron.speculative.native.v1").as_bytes(),
             SpeculativeReadScope::work_key,
         )
+    }
+
+    pub(crate) fn is_scoped(&self) -> bool {
+        self.scope.is_some()
     }
 
     pub(crate) fn with_scope(mut self, scope: SpeculativeReadScope) -> Self {

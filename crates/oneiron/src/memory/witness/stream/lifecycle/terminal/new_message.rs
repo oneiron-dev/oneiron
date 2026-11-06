@@ -55,7 +55,7 @@ pub(super) fn write_new_message_terminal(
                                 crate::batch::EdgeValueFields {
                                     weight: 1.0,
                                     created_at,
-                                    vad: crate::affect::Vad::NEUTRAL,
+                                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                                     provenance: None,
                                 },
                             )

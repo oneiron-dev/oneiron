@@ -12,18 +12,19 @@
 //! decision is not kept: a decision about evaporating content follows that
 //! content, and the room keeps no decision rows of its own.
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::CreateNoteRequest;
 use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, SessionReadContext};
 use crate::ports::EntityStoreRead;
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, SessionWriteRoute};
-use crate::task_verb::sdk::{AgentVerb, CreateNoteRequest};
+use crate::task_verb::sdk::AgentVerb;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 use super::room_births::RoomRowAttachments;
 use super::session::OffRecordSession;
@@ -231,6 +232,7 @@ impl OffRecordSession<'_> {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -284,6 +286,7 @@ impl OffRecordSession<'_> {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,

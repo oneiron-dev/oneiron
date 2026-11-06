@@ -18,8 +18,7 @@ pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v2";
 pub const DREAMER_PARTITION_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
-/// Domain for swarm evidence content hashes (pinned, design D10).
-pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
+pub use crate::store::consolidation_evidence::DREAMER_EVIDENCE_HASH_DOMAIN;
 /// A gap not re-observed within this window decays and is never re-surfaced
 /// (escalate-or-let-go, never re-nag nightly).
 pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;
@@ -31,10 +30,7 @@ pub const DREAMER_GAP_SCAN_ATTEMPT_TYPE: &str = "dreamer.reflection.gap_scan";
 /// gap scan, not a new queue kind and not a new wake mechanism. The pass rides
 /// the landed SessionEnd wake, whose `input` names the ended sitting.
 pub const DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE: &str = "dreamer.edit_distance.substitution_mine";
-/// `DreamerAttemptPayload.attempt_type` for a declared scope summary: a
-/// caller named the scope, and the Dreamer writes the body (ARCH-0006a).
-/// A payload discriminator on the Micro consolidation queue.
-pub const DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE: &str = "dreamer.scope_summary";
+pub use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 /// `DreamerAttemptPayload.attempt_type` for one person's PEOPLE `about`
 /// lines (ARCH-0067): one line per sensitivity band, from that band's facts.
 /// A payload discriminator on the Micro consolidation queue.
@@ -63,9 +59,9 @@ pub(super) const WATERMARK_SCHEMA_VERSION_V1: u64 = 1;
 pub(super) const WATERMARK_SCHEMA_VERSION: u64 = 2;
 pub(super) const CURSOR_SCHEMA_VERSION: u64 = 1;
 pub(super) const GAP_SCHEMA_VERSION: u64 = 1;
-/// v2 (FIX 7524): a branch of conversation parts, each with its own turns
-/// and watermark. No v1 reader.
-pub(super) const PARTITION_PAYLOAD_SCHEMA_VERSION: u64 = 2;
+/// v3 (FIX 12360): conversation parts and an explicitly tagged private
+/// grouping identity. Only this format is read.
+pub(super) const PARTITION_PAYLOAD_SCHEMA_VERSION: u64 = 3;
 
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 pub(super) const KEY_LAST_LEARNED_AT: &str = "last_learned_at";

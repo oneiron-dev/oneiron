@@ -27,7 +27,7 @@ use super::{
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind, LabelledRungs};
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::{DecisionAnswer, MAX_DECISION_STATE_BYTES, Reversibility};
+use crate::model_decision::{DecisionAnswer, MAX_DECISION_STATE_BYTES, Reversibility};
 use crate::{EntityId, Vault};
 
 /// `value`'s serialized length.

@@ -2,7 +2,11 @@
 //! of its named results, and one read of one of them through the MCP door.
 //! Each is read over the storage the run's rows are in: the vault's for a
 //! canonical run, its session's for one bound to an off-record session
-//! (FIX 4284), which never reads a room's run through the vault.
+//! (FIX 4284), which never reads a room's run through the vault. A read of
+//! a step's stored diagnostics body can also give that step's feedback
+//! beside its reply (FIX 10614, in `diagnostics`).
+
+mod diagnostics;
 
 use super::{
     CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, EntityId, ExecutorStorage,
@@ -73,11 +77,11 @@ pub(crate) fn result_cards_in(
 ) -> Result<(Vec<Value>, usize)> {
     let mut cards = Vec::new();
     for binding in record.bindings.iter().rev().skip(skip).take(limit) {
-        let Some(output) = record
-            .outputs
-            .iter()
-            .find(|output| output.handle == binding.handle && is_result_output_path(&output.path))
-        else {
+        let Some(output) = record.outputs.iter().find(|output| {
+            output.handle == binding.handle
+                && (binding.path.is_empty() || output.path == binding.path)
+                && is_result_output_path(&output.path)
+        }) else {
             continue;
         };
         let mut card = card(storage, record.run_id, output, Some(binding.name.as_str()))?;
@@ -101,9 +105,31 @@ pub(crate) fn read_result_in(
     input: Value,
     withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
 ) -> Result<Value> {
+    read_selected_in(
+        storage, record, feedback, reference, facet, input, withholds,
+    )
+    .map(|(reply, _)| reply)
+}
+
+/// [`read_result_in`], with the output the reference selected among the
+/// run's results and `feedback` (FIX 10614): `None` when the rows the run's
+/// answers were served from withhold the read, or the reference names no
+/// result of the run.
+fn read_selected_in(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    feedback: &[CodeRunRawOutput],
+    reference: &str,
+    facet: Option<ResultFacet>,
+    input: Value,
+    withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
+) -> Result<(Value, Option<CodeRunRawOutput>)> {
     let run_id = record.run_id;
     let live: Vec<&CodeRunResultBinding> = record.bindings.iter().collect();
     let target = JsResultTarget::parse(reference);
+    if withholds(record.agent_verb_rows().as_deref())? {
+        return Ok((refusal("result_withheld"), None));
+    }
     let outputs = record
         .outputs
         .iter()
@@ -127,13 +153,19 @@ pub(crate) fn read_result_in(
             }
             selected
         }
-        _ => resolve(outputs, &live, &target.reference),
+        _ => resolve(run_id, outputs, &live, &target.reference),
     };
     let Some((output, name)) = selected else {
-        return Ok(unknown_handle(&live));
+        return Ok((unknown_handle(&live), None));
     };
-    if withholds(record.agent_verb_rows().as_deref())? {
-        return Ok(refusal("result_withheld"));
-    }
-    ResultRead::outside_run(storage, run_id, output, name, target.range, facet, input)
+    let reply = ResultRead::outside_run(
+        storage,
+        run_id,
+        output.clone(),
+        name,
+        target.range,
+        facet,
+        input,
+    )?;
+    Ok((reply, Some(output)))
 }

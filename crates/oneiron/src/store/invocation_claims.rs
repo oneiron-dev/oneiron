@@ -8,7 +8,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::PeerMachine;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDbs};
@@ -16,6 +15,7 @@ use crate::store::{
     IdempotencyEntry, ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, ResponseStamps,
     opaque_retired_at,
 };
+use oneiron_base::machine_destination::PeerMachine;
 
 /// The durable row for one client-named invocation.
 #[doc(hidden)]

@@ -170,9 +170,11 @@ fn ready_in_txn(
     match intent.cause {
         RetireCause::Retention => Ok(kept_inventory_releases(&item, intent.through, kept)),
         RetireCause::Erase => {
-            if instance::instance_in_txn(store, txn, &item)?
-                .is_some_and(|found| found.lifecycle != Lifecycle::Erased)
-            {
+            // A history purge's intent retires only generations its live
+            // incarnation has left behind (FIX 11800).
+            if instance::instance_in_txn(store, txn, &item)?.is_some_and(|found| {
+                found.lifecycle != Lifecycle::Erased && intent.through >= found.generation
+            }) {
                 return Err(Error::CorruptedIndex(
                     "a retiring checkpoint payload leaf is not erased",
                 ));
@@ -216,6 +218,11 @@ impl Store {
     ) -> Result<bool> {
         if !CHECKPOINT_PAYLOADS_ENABLED {
             return Ok(false);
+        }
+        // A history purge's left-behind leaf is staged once a kept copy
+        // shows its reseal landed (FIX 11800).
+        if let Some(kept) = kept {
+            instance::stage_resealed_purges(self, kept)?;
         }
         let txn = self.env.read_txn()?;
         let owed = !retirements_in_txn(self, &txn, CustodyKind::CheckpointPayload)?.is_empty();

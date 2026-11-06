@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::critic::{CritiqueVerdict, LensCatalog, triage_critiques};
 use crate::error::{Error, Result};
+use crate::{critic::CritiqueVerdict, critic::triage_critiques, store::critic_lens::LensCatalog};
 
 use super::evidence::{
     DreamerTournamentEvidenceStore, put_critique_artifact_in_txn, tournament_evidence,

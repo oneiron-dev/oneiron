@@ -123,6 +123,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                         kind:
                             crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
                         code: None,
+                        secret: None,
                     },
                 )
             }
@@ -151,6 +152,12 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         })
     }
 
+    /// The pipeline holds a paced send and names its `retry_at`, which the
+    /// connector task executor re-arms at (FIX 8686).
+    fn waits_for_paced_window(&self) -> bool {
+        true
+    }
+
     fn admit_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -177,6 +184,7 @@ fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
         crate::outbound_intent_ledger::OutboundSendFailure {
             kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
             code: None,
+            secret: None,
         },
     )
 }

@@ -3,6 +3,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 
@@ -16,6 +17,9 @@ use super::{
 };
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
+
+/// A per-call admission check shared with every backend and transport attempt.
+pub type DispatchRelease<'a> = &'a (dyn Fn() -> LlmResult<()> + Sync);
 
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
 
@@ -118,6 +122,50 @@ pub trait SingleRouteBackend: LlmBackend {
         Ok(None)
     }
 
+    /// Preflights one dispatch against the immutable digest admitted for its
+    /// lease. Stateful adapters use it to keep a later availability change
+    /// from selecting different bytes. The returned digest is still checked
+    /// by the guard before the lease starts.
+    fn dispatch_digest(
+        &self,
+        request: &LlmRequest,
+        stream: bool,
+        _admitted_digest: Option<&str>,
+    ) -> LlmResult<Option<String>> {
+        self.preflight(request, stream)?;
+        self.request_digest(request, stream)
+    }
+
+    /// Sends the bytes checked by `dispatch_digest`, not a newly selected
+    /// route. Adapters with no stateful route selection keep their raw call.
+    fn generate_bound<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate(request, lease)
+    }
+
+    /// Streaming counterpart of `generate_bound`.
+    fn stream_bound<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+    ) -> LlmStreamResult<'a> {
+        self.stream(request, lease)
+    }
+
+    /// An alternate wire for the same offer after a proved pre-body failure.
+    /// It is never sent under the failed lease: the caller must settle that
+    /// attempt and admit the returned backend's exact bytes on a fresh permit.
+    /// A NotSent transport fault proves the first attempt can settle unsent;
+    /// a provider-answered refusal keeps its started-failure settlement.
+    fn fallback(&self, _error: &LlmError) -> Option<Arc<dyn SingleRouteBackend>> {
+        None
+    }
+
     /// How the credential broker that sends this backend's calls is kept
     /// apart from the daemon, for the dispatch receipt. `None`, the default,
     /// for a backend whose key, if any, no broker holds.
@@ -157,6 +205,8 @@ pub struct BudgetLease {
     /// id/guard equality, hash, Debug and serde. Set once after dispatch opens;
     /// the first writer wins. WorkContext itself is never serialized.
     work_context: Arc<Mutex<Option<WorkContext>>>,
+    /// Physical backend attempts begun for this call, not inferred from receipts.
+    physical_attempts: Arc<AtomicUsize>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -192,6 +242,7 @@ impl BudgetLease {
             guard_identity,
             observations: Arc::default(),
             work_context: Arc::default(),
+            physical_attempts: Arc::default(),
         }
     }
 
@@ -233,6 +284,18 @@ impl BudgetLease {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Marks one physical backend attempt begun. Unlike inference observations,
+    /// this count is present even before any reply or usage exists.
+    pub fn begin_physical_attempt(&self) {
+        self.physical_attempts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many physical backend attempts this call has begun.
+    #[must_use]
+    pub fn physical_attempts(&self) -> usize {
+        self.physical_attempts.load(Ordering::Relaxed)
     }
 
     /// Clone-then-set attachment: the clone shares identity, observations and

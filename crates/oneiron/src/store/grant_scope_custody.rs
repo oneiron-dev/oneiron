@@ -12,7 +12,7 @@
 //! guessed scope. Nothing here does network I/O; the offer carries the key
 //! between the two hosts, outside every signed record.
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
@@ -20,7 +20,7 @@ use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose, erasable_refs_of_in_txn,
-    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+    put_erasable_ref_in_txn, retirement_in_txn, stage_erasable_retirement_in_txn,
 };
 
 /// The context a pact id and epoch derive a key incarnation under.
@@ -49,7 +49,7 @@ fn archived() -> Error {
 /// The random source failed.
 pub(crate) fn new_scope_key() -> Result<Zeroizing<[u8; 32]>> {
     let mut key = Zeroizing::new([0u8; 32]);
-    crate::world_keys::os_fill(&mut key[..])?;
+    crate::key_material::os_fill(&mut key[..])?;
     Ok(key)
 }
 
@@ -109,7 +109,7 @@ pub(crate) fn install_scope_key(
         }
         None => {
             let mut key_ref = [0u8; 32];
-            crate::world_keys::os_fill(&mut key_ref)?;
+            crate::key_material::os_fill(&mut key_ref)?;
             let item = ErasableItem {
                 purpose: ErasablePurpose::GrantScope,
                 parent: *grant.as_bytes(),
@@ -121,6 +121,49 @@ pub(crate) fn install_scope_key(
         }
     };
     put_erasable_ref_in_txn(s, w, &item)
+}
+
+/// The live opening key of `grant`'s pact `pact_id` at `epoch` that a
+/// writer committed in `txn` (FIX 11730): what this install's authority view
+/// re-checks a pact's scope commitment with. `None` when custody holds none
+/// for that epoch, its retirement is staged or done, the vault is archived
+/// or has no custody yet: the pact then stands as the fold left it.
+///
+/// # Errors
+/// A committed key that does not read as a 32-byte opening, and custody and
+/// storage faults.
+pub(crate) fn scope_key_in_txn(
+    s: &Store,
+    txn: &RoTxn<'_>,
+    grant: &EntityId,
+    pact_id: &[u8; 32],
+    epoch: u64,
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    if s.core.gate_custody_archived() {
+        return Ok(None);
+    }
+    let Some(custody) = s.core.key_custody.local() else {
+        return Ok(None);
+    };
+    let incarnation = incarnation(pact_id, epoch);
+    for item in erasable_refs_of_in_txn(s, txn, ErasablePurpose::GrantScope, grant.as_bytes())? {
+        if item.incarnation != incarnation {
+            continue;
+        }
+        if retirement_in_txn(s, txn, &item.subject(&custody)?)?.is_some()
+            || custody.erasable_state(&item)? != EntryState::Live
+        {
+            return Ok(None);
+        }
+        let secret = custody.read_erasable(&item)?;
+        if secret.expose().len() != 32 {
+            return Err(unknown_key());
+        }
+        let mut key = Zeroizing::new([0u8; 32]);
+        key.copy_from_slice(secret.expose());
+        return Ok(Some(key));
+    }
+    Ok(None)
 }
 
 /// Stages the retirement of every opening key custody holds for `grant`,

@@ -11,7 +11,8 @@ use super::{
     EsignGetRequest, EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView,
     EsignSealedView, document_id,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 impl Memory<'_> {
     /// `vault.esign.get`: the document's folded state and its trail, with
@@ -117,6 +118,7 @@ impl Memory<'_> {
                     sealed_artifact: item.sealed_artifact,
                     sealed_version: item.sealed_version,
                     sha256: crate::entity_id::bytes_to_hex_lower(item.sha256.as_slice()),
+                    profile: item.profile,
                 })
                 .collect(),
         });

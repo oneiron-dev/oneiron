@@ -23,14 +23,18 @@ use super::argv::FrozenGitArgv;
 use super::checkout::{checkout_handle_dir_for, uncertain_inspection, verify_checkout_head};
 use super::checkout_remote::served_repo_name;
 use super::{GitOid, GitWire, GitWireRepo, GitWireResult, lock_repository};
-use crate::checkout::lease::{
-    CheckoutError, CheckoutLeaseAct, CheckoutResult, CheckoutTeardownInspection,
-    GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
-};
-use crate::codebase::RepoRef;
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_projection::checkout::{
     bind_projected_checkout, retained_projected_checkout,
+};
+use crate::store::code_snapshot::RepoRef;
+use crate::{
+    store::checkout_lease::CheckoutError,
+    store::checkout_lease::CheckoutLeaseAct,
+    store::checkout_lease::{
+        CheckoutResult, CheckoutTeardownInspection, GitOid as LeaseGitOid, PushedHeadReceipt,
+        TeardownReceiptMatch,
+    },
 };
 
 /// One masked copy a lease checks out: the copy store pinned at the copy

@@ -8,8 +8,8 @@
 //! anything: the job alone files the final answer. The sweep queues again
 //! each owed child that settled without an answer, and wakes a job owed
 //! nothing that no child woke.
+use super::target::{NodeInput, Target};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::jobs::{attempt_id, attempt_ref, invalid_job, job_item};
 use super::work::{self, FeedbackTriageNodeAnswer, FeedbackTriageStep, FeedbackTriageWork};
@@ -17,7 +17,7 @@ use super::{
     COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET, FeedbackTriageHandoff,
     FeedbackTriageOutput, FeedbackTriageSourceRef, FeedbackTriageWorkNode, HANDOFFS,
-    check_feedback_triage_findings, erased, handoff_in_txn, handoff_key, job_handoff_in_txn,
+    check_feedback_triage_findings, erased, handoff_key, job_handoff_in_txn,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND;
@@ -31,24 +31,9 @@ use crate::{EntityId, Error, Result, Vault};
 /// Why a revision's job is parked.
 const PARK_REASON: &str = "the feedback triage waits on its part and synthesis children";
 
-/// A part or synthesis child's input as it rides the queue.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NodeInput {
-    source: String,
-    id: String,
-    revision: String,
-    evidence: EntityId,
-    generation: u32,
-    node: u32,
-}
-
-/// The node a child's input names.
+/// The evidence an admission's read context can name. Erased inputs name none.
 pub(crate) struct NodeTarget {
-    source_ref: FeedbackTriageSourceRef,
     pub(crate) evidence: EntityId,
-    generation: u32,
-    node: u32,
 }
 
 /// The revision a child is queued for: its item, evidence and job, and the
@@ -97,17 +82,8 @@ fn lost_lease() -> Error {
 }
 
 pub(crate) fn node_target(input: &Value) -> Result<NodeTarget> {
-    let node: NodeInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
-    Ok(NodeTarget {
-        source_ref: FeedbackTriageSourceRef {
-            source: node.source,
-            id: node.id,
-            revision: node.revision,
-        },
-        evidence: node.evidence,
-        generation: node.generation,
-        node: node.node,
-    })
+    let (_, evidence) = NodeInput::decode(input)?.target.retained()?;
+    Ok(NodeTarget { evidence })
 }
 
 /// The leased child's facet, a part's or a synthesis's, stamped for the
@@ -125,21 +101,16 @@ fn require_node_attempt(vault: &Vault, attempt: &DreamerAdmittedAttempt) -> Resu
 fn target_handoff_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    target: &NodeTarget,
+    target: &NodeInput,
 ) -> Result<FeedbackTriageHandoff> {
-    let handoff = handoff_in_txn(vault, txn, &target.source_ref)?
-        .ok_or(Error::CorruptedIndex("feedback triage handoff missing"))?;
-    if handoff.evidence != target.evidence {
-        return Err(invalid_job());
-    }
-    Ok(handoff)
+    target.target.handoff_in_txn(vault, txn)
 }
 
 /// The node `target` names, while it is current, unanswered and owed to
 /// `child` under `facet`.
 fn owed_node<'h>(
     handoff: &'h FeedbackTriageHandoff,
-    target: &NodeTarget,
+    target: &NodeInput,
     child: EntityId,
     facet: &str,
 ) -> Option<&'h FeedbackTriageWorkNode> {
@@ -191,10 +162,10 @@ fn enqueue_node_in_txn(
     };
     let source_ref = owner.source_ref;
     let input = rmpv::ext::to_value(NodeInput {
-        source: source_ref.source.clone(),
-        id: source_ref.id.clone(),
-        revision: source_ref.revision.clone(),
-        evidence: owner.evidence,
+        target: Target::Retained {
+            source_ref: source_ref.clone(),
+            evidence: owner.evidence,
+        },
         generation,
         node: node.id,
     })
@@ -273,6 +244,13 @@ pub(super) fn reconcile_in_txn(
     let run_id = AttemptQueue::new(vault)
         .get_in_txn(txn, parent)?
         .and_then(|record| record.run_id);
+    let super::FeedbackTriageHandoffSource::Retained {
+        source_ref,
+        evidence,
+    } = &handoff.source
+    else {
+        return wake_in_txn(vault, txn, parent, now);
+    };
     let Some(work) = handoff.work.as_mut() else {
         return Ok(false);
     };
@@ -280,8 +258,8 @@ pub(super) fn reconcile_in_txn(
         return wake_in_txn(vault, txn, parent, now);
     }
     let owner = Owner {
-        source_ref: &handoff.source_ref,
-        evidence: handoff.evidence,
+        source_ref,
+        evidence: *evidence,
         parent,
         run_id: run_id.as_deref(),
     };
@@ -306,10 +284,12 @@ fn cuts_text(step: &FeedbackTriageStep) -> bool {
 impl Vault {
     /// Plans one step of a long revision's triage as the Coach, under its
     /// leased `coach.feedback_triage` job (FIX 7549), and parks the job on
-    /// its children: the step, a child for every node it owes, and the park
-    /// commit in one write, and only while the job holds its lease. The job
-    /// stays the revision's owner; the child that completes a level, or the
-    /// next sweep, wakes it as the same try.
+    /// the children it owes: the step, those children and the park commit in
+    /// one write, only while the job holds its lease. A `Wait` whose fresh
+    /// graph owes nothing returns `Ready` without parking or rewriting the
+    /// handoff, so the same leased run continues. Otherwise the job stays
+    /// the revision's owner; the child that completes a level, or the next
+    /// sweep, wakes it as the same try.
     ///
     /// # Errors
     ///
@@ -322,7 +302,7 @@ impl Vault {
         attempt: &DreamerAdmittedAttempt,
         step: FeedbackTriageStep,
         now: u64,
-    ) -> Result<FeedbackTriageWork> {
+    ) -> Result<super::FeedbackTriageParkOutcome> {
         self.require_coach_attempt(attempt, COACH_FEEDBACK_TRIAGE_FACET)?;
         let record = &attempt.status.attempt;
         let lease_owner = record.lease_owner.as_deref().ok_or_else(lost_lease)?;
@@ -330,13 +310,15 @@ impl Vault {
         let text = if cuts_text(&step) {
             let handoff = {
                 let txn = self.store.env.read_txn()?;
-                job_handoff_in_txn(self, &txn, attempt)?
+                let handoff = job_handoff_in_txn(self, &txn, attempt)?;
+                erased::refuse_erased_in_txn(self, &txn, &handoff)?;
+                handoff
             };
             Some(job_item(self, &handoff)?.text()?)
         } else {
             None
         };
-        let work = self.with_write_txn_grouped(|txn| {
+        let outcome = self.with_write_txn_grouped(|txn| {
             let mut handoff = job_handoff_in_txn(self, txn, attempt)?;
             if handoff.result.is_some() || handoff.attempt != attempt_ref(record.id)? {
                 return Err(invalid_job());
@@ -348,18 +330,41 @@ impl Vault {
             if !queue.holds_lease_in_txn(txn, record.id, lease_owner, record.attempt_count)? {
                 return Err(lost_lease());
             }
+            let waiting = matches!(&step, FeedbackTriageStep::Wait);
+            // FIX 12546: an empty-split Repartition only swaps the pin; like
+            // Wait it can finish without parking when the level is complete.
+            let repartition_ready = matches!(
+                &step,
+                FeedbackTriageStep::Repartition { splits, .. } if splits.is_empty()
+            );
+            let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
+            let (source_ref, evidence) = handoff.retained()?;
+            let owner = Owner {
+                source_ref,
+                evidence,
+                parent: record.id,
+                run_id: record.run_id.as_deref(),
+            };
+            let queued = enqueue_owed_in_txn(self, txn, &owner, &mut work, now)?;
+            if waiting && queued == 0 && !work.owed() {
+                return Ok(super::FeedbackTriageParkOutcome::Ready(work));
+            }
+            if repartition_ready && queued == 0 && !work.owed() {
+                // The pin changed, so unlike Wait this persists the handoff
+                // before the host continues on it.
+                handoff.work = Some(work.clone());
+                HANDOFFS.put(
+                    &self.store,
+                    txn,
+                    &handoff_key(handoff.retained()?.0),
+                    &handoff,
+                )?;
+                return Ok(super::FeedbackTriageParkOutcome::Ready(work));
+            }
             // The park renews the lease it parks under: a lease reclaim that
             // read the parked set before this write finds the lease live
             // under its own writer and leaves it (FIX 10304).
             queue.renew_lease_in_txn(txn, record.id, lease_owner, record.attempt_count, now)?;
-            let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
-            let owner = Owner {
-                source_ref: &handoff.source_ref,
-                evidence: handoff.evidence,
-                parent: record.id,
-                run_id: record.run_id.as_deref(),
-            };
-            enqueue_owed_in_txn(self, txn, &owner, &mut work, now)?;
             let parked = DreamerRunnerStore::new(self).park_if_current_lease_in_txn(
                 txn,
                 ParkDreamerAttempt {
@@ -382,13 +387,13 @@ impl Vault {
             HANDOFFS.put(
                 &self.store,
                 txn,
-                &handoff_key(&handoff.source_ref),
+                &handoff_key(handoff.retained()?.0),
                 &handoff,
             )?;
-            Ok(work)
+            Ok(super::FeedbackTriageParkOutcome::Parked(work))
         })?;
         self.store.notify_attempt_observers();
-        Ok(work)
+        Ok(outcome)
     }
 
     /// What a leased part or synthesis child answers (FIX 7549): a part's
@@ -408,7 +413,7 @@ impl Vault {
         attempt: &DreamerAdmittedAttempt,
     ) -> Result<FeedbackTriageNodeJob> {
         let facet = require_node_attempt(self, attempt)?;
-        let target = node_target(&attempt.status.payload.input)?;
+        let target = NodeInput::decode(&attempt.status.payload.input)?;
         let child = attempt_ref(attempt.status.attempt.id)?;
         let (handoff, node) = {
             let txn = self.store.env.read_txn()?;
@@ -441,10 +446,11 @@ impl Vault {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or(Error::CorruptedIndex("feedback triage synthesis input"))?;
+        let (source_ref, evidence) = handoff.retained()?;
         Ok(FeedbackTriageNodeJob::Pending(Box::new(
             FeedbackTriageNodeInput {
-                source_ref: handoff.source_ref,
-                evidence: handoff.evidence,
+                source_ref: source_ref.clone(),
+                evidence,
                 parent: handoff.attempt,
                 pin: work.pin.clone(),
                 item_bytes: work.item_bytes,
@@ -475,7 +481,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let facet = require_node_attempt(self, attempt)?;
-        let target = node_target(&attempt.status.payload.input)?;
+        let target = NodeInput::decode(&attempt.status.payload.input)?;
         let record = &attempt.status.attempt;
         let lease_owner = record.lease_owner.as_deref().ok_or_else(lost_lease)?;
         let child = attempt_ref(record.id)?;
@@ -504,7 +510,7 @@ impl Vault {
                 return Ok(false);
             }
             if let Some((output, served)) = answer {
-                check_feedback_triage_findings(output, &handoff.source_ref)?;
+                check_feedback_triage_findings(output, handoff.retained()?.0)?;
                 let node = handoff
                     .work
                     .as_mut()
@@ -519,7 +525,7 @@ impl Vault {
                 HANDOFFS.put(
                     &self.store,
                     txn,
-                    &handoff_key(&handoff.source_ref),
+                    &handoff_key(handoff.retained()?.0),
                     &handoff,
                 )?;
             }

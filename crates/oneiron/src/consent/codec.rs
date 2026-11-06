@@ -267,7 +267,7 @@ fn encode_envelope(envelope: &BoundEnvelope) -> Result<Value> {
             envelope
                 .scope
                 .as_deref()
-                .map(crate::federation::scope_codec::encode_scope_value)
+                .map(oneiron_authority::federation::scope_codec::encode_scope_value)
                 .transpose()?,
         ),
         BoundEnvelope::Action(envelope) => (
@@ -328,11 +328,12 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
             let envelope = if matches!(scope_value, Value::Nil) {
                 DisclosureEnvelope::new(selectors).map_err(|_| invalid_row())?
             } else {
-                let scope = crate::federation::scope_codec::decode_scope_value(scope_value)
-                    .map_err(|_| invalid_row())?;
+                let scope =
+                    oneiron_authority::federation::scope_codec::decode_scope_value(scope_value)
+                        .map_err(|_| invalid_row())?;
                 let envelope = DisclosureEnvelope::from_scope(scope).map_err(|_| invalid_row())?;
                 if envelope.selectors != selectors
-                    || crate::federation::scope_codec::encode_scope_value(
+                    || oneiron_authority::federation::scope_codec::encode_scope_value(
                         envelope.scope.as_deref().ok_or_else(invalid_row)?,
                     )
                     .map_err(|_| invalid_row())?

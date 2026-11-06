@@ -25,8 +25,11 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod memberships;
 mod pages;
 mod render;
+
+use memberships::KnownMembership;
 
 use super::PriorHead;
 use super::resources::{document_version, standing};
@@ -36,10 +39,11 @@ use crate::claim::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
     decode_claim_body, is_reserved_predicate,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::settings::ReadDestination;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
@@ -52,8 +56,10 @@ const RESTRICTED_BAND: u8 = 3;
 type Row = (u8, u64, Vec<u8>);
 /// The claim rows a listing names, for the wake to pin as sources.
 pub(super) type ListedRows = Vec<(EntityId, Row)>;
-/// The ids one attempt listed: each entity with its listed claims, in order.
-type Pins = Vec<(EntityId, Vec<EntityId>)>;
+/// The ids one attempt listed: each entity, its claims and its membership
+/// (unit, binding-claim) pairs, in order.
+type MembershipPins = Vec<(EntityId, EntityId)>;
+type Pins = Vec<(EntityId, Vec<EntityId>, MembershipPins)>;
 
 /// Per attempt, the entity and claim ids its extraction listed; per NOTE a
 /// review attempt reads, that NOTE's (FIX 7578). A replay after a kill lists
@@ -139,8 +145,10 @@ pub(crate) struct Neighbourhood {
 #[derive(Debug, Clone, PartialEq)]
 struct KnownEntity {
     id: EntityId,
+    kind: u8,
     label: Option<String>,
     claims: Vec<KnownClaim>,
+    memberships: Vec<KnownMembership>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +160,8 @@ struct KnownClaim {
     /// The relationships the head holds within, when it names a set (FIX
     /// 7575).
     rel: crate::claim::RelationshipScope,
+    /// The stored question key as JSON, when the claim carries one.
+    topic_key: Option<String>,
 }
 
 impl Neighbourhood {
@@ -236,7 +246,12 @@ impl Neighbourhood {
             .iter()
             .map(|entity| {
                 let claims = entity.claims.iter().map(|claim| claim.id).collect();
-                (entity.id, claims)
+                let memberships = entity
+                    .memberships
+                    .iter()
+                    .map(|membership| (membership.unit, membership.binding))
+                    .collect();
+                (entity.id, claims, memberships)
             })
             .collect()
     }
@@ -253,13 +268,19 @@ pub(super) fn pin(vault: &Vault, key: ListingPin, listed: &Neighbourhood) -> Res
             Some(pins) if !listed.gone.is_empty() => {
                 let kept: Pins = pins
                     .into_iter()
-                    .filter(|(id, _)| !listed.gone.contains(id))
-                    .map(|(id, claims)| {
+                    .filter(|(id, _, _)| !listed.gone.contains(id))
+                    .map(|(id, claims, memberships)| {
                         let claims = claims
                             .into_iter()
                             .filter(|claim| !listed.gone.contains(claim))
                             .collect();
-                        (id, claims)
+                        let memberships = memberships
+                            .into_iter()
+                            .filter(|(unit, binding)| {
+                                !listed.gone.contains(unit) && !listed.gone.contains(binding)
+                            })
+                            .collect();
+                        (id, claims, memberships)
                     })
                     .collect();
                 PINS.put(&vault.store, txn, &key, &kept)?;
@@ -296,12 +317,23 @@ pub(super) fn unpin_note_listing_in_txn(
 
 /// What one branch reads around its passage. `turns` holds each TURN's stored body and frozen
 /// text; `axes` the branch's world, facet, relationship and project, or `None` to list no
-/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497).
+/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497);
+/// `destination` where the listing's rows go (FIX 5588 S1).
 pub(super) struct Passage<'p> {
     pub(super) turns: &'p [(&'p [u8], Option<&'p str>)],
     pub(super) axes: Option<&'p Scope>,
     pub(super) bound: Option<&'p Scope>,
     pub(super) thing: Option<EntityId>,
+    pub(super) destination: ReadDestination,
+}
+
+/// The destination a neighbourhood listing is read for (FIX 5588 S1,
+/// Unknown-always): both plan points resolve through here, so the later
+/// FIX 12712 flip is one value. Today it is a destination nobody proved,
+/// which judges exactly as the bare off-device locality did (C2); it reads
+/// no role table, so the direct and driver paths cannot diverge (C8).
+pub(super) fn listing_destination() -> ReadDestination {
+    ReadDestination::toward(crate::machine_destination::PeerMachine::Unknown)
 }
 
 /// One branch's neighbourhood at the wake's snapshot, with the claim rows it
@@ -322,8 +354,24 @@ pub(super) fn discover_in(
             named_entities(vault, txn, std::slice::from_ref(turn))?,
         );
     }
-    let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
+    let (mut fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
+    let include_memberships = key.note.is_none()
+        && passage
+            .bound
+            .is_none_or(|scope| scope.relationship.is_none());
     let Some(pins) = PINS.get(&vault.store, txn, &key)? else {
+        if include_memberships {
+            rows.extend(memberships::capture_in(
+                vault,
+                txn,
+                read,
+                &mut fresh,
+                passage.bound,
+                &passage.destination,
+                None,
+                &mut BTreeSet::new(),
+            )?);
+        }
         let thing = listed_thing(&fresh, passage.thing);
         return Ok((
             Neighbourhood {
@@ -336,17 +384,14 @@ pub(super) fn discover_in(
         ));
     };
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, &passage.destination)?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
-    let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
+    let ids: Vec<_> = pins.iter().map(|(id, _, _)| *id).collect();
     let mut entities = Vec::new();
     let mut gone = BTreeSet::new();
-    for ((id, claims), row) in pins
+    let mut pinned_memberships = BTreeMap::new();
+    for ((id, claims, memberships), row) in pins
         .into_iter()
         .zip(read.get_entities_parts_in_txn(txn, &ids)?)
     {
@@ -359,8 +404,10 @@ pub(super) fn discover_in(
         }
         let mut entity = KnownEntity {
             id,
+            kind,
             label: label(&body),
             claims: Vec::new(),
+            memberships: Vec::new(),
         };
         if let Some(axes) = passage.axes {
             for (claim, row) in claims
@@ -377,7 +424,20 @@ pub(super) fn discover_in(
                 }
             }
         }
+        pinned_memberships.insert(id, memberships);
         entities.push(entity);
+    }
+    if include_memberships {
+        rows.extend(memberships::capture_in(
+            vault,
+            txn,
+            read,
+            &mut entities,
+            passage.bound,
+            &passage.destination,
+            Some(&pinned_memberships),
+            &mut gone,
+        )?);
     }
     let listed: BTreeSet<_> = entities
         .iter()
@@ -439,11 +499,21 @@ fn fresh_in(
         }
         let mut entity = KnownEntity {
             id,
+            kind,
             label: label(&body),
             claims: Vec::new(),
+            memberships: Vec::new(),
         };
         let claims = match passage.axes {
-            Some(axes) => newest_claims(vault, txn, read, id, axes, passage.bound)?,
+            Some(axes) => newest_claims(
+                vault,
+                txn,
+                read,
+                id,
+                axes,
+                passage.bound,
+                &passage.destination,
+            )?,
             None => Vec::new(),
         };
         for (claim, row) in claims {
@@ -531,6 +601,7 @@ fn newest_claims(
     subject: EntityId,
     axes: &Scope,
     bound: Option<&Scope>,
+    destination: &ReadDestination,
 ) -> Result<Vec<(KnownClaim, (EntityId, Row))>> {
     // A subject of any fan-in lists its newest claims (Rule 5): the subject
     // read raises its own scan check past its row and reads on.
@@ -550,13 +621,12 @@ fn newest_claims(
     let ids: Vec<_> = ordered.into_iter().map(|(_, id)| id).collect();
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, destination)?;
     #[cfg(not(feature = "sync"))]
-    let device_only = BTreeSet::new();
+    let device_only = {
+        let _ = destination;
+        BTreeSet::new()
+    };
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut claims = Vec::new();
     for (id, row) in ids.into_iter().zip(rows) {
@@ -620,6 +690,13 @@ fn listable(
         predicate: prior.body.predicate.clone(),
         value: rmpv_to_json(&prior.body.value).to_string(),
         rel: prior.body.rel.clone(),
+        topic_key: prior.body.scope.as_ref().and_then(|scope| {
+            scope
+                .as_map()?
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("topic_key"))
+                .map(|(_, topic)| rmpv_to_json(topic).to_string())
+        }),
     })
 }
 
@@ -648,11 +725,18 @@ impl Vault {
         let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
             .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
         let read = self.scoped_read(actor);
-        Ok(
-            newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
-                .into_iter()
-                .map(|(known, _)| known.id)
-                .collect(),
-        )
+        let destination = listing_destination();
+        Ok(newest_claims(
+            self,
+            &txn,
+            &read,
+            subject,
+            &Scope::default(),
+            None,
+            &destination,
+        )?
+        .into_iter()
+        .map(|(known, _)| known.id)
+        .collect())
     }
 }

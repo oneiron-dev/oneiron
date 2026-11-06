@@ -31,7 +31,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitIssue, KitPassphrase, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// One pending root request this install answers, as the door read it.
@@ -131,16 +131,17 @@ fn not_pending(fold: &AuthorityFold, me: EntityId, hash: AuthorityEntryHash) -> 
 }
 
 /// The counted root request signed as entry `hash` that names `me` and has
-/// no result yet, with its change.
+/// no result yet, with its change. The request is the fold's shared body,
+/// not a copy (FIX 12138).
 fn pending_root(
     fold: &AuthorityFold,
     me: EntityId,
     hash: AuthorityEntryHash,
-) -> Option<(OwnerWorkRequest, RootChange)> {
+) -> Option<(std::sync::Arc<OwnerWorkRequest>, RootChange)> {
     fold.pending_owner_work_for(me)
         .find_map(|(pending, request)| match request.work {
             OwnerWorkBody::Root { change, .. } if pending == hash => {
-                Some((request.clone(), change))
+                Some((fold.shared_owner_work_request(&pending)?, change))
             }
             _ => None,
         })
@@ -330,6 +331,7 @@ impl Vault {
                 activated,
                 replaced,
                 escrow,
+                mirror_pending: false,
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key
@@ -351,10 +353,13 @@ impl Vault {
             }
         };
         Ok(match confirmed.done() {
-            Ok(kit) => RootWorkDone::KitConfirmed {
-                kit: Box::new(kit),
-                mirror_pending,
-            },
+            Ok(mut kit) => {
+                kit.mirror_pending = mirror_pending;
+                RootWorkDone::KitConfirmed {
+                    kit: Box::new(kit),
+                    mirror_pending,
+                }
+            }
             Err(report) => report,
         })
     }

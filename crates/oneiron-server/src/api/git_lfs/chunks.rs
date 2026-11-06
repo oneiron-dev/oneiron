@@ -25,7 +25,7 @@ pub(super) async fn exchange(
     parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize_request(&parts, &server, LfsAccess::Read)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Read).await?;
     // The machine the request's connection proved: the selector, the
     // manifest and every piece are judged for it (FIX 4937).
     let peer = auth.peer();
@@ -40,11 +40,8 @@ pub(super) async fn exchange(
     // the reply. It waits on its headers and reads its body at its turn, so
     // a request in line holds none of it.
     let declared = declared_size(&parts.headers);
-    let Some(room) = server
-        .transfers
-        .lfs_read_room(Transfers::exchange_room(declared))
-        .await
-    else {
+    let room_taken = Transfers::exchange_room(declared);
+    let Some(room) = server.transfers.lfs_read_room(room_taken).await else {
         return Ok(lfs_waited_out());
     };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
@@ -59,8 +56,17 @@ pub(super) async fn exchange(
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
     let caller = auth.clone();
+    let line = server.transfers.lfs_reads_line();
+    let questions = Arc::clone(&server.transfers.questions);
     let (object, bytes, read, permit) = crate::api::transfer::spawn_worker(move || {
+        let (mut room, transfer) = permit;
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
+        // The object is named only now: charge the copies of a manifest row
+        // past the frame its room counted before the serve reads it whole
+        // (FIX 9032).
+        if let Some(row) = vault.lfs_manifest_row_bytes(object)? {
+            Transfers::charge_exchange_manifest(&line, &questions, &mut room, room_taken, row);
+        }
         // A lift-marked object's real bytes go to the owner and to an agent
         // whose read is granted, each as this request authenticated it (FIX
         // 2897); the read rides with the reply.
@@ -76,7 +82,7 @@ pub(super) async fn exchange(
                 Ok(read.as_ref().map(LfsMarkedRead::authority))
             },
         )?;
-        Ok::<_, oneiron::Error>((object, bytes, read, permit))
+        Ok::<_, oneiron::Error>((object, bytes, read, (room, transfer)))
     })
     .await
     .map_err(|_| ApiError::internal_server_error("lfs chunk worker failed"))?

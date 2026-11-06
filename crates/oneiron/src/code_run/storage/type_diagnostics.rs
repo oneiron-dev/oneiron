@@ -21,7 +21,6 @@ use super::super::type_diagnostics::{
     ProgramStepFeedback, ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TypeCheckFacts,
     TypeDiagnostic, TypeDiagnostics, check_incarnation,
 };
-use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::routing::ExecutorStorage;
 use crate::off_record::OffRecordSession;
 use crate::provenance::body::release_body_in_txn;
@@ -34,6 +33,11 @@ pub(crate) type StepKey = (EntityId, u64, u64);
 /// Step feedback rows.
 const ROWS: SideTable<StepKey, StoredStepFeedback, Named> =
     SideTable::new(&side_table::CODE_RUN_TYPE_DIAGNOSTICS);
+/// Whether a masked copy of a `CODE_RUN_TYPE_DIAGNOSTICS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_type_diagnostics_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredStepFeedback, Named>(bytes)
+}
 
 /// A step's check as a row keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,10 +298,24 @@ impl Vault {
     /// result of it is. A row that cannot be read keeps none back; no read
     /// that answers today is refused for it.
     pub(crate) fn type_diagnostics_bodies(&self, run: EntityId) -> Vec<CodeRunRawOutput> {
+        self.type_diagnostics_stored(run)
+            .into_iter()
+            .map(|(_, _, body)| body)
+            .collect()
+    }
+
+    /// [`Self::type_diagnostics_bodies`], each body beside the row that
+    /// keeps it and that row's key, in step order (FIX 10614): a read of one
+    /// of them knows whose step feedback it read. A row that cannot be read
+    /// keeps none back, as there.
+    pub(crate) fn type_diagnostics_stored(
+        &self,
+        run: EntityId,
+    ) -> Vec<(StepKey, StoredStepFeedback, CodeRunRawOutput)> {
         self.type_diagnostics_rows(run)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(_, row)| row.body())
+            .filter_map(|(key, row)| row.body().map(|body| (key, row, body)))
             .collect()
     }
 
@@ -416,10 +434,16 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
         if let Some(body) = row.body() {
             let occurrence = ResultOccurrence::of(Some(run), &body)?;
             let marks = occurrence.mark_key(&body.handle);
-            RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
-            RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
+            crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
             release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
         }
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", ROWS.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(
+            &place,
+            &ROWS.key_bytes(&(run, program_seq, invocation)),
+        )?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         ROWS.delete(&vault.store, wtxn, &(run, program_seq, invocation))?;
     }
     Ok(())

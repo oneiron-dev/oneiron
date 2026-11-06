@@ -13,6 +13,7 @@ use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
+use axum::http::HeaderMap;
 use oneiron::blob_artifact::esign::{EsignCapability, EsignIngress, SigningAction};
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
@@ -208,6 +209,18 @@ pub(super) async fn editor_spooled<T: Send + 'static>(
         }
     };
     spool_whole(server, headers, body, measure, read).await
+}
+
+/// A capability-free editor computation uses the same temporary spool and
+/// disk floor, without attributing a limit ask to an absent owner. The
+/// caller keeps the anonymous budget permit through `read`.
+pub(super) async fn anonymous_editor_spooled<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    headers: &HeaderMap,
+    body: Body,
+    read: impl FnOnce(File, u64) -> T + Send + 'static,
+) -> Result<T, Response> {
+    spool_whole(server, headers, body, |_| {}, read).await
 }
 
 /// The spool both admissions share: `body` whole on a transfer worker,

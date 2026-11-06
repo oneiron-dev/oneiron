@@ -13,6 +13,11 @@ use crate::side_table::{self, Named, Raw, SideTable};
 /// The owner's standing fallback for each offer, by the offer's key: the
 /// engine model id its calls go to while it is parked. Key: hex64.
 const FALLBACKS: SideTable<String, String, Raw> = SideTable::new(&side_table::MODEL_OWNER_FALLBACK);
+/// Whether a masked copy of a `MODEL_OWNER_FALLBACK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn model_owner_fallback_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<String, Raw>(bytes)
+}
 
 /// Whether providers keep Responses (`store`). Absent is off.
 const RESPONSES_STORE: SideTable<(), bool, Named> =

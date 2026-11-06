@@ -5,9 +5,8 @@
 //! in the skill reliability ledger that skill optimization reads.
 //! Entry: `project_health_review_outcome_in_txn`.
 
-use crate::dreamer_runner::maintenance::agent_health::{
-    AGENT_HEALTH_REVIEW_SKILL_ID, HealthReviewReceipt,
-};
+use crate::dreamer_runner::maintenance::agent_health::HealthReviewReceipt;
+use crate::skill::health_review::AGENT_HEALTH_REVIEW_SKILL_ID;
 use crate::skill_reliability::{
     RuleOutcomeSource, record_rule_outcome_in_txn, withdraw_rule_outcome_in_txn,
 };

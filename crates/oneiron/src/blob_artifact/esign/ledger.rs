@@ -1,10 +1,9 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
 use super::model::*;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -77,11 +76,11 @@ fn chain_read_in(
             Ok(row) => row,
             Err(unreadable) => return Ok(Err(unreadable)),
         };
-        held |= !crate::gate::claim_consolidation_eligible_in_txn(
+        held |= !vault.store.gate_hooks.claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
             &id,
-            crate::gate::ConsolidationReader::EsignLedger,
+            oneiron_store::consolidation_reader::ConsolidationReader::EsignLedger,
         )?;
         if rows.insert(row.sequence, row).is_some() {
             return Ok(Err(invalid("forked document event sequence")));
@@ -129,7 +128,7 @@ pub(crate) fn esign_document_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<(Vec<EntityId>, Option<EntityId>)> {
-    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+    let claims = crate::store::claim_projection::claim_ids_for_predicate_page_in_txn(
         &vault.store,
         txn,
         DRAFT_PREDICATE,
@@ -369,7 +368,10 @@ pub(super) fn create_document_in(
         now,
     )?;
     if let Some(project) = body.project {
-        crate::federation::record_scope::stamp_blob_project(&vault.store, txn, document, project)?;
+        vault
+            .store
+            .scope_stamps
+            .stamp_blob_project(&vault.store, txn, document, project)?;
     }
     Ok(())
 }
@@ -429,8 +431,10 @@ pub(crate) fn reject_event_delete(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
         && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && let Ok(body) =
-            crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+        && let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )
         && body.predicate.starts_with("esign.")
     {
         return Err(Error::InvalidClaimBody("esign events are append-only"));

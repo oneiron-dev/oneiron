@@ -140,6 +140,7 @@ pub(crate) mod exploration_trial;
 mod gate;
 mod goal_axes;
 mod goal_binding;
+mod input;
 mod job;
 mod judge_swap;
 mod labels;
@@ -153,6 +154,7 @@ mod response_pair;
 mod selection;
 mod tier;
 mod tradeoff_route;
+pub mod training_choice;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 #[cfg(test)]
@@ -284,7 +286,8 @@ pub use gate::{
 pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
     ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
-    project_goal_revision_proposals_in_txn, skill_edit_preflight_passed_in_txn,
+    project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
+    settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
     skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
     validate_judge_revision, with_optimized_skill_admission,
 };
@@ -292,9 +295,11 @@ pub(crate) use gate::{project_axes, project_rules_for_record};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
+pub(crate) use self::input::optimize_target_input;
 pub(crate) use self::job::{
     SKILL_EDIT_CYCLE_RUN_PREFIX, SkillRepairStamp, propose_skill_package_revision,
-    propose_skill_repair_in_txn, proven_cycle, skill_repair_brief, validate_skill_draft,
+    propose_skill_repair_in_txn, proven_cycle, run_skill_optimize_targeted, skill_repair_brief,
+    validate_skill_draft,
 };
 
 use self::dials::invalid;

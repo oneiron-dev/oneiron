@@ -42,18 +42,25 @@ pub(in crate::batch) fn stage_entity_body_row(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
-    crate::ingest::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
+    crate::store::identity_hints::reindex_identity_hints(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
     payload.0.push(entity_type);
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
@@ -193,10 +200,10 @@ pub(super) fn stage_skill_index_rows(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    previous: Option<&crate::skill::SkillRecord>,
-    record: &crate::skill::SkillRecord,
+    previous: Option<&crate::write_envelope::skill_record::SkillRecord>,
+    record: &crate::write_envelope::skill_record::SkillRecord,
 ) -> Result<()> {
-    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+    crate::store::skill_content_index::maintain_skill_content_hash_index_for_put(
         store,
         wtxn,
         id,
@@ -204,24 +211,28 @@ pub(super) fn stage_skill_index_rows(
         record.content_hash,
     )?;
     // All put doors share this reverse index, including hub import and sync replay.
-    crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
+    crate::store::skill_source_index::maintain_skill_source_index_for_put(
+        store, wtxn, id, previous, record,
+    )
 }
 
-/// Keeps CLAIM-derived thread and Dreamer indexes on every put/replay door.
+/// Keeps CLAIM-derived thread, Dreamer and counterparty-identity indexes on
+/// every put/replay door.
 pub(super) fn stage_claim_projection_indexes(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    body: &crate::claim::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
-    if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+    if crate::write_envelope::thread_claim::is_thread_claim_predicate(&body.predicate) {
         super::index_thread_claim_subject(store, wtxn, id, body, learned_at)?;
     }
     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
         store, wtxn, id, body, learned_at,
     )?;
-    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
+    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)?;
+    crate::counterparty_contact::maintain_counterparty_identity_index_for_put(store, wtxn, id, body)
 }
 
 /// The caller's write stamps and origin for the three carrier guards.
@@ -265,21 +276,23 @@ pub(super) fn stage_project_put(
     replicated: bool,
     posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
-    let project = if crate::workspace_roster::is_project_type(store, entity_type) {
-        Some(crate::workspace_roster::normalize_project_body(
-            store, txn, id, data, posture,
-        )?)
+    let project = if crate::store::project_kind::is_project_type(store, entity_type) {
+        Some(
+            store
+                .project_writes
+                .normalize_project_body(store, txn, id, data, posture)?,
+        )
     } else {
         None
     };
     let data = project.as_deref().unwrap_or(data);
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-        && (crate::gate::project_depth::is_project_depth_id(&id)
-            || crate::gate::project_depth::is_project_depth_contribution(data))
+        && (oneiron_store::project_depth_record::is_project_depth_id(&id)
+            || oneiron_store::project_depth_record::is_project_depth_contribution(data))
     {
-        crate::gate::project_depth::validate_contribution_put(
-            store, txn, id, data, replicated, posture,
-        )?;
+        store
+            .gate_hooks
+            .validate_contribution_put(store, txn, id, data, replicated, posture)?;
     }
     Ok(project)
 }
@@ -419,17 +432,18 @@ pub(super) fn validate_domain_carriers(
 /// A local write also pins the typed citations it adds (FIX 904); a
 /// replicated row carries its citations as written.
 pub(super) fn stage_claim_projection(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
-    body: Option<&crate::claim::ClaimBody>,
+    body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
+    let store = write.store;
     if let Some(body) = body {
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(write, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
@@ -482,15 +496,15 @@ pub(super) fn validate_scope_carriers(
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
-    if crate::workspace_roster::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+    if crate::store::project_kind::is_project_type(store, entity_type) {
+        for referenced in store.project_writes.validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
         // Live writes prove the signed leader or board authority at the door.
         // Replay stops at structure (ARCH-0040 ONE-AUTHLOG-F2): its authority
         // is judged by the project read fold, which quarantines, never refuses.
         if !context.replicated {
-            crate::workspace_roster::validate_project_transition(
+            store.project_writes.validate_project_transition(
                 store,
                 wtxn,
                 id,
@@ -499,10 +513,14 @@ pub(super) fn validate_scope_carriers(
                 context.posture,
             )?;
         }
-        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+        store
+            .project_writes
+            .validate_room_body(store, wtxn, id, data)?;
     }
     Ok(())
 }
@@ -512,7 +530,7 @@ pub(super) fn validate_scope_carriers(
 pub(super) struct ProposedClaimObservation<'a> {
     pub(super) id: EntityId,
     pub(super) replicated: bool,
-    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) body: Option<&'a crate::write_envelope::claim_body::ClaimBody>,
     pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
     pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(super) body_changed: bool,
@@ -532,13 +550,16 @@ pub(super) fn stage_local_proposal_observation(
         body_changed,
     } = observation;
     if !replicated
-        && let Some(body) =
-            body.filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+        && let Some(body) = body
+            .filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = envelope
     {
         // The stored claim's scope, never a caller-selected policy position.
         let scope = crate::gate::policy_values::PolicyEvaluationScope {
-            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(
+                body.world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(body.scope_project),
             ..Default::default()
         };
@@ -547,7 +568,7 @@ pub(super) fn stage_local_proposal_observation(
             None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
                 .proposal_check_threshold_source(&scope),
         };
-        crate::gate::proposal_observation::observe_submission_in_txn(
+        store.gate_hooks.observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
@@ -571,7 +592,7 @@ pub(super) fn stage_task_and_turn(
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+            crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
@@ -581,9 +602,13 @@ pub(super) fn stage_task_and_turn(
     Ok(())
 }
 
-pub(super) fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn normalized_policy_scope(
+    store: &Store,
+    entity_type: u8,
+    data: &[u8],
+) -> Option<Vec<u8>> {
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
+        store.gate_hooks.normalize_policy_manifest_scope(data)
     } else {
         None
     }

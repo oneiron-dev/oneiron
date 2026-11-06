@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::agent_dispatch::{AgentDispatcher, SpendRead, SpendScope, SpendScopeId};
 use crate::attempt_queue::AttemptId;
-use crate::compaction::{CompactionBackend, CompactionGatePolicy, CompactionWindowMessage};
+use crate::compaction::{CompactionBackend, CompactionGatePolicy};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
@@ -18,26 +18,7 @@ use crate::{BudgetExhaustionPolicy, EntityId, Vault};
 
 use super::{BudgetHit, InvocationId};
 
-/// A conversation's host-rendered message window, with the lines that must
-/// survive word for word. The session owns the resulting keyframe.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostCompactRequest {
-    pub session_ref: EntityId,
-    pub window: Vec<CompactionWindowMessage>,
-    pub keep_list: Vec<String>,
-    pub token_ceiling: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HostCompactResult {
-    pub epoch: u64,
-    pub summary: EntityId,
-    pub text: String,
-    pub keep_list: Vec<String>,
-    pub first_turn: u64,
-    pub last_turn: u64,
-}
+pub use crate::compaction::host_request::{HostCompactRequest, HostCompactResult};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -213,6 +194,7 @@ pub fn budget_hit_as_owner(
             .map_err(|error| MemoryError::bad_request(error.to_string()))?,
         actor: memory.actor(),
         invocation,
+        scope: None,
     });
     Ok(HostBudgetHitResult {
         seat: input.seat,

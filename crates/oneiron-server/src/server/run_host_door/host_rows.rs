@@ -8,11 +8,12 @@ use super::{
     LadderGraphAnswerer, Memory, MemoryError, MemoryResult, Modality, QuestionAnswersRequest,
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
     QuestionOutcomeWindowsRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
-    RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
-    closed_outcome_windows, create_question, decode, edit_question, encode, inside_host_dial,
-    internal, on_caller_payer, owners, pause_question, question_answers, read_question,
-    resume_held_wave, run_graph_ask_receipted, run_verdict, schedule_backfill,
-    select_graph_units_by_type, wave_plan, wave_receipt,
+    RenderRefusal, RunAdmission, RunMediaStep, SyncServer, TaskWaveRequest, Value, WriteActor,
+    agent_lane, closed_outcome_windows_in_lane, create_question_with_lane, decode,
+    edit_question_with_lane, encode, inside_host_dial, internal, on_caller_payer, owners,
+    pause_question, question_answers_in_lane, read_question_in_lane, resume_held_wave,
+    run_graph_ask_receipted, run_verdict, schedule_backfill_in_lane, select_graph_units_by_type,
+    wave_plan, wave_receipt,
 };
 
 /// One row the host serves, asked for the agent: never for a principal or
@@ -27,6 +28,7 @@ pub(super) fn host_row(
     input: Value,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
     evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
@@ -69,6 +71,7 @@ pub(super) fn host_row(
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
                 evidence.get_or_insert_with(Vec::new),
+                None,
             )?)
         }
         AgentVerb::VaultGraphAsk => {
@@ -88,7 +91,7 @@ pub(super) fn host_row(
                 server.vault(),
                 request.unit_deadline_ms,
             )?;
-            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?
+            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget, None)?
                 .with_posture(request.posture)
                 .with_criteria(request.criteria.unwrap_or_default());
             // Its model rungs bill the payer the run's line binds (FIX 3574).
@@ -104,15 +107,22 @@ pub(super) fn host_row(
             let request: QuestionCreateRequest = decode(input)?;
             let mut definition = request.definition;
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
-            encode(create_question(vault, actor, definition, now)?)
+            // Saved under the agent's own lane, as `vault.graph.ask` reads
+            // (OF-506, FIX 11828).
+            let lane = agent_lane(server, actor)?;
+            encode(create_question_with_lane(
+                vault, actor, &lane, definition, now,
+            )?)
         }
         AgentVerb::VaultQuestionsEdit => {
             let request: QuestionEditRequest = decode(input)?;
             let mut definition = request.definition;
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
-            encode(edit_question(
+            let lane = agent_lane(server, actor)?;
+            encode(edit_question_with_lane(
                 vault,
                 actor,
+                &lane,
                 request.id,
                 request.expected_version,
                 definition,
@@ -129,8 +139,11 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsBackfill => {
             let request: QuestionBackfillRequest = decode(input)?;
-            encode(schedule_backfill(
+            // Its reply as the agent's own lane reads it (FIX 11827).
+            let lane = agent_lane(server, actor)?;
+            encode(schedule_backfill_in_lane(
                 vault,
+                &lane,
                 principal,
                 request.id,
                 request.expected_version,
@@ -140,8 +153,12 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsRead => {
             let request: QuestionReadRequest = decode(input)?;
-            encode(read_question(
+            // Each unit and artifact ask the agent's own lane reads (FIX
+            // 12060).
+            let lane = agent_lane(server, actor)?;
+            encode(read_question_in_lane(
                 vault,
+                &lane,
                 principal,
                 request.id,
                 request.version,
@@ -149,11 +166,16 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsOutcomeWindows => {
             let request: QuestionOutcomeWindowsRequest = decode(input)?;
-            encode(closed_outcome_windows(vault, principal, request.id)?)
+            let lane = agent_lane(server, actor)?;
+            encode(closed_outcome_windows_in_lane(
+                vault, &lane, principal, request.id,
+            )?)
         }
         AgentVerb::VaultQuestionsAnswers => {
             let request: QuestionAnswersRequest = decode(input)?;
-            encode(question_answers(vault, principal, &request)?)
+            // Each answer the agent's own lane reads (OF-506, FIX 11828).
+            let lane = agent_lane(server, actor)?;
+            encode(question_answers_in_lane(vault, &lane, principal, &request)?)
         }
         AgentVerb::VaultArtifactsReviewSlides => {
             let request: oneiron::blob_artifact::SlideReviewSubmit = decode(input)?;
@@ -161,13 +183,17 @@ pub(super) fn host_row(
             // Its render takes a turn in the renderer line as it starts, at
             // the agent's fair place (FIX 7653).
             let renderer = AdmittedRenderer::at_render(server, Some(principal), Arc::default());
-            encode(memory.artifacts_review_slides_through(
-                &request,
-                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides"),
-                host.dial(DecisionRung::Big),
-                &host.bands(),
-                renderer.as_ref().map(AdmittedRenderer::slides),
-            )?)
+            // Its model rungs bill the payer the run's line binds (FIX 3574).
+            let slides = on_caller_payer(line.and_then(RunAdmission::payer), || {
+                memory.artifacts_review_slides_through(
+                    &request,
+                    &HostUnitDecider::new(server, class, "vault.artifacts.review_slides", None),
+                    host.dial(DecisionRung::Big),
+                    &host.bands(),
+                    renderer.as_ref().map(AdmittedRenderer::slides),
+                )
+            });
+            encode(slides?)
         }
         AgentVerb::VaultArtifactsBodyDeckPreview => {
             let request = decode(input)?;
@@ -230,9 +256,9 @@ pub(super) fn host_row(
         AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => match granted_media(server, principal, verb) {
-            Some(operation) => {
-                granted_media_row(server, principal, line, attempt, verb, operation, input)
-            }
+            Some(operation) => granted_media_row(
+                server, principal, line, attempt, media_step, verb, operation, input,
+            ),
             None => Err(owners(verb, "ai.* media calls are the owner's")),
         },
     }
@@ -268,12 +294,22 @@ fn granted_media_row(
     agent: EntityId,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
     verb: AgentVerb,
     operation: AiOperation,
     input: Value,
 ) -> MemoryResult<Value> {
     let line = line.ok_or_else(|| internal(verb))?;
     let runtime = tokio::runtime::Handle::current();
+    if let (AgentVerb::AiImage, Some(step)) = (verb, media_step) {
+        return encode(runtime.block_on(crate::api::ai_image_for_run_step(
+            server,
+            line,
+            attempt,
+            decode(input)?,
+            step,
+        ))?);
+    }
     match verb {
         AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_agent_run(
             server,

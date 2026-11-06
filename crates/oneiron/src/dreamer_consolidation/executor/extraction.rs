@@ -30,7 +30,7 @@ impl ConsolidationExecutor<'_> {
         call: &RoleCall<'_>,
         transcript: &str,
         labels: &CallLabelMap,
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
     ) -> Result<LlmRequest> {
         let mut request = Self::request_over(call, None, transcript.to_owned(), scope)?;
@@ -44,7 +44,7 @@ impl ConsolidationExecutor<'_> {
         call: &RoleCall<'_>,
         source_rule: Option<String>,
         source: String,
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
     ) -> Result<LlmRequest> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
@@ -72,7 +72,7 @@ impl ConsolidationExecutor<'_> {
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::Durable {
-                    fallback: crate::llm::DeterministicFallback {
+                    fallback: oneiron_model::llm::DeterministicFallback {
                         name: "json_rules_v1".into(),
                         config: Some(
                             serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"persons":[],"fallback":"model_unavailable"}}]}),
@@ -108,7 +108,7 @@ impl ConsolidationExecutor<'_> {
     pub(in crate::dreamer_consolidation) fn parse_candidates<'s>(
         response: &LlmResponse,
         resources: &BranchResources<'_>,
-        scope: &'s crate::llm::Scope,
+        scope: &'s oneiron_model::llm::Scope,
         ctx: ReplyContext<'_>,
         sources: &[EntityId],
     ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
@@ -196,7 +196,7 @@ impl ConsolidationExecutor<'_> {
 /// One extracted candidate as the reply states it, its evidence checked
 /// against its child's scope.
 pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
-    scope: &'s crate::llm::Scope,
+    scope: &'s oneiron_model::llm::Scope,
     subject: EntityId,
     /// Its own predicate, when that meets the claim grammar.
     predicate: Option<String>,

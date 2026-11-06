@@ -30,12 +30,12 @@ use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
-use crate::llm::{Scope, ScopeResource};
 use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
 pub(super) mod compaction_span;
 pub(super) mod projection;
@@ -327,16 +327,7 @@ pub(crate) fn dreamer_may_read_turns_in(
     dreamer_read(vault)?.entities_readable_in_txn(txn, turns)
 }
 
-/// The refusal a TURN's text read gives while a MESSAGE its saved tags were
-/// read from is away from this replica (a window demoted back to thin,
-/// OF-534). It is a wait, not a fault: a prepared attempt takes it as
-/// [`super::AttemptPreparation::ResidencyDeferred`].
-pub(super) const MESSAGES_NOT_RESIDENT: &str = "witnessed turn message is not resident here";
-
-/// Whether a text refusal is [`MESSAGES_NOT_RESIDENT`]'s wait.
-pub(super) fn residency_deferred(reason: &str) -> bool {
-    reason == MESSAGES_NOT_RESIDENT
-}
+pub(super) use crate::store::conversation_residency::{MESSAGES_NOT_RESIDENT, residency_deferred};
 
 /// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns
 /// each id's `(type, learned_at, logical body)`, `None` where it is withheld.

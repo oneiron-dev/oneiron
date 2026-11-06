@@ -5,12 +5,16 @@ use std::path::{Path, PathBuf};
 
 use super::argv::FrozenGitArgv;
 use super::{GIT_WIRE_CHECKOUT_ROOT_NAME, GitOid, GitWire, GitWireProcessEnv, GitWireRepo};
-use crate::checkout::lease::{
-    CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, CheckoutResult, CheckoutTeardownInspection,
-    GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
-};
-use crate::codebase::RepoRef;
 use crate::error::Error;
+use crate::store::code_snapshot::RepoRef;
+use crate::{
+    store::checkout_lease::CheckoutError,
+    store::checkout_lease::{CheckoutLeaseAct, CheckoutRepoOps},
+    store::checkout_lease::{
+        CheckoutResult, CheckoutTeardownInspection, GitOid as LeaseGitOid, PushedHeadReceipt,
+        TeardownReceiptMatch,
+    },
+};
 
 impl GitWire<'_> {
     /// The private, repository- and epoch-bound directory that owns one lease's

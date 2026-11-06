@@ -14,6 +14,9 @@
 //! once no instance row and no inline binding names it, so the collector
 //! has taken its file first, past every reader's pin.
 
+use std::collections::BTreeSet;
+use std::sync::{Mutex, PoisonError};
+
 use heed::{RoTxn, RwTxn};
 
 use super::custody::{instance_id, instance_of};
@@ -117,6 +120,27 @@ fn digest_instances_in_txn<D: SideTableDbs>(
     Ok(instances)
 }
 
+/// The governed instances that exist before an erase releases its body
+/// references: current and remembered digest instances, plus actual inline
+/// ASSET bindings. Unlike ERASED notes, this inventory precedes the erase.
+pub(crate) fn governed_body_instances_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digests: &[[u8; 32]],
+    inline_assets: &[EntityId],
+) -> Result<BTreeSet<[u8; 16]>> {
+    let mut instances = BTreeSet::new();
+    for digest in digests {
+        instances.extend(digest_instances_in_txn(store, txn, digest)?);
+    }
+    for asset in inline_assets {
+        if let Some(instance) = INLINE_ASSETS.get(store, txn, asset)? {
+            instances.insert(instance);
+        }
+    }
+    Ok(instances)
+}
+
 /// Drops the remembered `instances` of `digest`, each retired now.
 fn forget_remembered_in_txn<D: SideTableDbs>(
     dbs: &D,
@@ -174,7 +198,7 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
         // Every instance the digest was bound under, so an inline/file
         // switch or a release leaves no older image's copy behind (FIX 6023).
         let instances = digest_instances_in_txn(store, wtxn, digest)?;
-        if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
+        if crate::store::owned_body::digest_is_held_in_txn(store, wtxn, digest)? {
             for instance in &instances {
                 ERASE_PENDING.put(store, wtxn, instance, digest)?;
                 notes.note(store, wtxn, erase_owner, instance)?;
@@ -267,7 +291,7 @@ pub(crate) fn note_settled_inline_in_txn(
 
 /// The content handle of the result body `digest`.
 fn inline_handle(digest: &[u8; 32]) -> String {
-    crate::code_run::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+    crate::store::result_manifest::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
         hash: *digest,
         byte_len: 0,
     })
@@ -319,7 +343,7 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
     let handle = inline_handle(digest);
     if RAW_OUTPUT_ROWS
         .get(dbs, wtxn, &handle)?
-        .is_some_and(|raw| crate::code_run::code_run_row_inline(&raw))
+        .is_some_and(|raw| crate::store::result_body_rows::code_run_row_inline(&raw))
     {
         RAW_OUTPUT_ROWS.delete(dbs, wtxn, &handle)?;
         if BODY_KEYS
@@ -341,7 +365,12 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
 /// waiting on a holder defers; so does a Retention one that a lease, a kept
 /// copy or a standing hold needs now (FIX 6022), read under the finisher's
 /// custody write guard and writer.
-fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Result<bool> {
+fn ready_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    intent: &RetirementIntent,
+    kept: &BTreeSet<[u8; 16]>,
+) -> Result<bool> {
     let Some(instance) = instance_of(&intent.subject.at(0)) else {
         return Ok(false);
     };
@@ -361,7 +390,7 @@ fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Re
         }
     }
     if intent.cause == RetireCause::Retention {
-        return super::retention_policy::retention_ready_in_txn(store, txn, &instance);
+        return super::retention_policy::retention_ready_in_txn(store, txn, &instance, kept);
     }
     Ok(true)
 }
@@ -375,8 +404,32 @@ impl Store {
     ///
     /// Storage and custody errors.
     pub(crate) fn finish_body_custody_retirements(&self) -> Result<()> {
+        // The pass's holder snapshot (FIX 9067): read under an intent's
+        // write guard, once per holder epoch, instead of the whole holder
+        // directory per intent. Only a Retention intent reads it — an
+        // erase owns its cause and no holder read ever defers it, as it
+        // never did. A snapshot that does not read defers a Retention
+        // intent, as a per-intent read that failed did.
+        let snapshot: Mutex<Option<(u64, BTreeSet<[u8; 16]>)>> = Mutex::new(None);
         self.finish_custody_retirements(CustodyKind::BodyInstance, |txn, intent| {
-            ready_in_txn(self, txn, intent)
+            if intent.cause != RetireCause::Retention {
+                return ready_in_txn(self, txn, intent, &BTreeSet::new());
+            }
+            let epoch = self.core.key_custody.holders_epoch();
+            let mut held = snapshot.lock().unwrap_or_else(PoisonError::into_inner);
+            if held.as_ref().is_none_or(|(at, _)| *at != epoch) {
+                let Some(custody) = self.core.key_custody.local() else {
+                    return Ok(false);
+                };
+                let Ok(kept) = custody.kept_image_instances() else {
+                    return Ok(false);
+                };
+                *held = Some((epoch, kept));
+            }
+            let Some((_, kept)) = held.as_ref() else {
+                return Ok(false);
+            };
+            ready_in_txn(self, txn, intent, kept)
         })
     }
 

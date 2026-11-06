@@ -14,14 +14,15 @@
 //! finisher retires the key and the bodies no row names are unlinked.
 //!
 //! A read checks the row first: an absent row, a standing retirement, a
-//! missing key, a lock or erase since the admission are cold, and a body
-//! that is missing or does not open retires its row. A body opens under its
+//! missing key, a lock or erase since the admission are cold. A missing or
+//! invalid body retires its row; body I/O and allocation faults do not retire
+//! it. A body opens under its
 //! own row alone: the catalog id and the manifest are its associated data.
 //! The wrapped key's bytes never reach the row, the body, a log, an error
 //! or a receipt; the copy a call holds is wiped before it returns.
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::MutexGuard;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,7 +37,9 @@ use super::catalog::{
 };
 use super::lifecycle::SnapshotAdmission;
 use super::retention::SnapshotBudget;
-use super::seal::{SealedSnapshot, WrappedSnapshotKey, open_snapshot, seal_snapshot};
+use super::seal::{
+    SealedSnapshot, WrappedSnapshotKey, open_snapshot_with_expected_len, seal_snapshot,
+};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::store::{INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES, Store};
@@ -110,7 +113,13 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
     let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
-    let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 16 + manifest.len());
+    let len = AAD_DOMAIN
+        .len()
+        .checked_add(16)
+        .and_then(|len| len.checked_add(manifest.len()))
+        .ok_or_else(|| std::io::Error::from(ErrorKind::OutOfMemory))?;
+    let mut aad = Vec::new();
+    aad.try_reserve_exact(len).map_err(std::io::Error::from)?;
     aad.extend_from_slice(AAD_DOMAIN);
     aad.extend_from_slice(&id.0);
     aad.extend_from_slice(&manifest);
@@ -128,9 +137,37 @@ fn same_session(a: &SnapshotManifest, b: &SnapshotManifest) -> bool {
         && a.compatibility == b.compatibility
 }
 
-/// Writes `body` as `id`'s body file in `dir`: beside its name, synced,
+/// Reads a canonical-sized body, rejecting a short file or an extra byte.
+fn read_body(path: &Path, expected: u64) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if metadata.is_file() && metadata.len() != expected {
+        return Ok(None);
+    }
+    let bytes = usize::try_from(expected).map_err(|_| ErrorKind::OutOfMemory)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(bytes)?;
+    body.resize(bytes, 0u8);
+    if let Err(error) = file.read_exact(&mut body) {
+        return if error.kind() == ErrorKind::UnexpectedEof {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    let mut extra = [0u8; 1];
+    match file.read_exact(&mut extra) {
+        Ok(()) => Ok(None),
+        Err(error) if error.kind() == ErrorKind::UnexpectedEof => Ok(Some(body)),
+        Err(error) => Err(error),
+    }
+}
+
+/// Writes `sealed` as `id`'s body file in `dir`: beside its name, synced,
 /// renamed in, and the directory synced.
-fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
+fn write_body(dir: &Path, id: &SnapshotId, sealed: &SealedSnapshot<'_>) -> Result<()> {
     fs::create_dir_all(dir)?;
     let staging = dir.join(format!("{}{STAGING_SUFFIX}", id.to_hex()));
     let written = (|| -> Result<()> {
@@ -138,7 +175,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
             .write(true)
             .create_new(true)
             .open(&staging)?;
-        file.write_all(body)?;
+        sealed.write_to(&mut file)?;
         file.sync_all()?;
         fs::rename(&staging, dir.join(body_name(id)))?;
         crate::store::sync_dir(dir)
@@ -149,18 +186,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
     written
 }
 
-/// Takes the row `id` out of the catalog and stages its key's retirement,
-/// both in `wtxn`: from the commit on no open finds it, and a restored
-/// earlier image cannot open its key. The body file and the custody entry
-/// go after the commit. `true` when a row was there.
-///
-/// # Errors
-/// Custody and storage faults.
-pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    let gone = CATALOG.delete(store, wtxn, id)?;
-    store.stage_inference_snapshot_retirement_in_txn(wtxn, &id.0)?;
-    Ok(gone)
-}
+pub(super) use crate::store::snapshot_catalog::retire_in_txn;
 
 /// The wrapped key's bytes, checked to be the custody entry's width.
 fn checked_key(wrapped: WrappedSnapshotKey) -> Result<WrappedSnapshotKey> {
@@ -183,7 +209,7 @@ impl Vault {
     /// room inside `budget`. Never a refusal of the turn that made it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn publish_inference_snapshot(
         &self,
         admission: &SnapshotAdmission,
@@ -205,7 +231,13 @@ impl Vault {
         let (wrapped, sealed) = seal_snapshot(&key, &aad, plaintext)?;
         drop(key);
         let wrapped = checked_key(wrapped)?;
-        let body = sealed.to_bytes();
+        let sealed_bytes = match sealed.encoded_len() {
+            Ok(len) => len,
+            Err(error) => {
+                wrapped.retire();
+                return Err(error);
+            }
+        };
         let now = now_ms();
         let record = SnapshotRecord {
             schema: SNAPSHOT_RECORD_SCHEMA,
@@ -214,7 +246,7 @@ impl Vault {
             manifest: publish.manifest,
             dependencies: publish.dependencies,
             plaintext_bytes: u64::try_from(plaintext.len()).map_err(|_| corrupt())?,
-            sealed_bytes: u64::try_from(body.len()).map_err(|_| corrupt())?,
+            sealed_bytes,
             snapshot_sha256: publish.snapshot_sha256,
             class: publish.class,
             created_ms: now,
@@ -237,7 +269,7 @@ impl Vault {
             }
         };
         let published = if ledger.charge(&mut reservation, record.sealed_bytes) {
-            self.commit_snapshot(admission, &record, &wrapped, &body)
+            self.commit_snapshot(admission, &record, &wrapped, &sealed)
         } else {
             Ok(false)
         };
@@ -261,12 +293,12 @@ impl Vault {
         admission: &SnapshotAdmission,
         record: &SnapshotRecord,
         wrapped: &WrappedSnapshotKey,
-        body: &[u8],
+        sealed: &SealedSnapshot<'_>,
     ) -> Result<bool> {
         let store = &self.store;
         let _files = store.inference_snapshots.files();
         let dir = store.inference_snapshot_dir();
-        write_body(&dir, &record.id, body)?;
+        write_body(&dir, &record.id, sealed)?;
         let committed = (|| -> Result<bool> {
             let mut wtxn = store.env.write_txn()?;
             if !self.snapshot_admission_holds(admission) {
@@ -282,6 +314,12 @@ impl Vault {
                 .collect();
             store.publish_inference_snapshot_key_in_txn(&mut wtxn, &record.id.0, wrapped)?;
             CATALOG.put(store, &mut wtxn, &record.id, record)?;
+            catalog::put_conversation_entry(
+                store,
+                &mut wtxn,
+                &record.manifest.conversation,
+                &record.id,
+            )?;
             for id in earlier {
                 retire_in_txn(store, &mut wtxn, &id)?;
             }
@@ -297,11 +335,11 @@ impl Vault {
     /// Opens snapshot `id` under `admission`: its row and its plaintext,
     /// wiped on drop. `Ok(None)` is cold: no row, a row that may serve no
     /// restore, a standing retirement, no key, a locked key, or a lock or
-    /// erase since the admission. A body that is missing or does not open,
-    /// or whose plaintext does not match its row, retires the row.
+    /// erase since the admission. A missing, malformed or unauthenticated
+    /// body, or plaintext that does not match its row, retires the row.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn read_inference_snapshot(
         &self,
         admission: &SnapshotAdmission,
@@ -351,8 +389,9 @@ impl Vault {
         Ok(Some((record, plaintext)))
     }
 
-    /// `record`'s plaintext: `Some(None)` when its body is missing, does not
-    /// open or does not match the row, and `None` while the key is locked.
+    /// `record`'s plaintext: `Some(None)` for a missing, invalid or mismatched
+    /// body, and `None` while the key is locked. I/O and allocation faults
+    /// return an error without retiring the row.
     fn open_body(
         &self,
         record: &SnapshotRecord,
@@ -362,7 +401,7 @@ impl Vault {
             .store
             .inference_snapshot_dir()
             .join(body_name(&record.id));
-        let body = match fs::read(path) {
+        let body = match read_body(&path, record.sealed_bytes) {
             Ok(body) => body,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Some(None)),
             Err(error) => return Err(error.into()),
@@ -371,16 +410,29 @@ impl Vault {
             return Ok(None);
         };
         let aad = associated_data(&record.id, &record.manifest)?;
-        let plaintext = SealedSnapshot::parse(&body)
-            .ok()
-            .filter(|sealed| {
-                sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
-            })
-            .and_then(|sealed| open_snapshot(&key, wrapped, &aad, &sealed).ok())
-            .filter(|plaintext| {
-                plaintext.len() as u64 == record.plaintext_bytes
-                    && sha256(plaintext) == record.snapshot_sha256
-            });
+        let Some(body) = body else {
+            return Ok(Some(None));
+        };
+        let Some(sealed) = SealedSnapshot::parse(&body).ok().filter(|sealed| {
+            sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
+        }) else {
+            return Ok(Some(None));
+        };
+        let plaintext = match open_snapshot_with_expected_len(
+            &key,
+            wrapped,
+            &aad,
+            &sealed,
+            record.plaintext_bytes,
+        ) {
+            Ok(plaintext) => Some(plaintext),
+            Err(Error::CorruptedIndex(_)) => None,
+            Err(error) => return Err(error),
+        }
+        .filter(|plaintext| {
+            plaintext.len() as u64 == record.plaintext_bytes
+                && sha256(plaintext) == record.snapshot_sha256
+        });
         Ok(Some(plaintext))
     }
 
@@ -408,6 +460,20 @@ impl Vault {
             .into_iter()
             .filter_map(|(_, record)| record.filter(SnapshotRecord::reusable))
             .collect())
+    }
+
+    /// Every kept snapshot's row of `conversation` that decodes and may
+    /// serve a restore, by the conversation index: the host's restore
+    /// candidates for one conversation, with no other row read.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn inference_snapshot_records_for(
+        &self,
+        conversation: &crate::entity_id::EntityId,
+    ) -> Result<Vec<SnapshotRecord>> {
+        let txn = self.store.env.read_txn()?;
+        catalog::rows_of_conversation(&self.store, &txn, conversation)
     }
 
     /// The worlds the owner's sealed-copies setting keeps off a machine of
@@ -536,12 +602,21 @@ impl Vault {
         let dir = store.inference_snapshot_dir();
         let mut wtxn = store.env.write_txn()?;
         for (id, record) in catalog::rows(store, &wtxn)? {
-            let whole = record.is_some_and(|record| {
+            let whole = record.as_ref().is_some_and(|record| {
                 fs::metadata(dir.join(body_name(&id)))
                     .is_ok_and(|meta| meta.is_file() && meta.len() == record.sealed_bytes)
             });
-            if !whole && retire_in_txn(store, &mut wtxn, &id)? {
-                retired += 1;
+            if !whole {
+                if retire_in_txn(store, &mut wtxn, &id)? {
+                    retired += 1;
+                }
+            } else if let Some(record) = record.as_ref() {
+                catalog::put_conversation_entry(
+                    store,
+                    &mut wtxn,
+                    &record.manifest.conversation,
+                    &id,
+                )?;
             }
         }
         wtxn.commit()?;

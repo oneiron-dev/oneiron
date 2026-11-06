@@ -196,7 +196,7 @@ pub(super) fn open_read_only_with(
             || {},
         )
     }
-    .map_err(|error| crate::world_keys::page_seal_open_error(error, keyed))?;
+    .map_err(|error| crate::key_material::page_seal_open_error(error, keyed))?;
     let mut env = OwnedEnv {
         env,
         _bound_root_dir: None,
@@ -239,7 +239,7 @@ pub(super) fn open_read_only_with(
         options.flags(EnvFlags::READ_ONLY);
         options.open(root)
     }
-    .map_err(|error| crate::world_keys::page_seal_open_error(error, keyed))?;
+    .map_err(|error| crate::key_material::page_seal_open_error(error, keyed))?;
     let env = OwnedEnv {
         env,
         _bound_root_dir: None,

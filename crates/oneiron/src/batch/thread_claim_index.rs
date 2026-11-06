@@ -1,11 +1,11 @@
 //! Thread claims reuse the existing ClaimOf index at every storage door.
 use super::*;
-use crate::affect::Vad;
-use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::affect::Vad;
 
 pub(super) fn index_thread_claim_subject(
     store: &Store,
@@ -19,7 +19,7 @@ pub(super) fn index_thread_claim_subject(
     };
     let removed = reconcile_claim_of_edges(store, wtxn, id, Some(subject))?;
     for old in removed {
-        crate::ppr::invalidate_ppr_for_edge(store, wtxn, id, &old)?;
+        crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(store, wtxn, id, &old)?;
     }
     // Structural ClaimOf edges are derived from the subject, including when a
     // replicated owner has not arrived yet. The reader checks owner type.
@@ -34,5 +34,5 @@ pub(super) fn index_thread_claim_subject(
         Vad::NEUTRAL,
         None,
     )?;
-    crate::ppr::invalidate_ppr_for_edge(store, wtxn, id, &subject)
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(store, wtxn, id, &subject)
 }

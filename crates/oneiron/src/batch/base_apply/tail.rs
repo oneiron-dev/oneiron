@@ -14,7 +14,7 @@ pub(super) fn apply_tail(
     require_consumed_claim_bindings(&state.claim_materializations, &state.claim_transitions)?;
     // Rule A: each born row's made_by lands in the transaction that births it.
     for (row, birth) in &state.births {
-        crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
+        crate::store::birth_record::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
     }
     if state
         .preflight_gate_decision_ids
@@ -28,13 +28,13 @@ pub(super) fn apply_tail(
 
     // Each touched project's frontier is folded once over the final batch
     // state, before rooms reconcile against it.
-    crate::workspace_roster::refresh_project_frontiers(
+    store.project_writes.refresh_project_frontiers(
         store,
         wtxn,
         config.privacy.posture,
         &state.touched_projects,
     )?;
-    crate::workspace_roster::reconcile_project_rooms(
+    store.project_writes.reconcile_project_rooms(
         store,
         config,
         analyzer,
@@ -46,11 +46,9 @@ pub(super) fn apply_tail(
         .project_edge_endpoints
         .extend(&state.materialized_entity_ids);
     crate::workspace_roster::validate_project_graph(store, wtxn, &state.project_edge_endpoints)?;
-    crate::workspace_roster::validate_local_leader_chat_turns(
-        store,
-        wtxn,
-        &state.local_chat_turns,
-    )?;
+    store
+        .project_writes
+        .validate_local_leader_chat_turns(store, wtxn, &state.local_chat_turns)?;
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
     // this transaction — after every op, so an add and a delete of the same
@@ -107,8 +105,10 @@ pub(super) fn apply_tail(
                 .pending_embedding_enqueue_priorities
                 .get(id)
                 .copied()
-                .unwrap_or(crate::embed::EMBED_PRIORITY_DEVICE);
-            crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
+                .unwrap_or(crate::store::embedding::EMBED_PRIORITY_DEVICE);
+            store
+                .sync_hooks
+                .push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }
 
@@ -124,11 +124,15 @@ pub(super) fn apply_tail(
         crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
     }
 
+    state
+        .question_arrival_ids
+        .extend(&state.materialized_entity_ids);
     finalize_batch_indexes(
         store,
         config,
         wtxn,
         &state.materialized_entity_ids,
+        &state.question_arrival_ids,
         state.pending_hnsw_rebuild,
         state.had_graph_mutation,
         state.had_vector_mutation,

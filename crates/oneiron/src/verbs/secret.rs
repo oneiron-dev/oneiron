@@ -15,19 +15,11 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::AgentVerb;
 use crate::EntityId;
-use crate::edge::EdgeActorClass;
-use crate::error::Error;
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding,
-};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::secret_custody::{
-    HandleReveal, RevealAsker, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
-    SecretSight,
+    HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt, SecretSight,
 };
-use crate::task_verb::task_create_origin_in_txn;
-use crate::typed_body::LiftedSources;
 
 /// `reveal`'s input: the handle, and why the agent needs the value.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -307,45 +299,10 @@ fn reveal_effect(effect: HandleReveal) -> (&'static str, Option<String>, Option<
     }
 }
 
-/// The answer of a `reveal.wait` as a run's record keeps it: without the
-/// value. The guest reads the full answer; its step row and any receipt keep
-/// this one.
-#[must_use]
-pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
-    let mut kept = output.clone();
-    if let Some(fields) = kept.as_object_mut() {
-        fields.remove("value");
-        fields.remove("value_base64");
-    }
-    kept
-}
+pub use crate::code_run::kept_reveal_answer;
+pub(crate) use crate::code_run::kept_reveal_lease;
 
-/// The lease a kept `granted` answer of `reveal.wait` names: the lease a
-/// replay of its step reads the value again under (FIX 2360). `None` for any
-/// other answer.
-pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
-    if output.get("decision")?.as_str()? != "granted" {
-        return None;
-    }
-    let lease = output.get("receipt")?.get("lease")?.as_str()?;
-    EntityId::from_hex(lease).ok()
-}
-
-/// A reply to `verb` as a call receipt digests it and a verb hook reads it
-/// (OF-560): a `reveal.wait` reply, in whatever envelope its door wraps it,
-/// with each value replaced by its secret's handle, as a structured field
-/// keeps a masked secret. `None` for any other verb's reply, which is read as
-/// it is. A digest of the value itself would let a short secret be guessed
-/// offline.
-#[must_use]
-pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
-    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
-        return None;
-    }
-    let mut masked = reply.clone();
-    mask_reveal_values(&mut masked);
-    Some(masked)
-}
+pub use crate::task_verb::verb_hook_boundary::masked_reveal_reply;
 
 /// The digest a call receipt keeps of the reply bytes a door sent for
 /// `verb`: a `reveal.wait` reply's over its masked form
@@ -361,191 +318,7 @@ pub fn call_reply_digest(verb: &str, bytes: &[u8]) -> String {
     crate::receipt::call_json_digest(&reply)
 }
 
-/// The caller's view of a `reveal.wait` reply once its hooks read the masked
-/// form: where the view still holds the handle the mask left, the value goes
-/// back; a field a hook changed or dropped stays as the hook left it.
-#[must_use]
-pub fn revealed_hook_view(
-    mut view: serde_json::Value,
-    masked: &serde_json::Value,
-    reply: &serde_json::Value,
-) -> serde_json::Value {
-    if let (Some(fields), Some(masked), Some(reply)) =
-        (view.as_object_mut(), masked.as_object(), reply.as_object())
-    {
-        for key in REVEALED_FIELDS {
-            if let (Some(slot), Some(stand_in), Some(value)) =
-                (fields.get_mut(key), masked.get(key), reply.get(key))
-                && slot == stand_in
-            {
-                *slot = value.clone();
-            }
-        }
-    }
-    view
-}
-
-/// The fields of a `reveal.wait` answer that carry the value.
-const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
-
-/// Each value field in `value`, at any depth, replaced by the handle its
-/// answer's receipt names, or by null when none does. A JSON text an
-/// envelope carries (an MCP text content) is read the same way.
-fn mask_reveal_values(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            let handle = fields
-                .get("receipt")
-                .and_then(|receipt| receipt.get("handle"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-            for key in REVEALED_FIELDS {
-                if let Some(slot) = fields.get_mut(key) {
-                    *slot = handle
-                        .clone()
-                        .map_or(serde_json::Value::Null, serde_json::Value::String);
-                }
-            }
-            fields.values_mut().for_each(mask_reveal_values);
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(mask_reveal_values),
-        serde_json::Value::String(text) if text.starts_with(['{', '[']) => {
-            if let Ok(mut inner) = serde_json::from_str::<serde_json::Value>(text) {
-                let before = inner.clone();
-                mask_reveal_values(&mut inner);
-                if inner != before {
-                    *text = inner.to_string();
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-impl Memory<'_> {
-    /// One artifact version's export, its bytes as this caller reads them: a
-    /// file stored with keys in it reads whole for the owner, and for an
-    /// agent that says `why` once a grant covers its keys (OF-560, granted
-    /// file sight); every other read, masked.
-    pub(crate) fn export_blob_artifact_sighted(
-        &self,
-        artifact: &EntityId,
-        version: Option<u64>,
-        why: Option<&str>,
-    ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
-        // A repo-marked version reads as a repo file before the owner-key
-        // sight below: a tool or a run on the owner's key gets the masked
-        // copy, or the file reveal with a why (FIX 7608, FIX 8960).
-        if self.repo_reads_masked()?
-            && let Some(export) = self.export_repo_marked_artifact(artifact, version, why)?
-        {
-            return Ok(export);
-        }
-        let vault = self.vault();
-        let sight = self.secret_sight()?;
-        let Some(why) = why.filter(|_| {
-            sight == SecretSight::Masked && self.actor_class() == EdgeActorClass::Agent
-        }) else {
-            return Ok(vault.export_blob_artifact_as(artifact, version, sight)?);
-        };
-        // A marked file kept in its body file is judged by its stored digest,
-        // then read masked or whole as it streams, never held whole beside
-        // its copy (FIX 6507).
-        if let Some((pinned, hash)) = vault.marked_blob_version_file(artifact, version)? {
-            let asker = self.reveal_asker()?;
-            if let Some(sight) = vault.marked_file_sight(&asker, artifact, &hash, why)? {
-                return Ok(vault.export_blob_artifact_as(artifact, Some(pinned), sight)?);
-            }
-        }
-        let Some(mut file) = vault.export_blob_artifact_raw(artifact, version)? else {
-            return Ok(None);
-        };
-        let asker = self.reveal_asker()?;
-        let sight = vault.file_sight(&asker, &file.artifact_id, &file.bytes, why)?;
-        file.bytes = vault.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
-        // FIX 4513: once, after custody read the stored bytes.
-        file.bytes = vault.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
-        Ok(Some(file))
-    }
-
-    /// How this caller reads one projection of `artifact`'s typed body (a
-    /// deck's export, a body's view) that `projection_fingerprint` names,
-    /// whose lifted texts name `lifted`, read in the projection's snapshot
-    /// ([`crate::Vault::typed_body_lifted_sources_in_txn`]) (OF-067, FIX
-    /// 2941). The owner, a body whose texts name no key, and a reader that is
-    /// no agent or says no `why` read as [`Memory::secret_sight`] says. An
-    /// agent that says `why` reads it whole once a grant covers its keys and
-    /// this read's receipts are written, and masked otherwise, its ask filed
-    /// ([`crate::Vault::typed_body_sight`]). The sight is this read's alone:
-    /// [`Memory::secret_sight`] and [`Memory::reads_lifted_keys_masked`] do
-    /// not change.
-    pub(crate) fn typed_body_read_sight(
-        &self,
-        artifact: &EntityId,
-        projection_fingerprint: &[u8; 32],
-        lifted: &LiftedSources,
-        why: Option<&str>,
-    ) -> MemoryResult<SecretSight> {
-        let sight = self.secret_sight()?;
-        let Some(why) = why.filter(|_| {
-            sight == SecretSight::Masked
-                && !lifted.is_empty()
-                && self.actor_class() == EdgeActorClass::Agent
-        }) else {
-            return Ok(sight);
-        };
-        let asker = self.reveal_asker()?;
-        Ok(self
-            .vault()
-            .typed_body_sight(&asker, artifact, projection_fingerprint, lifted, why)?)
-    }
-
-    /// The asker of a reveal: the calling agent, and the project and run its
-    /// host bound. Only an agent reveals to a model; a reveal writes a
-    /// receipt, so an anonymous off-record session cannot make one.
-    pub(crate) fn reveal_asker(&self) -> MemoryResult<RevealAsker> {
-        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        if self.actor_class() != EdgeActorClass::Agent {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "only an agent reveals a secret to its model",
-                &["The owner reads a value at POST /v1/owner/secrets/reveal, with a reason."],
-            ));
-        }
-        if self.keeps_no_record() {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "a reveal writes its receipt, and an anonymous off-record session keeps none",
-                &["Reveal outside the anonymous session."],
-            ));
-        }
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let origin = task_create_origin_in_txn(self, &txn, self.task_host())?;
-        // The leased try is the run a run-bound secret's record names
-        // (FIX 8028); its task ref is the task a task's grant names
-        // (FIX 2354).
-        let attempt = origin.as_ref().and_then(|origin| origin.parent_attempt());
-        let task = match attempt {
-            Some(attempt) => crate::AttemptQueue::new(self.vault())
-                .get_in_txn(&txn, attempt)?
-                .and_then(|record| record.task_ref),
-            None => None,
-        };
-        drop(txn);
-        // The provider is the host's: the one its ladder served this
-        // program's turn from, never a field the agent sends.
-        Ok(RevealAsker::new(
-            self.actor(),
-            origin.as_ref().and_then(|origin| origin.project_ref()),
-            origin.and_then(|origin| origin.run_id()),
-        )
-        .with_provider(self.model_provider())
-        .with_reader(self.read_key()?)
-        .with_attempt(attempt)
-        .with_task(task)
-        .with_step(self.host_step()))
-    }
-}
+pub use crate::task_verb::verb_hook_boundary::revealed_hook_view;
 
 pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
     RevealReceipt {

@@ -21,12 +21,12 @@ use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
 use crate::dto::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
-    DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
-    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
-    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
+    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
+    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
+    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
     ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
     RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
@@ -35,6 +35,21 @@ use crate::dto::{
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
+
+mod ai_options;
+mod browser_batch;
+mod checkpoints;
+mod claims;
+mod core_write;
+mod diagnostics;
+mod key_value;
+mod lens_actions;
+mod lens_frames;
+mod policy_settings;
+mod proposal_results;
+mod proposals;
+mod skill_callables;
+mod wire_json;
 
 /// Lowers a foreign value into the engine type `T`.
 pub(crate) trait Lower<T> {
@@ -123,14 +138,6 @@ impl Lower<serde_json::Value> for WireJson {
                 "Send exactly one JSON value as canonical_json.",
             )
         })
-    }
-}
-
-impl Lift<serde_json::Value> for WireJson {
-    fn lift(value: serde_json::Value) -> Result<Self, OneironError> {
-        serde_json::to_string(&value)
-            .map(|canonical_json| Self { canonical_json })
-            .map_err(|error| internal(format!("could not encode a JSON value: {error}")))
     }
 }
 
@@ -432,6 +439,7 @@ impl Lower<engine::WitnessMessage> for WitnessMessage {
             },
             message_type: self.message_type,
             content: self.content,
+            parts: None,
             metadata: self.metadata.lower()?,
             is_visible: self.is_visible.unwrap_or(true),
             order: self.order,
@@ -495,6 +503,22 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
+            turn: value.turn.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
+            messages: value
+                .messages
+                .into_iter()
+                .map(|record| crate::RecordRef {
+                    kind: record.kind,
+                    id: record.id,
+                    short_id: record.short_id,
+                    label: record.label,
+                })
+                .collect(),
             wake_outcome: value
                 .wake_outcome
                 .map(TurnProgramWakeOutcome::lift)
@@ -609,6 +633,18 @@ impl Lift<engine::CommitReceipt> for CommitReceipt {
             approval: value.approval,
             superseded_short_id: value.superseded_short_id,
             receipt_ref: value.receipt_ref,
+            claim: value.claim.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
+            superseded: value.superseded.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
         })
     }
 }
@@ -968,6 +1004,12 @@ impl Lift<engine::EntityRefReceipt> for EntityRefReceipt {
             entity_ref: value.entity_ref,
             id_hex: value.id_hex,
             receipt_ref: value.receipt_ref,
+            record: value.record.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
         })
     }
 }
@@ -1010,6 +1052,19 @@ impl Lower<sdk::ReadBlobVersionRequest> for (String, u64) {
         Ok(sdk::ReadBlobVersionRequest {
             artifact_ref,
             version,
+        })
+    }
+}
+
+impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
+    fn lift(value: engine::BlobVersionAppendOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::BlobVersionAppendOutcome::Landed(view) => Self::Landed {
+                view: BlobVersionView::lift(view)?,
+            },
+            engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
+                proposal: crate::PendingProposalView::lift(proposal)?,
+            },
         })
     }
 }
@@ -1101,6 +1156,8 @@ impl Lower<sdk::OutboundScheduleRequest> for OutboundDraftInput {
             job_ref: self.job_ref,
             occurred_at: optional_seconds("occurred_at", self.occurred_at)?,
             mention: self.mention.lower()?,
+            selection: None,
+            counterparty_class: None,
         })
     }
 }
@@ -1186,6 +1243,7 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
                 world_ref: scope.world_ref,
                 facet: scope.facet,
                 kinds: scope.kinds,
+                project_refs: scope.project_refs.unwrap_or_default(),
                 conversation_refs: scope.conversation_refs.unwrap_or_default(),
                 person_ref: scope.person_ref,
                 ..Default::default()
@@ -1197,6 +1255,27 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
 impl Lift<engine::MemoryItem> for MemoryItem {
     fn lift(item: engine::MemoryItem) -> Result<Self, OneironError> {
         Ok(Self {
+            asset_ref: item.asset_ref,
+            embedding_matches: item
+                .embedding_matches
+                .into_iter()
+                .map(|evidence| {
+                    let kind = |kind| match kind {
+                        oneiron::store::embedding::InputKind::Text => crate::InputKind::Text,
+                        oneiron::store::embedding::InputKind::Image => crate::InputKind::Image,
+                        oneiron::store::embedding::InputKind::Audio => crate::InputKind::Audio,
+                    };
+                    crate::EmbeddingMatchEvidence {
+                        space: evidence.space,
+                        embedding_kind: kind(evidence.embedding_kind),
+                        query_kind: kind(evidence.query_kind),
+                        score: f64::from(evidence.score),
+                        floor: f64::from(evidence.floor),
+                        strong: f64::from(evidence.strong),
+                        matched: evidence.matched,
+                    }
+                })
+                .collect(),
             short_id: item.short_id,
             source_revision_ref: item.source_revision_ref,
             kind: item.kind,

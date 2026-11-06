@@ -12,6 +12,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
+use oneiron_base::edge::kind_tables::ensure_public_memory_edge_kind;
 
 use super::envelope::edge_operation_gate_id;
 use super::read_worlds::{ServedRows, served_row_in};
@@ -341,15 +342,16 @@ impl HostSelfDispatcher<'_> {
             ));
         }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
-                &call.id,
-                candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-                |_| Ok(()),
-            )?,
+        let actual_id = match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .put_claim_candidate_with_landing_returning_actual(
+                    &call.id,
+                    candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                    |_| Ok(()),
+                )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
@@ -358,20 +360,20 @@ impl HostSelfDispatcher<'_> {
                 call.occurred,
                 call.learned_at,
             )?,
-        }
+        };
 
         if let Some(json) = authored_rules {
             let admitted = match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
                     crate::dreamer_consolidation::admitted_authored_claim(
-                        vault, &call.id, self.actor,
+                        vault, &actual_id, self.actor,
                     )?
                 }
-                ExecutorStorage::Session(binding) => {
-                    binding
-                        .session
-                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
-                }
+                ExecutorStorage::Session(binding) => binding.session.admitted_executor_claim(
+                    &binding.route,
+                    &actual_id,
+                    self.actor,
+                )?,
             };
             if !admitted {
                 return Err(Error::InvalidConfig(
@@ -379,10 +381,10 @@ impl HostSelfDispatcher<'_> {
                 ));
             }
             let record =
-                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&actual_id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &actual_id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(
@@ -395,7 +397,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: call.id,
+            id: actual_id,
         }))
     }
 
@@ -556,58 +558,6 @@ impl HostSelfDispatcher<'_> {
                 tgt: call.tgt,
             },
         ))
-    }
-}
-
-fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
-    match kind {
-        EdgeKind::Mentions
-        | EdgeKind::About
-        | EdgeKind::Supports
-        | EdgeKind::Opposes
-        | EdgeKind::ParticipatesIn
-        | EdgeKind::Attached
-        | EdgeKind::EmployedBy
-        | EdgeKind::HasFacet
-        | EdgeKind::FacetOf
-        | EdgeKind::InWorld
-        | EdgeKind::SetIn => Ok(()),
-        EdgeKind::AuthoredBy
-        | EdgeKind::ScopedTo
-        | EdgeKind::PartOf
-        | EdgeKind::Supersedes
-        | EdgeKind::BelongsTo
-        | EdgeKind::ClaimOf
-        | EdgeKind::ChildOf
-        | EdgeKind::AssignedTo
-        | EdgeKind::DerivedFrom
-        | EdgeKind::MergedInto
-        | EdgeKind::SplitInto
-        | EdgeKind::BlockedBy
-        // ONE-1608: `blocks` is the L2 code-memory readiness edge. Its
-        // dedicated door binds the actor entity to its asserted class and
-        // proves acyclicity; a guest `vault.edges.put` carries neither,
-        // so guest code may not mint readiness dependencies.
-        | EdgeKind::Blocks
-        // ONE-1541 (CMT-4): the brief-fulfillment pair is structural and its
-        // ruled directions are only meaningful written together, after both
-        // endpoint classes have been proven. Guest code proves neither and
-        // can only ask for one direction at a time, so both bytes land on
-        // the refusal side with the rest of the structural kinds.
-        | EdgeKind::Fulfills
-        | EdgeKind::DischargedBy
-        | EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo
-        // A Retry reply's link is written with the reply, by its stream.
-        | EdgeKind::Regenerates
-        // ONE-1414: `same_as` is structural and its writes belong to the
-        // federation coreference door (`put_coreference_link`), which writes
-        // the link and its status Claim in ONE transaction under an actor
-        // gate. A raw link here would assert identity with no status, no
-        // consent surface, and no actor — so it lands on the refusal side
-        // with the rest of the structural kinds.
-        | EdgeKind::SameAs => Err(Error::InvalidClaimBody(
-            "vault.edges.put rejects structural edge kinds",
-        )),
     }
 }
 

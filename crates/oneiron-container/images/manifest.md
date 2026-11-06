@@ -83,6 +83,36 @@ own rootfs and kernel bytes instead; its snapshot is not qualified. It
 shares the emitter's schema check, exact-byte write and signing seam: with
 no `--signer-cmd`, no envelope is written.
 
+### The family's vault output: exported, not launched
+
+The family builder's `vault` variant (phase 4) is a second, independent
+producer of a vault rootfs: mkosi from the frozen snapshot, the four engine
+binaries compiled in the image's own userspace, and the pinned init
+unmodified (`images/README.md`). Its manifest is an ordinary builder output:
+- a real OCI form, which is an export only. The vault runs only as a
+  Firecracker microVM, so `host.kvm` is true.
+- `rootfs.ext4`, the image LC's vault VM would attach read-only as
+  `/dev/vda`.
+- `artifacts.kernel.image` `null` unless `manifest --kernel` names the
+  operator's vault kernel. The family builds no kernel; `kernel.config` pins
+  the vault config fragment.
+- the three binary roles all `null` (no guest, fence or relay).
+- `contracts.storage` set, and the two measured capability facts:
+  trusted organ builds 1 (the pinned init is present) and guest runtime 0.
+
+The receipt repeats those two facts in deploy/firecracker/build.py's
+rootfs-receipt field names (`vault_capabilities`: `vm_guest_runtime_revision`,
+`guest_runtime` null, `vm_trusted_organ_builds_revision`), measured by the
+same function, so the two documents cannot disagree.
+
+Nothing launches this output today. Hypnos imports the standalone image
+above: it reads `manifest.json` and `rootfs-receipt.json` from
+deploy/firecracker/build.py and checks that they agree. It reads neither this
+manifest's `contracts.vault` nor the family receipt. Taking the family's
+vault needs LC's hash-preserving import (`vault-family-artifact-import`), a
+kernel, and LC's boot legs. A no-runtime candidate is never a profile that
+binds guest runtimes. Measured (run v9): OCI archive 261,918,720 B (249.8 MiB), unpacked files 828,253,513 B (789.9 MiB; 291,382,601 B above the proposed 512 MiB budget), sparse ext4 989,855,744 B (944.0 MiB; 3,305,111,552 B below the 4 GiB cap), and builder peak RSS 40,156,364,800 B (37.40 GiB).
+
 ## Wire
 
 All fields are required, and unknown fields are refused at every level. A
@@ -101,10 +131,11 @@ No path is absolute on the host.
 | `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. Required: `null` only for the standalone Firecracker vault image, which names its kernel image; every builder output names its real OCI form. |
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
-| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver` and generic-agent's Bun, tsrs and launchers are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
+| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver`, generic-agent's Bun, tsrs and launchers, and the vault's four engine binaries (`oneiron-server`, `oneiron-broker`, `oneiron-vm-init`, `oneiron-vm-outbox`) are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
 | `sbom` | The build's SPDX 2.3 JSON SBOM: `{media_type: "application/spdx+json", path: "sbom.spdx.json", sha256}`, measured again from the file and checked against the receipt; `null` for a build without one. The in-toto provenance statement (`provenance.json`) is named by the receipt. |
 | `provenance` | The build receipt: `{media_type, path: "receipt.json", sha256}`. |
-| `host` | `kvm` (true when every launch form needs `/dev/kvm`; only the vault), `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). |
+| `host` | `kvm`: true requires `/dev/kvm` in every launch form; only the vault. A microVM launch checks KVM whatever this says. |
+| `guest` | The fence's floors on the guest kernel: `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). A container shares the host kernel; a microVM guest runs its own. |
 | `snapshot` | `qualified` (false), plus the image half of a snapshot's compatibility tuple: the rootfs and kernel BLAKE3, the guest protocol and the storage ABI. A snapshot restores only onto exact values; anything else cold-boots. |
 | `facts` | What the emitter could not measure: `blake3_unmeasured`, or empty. |
 
@@ -165,7 +196,8 @@ Sigstore, hardware) come with the crypto lane and implement this trait.
 
 ```rust
 verify_release(manifest_bytes, envelope: Option<&[u8]>, &ObservedArtifacts,
-               &HostCapabilities, &dyn ReleaseSignatureVerifier) -> ReleaseVerification
+               &HostCapabilities, &dyn ReleaseSignatureVerifier,
+               Option<LaunchBackend>) -> ReleaseVerification
 ```
 
 The function parses the manifest. It compares each digest the **caller**
@@ -174,8 +206,11 @@ hashes nothing (the launch doors' host-side reader is under Launch). Against
 a manifest with no OCI form, an observed OCI digest is `not_in_manifest`,
 never a match; the rootfs and kernel digests are what bind such a manifest
 to the bytes in use. It checks the host's observed capabilities against
-`host`, and reads the signature. The result is never a bare success. Its
-`signature` is one of:
+`host` for `backend`: a container shares the host kernel, so the guest
+floors are checked against the host probe, while a microVM launch or an
+unselected backend never evaluates them against the host. KVM is checked
+when `host.kvm` is true, or the backend is a microVM. It reads the
+signature. The result is never a bare success. Its `signature` is one of:
 
 | Outcome | Meaning |
 |---|---|
@@ -197,6 +232,8 @@ The fact codes are exact wire strings, each with a `const` of the same name:
 | `image_blake3_unmeasured` | The manifest carries `blake3_unmeasured`. |
 | `image_host_capability_missing` | The host lacks a capability the image needs. |
 | `image_host_capability_unobserved` | The caller did not observe a needed capability. |
+| `image_guest_capability_unobserved` | The manifest declares guest needs, but no guest kernel was observed: the host probe is not evidence of them. |
+| `image_launch_backend_unobserved` | The backend was not selected (an import), so no backend's checks ran. |
 | `image_storage_abi_older_than_host` | The image's engine is older than the vault data it would open. |
 | `image_signature_unavailable` | No envelope exists. |
 | `image_signature_unverifiable` | An envelope is present, but nothing configured can check it. |
@@ -223,24 +260,29 @@ it.
 ## Launch
 
 `observe_release(Option<ReleaseDocuments>, &ObservedArtifacts,
-&HostCapabilities, &dyn ReleaseSignatureVerifier) -> ImageReleaseObservation`
+&HostCapabilities, &dyn ReleaseSignatureVerifier, Option<LaunchBackend>)
+-> ImageReleaseObservation`
 is the one observe path. The launch doors reach it through one host-side
 wrapper, `observe_bound_release(SelectedImage, &ObservedArtifacts,
-&dyn ReleaseSignatureVerifier)` (`src/image_release/host_binding.rs`). Each
-door calls it after its existing checks and before it starts the guest:
+&dyn ReleaseSignatureVerifier, LaunchBackend)`
+(`src/image_release/host_binding.rs`). Each door passes its own backend
+explicitly — the selected image alone cannot select it, since an OCI
+identity boots as either form — after its existing checks and before it
+starts the guest:
 
 - `ContainerRuntime::start` and `ContainerRuntime::start_fenced`
-  (`crates/oneiron-container/src/lib.rs`), selecting and observing the pinned
-  image reference. Its digest matches the manifest's config, manifest or
-  index digest: which one a local image id names depends on the runtime's
-  store;
-- `FirecrackerBackend::boot`, after `config.pins.verify`, observing the
-  kernel and rootfs BLAKE3 pins. An OCI boot keeps the reference it was
-  given from before the host's boot registry resolves it to artifacts: it
-  selects and also observes that reference, and records it as
-  `SessionManifest.image`. A raw boot selects by its pins;
-- `firecracker/oci_session.rs` `start`, after `config.pins.verify`,
-  selecting the image reference and observing it with the pins.
+  (`crates/oneiron-container/src/lib.rs`), with `LaunchBackend::Container`,
+  selecting and observing the pinned image reference. Its digest matches the
+  manifest's config, manifest or index digest: which one a local image id
+  names depends on the runtime's store;
+- `FirecrackerBackend::boot`, with `LaunchBackend::MicroVm`, after
+  `config.pins.verify`, observing the kernel and rootfs BLAKE3 pins. An OCI
+  boot keeps the reference it was given from before the host's boot registry
+  resolves it to artifacts: it selects and also observes that reference, and
+  records it as `SessionManifest.image`. A raw boot selects by its pins;
+- `firecracker/oci_session.rs` `start`, with `LaunchBackend::MicroVm`
+  despite its OCI identity, after `config.pins.verify`, selecting the image
+  reference and observing it with the pins.
 
 ### The binding
 
@@ -306,6 +348,13 @@ engine and its containers. A Firecracker guest runs its own kernel, and its
 in-image fence depends on that kernel: the host probe is not evidence of
 the guest kernel's Landlock or seccomp floor.
 
+What the checks do with the probe depends on the backend. A container
+shares the host kernel, so the guest floors are checked against it. A
+microVM launch never evaluates the guest floors against the host: declared
+needs stay named in the parsed manifest and report
+`image_guest_capability_unobserved`. KVM is checked whenever `host.kvm` is
+true, and for every microVM launch.
+
 The observation goes into `SessionManifest.image_release`. The session-manifest
 receipt and the call outputs already carry that structure, as evidence,
 separate from the fence evidence. Every observation has
@@ -335,8 +384,12 @@ let observation = observe_release(
     },
     &probe_host(),
     &NoVerifierConfigured,
+    None, // The import selects no backend: the target launch form is unknown.
 );
 // Record `observation` per image beside the provisioning fact.
+// The import never pretends the image will launch as a container: a parsed
+// manifest reports `image_launch_backend_unobserved`, and declared guest
+// needs report `image_guest_capability_unobserved`.
 // Under ObserveOnly, `observation.admitted` is true: the import proceeds as before.
 ```
 

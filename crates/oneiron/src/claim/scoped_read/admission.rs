@@ -96,7 +96,7 @@ impl<'a> ScopedRead<'a> {
     /// from it keeps it too, and it meets any ceiling the key already holds.
     /// A room assembly passes the room's world set (ARCH-0067 §8).
     #[must_use]
-    pub fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+    pub fn within_worlds(mut self, worlds: crate::claim::world_access::WorldAuthoritySet) -> Self {
         self.actor_key = self.actor_key.within_worlds(worlds);
         self
     }
@@ -172,7 +172,10 @@ impl<'a> ScopedRead<'a> {
     /// (FIX 8245 judges the two apart). Generic records have no proved
     /// channel context. Channel-bound credentials must use their typed
     /// adapter instead of losing a caveat.
-    pub(super) fn credential_channel_allows(&self, claims: &crate::authority::SlipClaims) -> bool {
+    pub(super) fn credential_channel_allows(
+        &self,
+        claims: &oneiron_authority::authority::SlipClaims,
+    ) -> bool {
         claims.channels.is_empty()
             || self
                 .actor_key
@@ -197,7 +200,7 @@ impl<'a> ScopedRead<'a> {
         if let Some(owner) = self.actor_key.owner_proof_guard() {
             return owner_proof_holds_in(self.vault, txn, owner).map_err(|error| {
                 Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::from(error),
+                    oneiron_contracts::memory::MemoryError::from(error),
                 )))
             });
         }
@@ -213,8 +216,8 @@ impl<'a> ScopedRead<'a> {
             }
             return Err(Error::Claim(
                 crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::new(
-                        crate::memory::MEMORY_CODE_FORBIDDEN,
+                    oneiron_contracts::memory::MemoryError::new(
+                        oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                         "a due owner schedule's owner is no longer a live owner here",
                         &[],
                     ),
@@ -449,6 +452,39 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// A code-memory payload projection counts only a readable, non-opaque row.
+    pub(crate) fn code_memory_payload_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> usize {
+        let readable = (|| {
+            if self.admit_in::<()>(txn, id, || Ok(None))?.suppression() == 0 {
+                return Ok(false);
+            }
+            let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            // A header-only CLAIM cannot enter the nested shell reader here.
+            if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
+                return Ok(false);
+            }
+            let policy = self.policy_manifest_in(txn)?;
+            let floor = self.actor_retrieval_floor(&policy)?;
+            self.is_entity_raw_readable_held_in(
+                txn,
+                &policy,
+                id,
+                &raw,
+                &floor,
+                &super::access_gate::HeldAuthority::for_request(None),
+            )
+        })();
+        usize::from(readable.unwrap_or(false))
+    }
+
     /// Whether this read's credential is live in `txn` and the worlds the
     /// read asked for and its Scope both admit `world` (`None` is base
     /// reality): the world ceilings every row it serves lies under, before
@@ -517,8 +553,8 @@ impl ScopedRead<'_> {
         id: &EntityId,
         kind: u8,
         data: &[u8],
-        ceiling: &crate::federation::Scope,
-    ) -> Result<Option<crate::federation::Scope>> {
+        ceiling: &oneiron_authority::federation::Scope,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
         use crate::federation::record_scope::note_world::world_record_held_at;
         match self.session_view {
             Some(view) => world_record_held_at(view, txn, *id, kind, data, ceiling),
@@ -540,7 +576,10 @@ impl ScopedRead<'_> {
         let Some(granted) = self.actor_key.authority_scope() else {
             return Ok(false);
         };
-        if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
+        if matches!(
+            granted.worlds,
+            oneiron_authority::federation::ScopeAxis::All
+        ) {
             return Ok(false);
         }
         // A TASK and its authority facts, and an epoch SUMMARY, sit at their
@@ -593,16 +632,6 @@ impl ScopedRead<'_> {
             self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
                 .map(|allowed| allowed.then_some(()))
         })
-    }
-
-    /// What `id`, a row this lane does not read, adds to a receipt's
-    /// suppressed count: exactly [`ReadAdmission::suppression`] for it, one
-    /// for an ordinary policy denial and none for a row any other rule keeps
-    /// absent (world, credential, room turn, secret custody), so a caller's
-    /// sum of it discloses nothing the lane's own reads would not.
-    pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
-        let txn = self.grant_read_txn()?;
-        Ok(self.admit_in(&txn, id, || Ok(None::<()>))?.suppression())
     }
 }
 

@@ -27,6 +27,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/message-streams/refused",
             summary: "The stream seeds the vault's last open could not replay and still keeps (FIX 11933), each with its MESSAGE, generation, conversation, actor and the typed refusal its replay met. Every open tries them again; this read retires none.",
             row: Some(VERB),
+            shape: None,
         },
         get(list),
     )]

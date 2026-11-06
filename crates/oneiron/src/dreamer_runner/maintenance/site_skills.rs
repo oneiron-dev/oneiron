@@ -35,11 +35,12 @@ use super::proposals;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::browser_library::{
     DirtySolvedGroup, RetiredWorkflow, SolvedRunEvidence, SolvedRunScope, WorkflowRecord,
-    WorkflowResolution, all_solved_groups, resolve_workflow_in_txn, retired_workflows,
-    site_workflows, solved_group_coverage, solved_runs_in_group,
+    all_solved_groups, resolve_workflow_in_txn, retired_workflows, site_workflows,
+    solved_group_coverage, solved_runs_in_group,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ScopedRead, ScopedReadActorKey};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::ErrorKind;
 use crate::ports::EntityStoreRead;

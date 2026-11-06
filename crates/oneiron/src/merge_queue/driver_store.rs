@@ -19,10 +19,10 @@ use super::{
     QueueDriveOutcome, QueueDriveStatus, QueueDriveView, QueueRevisionLink, QueueSurvivorLink,
 };
 use crate::Vault;
-use crate::codebase::RepoRef;
-use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWireRepo, lock_repository};
+use crate::store::code_snapshot::RepoRef;
+use crate::store::contract_oracle::invalid;
 
 impl QueueCheckConfiguration {
     /// Whether this configuration enrolls its queue for automatic driving
@@ -230,14 +230,7 @@ impl MergeQueue<'_> {
                 .iter()
                 .flat_map(|proposal| proposal.files.iter().map(|file| file.path.as_str())),
         )?;
-        let run_order = source.run_order.clone().map(|mut order| {
-            order.proposals.retain(|stored| {
-                survivors
-                    .iter()
-                    .any(|proposal| proposal.id == stored.to_hex())
-            });
-            order
-        });
+        let run_order = super::staging::survivor_run_order(source.run_order.clone(), &survivors);
         let child = MergeBatch {
             schema_version: 1,
             id: child_id.clone(),

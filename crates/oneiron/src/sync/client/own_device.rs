@@ -4,8 +4,8 @@
 //! nothing.
 
 use super::base::SyncClient;
-use crate::EntityId;
 use crate::authority::PeerMachine;
+use crate::{EntityId, Vault};
 
 /// An own-device import's proof: the client that takes the bytes has no
 /// federation peer bound, and the machine at the other end of the connection
@@ -13,14 +13,41 @@ use crate::authority::PeerMachine;
 /// own fresh binding, and still stands here on the key it proved. Only
 /// [`SyncClient::own_device_import`] makes one; the ingest doors mint a row's
 /// own-device lane under it.
+#[derive(Clone)]
 pub(in crate::sync) struct OwnDeviceImport {
     machine: EntityId,
+    key: [u8; 32],
 }
 
 impl OwnDeviceImport {
     /// The own machine that sent the bytes.
     pub(in crate::sync) fn machine(&self) -> EntityId {
         self.machine
+    }
+
+    /// Whether the original connection key still stands in the writer's
+    /// transaction. A freshly read replacement key is not the proven key.
+    pub(in crate::sync) fn stands_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        Ok(vault
+            .authority_fold_readonly_in_txn(txn)?
+            .machine_proof_key(self.machine)
+            == Some(self.key))
+    }
+
+    /// The proof for bytes `from` sent: the machine a connection with no
+    /// federation peer bound proved when they came in, rechecked now in
+    /// `vault`. `None` for a machine no connection proved, and for one
+    /// removed, poisoned or trusted under other keys since. The caller
+    /// answers for the lane: a federation lane takes no proof.
+    pub(in crate::sync) fn proven(vault: &Vault, from: PeerMachine) -> Option<Self> {
+        let PeerMachine::Proven { machine, key } = vault.peer_machine_stands(from) else {
+            return None;
+        };
+        Some(Self { machine, key })
     }
 }
 
@@ -33,9 +60,6 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return None;
         }
-        let PeerMachine::Proven { machine, .. } = self.vault.peer_machine_stands(from) else {
-            return None;
-        };
-        Some(OwnDeviceImport { machine })
+        OwnDeviceImport::proven(&self.vault, from)
     }
 }

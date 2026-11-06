@@ -2,15 +2,16 @@
 
 use std::collections::BTreeMap;
 
-use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
+use crate::gate::experiment_selection_policy::SelectionPolicy;
+use crate::gate::experiment_selection_policy::SelectionPrecedence;
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
 
 use crate::error::Result;
 use crate::gate::hosted_tts_policy::HostedTtsLimits;
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 #[cfg(feature = "sync")]
@@ -79,7 +80,7 @@ impl PolicyManifestResolution {
     /// shipped default row; a malformed or unreadable manifest refuses.
     pub(crate) fn consult_fanout_policy_for(
         &self,
-        scope: &crate::task_verb::ConsultFanOutScope,
+        scope: &crate::gate::consult_fanout_values::ConsultFanOutScope,
     ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
@@ -109,8 +110,9 @@ impl PolicyManifestResolution {
     }
 
     /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
-    /// rows combined by minimum. An untrusted row can only narrow this cap.
-    /// The holder may request a smaller limit, never exceed the vault cap.
+    /// rows combined by minimum. Only trusted rows count: an untrusted row is
+    /// a proposal until a holder authors it (FIX 8780). The holder may
+    /// request a smaller limit, never exceed the vault cap.
     pub(crate) fn sheet_answer_limit(
         &self,
         artifact_ref: &str,
@@ -140,20 +142,8 @@ impl PolicyManifestResolution {
                 _ => {}
             }
         }
-        // Untrusted rows can narrow the trusted vault cap, never replace the
-        // shipped fallback when the owner omitted their vault row.
         let vault_cap = trusted_vault_cap.or(self.sheet_answer_default_max_count)?;
-        let mut cap = vault_cap.min(scoped_cap);
-        for row in &self.untrusted_sheet_answer_limits {
-            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
-                (None, None) => cap = cap.min(row.max_count),
-                (Some(artifact), None) if artifact == artifact_ref => cap = cap.min(row.max_count),
-                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
-                    cap = cap.min(row.max_count);
-                }
-                _ => {}
-            }
-        }
+        let cap = vault_cap.min(scoped_cap);
         if holder_override == Some(0) {
             return None;
         }
@@ -189,7 +179,7 @@ impl PolicyManifestResolution {
     pub(crate) fn retry_budget_for(
         &self,
         actor: crate::EntityId,
-        scope: Option<&crate::llm::Scope>,
+        scope: Option<&oneiron_model::llm::Scope>,
     ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
         crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
     }
@@ -210,6 +200,13 @@ impl PolicyManifestResolution {
             .clone()
             .unwrap_or_default()
             .effective(actor))
+    }
+
+    /// Runtime routing knobs, not admission authority. Absence preserves the existing boundaries.
+    pub(crate) fn entity_resolution_bands(
+        &self,
+    ) -> crate::gate::entity_resolution_bands::EntityResolutionBands {
+        self.entity_resolution_bands.unwrap_or_default()
     }
 
     /// One snapshot supplies the same carry-forward floor to typed, raw and Gate doors.
@@ -239,7 +236,7 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
-    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+    ) -> Option<crate::gate::judge_calibration::JudgeCalibrationPolicy> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
@@ -411,7 +408,7 @@ impl PolicyManifestResolution {
     pub(crate) fn voice_ref_limits(
         &self,
         owner: &crate::EntityId,
-    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+    ) -> Option<crate::gate::voice_ref_limits::VoiceRefLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
@@ -488,7 +485,7 @@ impl PolicyManifestResolution {
     pub(crate) fn teacher_probe_policy(
         &self,
         holder_ref: Option<&str>,
-    ) -> Option<crate::llm::manifest::TeacherProbePolicy> {
+    ) -> Option<crate::teacher_probe_policy::TeacherProbePolicy> {
         if self.is_fail_closed() || !self.teacher_probe_trusted {
             return None;
         }
@@ -497,7 +494,8 @@ impl PolicyManifestResolution {
             .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
             .unwrap_or(vault_min)
             .max(vault_min);
-        crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
+        crate::teacher_probe_policy::TeacherProbePolicy::resolved(vault_min, effective, holder_ref)
+            .ok()
     }
 
     /// Conversion UI/notification choices from trusted, resolved manifest
@@ -641,9 +639,9 @@ impl PolicyManifestResolution {
             ));
         }
         // `packs` holds exactly the trusted packs this fold read: one is
-        // pushed per trusted pack, after untrusted ones have left the fold.
-        // An untrusted pack counts in `manifest_count`, so the count proves
-        // nothing; a trusted pack read is the positive proof of absence.
+        // pushed per trusted pack. An untrusted pack leaves the fold before
+        // anything is counted (FIX 8780); a trusted pack read is the positive
+        // proof of absence.
         let trusted_absence = !self.packs.is_empty();
         crate::gate::voice_serving::resolve(&self.voice_serving, holder, trusted_absence)
     }
@@ -725,7 +723,7 @@ impl PolicyManifestResolution {
     pub(crate) fn slide_review_limits(
         &self,
         holder: crate::EntityId,
-    ) -> Option<crate::llm::decision::SlideReviewLimits> {
+    ) -> Option<crate::model_decision::SlideReviewLimits> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed())
             .then(|| self.slide_review_policy.resolve(holder))
     }
@@ -733,7 +731,7 @@ impl PolicyManifestResolution {
     pub(crate) fn slide_review_route(
         &self,
         holder: crate::EntityId,
-    ) -> Option<crate::llm::decision::SlideReviewRoute> {
+    ) -> Option<crate::model_decision::SlideReviewRoute> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed())
             .then(|| self.slide_review_policy.resolve_route(holder))
     }

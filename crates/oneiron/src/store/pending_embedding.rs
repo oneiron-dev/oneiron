@@ -26,7 +26,7 @@ const SEALED_PENDING_EMBEDDING_MARKER_VERSION: u8 = 3;
 
 const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 
-pub(super) const ENTITY_BODY_OFFSET: usize = 25;
+pub(super) const ENTITY_BODY_OFFSET: usize = crate::batch::ENTITY_METADATA_HEADER_LEN;
 
 /// Typed door for the `pe:` marker family. The value stays `Vec<u8>`: every
 /// reader compares the stored bytes against a freshly computed token rather
@@ -59,14 +59,14 @@ impl Store {
     fn scoped_embedding_token(
         epoch: u64,
         body: &[u8],
-        owner: Option<crate::federation::derivation::DerivationOwner>,
+        owner: Option<crate::store::derivation::DerivationOwner>,
     ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
         let Some(owner) = owner else {
             return Self::pending_embedding_marker_token(epoch, body);
         };
-        let digest = crate::federation::derivation::sealed_digest(
+        let digest = crate::store::derivation::sealed_digest(
             owner,
-            crate::federation::derivation::DerivationKind::Embedding,
+            crate::store::derivation::DerivationKind::Embedding,
             &epoch.to_be_bytes(),
             body,
         );
@@ -79,7 +79,7 @@ impl Store {
         marker: &[u8],
         epoch: u64,
         claim_body: &[u8],
-        owner: Option<crate::federation::derivation::DerivationOwner>,
+        owner: Option<crate::store::derivation::DerivationOwner>,
     ) -> bool {
         // A v1 body-only marker cannot prove which embedding-model epoch
         // produced its vector, even when the vault has no derivation owner.
@@ -92,8 +92,8 @@ impl Store {
         id: &EntityId,
         claim_body: &[u8],
     ) -> Result<Vec<u8>> {
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
-        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, &*wtxn)?;
+        let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         let token = Self::scoped_embedding_token(epoch, claim_body, owner);
         MARKERS.put(self, wtxn, &HexId(*id), &token.to_vec())?;
         Ok(token.to_vec())
@@ -109,9 +109,9 @@ impl Store {
     pub(crate) fn seal_pending_embeddings_for_owner(
         &self,
         wtxn: &mut RwTxn<'_>,
-        owner: crate::federation::derivation::DerivationOwner,
+        owner: crate::store::derivation::DerivationOwner,
     ) -> Result<()> {
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
         let pending = MARKERS.scan(self, &*wtxn)?;
         for (HexId(id), marker) in pending {
             let Some(record) = self.port_entity_raw(&*wtxn, &id)? else {
@@ -167,8 +167,8 @@ impl Store {
         let Some(record) = self.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
-        let owner = crate::federation::derivation::owner_in_txn(self, rtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, rtxn)?;
+        let owner = crate::store::derivation::owner_in_txn(self, rtxn)?;
         Ok(self
             .marker_is_current_for_record(&marker, &record, epoch, owner)
             .then(|| marker.to_vec()))
@@ -186,8 +186,8 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(None);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
-        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .marker_is_current_for_record(&marker, &record, epoch, owner)
             .then(|| marker.to_vec()))
@@ -204,8 +204,8 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
-        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
     }
 
@@ -230,8 +230,8 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
-        let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
+        let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
     }
 
@@ -251,7 +251,7 @@ impl Store {
         marker: &[u8],
         record: &[u8],
         epoch: u64,
-        owner: Option<crate::federation::derivation::DerivationOwner>,
+        owner: Option<crate::store::derivation::DerivationOwner>,
     ) -> bool {
         if is_turn_record(record) {
             let version = match owner {
@@ -288,4 +288,15 @@ impl Store {
 /// messages' text, not to its own body.
 fn is_turn_record(record: &[u8]) -> bool {
     record.len() > ENTITY_BODY_OFFSET && record[0] == ENTITY_TYPE_TURN
+}
+
+impl Store {
+    /// Raw presence: even a stale marker leaves a prior vector unsettled.
+    pub(crate) fn pending_embedding_marker_present(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(MARKERS.get(self, txn, &HexId(*id))?.is_some())
+    }
 }

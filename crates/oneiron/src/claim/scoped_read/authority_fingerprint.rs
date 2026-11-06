@@ -6,37 +6,39 @@
 //! and a fingerprint that cannot be read refuses nothing (its caller keeps
 //! the path it had). It folds, in ONE snapshot, what those lanes resolve live
 //! for the key: its own ceilings (credential Scope, world ceiling, locality,
-//! room bounds, owner exemption), the reader's standing for `read` and each
-//! agent Grant that stands for it, and the principal's live access grants and
-//! relationship memberships. A change in any of them changes the digest; a
-//! raw key, a grant id alone or a vault-wide counter never stands in for it.
+//! room bounds, owner exemption, a saved lane's records bound), the reader's
+//! standing for `read` and each agent Grant that stands for it, and the
+//! principal's live access grants and relationship memberships. A change in
+//! any of them changes the digest; a raw key, a grant id alone or a
+//! vault-wide counter never stands in for it.
 //!
 //! The grant and relationship scans repeat `agent_grants`' and
 //! `AccessContext`'s own rather than share them, because those answers are
 //! private to the lanes that authorize, and this one only describes.
 //!
-//! A live vault Owner reads clearance-free: the Owner's key folds the owner
-//! and its world ceiling, and no clearance.
+//! A live vault Owner reads clearance-free: the Owner's key folds the owner,
+//! its world ceiling and any records bound, and no clearance.
 
 use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
 use super::{RoomTurnCeiling, ScopedReadActorKey};
-use crate::authority::{HostActionGuard, PeerMachine, VerifiedSlip};
+use crate::authority::{HostActionGuard, VerifiedSlip};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::world_access::WorldAuthoritySet;
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::federation::Scope;
-use crate::pipeline::WorldAuthoritySet;
+use crate::machine_destination::PeerMachine;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_RELATIONSHIP,
 };
 use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 impl ScopedReadActorKey {
     /// The canonical fingerprint of the live read authority behind this key,
@@ -51,6 +53,7 @@ impl ScopedReadActorKey {
         let mut hasher = Sha256::new();
         hasher.update(b"oneiron.scoped_read.authority_fingerprint.v1");
         fold_scope(&mut hasher, &self.world_ceiling())?;
+        fold_record_bound(&mut hasher, self.record_bound.as_ref());
         if let Some(owner) = self.vault_owner_ref() {
             hasher.update([0u8]);
             hasher.update(owner.as_bytes());
@@ -182,7 +185,8 @@ fn fold_principal_reach(
                 continue;
             }
             let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF
+            if body.predicate
+                == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                 && claim_surfaceable(&body)
                 && body
                     .value
@@ -221,6 +225,20 @@ fn fold_scope(hasher: &mut Sha256, scope: &Scope) -> Result<()> {
     fold_len(hasher, bytes.len());
     hasher.update(&bytes);
     Ok(())
+}
+
+/// A saved lane's records bound (OF-506, FIX 11832): absent, or each row it
+/// names, in the set's sorted order. It binds an Owner's key as any other.
+fn fold_record_bound(hasher: &mut Sha256, records: Option<&BTreeSet<String>>) {
+    let Some(records) = records else {
+        hasher.update([0u8]);
+        return;
+    };
+    hasher.update([1u8]);
+    fold_len(hasher, records.len());
+    for record in records {
+        fold_str(hasher, record);
+    }
 }
 
 fn fold_str(hasher: &mut Sha256, value: &str) {
@@ -275,6 +293,7 @@ impl ScopedReadActorKey {
         key_fold_host_action(&mut hasher, self.host_action_guard());
         key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
         hasher.update(&[u8::from(self.owner_by_census())]);
+        key_fold_record_bound(&mut hasher, self.record_bound.as_ref());
         *hasher.finalize().as_bytes()
     }
 }
@@ -300,6 +319,20 @@ fn key_fold_opt_str(hasher: &mut blake3::Hasher, value: Option<&str>) {
         None => {
             hasher.update(&[0u8]);
         }
+    }
+}
+
+/// A saved lane's records bound: absent, or each row it names in the set's
+/// sorted order.
+fn key_fold_record_bound(hasher: &mut blake3::Hasher, records: Option<&BTreeSet<String>>) {
+    let Some(records) = records else {
+        hasher.update(&[0u8]);
+        return;
+    };
+    hasher.update(&[1u8]);
+    key_fold_len(hasher, records.len());
+    for record in records {
+        key_fold_str(hasher, record);
     }
 }
 

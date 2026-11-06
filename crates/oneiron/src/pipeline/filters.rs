@@ -60,10 +60,26 @@ pub(super) fn claim_status_gate_allows(
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    claim_status_gate_allows_with_row(store, rtxn, id, metadata_cache, gate, None)
+}
+
+/// The gate, judging `row` — the record the caller's metadata read under
+/// this same transaction just decoded — where the caller has it, so its
+/// bytes are fetched once. The archive refusal is judged from that same
+/// read's deletion state ([`EntityMetadataCache::archived_bit`]). With no
+/// row carried, every read is made exactly as before.
+pub(super) fn claim_status_gate_allows_with_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    metadata_cache: &mut EntityMetadataCache,
+    gate: &mut ClaimStatusGateCache,
+    row: Option<&crate::ports::EntityRecord>,
+) -> Result<bool> {
     if gate.keeps_device_local(store, rtxn, id)? {
         return Ok(false);
     }
-    if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
+    if metadata_cache.archived_bit(store, rtxn, id)? {
         metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
@@ -77,7 +93,16 @@ pub(super) fn claim_status_gate_allows(
             .private_note_ids
             .as_ref()
             .is_some_and(|ids| ids.contains(id))
-            || crate::note::ordinary_entity_visible(store, rtxn, id)?);
+            || match row {
+                Some(row) => crate::note::ordinary_entity_visible_with_body(
+                    store,
+                    rtxn,
+                    id,
+                    row.entity_type,
+                    &row.body,
+                )?,
+                None => crate::note::ordinary_entity_visible(store, rtxn, id)?,
+            });
     }
     if meta.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
@@ -95,25 +120,29 @@ pub(super) fn claim_status_gate_allows(
 
     // Read path allows reserved `edge.*` predicates so stored provenance
     // Claims gate on their own appr/life/stale like any other claim instead
-    // of failing the decode.
-    let decision = store
-        .port_entity_record(rtxn, id)?
-        .map(|row| row.encode())
-        .and_then(|raw| {
-            raw.get(ENTITY_METADATA_HEADER_LEN..)
-                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        })
-        .filter(crate::claim::claim_generic_readable)
-        .filter(|body| {
-            claim_surfaceable(body)
-                || (gate.include_stale
-                    && matches!(
-                        body.approval,
-                        crate::claim::ClaimApprovalStatus::Auto
-                            | crate::claim::ClaimApprovalStatus::Approved
-                    )
-                    && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
-        });
+    // of failing the decode. `row.encode()` after the header is `row.body`
+    // itself, so a carried row decodes from its body.
+    let decision = match row {
+        Some(row) => crate::claim::decode_claim_body(&row.body, true).ok(),
+        None => store
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.encode())
+            .and_then(|raw| {
+                raw.get(ENTITY_METADATA_HEADER_LEN..)
+                    .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            }),
+    }
+    .filter(crate::claim::claim_generic_readable)
+    .filter(|body| {
+        claim_surfaceable(body)
+            || (gate.include_stale
+                && matches!(
+                    body.approval,
+                    crate::claim::ClaimApprovalStatus::Auto
+                        | crate::claim::ClaimApprovalStatus::Approved
+                )
+                && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+    });
     let decision = match decision {
         Some(body) if crate::claim::has_live_support_in_txn(store, rtxn, &body)? => Some(body),
         _ => None,
@@ -136,6 +165,17 @@ pub(super) fn import_claim_gate_decisions_for_scores(
             continue;
         };
         claim_gate.decisions.entry(scored.id).or_insert(decision);
+    }
+    // FIX 199: the fetch drops gate-rejected rows before they reach the
+    // fused union, so their suppressions must travel with the run even when
+    // they back no score. Import the probe's remaining rejections (None
+    // only: an allowed-but-unfetched row is not suppressed, and importing
+    // its body would inflate claim_bodies) so the D19 site and
+    // PackStats::claims_suppressed see them.
+    for (id, decision) in std::mem::take(&mut probe_gate.decisions) {
+        if decision.is_none() {
+            claim_gate.decisions.entry(id).or_insert(None);
+        }
     }
 }
 
@@ -617,7 +657,8 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     } else {
         (metadata_cache, claim_gate)
     };
-    let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
+    let (meta, gate_row) = metadata_cache.get_row(store, rtxn, id)?;
+    let Some(meta) = meta else {
         return Ok(false);
     };
 
@@ -667,7 +708,14 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
         return Ok(false);
     }
-    if !claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)? {
+    if !claim_status_gate_allows_with_row(
+        store,
+        rtxn,
+        id,
+        metadata_cache,
+        claim_gate,
+        gate_row.as_ref(),
+    )? {
         return Ok(false);
     }
     // Bounded corpus channels truncate through this predicate before fusion.

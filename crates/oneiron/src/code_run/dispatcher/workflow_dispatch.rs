@@ -14,11 +14,11 @@ use crate::code_run::types::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
     SelfFailedResult,
 };
-use crate::error::{ArtifactError, Error, Result};
-use crate::task_verb::HostBinding;
-use crate::task_verb::sdk::{
+use crate::code_run::workflow_operations::{
     WorkflowBoundDispatchRequest, WorkflowRunView, dispatch_workflow_bound_as,
 };
+use crate::error::{ArtifactError, Error, Result};
+use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault};
 
 use super::HostSelfDispatcher;
@@ -106,6 +106,8 @@ fn refused(message: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Failed(SelfFailedResult {
         effect: SelfEffect::WorkflowDispatch,
         error: message.to_owned(),
+        code: None,
+        disk_floor: None,
     })
 }
 
@@ -142,3 +144,5 @@ fn run_rows(view: &WorkflowRunView, task: EntityId) -> Vec<EntityId> {
     rows.dedup();
     rows
 }
+
+pub mod operations;

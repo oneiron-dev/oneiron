@@ -7,12 +7,11 @@ use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
-use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::error::{CodeError, Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::secret_custody::read_secret_custody_meta_in_txn;
 use crate::secret_lease::decode_local_registration_body;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::vault::Vault;
 
 /// SECRET-03 (ONE-1921): the T2 local-registration rows this snapshot filter
@@ -52,7 +51,12 @@ impl SnapshotExclusionSet {
             .port_entity_ids_by_type(txn, ENTITY_TYPE_SECRET_CUSTODY, None)?
         {
             let id = entry?;
-            if let Some(record) = read_secret_custody_meta_in_txn(&vault.store, txn, &id)? {
+            if let Some(record) =
+                vault
+                    .store
+                    .record_hooks
+                    .read_secret_custody_meta_in_txn(&vault.store, txn, &id)?
+            {
                 declared_paths.extend(record.declared_paths);
             }
         }

@@ -7,12 +7,12 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
+use crate::store::row_birth::RowBirth;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -185,12 +185,12 @@ pub(super) fn persist_scanned(
     };
     let text = doc.text();
     let remark = scan(vault, txn, entity, h, &text)?;
-    // A NOTE written on this plane keeps the NOTE door's body bound and its
-    // seal (OF-073 stage 1).
+    // A NOTE written on this plane keeps the NOTE door's seal (OF-073 stage
+    // 1); no body length refuses it (rule 5, FIX 10345).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
         let read: &RoTxn<'_> = txn;
         let moved = before.is_some_and(|before| before.encode() != doc.doc.oplog_vv().encode());
-        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, &doc.text(), || {
+        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, || {
             Ok(moved || text_changed(store, read, entity, doc)?)
         })?;
     }
@@ -219,6 +219,8 @@ pub(super) fn persist_scanned(
     }
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
+    // The stamp tokens its new changes name, for the hold check (FIX 11965).
+    super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -235,7 +237,7 @@ pub(super) fn persist_scanned(
         txn,
         &std::collections::BTreeSet::from([*entity]),
     )?;
-    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+    if crate::store::decision_question_watches::unit_watched_in_txn(store, txn, entity)? {
         crate::batch::queue_proactivity_change(vault, txn);
     }
     Ok(())
@@ -255,10 +257,11 @@ fn index_document(
         entity,
         document_text_fields(doc, &head.field)?,
     )?;
-    match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, entity, &fields) {
+    match crate::store::text_index::index_text(&vault.store, txn, &vault.analyzer, entity, &fields)
+    {
         // A large document remains authoritative even when it is not searchable.
         Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
-            crate::bm25::deindex_text(&vault.store, txn, entity)?;
+            crate::store::text_index::deindex_text(&vault.store, txn, entity)?;
         }
         Ok(()) => {}
         Err(error) => return Err(error),
@@ -363,10 +366,10 @@ impl Vault {
                 if *field != TextField::MapField("content".to_owned()) {
                     return Err(invalid("MESSAGE document edits only content"));
                 }
-                crate::gate::validate_canonical_witness_message_body(body)?;
+                crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                let original = crate::note::decode_note_body(body)?;
+                let original = crate::store::note_body::decode_note_body(body)?;
                 // Only a live author that is the migrating writer matches: an
                 // erased one is no one, never another verified writer.
                 if !original.author_ref.is(birth_actor.entity_ref())
@@ -387,7 +390,7 @@ impl Vault {
             )?;
             // A row its writing door already stamped keeps that birth on its
             // document's birth commit (FIX 10929).
-            let born = crate::provenance::birth::row_birth_in_txn(&self.store, txn, entity)?;
+            let born = crate::store::birth_record::row_birth_in_txn(&self.store, txn, entity)?;
             // The birth commit names the birth actor's stamp token (FIX 10930).
             let stamp = crate::provenance::actor_stamp_in_txn(self, txn, birth_actor)?;
             let doc = EntityDoc::open_with_metadata(
@@ -399,11 +402,18 @@ impl Vault {
                 born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
+            if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                crate::vault::entity_revision::ensure_document(self, txn, entity)?;
+            }
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
-            self.store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
-            crate::federation::record_scope::restamp_document_pointer(
+            self.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(self),
+                txn,
+                entity,
+                &pointer,
+            )?;
+            self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
                 *entity,
@@ -464,7 +474,7 @@ pub(super) fn stamp_document_birth(
     let class = MadeByClass::of_writer(actor.actor_class());
     match RowBirth::written(actor, class, door, &[], &[], at) {
         Some(birth) => {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
+            crate::store::birth_record::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
         }
         None => Ok(()),
     }
@@ -597,11 +607,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
 }
 
 pub(super) fn move_pointer(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     document: &str,
 ) -> Result<()> {
+    let store = write.store;
     let raw = store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
@@ -621,7 +632,7 @@ pub(super) fn move_pointer(
     rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::federation::record_scope::restamp_document_pointer(
+    store.scope_stamps.restamp_document_pointer(
         store,
         txn,
         *entity,
@@ -629,7 +640,7 @@ pub(super) fn move_pointer(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         &body,
     )?;
-    store.port_entity_document_pointer_put(txn, entity, &body)
+    store.port_entity_document_pointer_put(write, txn, entity, &body)
 }
 
 /// Removes a document's snapshot, state vectors and pending updates.
@@ -736,7 +747,7 @@ pub(crate) fn record_body_at(
 }
 
 /// A typed read projection of the body and metadata at one document version.
-pub(super) fn body_with_document(
+pub(crate) fn body_with_document(
     field: &TextField,
     body: &[u8],
     doc: &EntityDoc,

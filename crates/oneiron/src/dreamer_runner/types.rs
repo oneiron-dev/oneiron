@@ -17,12 +17,10 @@ use super::codec::invalid_dreamer_runner;
 mod park;
 mod retry_policy;
 
+pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
 pub use park::ParkDreamerAttempt;
 
-use super::constants::{
-    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-};
+use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 
 /// Coarse Dreamer attempt progress state for live ephemeral rows and durable
 /// milestone fallback.
@@ -97,36 +95,7 @@ pub struct DreamerDurableMilestone {
     pub learned_at: u64,
 }
 
-/// Consolidation attempt-table lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum DreamerConsolidationScope {
-    Micro,
-    Meso,
-    Macro,
-}
-
-impl DreamerConsolidationScope {
-    /// Stable scope string used in Dreamer payloads.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Micro => "micro",
-            Self::Meso => "meso",
-            Self::Macro => "macro",
-        }
-    }
-
-    /// Private attempt-table kind for this consolidation lane.
-    #[must_use]
-    pub const fn attempt_kind(self) -> &'static str {
-        match self {
-            Self::Micro => DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-            Self::Meso => DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-            Self::Macro => DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
-        }
-    }
-}
+pub use crate::store::consolidation_scope::DreamerConsolidationScope;
 
 /// Speaker role of a TURN entity as seen by the Dreamer extraction lane.
 ///
@@ -387,14 +356,6 @@ pub enum DreamerConsolidationAdmissionOutcome {
     NotHomeNode(DreamerHomeNodeDesignation),
     ClaimAuthoringBudgetTrap(DreamerClaimAuthoringBudgetTrap),
     Admission(DreamerAdmissionOutcome),
-}
-
-/// Typed Dreamer attempt payload stored in the generic queue row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DreamerAttemptPayload {
-    pub attempt_type: String,
-    pub input: Value,
-    pub parent_attempt: Option<AttemptId>,
 }
 
 /// Input for enqueueing a Dreamer attempt into the private runner queue.
@@ -727,7 +688,7 @@ impl DreamerParkCause {
     /// for a failure only an owner act clears (the wake driver's owner-act
     /// check names them); and a Retry, resumed after its delay, for any other.
     #[must_use]
-    pub fn of_llm(error: &crate::llm::LlmError) -> Self {
+    pub fn of_llm(error: &oneiron_model::llm::LlmError) -> Self {
         if error.is_provider_unavailable() {
             Self::ProviderUnavailable
         } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
@@ -742,9 +703,9 @@ impl DreamerParkCause {
     /// A fallback for an outage parks as one, so the offer's recovery
     /// resumes it.
     #[must_use]
-    pub fn of_response(response: &crate::llm::LlmResponse) -> Self {
-        crate::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
-            Self::of_llm(&crate::llm::LlmError::Fatal(source))
+    pub fn of_response(response: &oneiron_model::llm::LlmResponse) -> Self {
+        oneiron_model::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
+            Self::of_llm(&oneiron_model::llm::LlmError::Fatal(source))
         })
     }
 
@@ -755,8 +716,8 @@ impl DreamerParkCause {
     /// the wake driver's owner-act checks name); and a Retry, resumed after
     /// its delay, for any other.
     #[must_use]
-    pub fn of_step(error: &crate::llm::DurableStepError) -> Self {
-        use crate::llm::DurableStepError;
+    pub fn of_step(error: &crate::model_step_error::DurableStepError) -> Self {
+        use crate::model_step_error::DurableStepError;
         match error {
             DurableStepError::Llm(source)
             | DurableStepError::ClassifiedLlm { source, .. }

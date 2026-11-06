@@ -28,7 +28,7 @@ impl DiaryConsent {
     fn new(owner: EntityId, endpoint: OwnedDiaryEndpoint, created_at: u64) -> Self {
         let pair = endpoint.pair;
         Self(AccessGrant {
-            authority_scope: crate::federation::scope_codec::read_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::read_preset(),
             principal_ref: owner,
             scope: AccessGrantScope::DiaryCoreference {
                 left_ref: pair.left,

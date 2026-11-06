@@ -3,10 +3,9 @@
 mod admission;
 
 use crate::batch::{BatchOp, apply_ops};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result, SideTableRowProblem};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -19,66 +18,18 @@ use super::types::{
 use crate::error::SecretError;
 
 pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
+pub(crate) use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+pub(super) use crate::store::secret_name_index::{NAME_INDEX, NameEntry};
 
 // ---------------------------------------------------------------------------
 // Name index
 // ---------------------------------------------------------------------------
-
-/// Live secret name -> custody `EntityId` and the name's generation
-/// high-water, keyed by the name itself. `run_bound` reads a run's names
-/// and forgets them with their records (FIX 8028).
-pub(super) const NAME_INDEX: SideTable<String, NameEntry, Raw> =
-    SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
-
-/// One name's index row: the custody record the name resolves to, and the
-/// highest `rotation_generation` a record has held under the name here. The
-/// high-water outlives its record: a name whose record is gone from the store
-/// starts its next life above it, never at the caller's number (FIX 5958).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct NameEntry {
-    pub(super) id: EntityId,
-    high_water: u32,
-}
-
-/// The record's id bytes, then the high-water as four big-endian bytes.
-impl RawValue for NameEntry {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = self.id.as_bytes().to_vec();
-        raw.extend_from_slice(&self.high_water.to_be_bytes());
-        Ok(raw)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let undecodable = || CodecError::Row(SideTableRowProblem::Undecodable);
-        let (id, high_water) = bytes
-            .split_at_checked(ENTITY_ID_LEN)
-            .ok_or_else(undecodable)?;
-        let high_water = <[u8; 4]>::try_from(high_water).map_err(|_| undecodable())?;
-        Ok(Self {
-            id: <EntityId as RawValue>::from_raw(id)?,
-            high_water: u32::from_be_bytes(high_water),
-        })
-    }
-}
 
 /// One above `generation`, the generation a name's next life starts at.
 fn next_generation(generation: u32) -> Result<u32> {
     generation
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("secret rotation generation"))
-}
-
-/// Resolves a live secret name to its custody `EntityId` inside an
-/// existing txn. `pub(crate)` for SECRET-02's lease doors (ONE-1920), which
-/// hold their own write txn and must not open a nested read txn.
-pub(crate) fn resolve_secret_ref_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    name: &str,
-) -> Result<Option<EntityId>> {
-    Ok(NAME_INDEX
-        .get(store, txn, &name.to_owned())?
-        .map(|entry| entry.id))
 }
 
 /// Reads a custody record under either a read or write txn, its value
@@ -154,28 +105,7 @@ pub(crate) fn put_secret_custody_in_txn(
     put_custody_body_in_txn(&CustodyWrite::of(vault), wtxn, id, rec, occurred_at)
 }
 
-/// What a custody write applies through: the vault's store, config and
-/// analyzer, and whether its text index is trusted. The batch door's mask on
-/// write (OF-560) holds these without a [`Vault`].
-pub(crate) struct CustodyWrite<'a> {
-    pub(crate) store: &'a Store,
-    pub(crate) config: &'a crate::config::VaultConfig,
-    pub(crate) analyzer: &'a crate::analyzer::MultilingualAnalyzer,
-    pub(crate) text_index_trusted: bool,
-}
-
-impl<'a> CustodyWrite<'a> {
-    pub(crate) fn of(vault: &'a Vault) -> Self {
-        Self {
-            store: &vault.store,
-            config: &vault.config,
-            analyzer: &vault.analyzer,
-            text_index_trusted: vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-        }
-    }
-}
+pub(crate) use crate::secret_record::CustodyWrite;
 
 /// [`put_secret_custody_in_txn`] through `write`: the value sealed under its
 /// generation's custody key first, minted in this writer (KS-6).
@@ -216,6 +146,7 @@ pub(super) fn apply_custody_body_in_txn(
             entity_type: ENTITY_TYPE_SECRET_CUSTODY,
             occurred,
             learned_at: occurred_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -270,6 +201,7 @@ impl Vault {
             name: name.to_owned(),
             class: CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: true,
             value_bytes: value.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at,
@@ -600,6 +532,75 @@ pub(crate) fn restore_secret_custody_in_txn(
     Ok(true)
 }
 
+/// Proves an incoming original against this exact MESSAGE part's birth
+/// value, using existing keyed history only. It grants no value read or replay.
+pub(crate) fn message_part_original_matches_in_txn(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    message: &EntityId,
+    index: usize,
+    handle: &str,
+    original: &[u8],
+) -> Result<bool> {
+    use crate::ports::ShortIdStoreRead;
+    use crate::store::known_value_index::KnownValues;
+
+    let place = format!("parts/{index}");
+    for custody in super::found_keys::found_key_custody_in_txn(store, txn, message)? {
+        let own = crate::batch::secret_scan::mask_origin_in_txn(store, txn, &custody)?
+            .is_some_and(|origin| origin.record == *message && origin.place == place);
+        if !own
+            || store
+                .port_short_id_reference(txn, &custody)?
+                .is_none_or(|(reference, _)| reference != handle)
+        {
+            continue;
+        }
+        // Masker::mint records a new whole part at generation zero. Later
+        // rotations do not redefine the immutable MESSAGE's original part.
+        return Ok(KnownValues::load_for_in_writer(store, txn, &custody, &[0])?
+            .is_some_and(|known| known.is_exact_value(original)));
+    }
+    Ok(false)
+}
+
+/// Revokes only custody minted at this MESSAGE's ordered part positions.
+/// The origin inventory remains usable after the MESSAGE body has gone.
+pub(crate) fn revoke_message_part_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    act: Option<&super::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(&vault.store, wtxn, message)? {
+        let part = crate::batch::secret_scan::mask_origin_in_txn(&vault.store, wtxn, &id)?
+            .is_some_and(|origin| {
+                origin.record == *message
+                    && origin
+                        .place
+                        .strip_prefix("parts/")
+                        .is_some_and(|index| index.parse::<usize>().is_ok())
+            });
+        if !part {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(&vault.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &id, cause, at)?;
+        } else {
+            vault.revoke_secret_in_txn(wtxn, &record.name, cause, at)?;
+            if let Some(act) = act {
+                act.carry_revoke_in_txn(vault, wtxn, &record.name, at)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Revokes, in `wtxn`, each custody record the side-row wall minted from the
 /// row outside the entity tables that `origin` names (FIX 6710): an erase
 /// that takes the row reaches every value it lifted. A record is minted from
@@ -635,6 +636,68 @@ pub(crate) fn revoke_side_row_custody_in_txn(
                 act.carry_revoke_in_txn(vault, wtxn, &record.name, at)?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Revokes custody lifted from a side row by a native local erase. The
+/// caller supplies the actual write context and owns the erase transaction;
+/// this does not record or carry an owner act to another machine.
+pub(crate) fn revoke_side_row_custody_with_context_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: &EntityId,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(write.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(write.store, wtxn, origin)? {
+        let minted = crate::batch::secret_scan::mask_origin_in_txn(write.store, wtxn, &id)?
+            .is_some_and(|mask| mask.record == *origin);
+        if !minted {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(write.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_with_context_in_txn(
+                write, wtxn, &id, cause, at,
+            )?;
+        } else {
+            crate::secret_rotation::revoke_secret_with_context_in_txn(
+                write,
+                wtxn,
+                &record.name,
+                cause,
+                at,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Revokes lifted custody for every row the caller's prefix delete takes,
+/// including keys that no longer decode. The caller performs the delete.
+pub(crate) fn revoke_side_row_prefix_custody_in_txn<K, V, C>(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    table: &crate::side_table::SideTable<K, V, C>,
+    key_prefix: &[u8],
+) -> Result<()>
+where
+    K: crate::side_table::SideKey,
+    C: crate::side_table::SideCodec<V>,
+{
+    let keys = table
+        .iter_raw_from(write.store, wtxn, key_prefix)?
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    let place = format!("side:{}", table.decl().name);
+    for raw in keys {
+        let mut key = table.decl().prefix.to_vec();
+        key.extend_from_slice(&raw);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &key)?;
+        revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
     }
     Ok(())
 }

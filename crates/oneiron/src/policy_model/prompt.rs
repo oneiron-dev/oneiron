@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value as JsonValue, json};
 
 use crate::error::{Error, Result};
-use crate::llm::{
+use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DEFAULT_SAFEGUARD_MODEL_BINDING,
     DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
 };
@@ -80,7 +80,7 @@ impl PolicyClassifyPrompt {
             model: config.safeguard_binding.llm_model_id(),
             envelope: CallEnvelope {
                 seat_effort: None,
-                scope: crate::llm::Scope::default(),
+                scope: oneiron_model::llm::Scope::default(),
                 purpose: CallPurpose::Other {
                     name: "policy_model_classify".to_owned(),
                 },
@@ -92,10 +92,10 @@ impl PolicyClassifyPrompt {
                         config: Some(json!({ "scope": "substrate_owner_patterns" })),
                     },
                 },
-                tier: crate::llm::TierPrecedence {
+                tier: oneiron_model::llm::TierPrecedence {
                     per_seat: None,
                     vault_policy: Some(config.safeguard_binding.tier_ref()),
-                    ..crate::llm::TierPrecedence::for_purpose(
+                    ..oneiron_model::llm::TierPrecedence::for_purpose(
                         &CallPurpose::Other {
                             name: "policy_model_classify".into(),
                         },

@@ -5,18 +5,21 @@
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::{
-    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
-    MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
-    RungVoices, Vault, submit_stamps,
+    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
+    MediaDispatchRelease, MediaJobState, MediaRequest, MediaResponse, MediaRuntime, MediaTicket,
+    PayerPerson, RetryHint, RunAdmission, RungVoices, Vault, submit_stamps,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
 /// stops, charging nothing: the job runs on at its provider, and the runtime
 /// that takes it up from its kept row pays its end, once. A program's job
 /// whose row was not kept has no row to take it up from: it pays its
-/// reservation on its run's line now (FIX 780, 6083). A job in a poll that
-/// holds it is left to its own permit.
+/// reservation on its run's line now (FIX 780, 6083). A direct job whose
+/// submit was never kept, neither durable nor held, pays its reservation now
+/// too (FIX 11517). A job in a poll that holds it is left to its own permit.
 impl Drop for MediaRuntime {
     fn drop(&mut self) {
         if self.store.is_none() {
@@ -29,7 +32,7 @@ impl Drop for MediaRuntime {
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
-            if self.unkept_program_job(ticket) {
+            if job.unkept || self.unkept_program_job(ticket) {
                 let charges = job.charges();
                 job.settle_failed();
                 // What its settle charged reaches the scope that funds it
@@ -62,6 +65,18 @@ impl MediaRuntime {
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
         self.run_in(request, None, payer, sources).await
+    }
+
+    /// [`Self::run`] with a hook invoked immediately before each backend dispatch.
+    pub(crate) async fn run_released(
+        &self,
+        request: MediaRequest,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaResponse> {
+        self.run_in_released(request, None, payer, sources, release)
+            .await
     }
 
     /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
@@ -106,29 +121,95 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released(run, request, voices, replay, None)
+            .await
+    }
+
+    pub(super) async fn run_admitted_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released_inner(run, request, voices, replay, release, None)
+            .await
+    }
+
+    pub(crate) async fn run_admitted_for_step(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        admitted: &AtomicBool,
+    ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released_inner(run, request, voices, replay, None, Some(admitted))
+            .await
+    }
+
+    async fn run_admitted_released_inner(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let key = replay.as_ref().filter(|_| voices.is_none());
-        if let Some(key) = key
-            && let Some(answer) = self.replay_answer(key)
-        {
-            return answer;
-        }
-        let kept = key.map(|_| request.clone());
-        let ladder = self.ladder(&request)?;
-        match ladder.media(run, request, None, voices).await? {
-            MediaAnswer::Done(response) => {
-                if let (Some(key), Some(kept)) = (key, &kept) {
-                    self.keep_replay_answer(key, kept, &response, None, None);
+        let leader = if let Some(key) = key {
+            if let Some(answer) = self.replay_answer(key) {
+                return answer;
+            }
+            match self.replay_runs.claim(key) {
+                super::run_replay::Claim::Leader(leader) => Some(leader),
+                super::run_replay::Claim::Follower(follower) => {
+                    drop(request);
+                    return self.follow_replay(key, follower, admitted).await;
                 }
-                Ok(response)
             }
-            // Only a job operation is submitted.
-            MediaAnswer::Job(mut job) => {
-                job.settle_failed();
-                Err(FatalLlmError::InvalidRequest.into())
+        } else {
+            None
+        };
+        let local_admitted = AtomicBool::new(false);
+        let admitted = admitted.or_else(|| leader.as_ref().map(|_| &local_admitted));
+        let answer = async {
+            if let Some(key) = key
+                && let Some(answer) = self.replay_answer(key)
+            {
+                return answer;
             }
+            let kept = key.map(|_| request.clone());
+            let ladder = self.ladder(&request)?;
+            match ladder
+                .media_released(run, request, None, voices, release, admitted)
+                .await?
+            {
+                MediaAnswer::Done(response) => {
+                    if let (Some(key), Some(kept)) = (key, &kept) {
+                        self.keep_replay_answer(key, kept, &response, None, None);
+                    }
+                    Ok(response)
+                }
+                // Only a job operation is submitted.
+                MediaAnswer::Job(mut job) => {
+                    job.settle_failed();
+                    Err(FatalLlmError::InvalidRequest.into())
+                }
+            }
+        }
+        .await;
+        match leader {
+            Some(leader) => leader.finish(
+                answer,
+                admitted.is_some_and(|admitted| admitted.load(Ordering::Acquire)),
+            ),
+            None => answer,
         }
     }
 

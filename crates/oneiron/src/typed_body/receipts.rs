@@ -16,11 +16,11 @@ use super::{DOCS, HEADS, invalid, load, made_by_names, names_no_actor, require_l
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::made_by::MadeBy;
-use crate::provenance::text_commit::TextCommitReceipt;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeBy;
+use crate::write_envelope::provenance::text_commit::TextCommitReceipt;
 pub(super) mod checkpoint;
 
 /// The stamp every commit message starts with; the verb follows it and no
@@ -55,7 +55,7 @@ impl StoredReceipt {
                 class,
                 made_by,
             } => {
-                let class = crate::edit_distance::actor_class_from_token(class)?;
+                let class = crate::write_envelope::actor_tokens::actor_class_from_token(class)?;
                 Some((WriteActor::new(*actor, class), made_by))
             }
             Self::Erased { .. } => None,
@@ -85,7 +85,8 @@ pub(super) fn record_in_txn(
     }
     let receipt = StoredReceipt::Live {
         actor: actor.entity_ref(),
-        class: crate::edit_distance::actor_class_token(actor.actor_class()).to_owned(),
+        class: crate::write_envelope::actor_tokens::actor_class_token(actor.actor_class())
+            .to_owned(),
         made_by: made_by.clone(),
     };
     RECEIPTS.put(store, txn, &key, &receipt)

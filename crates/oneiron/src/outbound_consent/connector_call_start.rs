@@ -26,21 +26,42 @@ impl PendingConnectorCall {
     /// Whether `other` asks for exactly this call: the same caller, tool,
     /// arguments and mutation, and for a `self.use` call the same use but
     /// for its intent and generation (FIX 2822).
-    fn same_call(&self, other: &Self) -> bool {
+    fn same_call(&self, vault: &Vault, other: &Self) -> bool {
         let arguments = |text: &str| serde_json::from_str::<Value>(text).ok();
         let same_use = match (&self.secret_use, &other.secret_use) {
             (Some(held), Some(asked)) => held.same_use(asked),
             (held, asked) => held.is_none() && asked.is_none(),
         };
-        self.name == other.name
-            && self.tool == other.tool
+        // A sweep-minted row skips the credential-family comparison (the
+        // sweep could not rebuild it), but the live raw catalog name must
+        // still resolve to the frozen server before its fields are
+        // adopted. After adoption the raw names compare strictly again.
+        let presentation_matches = if self.sweep_minted {
+            vault
+                .route_connector_call(&other.name)
+                .is_ok_and(|route| route.is_some_and(|route| route.name == self.name))
+        } else {
+            self.name == other.name
+                && self.credential == other.credential
+                && self.grant == other.grant
+                && same_use
+        };
+        let mut held_arguments = arguments(&self.arguments);
+        let mut asked_arguments = arguments(&other.arguments);
+        if self.sweep_minted
+            && self.sweep_dry_run_forced
+            && let (Some(Value::Object(held)), Some(Value::Object(asked))) =
+                (&mut held_arguments, &mut asked_arguments)
+        {
+            held.remove("dry_run");
+            asked.remove("dry_run");
+        }
+        self.tool == other.tool
             && self.mutation == other.mutation
             && self.principal_ref == other.principal_ref
-            && self.credential == other.credential
-            && self.grant == other.grant
-            && same_use
-            && arguments(&self.arguments).is_some()
-            && arguments(&self.arguments) == arguments(&other.arguments)
+            && presentation_matches
+            && held_arguments.is_some()
+            && held_arguments == asked_arguments
     }
 }
 
@@ -145,6 +166,7 @@ impl Vault {
             attempt_id: invocation.attempt_id,
             call_seq: invocation.call_seq,
             principal_ref: memory.actor().to_hex(),
+            remember_context: super::connector_remember::capture(memory),
             held_at_ms: now_ms(),
             settled: None,
             held_reasons: Vec::new(),
@@ -152,6 +174,8 @@ impl Vault {
             credential: secret_use.as_ref().map(|secret_use| secret_use.custody),
             grant,
             secret_use,
+            sweep_minted: false,
+            sweep_dry_run_forced: false,
             live_use: false,
             code_consent_wait: None,
             source_rows: Some(Vec::new()),
@@ -190,7 +214,7 @@ impl Vault {
                 Ok((self.ask_code_consent_for_hold(memory, outcome), rows))
             }
             // It read only the held row, which names no row of its own.
-            Some(held) if !held.same_call(&pending) => Ok((
+            Some(held) if !held.same_call(self, &pending) => Ok((
                 ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons: vec![CONNECTOR_CALL_INVOCATION_CONFLICT.to_owned()],
@@ -223,6 +247,21 @@ impl Vault {
                 {
                     return Ok((expired, held.source_rows));
                 }
+                let held = if held.sweep_minted {
+                    PendingConnectorCall {
+                        name: pending.name,
+                        arguments: pending.arguments,
+                        credential: pending.credential,
+                        grant: pending.grant,
+                        secret_use: pending.secret_use,
+                        off_record: pending.off_record,
+                        sweep_minted: false,
+                        sweep_dry_run_forced: false,
+                        ..held
+                    }
+                } else {
+                    held
+                };
                 self.drive_connector_call(Some(call_ref), None, held, host)
             }
         }

@@ -7,7 +7,7 @@ use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvi
 use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
-use crate::comm::{CommParties, PREDICATE_COMM_LAST_TOUCH, count_active_party_claims_in_txn};
+use crate::comm::CommParties;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
@@ -15,6 +15,7 @@ use crate::outbound_grant::{
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT};
+use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
 use std::collections::BTreeMap;
 
 /// Channel classes an iMIP invite counts as prior contact on.
@@ -216,18 +217,24 @@ fn resolve_consent_basis_in_txn(
     event_ref: EntityId,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
-    let party = crate::comm::resolve_party_ref_in_txn(vault, txn, recipient)
+    let party = vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, txn, recipient)
         .map_err(|err| ingest_reason(err.to_string()))?;
     consent_basis(
         |channel_class| match party {
-            Some(party) => count_active_party_claims_in_txn(
-                vault,
-                txn,
-                party,
-                PREDICATE_COMM_LAST_TOUCH,
-                channel_class,
-            )
-            .map_err(|err| ingest_reason(err.to_string())),
+            Some(party) => vault
+                .store
+                .record_hooks
+                .count_active_party_claims_in_txn(
+                    vault,
+                    txn,
+                    party,
+                    PREDICATE_COMM_LAST_TOUCH,
+                    channel_class,
+                )
+                .map_err(|err| ingest_reason(err.to_string())),
             None => Ok(0),
         },
         || {
@@ -339,14 +346,17 @@ impl PartyTouches {
             let touches = PRIOR_THREAD_CHANNEL_CLASSES
                 .into_iter()
                 .map(|channel_class| {
-                    let count = count_active_party_claims_in_txn(
-                        vault,
-                        &rtxn,
-                        party,
-                        PREDICATE_COMM_LAST_TOUCH,
-                        channel_class,
-                    )
-                    .map_err(|err| ingest_reason(err.to_string()));
+                    let count = vault
+                        .store
+                        .record_hooks
+                        .count_active_party_claims_in_txn(
+                            vault,
+                            &rtxn,
+                            party,
+                            PREDICATE_COMM_LAST_TOUCH,
+                            channel_class,
+                        )
+                        .map_err(|err| ingest_reason(err.to_string()));
                     (channel_class, count)
                 })
                 .collect::<BTreeMap<_, _>>();

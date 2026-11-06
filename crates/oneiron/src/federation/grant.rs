@@ -61,16 +61,9 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 13] = [
 /// [`FEDERATION_GRANT_BODY_KEYS`].
 const FEDERATION_GRANT_REQUIRED_KEYS: usize = 5;
 
-pub(crate) const FEDERATION_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "role", "preset"];
-
-pub(crate) const FEDERATION_GRANT_FIELDS_STANDARD: &[&str] =
-    &["scope", "member_ref", "role", "preset"];
-
-// Explicit, NOT an alias of the on-disk key set: the body grew to seven keys,
-// context-pack hydration deliberately did not. Delegate expiry and parentage
-// are authorization facts read at the selector door, not pack content.
-pub(crate) const FEDERATION_GRANT_FIELDS_FULL: &[&str] =
-    &["schema_version", "scope", "member_ref", "role", "preset"];
+pub(crate) use crate::serialize::grant_fields::{
+    FEDERATION_GRANT_FIELDS_FULL, FEDERATION_GRANT_FIELDS_MINIMAL, FEDERATION_GRANT_FIELDS_STANDARD,
+};
 
 pub(super) const KEY_SCHEMA_VERSION: &str = FEDERATION_GRANT_BODY_KEYS[0];
 
@@ -575,17 +568,32 @@ impl FederationGrant {
     /// non-delegate role — confer regardless of age.
     #[must_use]
     pub fn confers_at(&self, now_secs: u64) -> bool {
+        Self::scope_confers_at(&self.authority_scope, self.kind, self.expires_at, now_secs)
+    }
+
+    /// Whether a scope of `kind` with `expires_at` confers at `now_secs`
+    /// (FIX 4703): the [`Self::confers_at`] predicate over explicit parts,
+    /// so a signed Mint's scope is judged without building a Grant.
+    /// Source-equivalent to [`Self::confers_at`]; a `GitPush` kind never
+    /// confers (G1-PUSH).
+    #[must_use]
+    pub(crate) fn scope_confers_at(
+        scope: &super::Scope,
+        kind: super::FederationGrantKind,
+        expires_at: Option<u64>,
+        now_secs: u64,
+    ) -> bool {
         // A git_push grant confers no standing (G1-PUSH).
-        if self.is_git_push()
-            || !self.authority_scope.verbs.contains(&"read".to_owned())
-            || self.authority_scope.worlds.is_bottom()
-            || self.authority_scope.bands.is_bottom()
-            || self.authority_scope.audience.is_bottom()
-            || self.authority_scope.sensitivity == super::SensitivityCeiling::Bottom
+        if kind == super::FederationGrantKind::GitPush
+            || !scope.verbs.contains(&"read".to_owned())
+            || scope.worlds.is_bottom()
+            || scope.bands.is_bottom()
+            || scope.audience.is_bottom()
+            || scope.sensitivity == super::SensitivityCeiling::Bottom
         {
             return false;
         }
-        match self.expires_at {
+        match expires_at {
             None => true,
             Some(expires_at) => now_secs < expires_at,
         }

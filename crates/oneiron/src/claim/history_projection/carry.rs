@@ -62,12 +62,12 @@ impl Vault {
         if prior.scope != super::super::history_store::machine_history_scope_bytes(&original)? {
             return Err(bad());
         }
-        let signature = crate::authority::AuthoritySignature {
+        let signature = oneiron_authority::authority::AuthoritySignature {
             suite: prior.signer.suite(),
             public_key: prior.signer.clone(),
             signature: prior.signature.to_vec(),
         };
-        if !crate::authority::verify_authority_signature(
+        if !oneiron_authority::authority::verify_authority_signature(
             &signature,
             &prior.transcript().map_err(|_| bad())?,
         ) {
@@ -127,6 +127,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data: super::super::encode_claim_body(&record)?,
                     allow_maintenance: false,
                     allow_reserved_predicate: true,
@@ -137,7 +138,7 @@ impl Vault {
                     kind: crate::edge::EdgeKind::FacetOf,
                     tgt: original.scope_facet,
                     weight: 1.0,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 },
             ],
             self.text_index_trusted

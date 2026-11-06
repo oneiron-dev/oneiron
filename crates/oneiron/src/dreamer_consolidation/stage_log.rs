@@ -12,10 +12,7 @@ use crate::dreamer_wake::DreamerAttemptExecution;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Result};
 
-/// Wall ms since `started`.
-pub(crate) fn ms_since(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
+pub(crate) use crate::store::writer_hold::{WriterHold, ms_since};
 
 /// The wall ms of one partition attempt's stages. A stage the attempt never
 /// reached stays 0.

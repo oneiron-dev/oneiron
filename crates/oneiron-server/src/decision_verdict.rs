@@ -36,15 +36,15 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    LocatedDecision, ModelDecisionProvider, RoutineOutcome, RoutineTrail, cut_text, fit_state,
-    routine_choice,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
+    cut_text, fit_state_with_budget, routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, BlobVersionView, EntityView, ImageViewRequest, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+    BlobArtifactInput, BlobVersionAppendOutcome, EntityView, ImageViewRequest,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
@@ -55,6 +55,15 @@ use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
 
 pub(crate) mod hook;
+mod model_calls;
+
+/// This thread's caller for the model-call capture in `BigModel::decide`
+/// (FIX 12516/12742), bound while a verdict, graph or artifact decision
+/// answers. Outside a capture scope it is `None`, never guessed.
+pub(crate) use model_calls::caller as model_call_context;
+/// Binds the capture caller [`model_call_context`] reads back (FIX
+/// 12516/12742), on the decision's blocking thread.
+pub(crate) use model_calls::scoped as with_model_call_context;
 
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
@@ -219,6 +228,9 @@ impl HeldImage {
 /// run line bills when a room's root spend scope funds the run (FIX 3574),
 /// as the host bound it; `None` bills the vault owner. `evidence_read`
 /// holds the rows the evidence refs and images resolved to, once read.
+/// `session_ref` is the bound session the model-call capture attributes
+/// (FIX 12516/12742), `None` only at unbound sources; the scope binds it
+/// with `principal` for [`model_call_context`] on this blocking thread.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the caller's verdict"
@@ -233,6 +245,7 @@ pub(crate) fn run_verdict(
     request: &AiVerdictRequest,
     payer: Option<&PayerPerson>,
     evidence_read: &mut Vec<EntityId>,
+    session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
@@ -246,18 +259,20 @@ pub(crate) fn run_verdict(
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
         WriteActor::new(principal, class),
     );
-    let answered = on_caller_meter(&meter, || {
-        on_caller_payer(payer, || {
-            answer_verdict(
-                server,
-                principal,
-                class,
-                reader,
-                lane,
-                held,
-                request,
-                evidence_read,
-            )
+    let answered = model_calls::scoped(principal, session_ref, || {
+        on_caller_meter(&meter, || {
+            on_caller_payer(payer, || {
+                answer_verdict(
+                    server,
+                    principal,
+                    class,
+                    reader,
+                    lane,
+                    held,
+                    request,
+                    evidence_read,
+                )
+            })
         })
     });
     let now = vault.now_recorded_at();
@@ -336,9 +351,6 @@ fn answer_verdict(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| internal())?;
     let caller_state = request.state.clone().unwrap_or(Value::Null);
-    // One verdict over every evidence ref: a state its fit cannot bring under
-    // the ladder's fit target goes whole at its deepest cut (Rule 5).
-    let (state, cut_at) = verdict_state(&caller_state, &views);
     let images = match (&request.image, held) {
         (Some(handle), Some(held)) => vec![kept(reader, handle, readable(held)?)],
         (Some(handle), None) if handle.starts_with(HELD_PREFIX) => {
@@ -385,6 +397,16 @@ fn answer_verdict(
     dial.first = ladder
         .first_taking(&question, dial, &images)
         .ok_or_else(|| no_rung(&question.contract, !images.is_empty()))?;
+    // Fit for the provider that actually takes the question, when it knows a
+    // truthful serialized-byte budget; every current provider keeps the old
+    // fallback (L06-A 11:41, FIX 11126).
+    let state_budget = ladder
+        .provider(dial.first)
+        .and_then(|provider| provider.state_budget_bytes())
+        .unwrap_or(MAX_DECISION_STATE_BYTES);
+    // One verdict over every evidence ref: a state its fit cannot bring under
+    // the budget goes whole at its deepest cut (Rule 5).
+    let (state, cut_at) = verdict_state(&caller_state, &views, state_budget);
     let failed = |error: oneiron::Error| {
         MemoryError::bad_request_with(
             format!("ai.verdict: {error}"),
@@ -473,14 +495,20 @@ fn answer_verdict(
 }
 
 /// The ladder's state for a verdict, fitted by the engine's own cut step
-/// ([`fit_state`], FIX 1124): the caller's `state` whole, and each evidence
-/// view by its ref and kind, whole, beside its body with every text in it
-/// cut to the same bytes ([`cut_text`]), halving until the whole fits. A cut
+/// ([`fit_state_with_budget`], FIX 1124) to the selected provider's byte
+/// budget, or the existing default when it offers none (FIX 11126): the
+/// caller's `state` whole, and each evidence view by its ref and kind, whole,
+/// beside its body with every text in it cut to the same bytes ([`cut_text`]),
+/// halving until the whole fits. A cut
 /// state says where (`cut_at_bytes`) and each cut view says it is (`cut`),
 /// so a provider knows it reads a cut text; beside it, the cut. A state the
 /// rest does not let fit comes back over the bound at its deepest cut, and
 /// the ladder reads it whole.
-fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u64>) {
+fn verdict_state(
+    caller_state: &Value,
+    views: &[EntityView],
+    budget: usize,
+) -> (Value, Option<u64>) {
     let longest = views
         .iter()
         .filter_map(|view| view.body.as_ref())
@@ -488,7 +516,7 @@ fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u
         .max()
         .unwrap_or(0);
     let chosen = std::cell::Cell::new(None);
-    let state = fit_state(longest, |cut| {
+    let state = fit_state_with_budget(longest, budget, |cut| {
         chosen.set(cut);
         let evidence = views
             .iter()
@@ -616,6 +644,14 @@ fn kept(reader: &Memory<'_>, handle: &str, image: DecisionImage) -> DecisionImag
         image.image.media_type.clone(),
         &image.image.bytes,
     );
+    let stored = match stored {
+        Ok(BlobVersionAppendOutcome::Landed(version)) => Ok(version),
+        Ok(BlobVersionAppendOutcome::Proposed(proposal)) => {
+            tracing::warn!(proposal_ref = %proposal.proposal_ref, %handle, "the decision screenshot waits as a proposal; its pin stays on its run");
+            return image;
+        }
+        Err(error) => Err(error),
+    };
     let artifact = match stored.map(|version| EntityId::from_hex(&version.artifact_ref)) {
         Ok(Ok(artifact)) => artifact,
         Ok(Err(_)) => return image,
@@ -642,7 +678,7 @@ pub(crate) fn keep_screenshot(
     name: String,
     media_type: String,
     bytes: &[u8],
-) -> MemoryResult<BlobVersionView> {
+) -> MemoryResult<BlobVersionAppendOutcome> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
@@ -695,13 +731,10 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
     };
     let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
     let image = pulled.image.take().ok_or_else(internal)?;
-    let asset = EntityId::from_hex(&pulled.asset_ref).map_err(|_| internal())?;
+    let evidence = pulled.evidence.take().ok_or_else(internal)?;
     readable(DecisionImage {
         name: IMAGE.to_owned(),
-        evidence: EvidenceVersion {
-            id: asset,
-            body_hash: *blake3::hash(&image.bytes).as_bytes(),
-        },
+        evidence,
         image,
         frame: None,
     })

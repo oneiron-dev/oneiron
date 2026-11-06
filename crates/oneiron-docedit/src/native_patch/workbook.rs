@@ -108,43 +108,37 @@ impl Range {
 
     pub(super) fn formula(&self) -> String {
         let sheet = format!("'{}'", self.sheet.replace('\'', "''"));
-        let first = format!("${}${}", letters(self.first.0), self.first.1);
+        let first = crate::a1::cell_text_fixed(self.first.0, self.first.1, true, true);
         if self.first == self.last {
             return format!("{sheet}!{first}");
         }
-        format!("{sheet}!{first}:${}${}", letters(self.last.0), self.last.1)
+        let last = crate::a1::cell_text_fixed(self.last.0, self.last.1, true, true);
+        format!("{sheet}!{first}:{last}")
     }
 }
 
-/// `$B$12` → (2, 12).
+/// `$B$12` → (2, 12). Strict stored-XML reader: unpadded uppercase, no
+/// leading zero, grid bounds (R1/R2/R4); over-long letters already fail the
+/// grid bound. The old `B+12` acceptance is intentionally dropped (R3).
 fn cell_ref(text: &str) -> Option<(u32, u32)> {
-    let text = text.strip_prefix('$').unwrap_or(text);
-    let split = text.find(|c: char| !c.is_ascii_uppercase())?;
-    let (letters, digits) = text.split_at(split);
-    let digits = digits.strip_prefix('$').unwrap_or(digits);
-    if letters.is_empty() || letters.len() > 3 || digits.starts_with('0') {
+    let cell = crate::a1::parse_cell(text)?;
+    // The core trims and folds case; stored refs are unpadded uppercase.
+    if text != text.trim() || text.bytes().any(|byte| byte.is_ascii_lowercase()) {
         return None;
     }
-    let col = letters
-        .bytes()
-        .fold(0u32, |sum, byte| sum * 26 + u32::from(byte - b'A' + 1));
-    let row = digits.parse::<u32>().ok()?;
-    (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((col, row))
-}
-
-fn letters(mut col: u32) -> String {
-    let mut out = Vec::new();
-    while col > 0 {
-        let digit = (col - 1) % 26;
-        out.push(b'A' + digit as u8);
-        col = (col - 1) / 26;
+    let after_letters = text
+        .strip_prefix('$')
+        .unwrap_or(text)
+        .trim_start_matches(|c: char| c.is_ascii_uppercase());
+    let digits = after_letters.strip_prefix('$').unwrap_or(after_letters);
+    if digits.starts_with('0') {
+        return None;
     }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
+    (cell.col <= MAX_COLUMN && (1..=MAX_ROW).contains(&cell.row)).then_some((cell.col, cell.row))
 }
 
 pub(super) fn a1(key: &CellKey) -> String {
-    format!("{}{}", letters(key.col), key.row)
+    crate::a1::cell_text(key.col, key.row)
 }
 
 /// The shortest text that parses back to the same number.

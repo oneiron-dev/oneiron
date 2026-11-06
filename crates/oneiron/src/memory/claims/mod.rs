@@ -14,7 +14,7 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::deletion::{DeleteReason, DeletionGateContext};
+use crate::deletion::DeletionGateContext;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -120,48 +120,7 @@ pub enum CommitOutcome {
     },
 }
 
-/// Why a write or an answer was refused (OF-063, Engine 10-18): the one
-/// reason the refusal's reference-refusal receipt records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RefusalReason {
-    /// A record it named does not resolve for its writer: invented,
-    /// missing, or one the writer may not read.
-    #[serde(rename = "INVENTED_REFERENCE")]
-    InventedReference,
-    /// The gate, the door's authority or the write's own checks refused it.
-    #[serde(rename = "GATE_REFUSED")]
-    GateRefused,
-}
-
-impl RefusalReason {
-    /// The stable form, as the receipt records it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::InventedReference => MEMORY_CODE_INVENTED_REFERENCE,
-            Self::GateRefused => "GATE_REFUSED",
-        }
-    }
-
-    /// Parses the stable form.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        [Self::InventedReference, Self::GateRefused]
-            .into_iter()
-            .find(|reason| reason.as_str() == value)
-    }
-
-    /// The reason a refused claim element's error gives (the one policy
-    /// hook for it): a record it named that does not resolve is an invented
-    /// reference, and every other refusal the gate's or its door's.
-    pub(crate) fn of_code(code: &str) -> Self {
-        if code == MEMORY_CODE_INVENTED_REFERENCE || code == MEMORY_CODE_NOT_FOUND {
-            Self::InventedReference
-        } else {
-            Self::GateRefused
-        }
-    }
-}
+pub use crate::receipt::RefusalReason;
 
 /// A refusal as its caller hears it (OF-063, Engine rulings 1221 and 1231):
 /// typed, and never shaped like a success. Nothing it was asked to write or
@@ -218,54 +177,7 @@ impl RecordRefusal {
     }
 }
 
-/// Named deletion reasons (S7). There is deliberately NO bare bool delete on
-/// this surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SafeDeleteReason {
-    /// Tombstone delete: local body scrubbed to a shell, no receipt.
-    UserDelete,
-    /// Hard purge + redaction audit receipt + historical sweep.
-    UserHardDelete,
-    /// Compliance erase (soft-erase pass + purge + receipt + sweep).
-    GdprDelete,
-    /// Policy-driven erase (same machinery as GDPR).
-    PolicyDelete,
-}
-
-impl SafeDeleteReason {
-    /// Stable string form.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::UserDelete => "user_delete",
-            Self::UserHardDelete => "user_hard_delete",
-            Self::GdprDelete => "gdpr_delete",
-            Self::PolicyDelete => "policy_delete",
-        }
-    }
-
-    /// Parses the stable string form.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "user_delete" => Some(Self::UserDelete),
-            "user_hard_delete" => Some(Self::UserHardDelete),
-            "gdpr_delete" => Some(Self::GdprDelete),
-            "policy_delete" => Some(Self::PolicyDelete),
-            _ => None,
-        }
-    }
-
-    pub(super) const fn delete_reason(self) -> DeleteReason {
-        match self {
-            Self::UserDelete => DeleteReason::UserDelete,
-            Self::UserHardDelete => DeleteReason::UserHardDelete,
-            Self::GdprDelete => DeleteReason::GdprDelete,
-            Self::PolicyDelete => DeleteReason::PolicyDelete,
-        }
-    }
-}
+pub use crate::deletion::SafeDeleteReason;
 
 /// Where one delete request stands (FIX 1465). Neither says the erase is
 /// complete: that is its deletion receipt's signed final row.
@@ -367,6 +279,8 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+
+pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 

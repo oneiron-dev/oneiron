@@ -11,7 +11,6 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Error;
 use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
 
 use super::authority::OutboundBindingAuthority;
@@ -30,7 +29,9 @@ impl Vault {
         host: &mut H,
     ) -> Result<Option<Step>, IntentLedgerError> {
         let record = {
-            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            // The custody guard before the snapshot: a sealed row opens
+            // here (FIX 10958).
+            let txn = self.store.custody_snapshot()?;
             read_intent_for_attempt_in_txn(self, &txn, pending.attempt_id, pending.call_seq)?
         };
         let Some(record) = record else {

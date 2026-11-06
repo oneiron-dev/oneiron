@@ -22,6 +22,7 @@ use super::fact_subject::{
 use super::hosting::{ACTOR_ERASE_HOST_PIN, HostPin};
 use super::offer_history::{
     ACTOR_ERASE_OFFER_BINDING, OFFER_ROWS, OfferHistory, OfferRow, links as offer_links,
+    offer_history_erased_wins,
 };
 use super::offer_settle::RecordedOfferAnswer;
 use super::offers::{OFFER_CURRENT, OfferState, StoredOffer, current_key};
@@ -31,7 +32,8 @@ use crate::deletion::carrier_actor_merged;
 use crate::error::Result;
 use crate::side_table::{LegacyJson, SideTable};
 use crate::workspace_roster::join_history::{
-    ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, links as join_links,
+    ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, join_history_erased_wins,
+    links as join_links,
 };
 use crate::workspace_roster::join_receipt::{READY, ready_key};
 use crate::workspace_roster::{
@@ -261,6 +263,7 @@ pub(super) fn shared_here(
                 carried,
                 held,
                 |carried| RoomSideRow::Join { receipt: carried },
+                join_history_erased_wins,
                 |txn, history, index| {
                     JOIN_ROWS.put(
                         &vault.store,
@@ -298,6 +301,7 @@ pub(super) fn shared_here(
                 carried,
                 held,
                 |carried| RoomSideRow::Offer { offer: carried },
+                offer_history_erased_wins,
                 |txn, history, index| {
                     OFFER_ROWS.put(
                         &vault.store,
@@ -330,11 +334,15 @@ impl IndexRow {
 
 /// Settles the carried copy's form against the held one's (`changed` when
 /// the held one is not as stored). A history form is written by `write`
-/// with the index row its live form kept.
+/// with the index row its live form kept. Two history forms settle under
+/// carrier equivalence (FIX 4871): each names no one the other's vault
+/// erased, and `merge` writes the union of what each forgot; what differs
+/// past who they name still conflicts, as live copies do.
 fn settle<L, H: PartialEq>(
     carried: Form<L, H>,
     held: Option<(bool, Form<L, H>)>,
     live: impl Fn(L) -> RoomSideRow,
+    merge: impl Fn(&H, &H) -> Option<H>,
     write: impl FnOnce(&mut heed::RwTxn<'_>, H, IndexRow) -> Result<()>,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<SharedHere> {
@@ -358,10 +366,10 @@ fn settle<L, H: PartialEq>(
             Ok(SharedHere::Settled(SideMerge::Written))
         }
         (Form::History(carried, index), Some((changed, Form::History(held, held_index)))) => {
-            if carried != held {
+            let Some(union) = merge(&carried, &held) else {
                 return refused(TurnMergeRefusal::FixedFieldsConflict);
-            }
-            if !changed {
+            };
+            if !changed && union == held {
                 return Ok(SharedHere::Settled(SideMerge::Held));
             }
             // The held copy turned history here: its own index row goes.
@@ -370,7 +378,7 @@ fn settle<L, H: PartialEq>(
             } else {
                 held_index
             };
-            write(txn, held, index)?;
+            write(txn, union, index)?;
             Ok(SharedHere::Settled(SideMerge::Written))
         }
         (Form::History(..), Some((_, Form::Live(_))))

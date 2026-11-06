@@ -23,9 +23,10 @@ use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consoli
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::decision::{
-    AnswerContract, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionClass, DecisionQuestion,
-    DecisionRung, HolderKind, HumanAskReason, HumanDecisionRequest, ProviderPin,
+use crate::llm::decision::{AskRole, AskTo, DecisionAsk, HumanDecisionRequest};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, HolderKind,
+    HumanAskReason, MAX_DECISION_QUESTION_TEXT_BYTES, ProviderPin,
 };
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, TimeRange, Vault};
@@ -45,10 +46,6 @@ const INTENT_CLAIM_DOMAIN: &[u8] = b"oneiron.dreamer.intent_ask.claim.v1";
 const ASK_PAGE: usize = 256;
 /// What the gap scan reads as a stated intent, lowercased.
 const MARKERS: [&str; 2] = ["i will ", "i'll "];
-/// The longest question text an ask holds, as `DecisionQuestion::validate`
-/// bounds it (FIX 9294): a sentence too long to quote whole within it is
-/// quoted by its first part and a locator.
-const QUESTION_TEXT_BYTES: usize = 16_384;
 
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -65,8 +62,10 @@ enum OwnerWord<'a> {
 impl Vault {
     /// The owner states an intent in his own words (FIX 8949): `text`, as he
     /// wrote it, lands as an Approved, Active, UserStated `profile.intent`
-    /// about him, citing `message` (a MESSAGE) when he names one. His proof
-    /// is checked again in the write. Returns the claim.
+    /// about him, citing `message` (a MESSAGE) when he names one, with
+    /// `needed_before` (Unix seconds) kept as factual evidence the urgent
+    /// question reads when he states one, never an expiry. His proof is
+    /// checked again in the write. Returns the claim.
     ///
     /// # Errors
     ///
@@ -76,23 +75,35 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         text: &str,
+        needed_before: Option<u64>,
         message: Option<EntityId>,
     ) -> Result<EntityId> {
         let id = self.store.clock.entity_id()?;
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            write_owner_intent_in_txn(self, txn, OwnerWord::Intake(owner), id, text, message, now)
+            write_owner_intent_in_txn(
+                self,
+                txn,
+                OwnerWord::Intake(owner),
+                id,
+                text,
+                needed_before,
+                message,
+                now,
+            )
         })
     }
 }
 
-/// The one intent writer: `text` as `word`'s owner stated it, at `id`.
+/// The one intent writer: `text` as `word`'s owner stated it, at `id`, with
+/// `needed_before` kept alongside the words when he states one.
 fn write_owner_intent_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     word: OwnerWord<'_>,
     id: EntityId,
     text: &str,
+    needed_before: Option<u64>,
     message: Option<EntityId>,
     now: u64,
 ) -> Result<EntityId> {
@@ -107,10 +118,17 @@ fn write_owner_intent_in_txn(
             (actor, "ask")
         }
     };
+    let stored = match needed_before {
+        None => Value::from(text),
+        Some(due) => Value::Map(vec![
+            (Value::from("text"), Value::from(text)),
+            (Value::from("needed_before"), Value::from(due)),
+        ]),
+    };
     let mut candidate = ClaimCandidate::new(
         PROFILE_INTENT_PREDICATE,
         ClaimSubject::Entity(owner),
-        Value::from(text),
+        stored,
         1.0,
     );
     if let Some(message) = message {
@@ -189,15 +207,16 @@ fn intent_question(turn: EntityId, at: (usize, usize), words: &str) -> Result<De
     })
 }
 
-/// The question's text: `words` quoted whole, or, past the question's bound
-/// (FIX 9294), its first part with where the whole sentence stands.
+/// The question's text: `words` quoted whole, or, past
+/// [`MAX_DECISION_QUESTION_TEXT_BYTES`] (FIX 9294), its first part with where
+/// the whole sentence stands.
 fn intent_question_text(turn: EntityId, (start, end): (usize, usize), words: &str) -> String {
     let whole = format!(
         "Your conversation holds these words: \"{words}\". Keep them as your own stated \
          intent? Yes records exactly these words as your intent; no, or no answer, changes \
          nothing."
     );
-    if whole.len() <= QUESTION_TEXT_BYTES {
+    if whole.len() <= MAX_DECISION_QUESTION_TEXT_BYTES {
         return whole;
     }
     let quoted = |part: &str| {
@@ -210,7 +229,7 @@ fn intent_question_text(turn: EntityId, (start, end): (usize, usize), words: &st
             turn.to_hex(),
         )
     };
-    let mut cut = QUESTION_TEXT_BYTES
+    let mut cut = MAX_DECISION_QUESTION_TEXT_BYTES
         .saturating_sub(quoted("").len())
         .min(words.len());
     while !words.is_char_boundary(cut) {
@@ -355,7 +374,16 @@ fn land_answer(vault: &Vault, ask: &DecisionAsk) -> Result<()> {
         // The words still stand in this write, at its own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         record.check_live_in(&read, txn, &turn)?;
-        write_owner_intent_in_txn(vault, txn, OwnerWord::Answered(by), id, words, message, now)?;
+        write_owner_intent_in_txn(
+            vault,
+            txn,
+            OwnerWord::Answered(by),
+            id,
+            words,
+            None,
+            message,
+            now,
+        )?;
         Ok(())
     })
 }

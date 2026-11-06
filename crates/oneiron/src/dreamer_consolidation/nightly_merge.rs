@@ -19,14 +19,16 @@ use crate::dreamer_runner::{
     DreamerParkCause, DreamerRunnerStore,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, Scope,
-    StepOutcome, TierPrecedence, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
+};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -75,12 +77,28 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
         return Err(invalid());
     }
     vault.with_write_txn_grouped(|txn| {
-        let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
-        outputs.extend(ids);
-        outputs.sort_unstable();
-        outputs.dedup();
-        OUTPUT.put(&vault.store, txn, &attempt, &outputs)
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly outputs");
+        record_outputs_in_txn(vault, txn, attempt, ids)
     })
+}
+
+/// Records claim ids in the same transaction that validated their promotion or
+/// attachment. These are committed outputs, not a whole-attempt success receipt;
+/// nightly readers still judge each claim's current live state and scope.
+pub(crate) fn record_outputs_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    ids: &[EntityId],
+) -> Result<()> {
+    if AttemptQueue::new(vault).get_in_txn(txn, attempt)?.is_none() {
+        return Err(invalid());
+    }
+    let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
+    outputs.extend(ids);
+    outputs.sort_unstable();
+    outputs.dedup();
+    OUTPUT.put(&vault.store, txn, &attempt, &outputs)
 }
 
 /// The existing extraction and merge result ledgers in the caller's snapshot.
@@ -98,7 +116,7 @@ pub(crate) fn outputs_in_txn(
     Ok(outputs)
 }
 
-/// Outputs already accepted by the promotion sink for this attempt.
+/// Claim ids recorded by the promotion sink for this attempt.
 pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
     Ok(OUTPUT
@@ -455,6 +473,7 @@ impl ConsolidationExecutor<'_> {
         };
         let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly merge");
             recheck_in_txn(&read, txn, &read_back)?;
             let outputs = writer.claims_in_txn(txn, drafts)?;
             writer.result_in_txn(
@@ -633,7 +652,7 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
     if super::step_charge::retry_fallback(response) {
         return Err(NARRATIVE_FALLBACK.to_owned());
     }
-    if crate::llm::fallback_failure_class(response).is_some() {
+    if oneiron_model::llm::fallback_failure_class(response).is_some() {
         return Ok(());
     }
     narrative_text(response).map(|_| ()).map_err(str::to_owned)

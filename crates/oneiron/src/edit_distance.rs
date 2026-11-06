@@ -66,6 +66,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_PEER_BINDING,
@@ -80,12 +81,17 @@ use crate::write_envelope::WriteActor;
 /// Finalized proposal-text artifact and its retained document, keyed by artifact ref.
 const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
+/// Whether a masked copy of a `EDIT_DISTANCE_PROPOSAL_ARTIFACT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn edit_distance_proposal_artifact_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredProposal, Raw>(bytes)
+}
 
 /// Schema version of the persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;
+pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 4;
 
 /// Pinned MessagePack key set for a persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
+pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 10] = [
     "v",
     "artifact",
     "proposed_ref",
@@ -94,6 +100,8 @@ pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
     "source_turn",
     "spans",
     "lifted",
+    "made_by_inputs",
+    "birth_attempt",
 ];
 
 /// Pinned MessagePack key set for one attributed op span inside a record.
@@ -109,6 +117,8 @@ const KEY_DOCUMENT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
 const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
 const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
 const KEY_LIFTED: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
+const KEY_MADE_BY_INPUTS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[8];
+const KEY_BIRTH_ATTEMPT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[9];
 
 const SPAN_KEY_PEER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[0];
 const SPAN_KEY_COUNTER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[1];
@@ -271,6 +281,13 @@ pub struct FinalizedProposalText {
     /// fence probe keys off this, so an absent value there means "not
     /// turn-sourced", never "unknown".
     pub source_turn_ref: Option<EntityId>,
+    /// The run-write attempt present when this artifact opened, never the
+    /// later finalize or settle attempt. `None` when birth had no run token.
+    pub birth_attempt: Option<AttemptId>,
+    /// Every MadeBy input row id the window's commits named (FIX 11350), in
+    /// first-seen order, deduped by id. Ids only: the eligibility check is row
+    /// readability, and Prompt vs Input is irrelevant to it.
+    pub made_by_inputs: Vec<EntityId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +426,19 @@ pub fn peer_actor_stamp_is_honored(
         .any(|binding| binding.claims_second(at) && binding.actor == *actor))
 }
 
+/// [`peer_actor_stamp_is_honored`] under the caller's transaction (FIX 11172).
+pub(crate) fn peer_actor_stamp_is_honored_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer_id: u64,
+    at: u64,
+    actor: &WriteActor,
+) -> Result<bool> {
+    Ok(eligible_peer_bindings_in_txn(vault, txn, peer_id)?
+        .into_iter()
+        .any(|binding| binding.claims_second(at) && binding.actor == *actor))
+}
+
 /// The peer's bindings an attribution may rest on: one awaiting its owner's
 /// answer vouches for no actor yet. Registration's closure scan reads them all.
 fn eligible_peer_bindings_in_txn(
@@ -541,30 +571,7 @@ fn peer_binding_field<'a>(body: &'a ClaimBody, key: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
-/// The pinned wire token for an actor class.
-///
-/// Deliberately NOT `EdgeActorClass::gate_actor_class`: that key belongs to
-/// Gate's `actor_ceilings` policy rows and is free to change with policy. This
-/// mapping is a storage ABI. The exhaustive match makes a new class a compile
-/// error here, which is the point.
-pub(crate) const fn actor_class_token(class: EdgeActorClass) -> &'static str {
-    match class {
-        EdgeActorClass::Human => "human",
-        EdgeActorClass::Agent => "agent",
-        EdgeActorClass::System => "system",
-    }
-}
-
-/// Inverse of [`actor_class_token`]; `None` for an unknown token.
-pub(crate) fn actor_class_from_token(token: &str) -> Option<EdgeActorClass> {
-    [
-        EdgeActorClass::Human,
-        EdgeActorClass::Agent,
-        EdgeActorClass::System,
-    ]
-    .into_iter()
-    .find(|class| actor_class_token(*class) == token)
-}
+pub(crate) use crate::write_envelope::actor_tokens::{actor_class_from_token, actor_class_token};
 
 // ---------------------------------------------------------------------------
 // Record codec
@@ -611,6 +618,22 @@ fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
         (
             Value::from(KEY_LIFTED),
             text_ref::encode_lifted(stored.lifted.as_ref()),
+        ),
+        (
+            Value::from(KEY_MADE_BY_INPUTS),
+            Value::Array(
+                record
+                    .made_by_inputs
+                    .iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_BIRTH_ATTEMPT),
+            record
+                .birth_attempt
+                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
     ]);
     let mut out = Vec::new();
@@ -678,6 +701,12 @@ fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
         final_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_FINAL_REF)?),
         ops_by_actor: spans,
         source_turn_ref: field_opt_entity_id(&entries, KEY_SOURCE_TURN)?,
+        birth_attempt: match field(&entries, KEY_BIRTH_ATTEMPT).ok_or_else(corrupt)? {
+            Value::Nil => None,
+            Value::Binary(bytes) => Some(AttemptId::from_bytes(bytes).map_err(|_| corrupt())?),
+            _ => return Err(corrupt()),
+        },
+        made_by_inputs: field_entity_id_list(&entries, KEY_MADE_BY_INPUTS)?,
     };
     let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
     Ok(StoredProposal {
@@ -778,6 +807,22 @@ fn field_opt_entity_id(entries: &[(Value, Value)], key: &str) -> Result<Option<E
         None | Some(Value::Nil) => Ok(None),
         Some(_) => field_entity_id(entries, key).map(Some),
     }
+}
+
+fn field_entity_id_list(entries: &[(Value, Value)], key: &str) -> Result<Vec<EntityId>> {
+    let Some(Value::Array(items)) = field(entries, key) else {
+        return Err(corrupt());
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            Value::Binary(bytes) => {
+                let bytes: [u8; ENTITY_ID_LEN] = bytes.clone().try_into().map_err(|_| corrupt())?;
+                EntityId::from_bytes(bytes).map_err(|_| corrupt())
+            }
+            _ => Err(corrupt()),
+        })
+        .collect()
 }
 
 fn corrupt() -> Error {

@@ -193,7 +193,7 @@ pub(crate) fn land_kept_alternative_in_txn(
         crate::own_rate::count_in_txn(
             &vault.store,
             txn,
-            crate::own_rate::OwnRateKind::AutoWrite,
+            crate::store::own_rate_record::OwnRateKind::AutoWrite,
             run.agent_actor.entity_ref(),
             vault.store.clock.now_recorded_at(),
             crate::own_rate::auto_write_rate(),

@@ -26,10 +26,13 @@ use super::{
     WrapTransition, check_name,
 };
 use crate::recovery::checkpoint::{
-    AddedRecipient, EscrowRole, RecipientAdmissionFacts, RecipientRetirementDisposition, Rejected,
-    RestoreAdmissionReason as R, RestorePlan, RetiredBy, RetiredRecipient, because,
+    AddedRecipient, EscrowRole, RecipientAdmissionFacts, RecipientRetirementDisposition,
+    RestorePlan, RetiredBy, RetiredRecipient,
 };
 use crate::store::RecipientRetirement;
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 use crate::world_keys::{OpenedDataKey, refused};
 use crate::{EntityId, Vault};
 

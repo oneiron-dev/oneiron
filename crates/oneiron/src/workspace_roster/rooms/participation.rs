@@ -37,12 +37,12 @@ use super::super::join_receipt::JoinReceiptRef;
 use super::fact_subject::FactSubject;
 use super::{ProjectRoom, RoomTurn, invalid, require_member, room_in, turn_in};
 use super::{TURNS, audience, hosting, offers};
-use crate::agent_dispatch::SpendScopeId;
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::memory::WitnessTurn;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 mod admission;
@@ -674,6 +674,32 @@ fn held_thread_task_in_txn(
         }
     }
     Ok(None)
+}
+
+/// Every holder of an open TASK of `turn`'s thread now: each task's stored
+/// assignee, re-read here, as [`held_thread_task_in_txn`] reads it for one
+/// holder (FIX 15647). A task whose holder does not read is passed over.
+pub(super) fn thread_task_holders_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<BTreeSet<EntityId>> {
+    let mut holders = BTreeSet::new();
+    for task in thread_tasks_in_txn(vault, txn, turn)? {
+        match crate::task_verb::open_thread_task_holder_in(
+            vault,
+            txn,
+            task,
+            crate::gate::TaskHolderFallback::AssigneeOnly,
+        ) {
+            Ok(Some(holder)) => {
+                holders.insert(holder);
+            }
+            Ok(None) | Err(Error::EntityNotFound) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(holders)
 }
 
 /// The TASK ids bound along `turn`'s thread chain, from the turn up to its

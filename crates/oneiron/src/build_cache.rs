@@ -8,11 +8,11 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::codebase::{CodebaseForkHash, RepoRef};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::secret_rotation::ArtifactTaintState;
 use crate::side_table::{self, Raw, RawValue, SideTable};
+use crate::store::code_snapshot::{CodebaseForkHash, RepoRef};
 
 pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 3;
 pub const BUILD_CACHE_ACTION_SCHEMA_VERSION_V1: u8 = 1;
@@ -631,6 +631,7 @@ fn admit_result_in_txn(
 }
 
 mod account;
+pub mod command_spec;
 mod leg;
 mod reapi;
 pub use leg::{BuildLegReceipt, CachedBuildLeg};

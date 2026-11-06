@@ -15,7 +15,8 @@ use crate::channel_identity::{
 use crate::claim::ClaimLifecycleStatus;
 use crate::consent::{BoundClass, BoundEnvelope, BoundSubject, GrantBound};
 use crate::error::Result;
-use crate::skill_hub::{HubPin, HubRef, PREDICATE_SKILL_HUB_PROVENANCE, default_skill_hub_id};
+use crate::skill_hub::{PREDICATE_SKILL_HUB_PROVENANCE, default_skill_hub_id};
+use crate::write_envelope::skill_source::{HubPin, HubRef};
 use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
 
@@ -107,6 +108,9 @@ pub(super) fn channel_holding(
                 ChannelIdentityShape::DedicatedHandle => ShapeSelfHeld::DedicatedHandle,
                 ChannelIdentityShape::SharedPresence => ShapeSelfHeld::SharedPresence,
                 ChannelIdentityShape::DelegatedGrant => return None,
+                // The enum is `#[non_exhaustive]` in `oneiron-authority`; every
+                // variant it has today is matched above, so this arm never runs.
+                _ => return None,
             },
         },
     };

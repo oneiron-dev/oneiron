@@ -3,10 +3,12 @@
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::agent_dispatch::{AgentDispatcher, DispatchHealer, HealerSlotOutcome};
+use crate::agent_dispatch::AgentDispatcher;
+use crate::agent_dispatch::HealerSlotOutcome;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::failure_ladder::healer_dispatch::DispatchHealer;
 use crate::work_line::TaskWorkTurn;
 
 use super::blocked_reports::BlockedReportRef;
@@ -153,7 +155,12 @@ impl<'a> FailureLadder<'a> {
         }
 
         // 4. Exactly one bounded lineage walk, for every class.
-        let walk = retry_lineage_walk(&queue, &current, policy.max_consecutive_transients)?;
+        let walk = retry_lineage_walk(
+            self.vault,
+            &queue,
+            &current,
+            policy.max_consecutive_transients,
+        )?;
         // Rule 5: the one transition's TASK report runs on its runner's
         // task-work turn, taken before any writer and held until the routing
         // below returns, past its commit and any healer dispatch.

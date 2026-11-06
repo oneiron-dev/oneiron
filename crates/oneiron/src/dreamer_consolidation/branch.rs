@@ -16,7 +16,7 @@ use super::partition::{
 use super::support::hash_optional_entity;
 use super::watermark::WorkingSetTurn;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::llm::ScopeResource;
+use oneiron_model::llm::ScopeResource;
 
 /// The domain of a multi-part branch's identity.
 const BRANCH_IDENTITY_DOMAIN: &[u8] = b"oneiron:dreamer-branch:v1";
@@ -134,7 +134,12 @@ impl<T> ConsolidationBranchPlan<T> {
             Some(thing) => {
                 hasher.update(&[1]);
                 hash_optional_entity(&mut hasher, thing.entity.as_ref());
-                hash_optional_entity(&mut hasher, thing.audience.as_ref());
+                match thing.audience {
+                    Some(audience) => audience.hash_into(&mut hasher),
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                }
             }
             None => {
                 hasher.update(&[0]);

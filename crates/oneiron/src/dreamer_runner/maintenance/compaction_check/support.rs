@@ -17,14 +17,16 @@ use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRun
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
-use crate::llm::decision::catalogue::COMPACTION_SUPPORT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    GeneratedDecisions, GeneratedRung, GeneratedStep, ProviderPin, Reversibility,
+use crate::llm::decision::{DecisionLadder, GeneratedDecisions, GeneratedRung, GeneratedStep};
+use crate::model_decision::catalogue::COMPACTION_SUPPORT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, ProviderPin, Reversibility,
 };
-use crate::llm::{DurableStepContext, DurableStepError, LlmRequest, LlmUsage, ModelLocality};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{LlmRequest, LlmUsage, ModelLocality};
 
 /// The support question's choices, named as the finding names its verdicts.
 const SUPPORTED: &str = "supported";
@@ -83,11 +85,23 @@ impl Spend {
         &mut self,
         vault: &Vault,
         attempt: AttemptId,
-        spent: &[([u8; 32], LlmUsage)],
+        spent: &[([u8; 32], LlmUsage, bool)],
     ) -> Result<()> {
         let store = DreamerRunnerStore::new(vault);
-        for (hash, usage) in spent {
-            if self.step_hashes.contains(hash) || store.checkpoint_step_charged(attempt, hash)? {
+        for (index, (hash, usage, _)) in spent.iter().enumerate() {
+            if self.step_hashes.contains(hash)
+                || match store.checkpoint_step_charged(attempt, hash) {
+                    Ok(charged) => charged,
+                    Err(error) => {
+                        for (_, usage, memoized) in &spent[index..] {
+                            if !*memoized {
+                                self.units = self.units.saturating_add(units(usage));
+                            }
+                        }
+                        return Err(error);
+                    }
+                }
+            {
                 continue;
             }
             self.step_hashes.push(*hash);

@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
@@ -70,7 +70,7 @@ mod refusal;
 mod relay_delete;
 
 #[cfg(target_os = "linux")]
-pub(super) use self::carrier_watch::carrier_recipient;
+pub(super) use self::carrier_watch::carrier_recipients_snapshot;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
@@ -202,10 +202,11 @@ pub struct ManagedState {
     /// row (b)): set once at boot, before ctl serves. `None` until set, which
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
-    /// The vault VM outbox carrier's revision, as every `Ping` reports it
-    /// (FIX 5235): set at boot, then as its companion answers each look
-    /// (FIX 6683); 0 for none, on a node or while no companion answers.
-    vm_outbox_revision: AtomicU32,
+    /// The vault VM outbox carrier's one-word observation, as every `Ping`
+    /// reports it (FIX 5235, FIX 11073): its revision plus whether a probe
+    /// completed, set at boot, then as its companion answers each look (FIX
+    /// 6683); unobserved until one does.
+    vm_outbox_revision: AtomicU64,
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
@@ -223,6 +224,11 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 /// request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// A registered MCP lifecycle call, classified from the verified held body.
+/// This carries only a wake hint, never caller authority or body bytes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct McpLifecycleObservation;
 
 /// The person a supervisor-signed `ManagedPersonAction` names for one
 /// request at a member door (FIX 1302), verified at ingress; never the
@@ -437,7 +443,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
-            vm_outbox_revision: AtomicU32::new(0),
+            vm_outbox_revision: AtomicU64::new(0),
             restore: None,
             idle_backup: Arc::default(),
             relay_delete: Arc::default(),

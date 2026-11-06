@@ -9,7 +9,7 @@ use rmpv::Value;
 
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::grants::{
     PolicyScopedGrant, scoped_read_actor_matches, scoped_read_grant_has_read_effector,
@@ -42,7 +42,7 @@ pub(crate) struct ResolvedRetrievalFilter {
     /// The verified credential a scoped read retrieves under, if any. A TASK
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
-    pub(crate) credential: Option<crate::federation::Scope>,
+    pub(crate) credential: Option<oneiron_authority::federation::Scope>,
 }
 
 impl ResolvedRetrievalFilter {
@@ -58,6 +58,38 @@ impl ResolvedRetrievalFilter {
     #[must_use]
     pub(crate) fn read_scope(&self) -> Scope {
         read_scope(self.entity_types.as_ref(), self.max_sensitivity_band)
+    }
+
+    /// The rows this filter reads and the rows `other` reads, as one
+    /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
+    /// either reads it, the lower minima. A deny-all side adds nothing. It
+    /// is a candidate envelope, never an authorization: each row it lets
+    /// through must still pass one whole alternative's own check. Both sides
+    /// retrieve under the same key, so this filter's credential is kept.
+    #[must_use]
+    pub(crate) fn union_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return Self {
+                credential: self.credential.clone(),
+                ..other.clone()
+            };
+        }
+        let entity_types = match (&self.entity_types, &other.entity_types) {
+            (Some(left), Some(right)) => Some(left.union(right).copied().collect()),
+            _ => None,
+        };
+        Self {
+            entity_types,
+            max_sensitivity_band: self.max_sensitivity_band.max(other.max_sensitivity_band),
+            include_stale: self.include_stale || other.include_stale,
+            min_confidence: self.min_confidence.min(other.min_confidence),
+            min_salience: self.min_salience.min(other.min_salience),
+            deny_all: false,
+            credential: self.credential.clone(),
+        }
     }
 }
 
@@ -97,6 +129,54 @@ impl PolicyManifestResolution {
             actor,
             actor.and_then(ScopedReadActorKey::authority_scope),
         )
+    }
+
+    /// Whether every floor-counted read grant has a static boundary. Each
+    /// alternative is judged whole: a union of projections can look broad
+    /// even when no single grant is. This inspects no rows.
+    pub(crate) fn scoped_read_grants_all_bounded(&self, actor: &ScopedReadActorKey) -> bool {
+        if actor.vault_owner_ref().is_some() {
+            return false;
+        }
+        let mut saw_grant = false;
+        for grant in self.scoped_grants().iter().filter(|grant| {
+            scoped_read_grant_has_read_effector(grant)
+                && scoped_read_actor_matches(grant, actor)
+                && !grant.receipt_required
+                && grant.budget.is_none()
+        }) {
+            let Some(floor) = RetrievalPolicyFloor::from_grant(grant) else {
+                continue;
+            };
+            saw_grant = true;
+            let scope = &grant.authority_scope;
+            // Other selectors belong to the matcher; unknown keys also admit
+            // nothing. Neither case is a wholly broad alternative.
+            let matcher_bound = match grant.scope.as_ref() {
+                Some(Value::Map(entries)) => entries.iter().any(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        Some(
+                            "entity_types"
+                                | "max_sensitivity_band"
+                                | "include_stale"
+                                | "min_confidence"
+                                | "min_salience"
+                        )
+                    )
+                }),
+                _ => false,
+            };
+            if !floor.has_grant_scope_bound(None)
+                && scope.worlds == ScopeAxis::All
+                && scope.facets == ScopeAxis::All
+                && scope.audience == ScopeAxis::All
+                && !matcher_bound
+            {
+                return false;
+            }
+        }
+        saw_grant
     }
 
     /// [`Self::retrieval_floor_for_actor`] for `actor` as if it held a proof
@@ -201,6 +281,24 @@ impl RetrievalPolicyFloor {
                 .is_none_or(|types| !types.is_empty())
     }
 
+    /// Whether this reader has a static grant boundary, independently of
+    /// request narrowing and of which rows exist or were visited.
+    pub(crate) fn has_grant_scope_bound(&self, credential: Option<&Scope>) -> bool {
+        let baseline = Self::legacy();
+        self.deny_all
+            || self.allowed_entity_types != baseline.allowed_entity_types
+            || self.max_sensitivity_band < baseline.max_sensitivity_band
+            || (!self.include_stale && baseline.include_stale)
+            || self.min_confidence > baseline.min_confidence
+            || self.min_salience > baseline.min_salience
+            || credential.is_some_and(|scope| {
+                Scope {
+                    verbs: ScopeAxis::All,
+                    ..scope.clone()
+                } != Scope::top()
+            })
+    }
+
     /// The kinds and band this floor reads, as a canonical Scope.
     fn authority(&self) -> Scope {
         read_scope(
@@ -288,6 +386,9 @@ impl RetrievalPolicyFloor {
         }
     }
 
+    /// A new scalar floor read here must join `ClaimReadPolicy::scalar_floors`
+    /// too: a CLAIM's access class keys its confidence and salience by the
+    /// side of each floor they fall on (FIX 11915, L02 05:4x).
     pub(super) fn from_scope(scope: Option<&Value>) -> Option<Self> {
         let mut floor = Self::legacy();
         let entries = match scope {
@@ -398,7 +499,7 @@ fn parse_minimum(value: &Value) -> Option<f32> {
 /// share one. A grant reads a world only then (Sol R7-004, R11-001).
 pub(crate) fn scoped_read_grant_reads_some_type(
     grant: &PolicyScopedGrant,
-    credential: Option<&crate::federation::Scope>,
+    credential: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| match credential {
         Some(scope) => row

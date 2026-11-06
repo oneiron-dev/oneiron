@@ -13,6 +13,10 @@ information, but omits type and local-variable debugger information. It does not
 by itself change optimization, assertions, overflow checks, panic behavior,
 features, or release profiles.
 
+The `release` profile sets `lto = "thin"` and otherwise keeps Cargo's defaults.
+Thin LTO lets LLVM inline across the workspace's crate boundaries, so moving
+engine modules into their own crates does not stop hot calls from inlining.
+
 For a debugging session that needs locals, opt back into full debug information:
 
 ```sh
@@ -28,6 +32,26 @@ The core package also uses 256 codegen units for dev/test builds. This improves
 the measured non-incremental Mini core build while matching the ordinary
 incremental default count. It is not a measured incremental edit-loop gain.
 Other packages' codegen-unit settings and release/bench defaults are unchanged.
+
+### bench-fast tuning profile
+
+`bench-fast` is an opt-in profile for tuning builds. It inherits the `release`
+optimization settings, enables incremental compilation, and uses 256 codegen
+units (the same count as the ordinary incremental default and the dev
+`oneiron` setting). It sets `lto = "off"` for this profile, so tuning builds
+skip the release cross-crate link pass. The `release` profile is unchanged.
+
+On an authorized fleet build host (never the owner's MacBook):
+
+```sh
+env -u CARGO_INCREMENTAL -u RUSTC_WRAPPER cargo build --locked --profile bench-fast -p oneiron-bench
+```
+
+The `env -u` flags clear an inherited incremental override and the sccache
+wrapper for this command. Outputs land under `target/bench-fast` instead of
+`target/release` (or under the configured target dir). Final and full 457-turn
+measurements use the actual `release` profile with thin LTO. No speed,
+build-wall-time, or RAM improvement has been measured for `bench-fast`.
 
 The settings work on the MacBook, Mac mini, and Arch Linux hosts, but the gains
 below are host-specific. The debug-info comparison is from the MacBook; the

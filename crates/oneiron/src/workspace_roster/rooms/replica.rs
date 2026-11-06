@@ -215,6 +215,22 @@ pub(crate) enum RoomSideRow {
 }
 
 impl RoomSideRow {
+    /// The Offer wording, for its split-row codec; other tables have none.
+    pub(crate) fn offer_what_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Offer { offer } => Some(&mut offer.card.what),
+            _ => None,
+        }
+    }
+
+    /// The Offer artifact ref, for its split-row codec; other tables have none.
+    pub(crate) fn offer_artifact_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Self::Offer { offer } => Some(&mut offer.card.artifact_ref),
+            _ => None,
+        }
+    }
+
     /// The room the row belongs to, and the thread root a fact, join or
     /// card names; `None` when the row names an id that does not parse.
     pub(crate) fn place(&self) -> Option<(EntityId, Option<EntityId>)> {
@@ -238,9 +254,12 @@ impl RoomSideRow {
                 !handle.is_empty() && handle.len() <= 256 && !handle.contains('\0')
             }
             Self::Claim { claim } => {
+                // REVIEW-4366 round 3: a claim of an actor this vault
+                // erased names no one here, as a carried turn's actor does.
                 named(&claim.room_id).is_some()
                     && named(&claim.turn_id).is_some()
-                    && named(&claim.actor).is_some()
+                    && (named(&claim.actor).is_some()
+                        || claim.actor == crate::receipt::ERASED_CALL_IDENTITY)
             }
             Self::Join { receipt } => {
                 join_ref(&receipt.request).is_ok_and(|filed| filed == receipt.join_ref)
@@ -578,6 +597,11 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             handle,
             actor,
         } => {
+            // FIX 4870: a handle of an actor this vault erased stays gone,
+            // as a host pin of one does: a bare id fits no erased form.
+            if vault.carrier_actor_erased_in_txn(txn, actor)? {
+                return Ok(SideMerge::Refused(TurnMergeRefusal::ActorErased));
+            }
             let key = (*room, handle.clone());
             if HANDLES.get_lenient(store, txn, &key)? == Some(*actor) {
                 return Ok(SideMerge::Held);
@@ -585,6 +609,15 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             HANDLES.put(store, txn, &key, actor)?;
         }
         RoomSideRow::Claim { claim } => {
+            // FIX 4870: the carried claim names no one here for an actor
+            // this vault erased, as a carried turn's actor does (FIX 6543).
+            let mut carried = claim.clone();
+            if let Ok(actor) = EntityId::from_hex(&carried.actor)
+                && vault.carrier_actor_erased_in_txn(txn, &actor)?
+            {
+                carried.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
+            }
+            let claim = &carried;
             let turn = EntityId::from_hex(&claim.turn_id)?;
             if TURNS
                 .get_lenient(store, txn, &turn)?
@@ -595,6 +628,24 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             if let Some(held) = CLAIMS.get_lenient(store, txn, &turn)? {
                 if held == *claim {
                     return Ok(SideMerge::Held);
+                }
+                // REVIEW-4366 round 4: the same receipt's two actor
+                // forms meet here; the erased form wins where the copies
+                // meet, as a carried turn's actor does, whether or not
+                // this vault holds the actor's marker.
+                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref)
+                    && let Some(actor) = crate::deletion::carrier_actor_merged(
+                        held.actor.as_str(),
+                        claim.actor.as_str(),
+                        crate::receipt::ERASED_CALL_IDENTITY,
+                    )
+                    .map(str::to_owned)
+                    && actor != held.actor
+                {
+                    let mut merged = held.clone();
+                    merged.actor = actor;
+                    CLAIMS.put(store, txn, &turn, &merged)?;
+                    return Ok(SideMerge::Written);
                 }
                 if (held.at, &held.receipt_ref) > (claim.at, &claim.receipt_ref) {
                     CLAIMS.put(store, txn, &turn, claim)?;

@@ -2,17 +2,13 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use heed::RoTxn;
-use rmpv::Value;
 
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
+use crate::claim::ClaimBody;
 use crate::codebase::{CodebaseScopeKey, RepoRef};
 use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -31,7 +27,7 @@ use crate::temporal::TemporalAnchorMode;
 // ordinary builds, where it would be an unused import.
 #[cfg(doc)]
 use super::builder::PipelineBuilder;
-use super::support::read_entity_metadata;
+use super::support::{read_entity_metadata, read_entity_metadata_row};
 
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
@@ -41,28 +37,12 @@ pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 /// A scored entity result. Defined in `oneiron-retrieval`, where fusion ranks it.
 pub use oneiron_retrieval::pipeline::ScoredEntity;
 
-/// Retrieval signal type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
-#[non_exhaustive]
-pub enum Signal {
-    Vector,
-    Text,
-    Phonetic,
-    Temporal,
-    Ppr,
-    Hyde,
-}
+pub use crate::store::retrieval_signal::Signal;
 
 pub(super) const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 pub(super) const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
-/// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
-/// 28-day default). The recency signal's source timestamp is the
-/// entity's `learned_at` (v1). This named constant is the engine
-/// default for unlisted dynamic type bytes; the temporal pipeline's
-/// recency decay constant (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`,
-/// the ARCH-0004 §4.5 table value) derives from it.
-pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
+pub use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 
 /// RET-010c recency half-life table, keyed by entity type byte. Values are
 /// explicit contract rows, not derived from type defaults; unknown dynamic
@@ -171,49 +151,11 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
-    + Send
-    + Sync
-    + 'a;
+pub(crate) use crate::store::retrieval_values::{
+    CandidateFilter, CandidateGate, SnapshotCandidateFilter,
+};
 
-/// A [`CandidateFilter`] for one retrieval snapshot, used on the thread that
-/// opened its transaction, so it need be neither `Send` nor `Sync`.
-pub(crate) type SnapshotCandidateFilter<'a> =
-    dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool> + 'a;
-
-/// A candidate admission that holds state for one read transaction (FIX
-/// 11648): a run asks it once for each snapshot it opens, beside that
-/// snapshot's transaction, and judges every candidate of the snapshot with
-/// the filter it returns. What the filter holds is dropped with the
-/// snapshot, so it never serves another transaction.
-pub(crate) trait CandidateGate: Send + Sync {
-    fn in_txn<'t>(&'t self, txn: &'t heed::RoTxn<'t>) -> Box<SnapshotCandidateFilter<'t>>;
-}
-
-/// What a run does with a MESSAGE hit
-/// (`PipelineBuilder::fold_messages_into_turns`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TurnFold {
-    /// Every hit stands as itself.
-    Off,
-    /// A MESSAGE hit becomes its TURN when the run admits the turn; any other
-    /// message stays as itself.
-    Fold,
-    /// As [`Self::Fold`], and a MESSAGE that found no admitted turn leaves the
-    /// run: the caller admits messages only as the way to their turns.
-    TurnsOnly,
-}
-
-impl TurnFold {
-    /// The mode's name in replay inputs and the fork hash.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Fold => "fold",
-            Self::TurnsOnly => "turns_only",
-        }
-    }
-}
+pub(crate) use crate::context_pack::turn_fold::TurnFold;
 
 #[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
@@ -266,6 +208,10 @@ pub(super) struct PipelineFilterConfig<'a> {
 pub(super) struct EntityMetadataCache {
     pub(super) temporal_report: Option<super::TemporalSearchReport>,
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    /// Archive bits measured by this run's deletion-state reads, keyed as
+    /// `entries`: the claim-status gate judges its archive refusal from
+    /// the read that produced the metadata instead of reading again.
+    archived: HashMap<EntityId, bool>,
     /// Unique evaluated candidates rejected by read authority or D19. Not telemetry.
     pub(super) read_suppressed: std::collections::HashSet<EntityId>,
     // Counts D19 body lookups across all gates sharing this run cache, including
@@ -301,6 +247,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) embedding_matches: HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// A dense list answered: the text index's or a declared space's.
     pub(crate) vector_completed: bool,
+    /// The primary text scan exhausted its admitted matches without a fold or
+    /// result-window cut. Only a text-only run can use this to finish paging.
+    pub(crate) text_exhausted: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     /// The ids whose words a reranker scored at their pin in `revisions`.
     /// Those words are what the pack serves, never a later projection.
@@ -317,6 +266,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
     pub(crate) read_suppressed: usize,
+    /// Raw rejected candidates; scoped receipts qualify them before counting.
+    pub(crate) read_suppressed_candidates: std::collections::HashSet<EntityId>,
     pub(crate) cosine_ghosts_dampened: usize,
     /// Scored rows the pack's disclosure clamp withheld before selection
     /// (`PipelineBuilder::disclosure_preselect`).
@@ -332,29 +283,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) critical: crate::context_pack::PackCriticalAccounting,
 }
 
-#[derive(Debug, Clone)]
-pub struct RetrievalWithTelemetry<T> {
-    /// Execution quality; independent of result counts and scores.
-    pub retrieval_quality: RetrievalQualityReport,
-    pub value: T,
-    pub run_id: Option<RetrievalRunId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingVectorEmbedding {
-    pub id: EntityId,
-    pub token: Vec<u8>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RetrievalWithPendingVectors<T> {
-    /// Execution quality; pending embedding state does not imply a timeout.
-    pub retrieval_quality: RetrievalQualityReport,
-    pub value: T,
-    pub pending_vector_ids: Vec<EntityId>,
-    pub pending_vectors: Vec<PendingVectorEmbedding>,
-    pub run_id: Option<RetrievalRunId>,
-}
+pub use crate::store::retrieval_values::{
+    PendingVectorEmbedding, RetrievalWithPendingVectors, RetrievalWithTelemetry,
+};
 
 impl ClaimStatusGateCache {
     /// Whether a device-local world keeps `id` from this run.
@@ -451,44 +382,48 @@ impl EntityMetadataCache {
         self.entries.insert(*id, metadata);
         Ok(metadata)
     }
+
+    /// [`Self::get`] also carrying the decoded record on a cache miss, for
+    /// a caller that gates on the row it just read. A hit carries no
+    /// record: row bytes are never memoized here.
+    pub(super) fn get_row(
+        &mut self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<EntityMetadata>, Option<crate::ports::EntityRecord>)> {
+        if let Some(cached) = self.entries.get(id) {
+            return Ok((*cached, None));
+        }
+
+        let read = read_entity_metadata_row(store, rtxn, id)?;
+        self.entries.insert(*id, read.meta);
+        if let Some(archived) = read.archived {
+            self.archived.insert(*id, archived);
+        }
+        Ok((read.meta, read.row))
+    }
+
+    /// The archive bit for `id`: the one this run's deletion-state read
+    /// measured, or, if none did (a plain [`Self::get`] filled the entry,
+    /// or a legal hold returned first), the read `is_archived_in_txn`
+    /// makes, kept for the rest of the run.
+    pub(super) fn archived_bit(
+        &mut self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if let Some(archived) = self.archived.get(id) {
+            return Ok(*archived);
+        }
+        let archived = crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?;
+        self.archived.insert(*id, archived);
+        Ok(archived)
+    }
 }
 
-/// Facet filter mode for the post-fusion claim facet filter (ARCH-0039
-/// facet modes table; ARCH-0022 retrieval-filter rule).
-///
-/// Selected per query via [`PipelineBuilder::facet`]. Not setting a facet on
-/// the builder is the contract's third mode — *(no facet)* — and performs no
-/// filtering at all (backward compatible).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FacetMode {
-    /// Only core + active-facet claims surface — a claim whose `FacetOf`
-    /// edges all target other facets is removed from the results (never
-    /// leak RP claims into IRL). Claims with no `FacetOf` edge (core /
-    /// unfaceted) and entities of every non-CLAIM type pass untouched.
-    /// Strict never rescores.
-    Strict,
-    /// Return all, boost the active facet: nothing is removed; claims with
-    /// a `FacetOf` edge to the active facet have their fused score
-    /// multiplied by `boost` (cross-facet analysis, psych mirror
-    /// generation). The multiplier is CALLER-SUPPLIED — the contract pins
-    /// no constant — and must be finite and positive; it is applied at
-    /// most once per claim regardless of how many `FacetOf` edges match.
-    Prefer {
-        /// Score multiplier for active-facet claims. Must be finite and
-        /// `> 0`, enforced fail-closed at [`PipelineBuilder::run`] time
-        /// with [`Error::InvalidConfig`].
-        boost: f32,
-    },
-}
-
-/// Relationship retrieval scope behavior for a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelMode {
-    /// Remove claims bound to another relationship.
-    Filter,
-    /// Retain other-relationship claims, after all in-scope rows.
-    Demote,
-}
+pub use crate::claim::retrieval_scope::{FacetMode, RelMode};
 
 /// World retrieval scope for the post-fusion claim world filter (ARCH-0004
 /// claim-filtering: `worldId = vault.baseWorld` unless the query targets a
@@ -533,372 +468,11 @@ pub enum WorldScope {
     ActiveSet,
 }
 
-/// Pinned schema version of both world-access authority claim values
-/// (ONE-1420). A stored row carrying any other version fails closed instead of
-/// being read under an assumed shape.
-pub const WORLD_ACCESS_SCHEMA_VERSION: u64 = 1;
-
-/// Predicate of the OWNER-granted ALLOWED-SET rows — the outer bound on what
-/// an agent may ever read.
-///
-/// Every ACTIVE, APPROVED, USER-STATED row folds by INTERSECTION, so writing
-/// another row can only NARROW the grant, and no row at all resolves to the
-/// EMPTY authority (never to [`WorldScope::All`]). Ordinary bitemporal CLAIM
-/// rows: `valid_from` / `valid_to`, lifecycle, source, approval and
-/// supersession all apply, and no new entity type or table is introduced.
-pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_set";
-
-/// Predicate of the DEFAULT-SUBSET rows — the selection a turn inherits when
-/// it supplies none of its own.
-///
-/// The active default may be written by the agent itself, which is why the
-/// resolver REJECTS a default that exceeds the owner's ALLOWED-SET rather than
-/// clamping it: an agent must never reach a wider read through its own
-/// default. Consumed only when the turn supplies no explicit selection.
-pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
-
-const WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION: &str = "schema_version";
-const WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE: &str = "include_base";
-const WORLD_ACCESS_VALUE_KEY_WORLDS: &str = "worlds";
-
-/// One world-access authority value: base reality plus a sorted, unique set of
-/// world ids.
-///
-/// The same shape carries all three tiers — the owner's ALLOWED-SET, the
-/// stored DEFAULT-SUBSET, and the per-turn ActiveSet — so subset checking is
-/// one predicate ([`WorldAuthoritySet::is_subset_of`]) rather than three.
-/// [`Default`] is the EMPTY authority (`include_base == false`, no worlds):
-/// the fail-closed value an absent grant resolves to.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WorldAuthoritySet {
-    /// Whether base reality — claims with no `world` key, and every non-claim
-    /// entity — is readable under this set.
-    include_base: bool,
-    /// The readable world ids. Sorted and unique by construction.
-    worlds: BTreeSet<EntityId>,
-}
-
-impl WorldAuthoritySet {
-    /// Builds an authority set from any world-id iterator, normalizing it to
-    /// sorted-unique order. Every world is kept, however many a scope selects
-    /// (FIX 8668).
-    ///
-    /// # Errors
-    ///
-    /// None today: a set of any size is valid.
-    pub fn new(include_base: bool, worlds: impl IntoIterator<Item = EntityId>) -> Result<Self> {
-        Ok(Self {
-            include_base,
-            worlds: worlds.into_iter().collect(),
-        })
-    }
-
-    /// Whether base reality is readable under this set.
-    #[must_use]
-    pub fn include_base(&self) -> bool {
-        self.include_base
-    }
-
-    /// The readable world ids in sorted, unique order.
-    #[must_use]
-    pub fn worlds(&self) -> &BTreeSet<EntityId> {
-        &self.worlds
-    }
-
-    /// This authority as the One Scope worlds axis: base reality is the
-    /// ordinary member `base_world_id` (R13), and an empty set is bottom.
-    /// Base has its own boolean here: a listed id equal to the reserved base
-    /// id cannot stand in for it.
-    #[must_use]
-    pub fn scope_axis(&self) -> ScopeAxis<ScopeId> {
-        let base = crate::claim::base_world_id();
-        self.worlds
-            .iter()
-            .filter(|id| **id != base)
-            .copied()
-            .chain(self.include_base.then_some(base))
-            .map(ScopeId)
-            .collect()
-    }
-
-    /// A Scope worlds axis as an authority set, or `None` when the axis is
-    /// open: an open axis names no worlds to list.
-    ///
-    /// # Errors
-    ///
-    /// None today: [`Self::new`] keeps a named set of any size.
-    pub fn from_scope_axis(axis: &ScopeAxis<ScopeId>) -> Result<Option<Self>> {
-        let base = ScopeId(crate::claim::base_world_id());
-        match axis {
-            ScopeAxis::All => Ok(None),
-            ScopeAxis::Bottom => Ok(Some(Self::default())),
-            ScopeAxis::Some(ids) => Self::new(
-                ids.contains(&base),
-                ids.iter().filter(|id| **id != base).map(|id| id.0),
-            )
-            .map(Some),
-        }
-    }
-
-    /// What both sets admit: the meet on the Scope worlds axis. It holds no
-    /// more worlds than either.
-    #[must_use]
-    pub fn meet(&self, other: &Self) -> Self {
-        // Two named sets meet at a named set or bottom, never the open axis.
-        Self::from_scope_axis(&self.scope_axis().meet(&other.scope_axis()))
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }
-
-    /// Membership of an ordinary claim world, or base reality for non-claims:
-    /// the worlds axis's `contains`, without building the axis per row.
-    pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
-        match world.filter(|world| *world != crate::claim::base_world_id()) {
-            Some(world) => self.worlds.contains(&world),
-            None => self.include_base,
-        }
-    }
-
-    /// Whether every member of `self` is also a member of `allowed`: the
-    /// Scope worlds axis's narrowing order.
-    ///
-    /// Base reality is a MEMBER of this containment, not a side channel:
-    /// asking for base without an owner grant for base is a widening and is
-    /// refused like any world id would be.
-    #[must_use]
-    pub fn is_subset_of(&self, allowed: &Self) -> bool {
-        self.scope_axis().is_narrowing_of(&allowed.scope_axis())
-    }
-
-    /// Whether this authority admits nothing at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.scope_axis().is_bottom()
-    }
-}
-
-/// The per-turn world selection carried on [`PipelineBuilder`] — in memory for
-/// exactly one query, never written to the vault.
-///
-/// `agent_ref` names the CLAIM subject whose stored authority rows the
-/// resolver reads; it is not itself a grant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveWorldSelection {
-    /// The agent entity the ALLOWED-SET / DEFAULT-SUBSET rows are about.
-    pub agent_ref: EntityId,
-    /// `None` means use the resolved DEFAULT-SUBSET.
-    pub selected: Option<WorldAuthoritySet>,
-}
-
-/// The outcome of one authority resolution: the three tiers plus the claim
-/// provenance each tier came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedWorldAuthority {
-    /// The owner grant: the intersection of every qualifying ALLOWED-SET row.
-    pub allowed_set: WorldAuthoritySet,
-    /// The stored default, already checked against `allowed_set`.
-    pub default_subset: WorldAuthoritySet,
-    /// What this turn actually reads: the explicit selection, else the default.
-    pub active_set: WorldAuthoritySet,
-    /// The ALLOWED-SET claim rows folded into `allowed_set`, in scan order.
-    pub allowed_claim_ids: Vec<EntityId>,
-    /// The DEFAULT-SUBSET claim row `default_subset` was read from.
-    pub default_claim_id: Option<EntityId>,
-}
-
-/// Builds the CLAIM body for one world-access authority row.
-///
-/// The row is an ORDINARY bitemporal claim: subject = the agent entity, value
-/// = the pinned strict map, lifecycle = active, and the caller's `source` /
-/// `approval` / `valid_from` / `valid_to` verbatim. Writing it goes through the
-/// ordinary claim door, so supersession, retraction and the write gate behave
-/// exactly as they do for every other claim.
-///
-/// # Errors
-///
-/// [`Error::InvalidConfig`] when `predicate` is not one of the two pinned
-/// world-access predicates, or when the validity window is empty
-/// (`valid_to <= valid_from`), which would mint a row that is never in force.
-pub fn world_access_claim_body(
-    predicate: &'static str,
-    agent_ref: EntityId,
-    value: &WorldAuthoritySet,
-    source: ClaimSource,
-    approval: ClaimApprovalStatus,
-    valid_from: Option<u64>,
-    valid_to: Option<u64>,
-) -> Result<ClaimBody> {
-    if predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
-        && predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-    {
-        return Err(Error::InvalidConfig(format!(
-            "{predicate} is not a world-access authority predicate"
-        )));
-    }
-    if let (Some(from), Some(to)) = (valid_from, valid_to)
-        && to <= from
-    {
-        return Err(Error::InvalidConfig(format!(
-            "world-access validity window is empty: valid_to {to} does not follow valid_from {from}"
-        )));
-    }
-
-    let mut body = ClaimBody::new(
-        predicate,
-        ClaimSubject::Entity(agent_ref),
-        encode_world_access_claim_value(value),
-        1.0,
-        approval,
-        ClaimLifecycleStatus::Active,
-    )?;
-    body.source = Some(source);
-    body.valid_from = valid_from;
-    body.valid_to = valid_to;
-    Ok(body)
-}
-
-/// Encodes an authority set as the pinned strict claim value.
-///
-/// `worlds` is emitted from the `BTreeSet`, so the array is sorted and unique
-/// on the wire by construction — the exact shape
-/// [`decode_world_access_claim_value`] admits.
-fn encode_world_access_claim_value(value: &WorldAuthoritySet) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION),
-            Value::from(WORLD_ACCESS_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE),
-            Value::Boolean(value.include_base),
-        ),
-        (
-            Value::from(WORLD_ACCESS_VALUE_KEY_WORLDS),
-            Value::Array(
-                value
-                    .worlds
-                    .iter()
-                    .map(|world| Value::Binary(world.as_bytes().to_vec()))
-                    .collect(),
-            ),
-        ),
-    ])
-}
-
-/// Decodes the strict world-access claim value:
-///
-/// ```text
-/// { "schema_version": 1, "include_base": <bool>, "worlds": [<16-byte binary>, ...] }
-/// ```
-///
-/// Every deviation fails CLOSED with [`Error::InvalidConfig`]: a non-map value,
-/// a non-string key, an unknown or duplicated key, a missing key, an
-/// unsupported `schema_version`, a non-boolean `include_base`, a non-array
-/// `worlds`, an element that is not exactly 16 bytes of MessagePack binary, and
-/// an out-of-order or duplicated world id. A list of any length is read whole
-/// (FIX 8668). A malformed authority row can therefore never
-/// be read as a WIDER authority than it encodes — the read that consulted it
-/// refuses instead.
-///
-/// # Errors
-///
-/// [`Error::InvalidConfig`] for every shape listed above.
-pub fn decode_world_access_claim_value(body: &ClaimBody) -> Result<WorldAuthoritySet> {
-    let Value::Map(entries) = &body.value else {
-        return Err(invalid_world_access_value("must be a MessagePack map"));
-    };
-
-    let mut schema_version: Option<u64> = None;
-    let mut include_base: Option<bool> = None;
-    let mut worlds: Option<BTreeSet<EntityId>> = None;
-
-    for (key, value) in entries {
-        let Some(key) = key.as_str() else {
-            return Err(invalid_world_access_value("keys must be strings"));
-        };
-        match key {
-            WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION => {
-                if schema_version.is_some() {
-                    return Err(invalid_world_access_value("repeats schema_version"));
-                }
-                let version = value.as_u64().ok_or_else(|| {
-                    invalid_world_access_value("schema_version must be an unsigned integer")
-                })?;
-                schema_version = Some(version);
-            }
-            WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE => {
-                if include_base.is_some() {
-                    return Err(invalid_world_access_value("repeats include_base"));
-                }
-                let Value::Boolean(flag) = value else {
-                    return Err(invalid_world_access_value("include_base must be a boolean"));
-                };
-                include_base = Some(*flag);
-            }
-            WORLD_ACCESS_VALUE_KEY_WORLDS => {
-                if worlds.is_some() {
-                    return Err(invalid_world_access_value("repeats worlds"));
-                }
-                worlds = Some(decode_world_access_members(value)?);
-            }
-            _ => {
-                return Err(invalid_world_access_value(
-                    "carries a key outside schema_version/include_base/worlds",
-                ));
-            }
-        }
-    }
-
-    let schema_version =
-        schema_version.ok_or_else(|| invalid_world_access_value("is missing schema_version"))?;
-    if schema_version != WORLD_ACCESS_SCHEMA_VERSION {
-        return Err(Error::InvalidConfig(format!(
-            "world-access claim value schema_version {schema_version} is not the supported \
-             {WORLD_ACCESS_SCHEMA_VERSION}"
-        )));
-    }
-    let include_base =
-        include_base.ok_or_else(|| invalid_world_access_value("is missing include_base"))?;
-    let worlds = worlds.ok_or_else(|| invalid_world_access_value("is missing worlds"))?;
-
-    WorldAuthoritySet::new(include_base, worlds)
-}
-
-/// Decodes the `worlds` array: strictly ascending 16-byte binary ids, every
-/// one of them.
-fn decode_world_access_members(value: &Value) -> Result<BTreeSet<EntityId>> {
-    let Value::Array(items) = value else {
-        return Err(invalid_world_access_value("worlds must be an array"));
-    };
-    let mut members = BTreeSet::new();
-    let mut previous: Option<EntityId> = None;
-    for item in items {
-        let Value::Binary(bytes) = item else {
-            return Err(invalid_world_access_value(
-                "world ids must be MessagePack binary",
-            ));
-        };
-        let raw: [u8; ENTITY_ID_LEN] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| invalid_world_access_value("world ids must be exactly 16 binary bytes"))?;
-        let world = EntityId::from_bytes(raw)
-            .map_err(|_| invalid_world_access_value("carries a reserved world id"))?;
-        if previous.is_some_and(|previous| previous >= world) {
-            return Err(invalid_world_access_value(
-                "worlds must be sorted ascending and unique",
-            ));
-        }
-        previous = Some(world);
-        members.insert(world);
-    }
-    Ok(members)
-}
-
-fn invalid_world_access_value(reason: &str) -> Error {
-    Error::InvalidConfig(format!("world-access claim value {reason}"))
-}
+pub use crate::claim::world_access::{
+    ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, ResolvedWorldAuthority, WORLD_ACCESS_SCHEMA_VERSION,
+    WorldAuthoritySet, decode_world_access_claim_value, world_access_claim_body,
+};
 
 /// Opaque Dreamer working-set cursor.
 ///

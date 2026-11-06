@@ -28,8 +28,9 @@ pub(super) use derived::{
     put_pending_in_txn, put_ready_in_txn,
 };
 pub(crate) use derived::{
-    finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
-    repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
+    discard_repo_derived_index_copy_in_txn, finalize_repo_derived_index_copies_in_txn,
+    repo_derived_batch, repo_derived_fields, repo_derived_index_text_in,
+    retire_repo_derived_index_copies_in_txn,
 };
 pub(crate) use session::apply_ops_session_projected;
 
@@ -43,7 +44,7 @@ use crate::origin::secret_projection::index::{
     RepoIndexMarks, masked_repo_index_input_in_txn, opaque_index_text,
 };
 use crate::ports::{EntityStoreRead, RetrievalIndexInventory};
-use crate::registry::ENTITY_TYPE_ASSET;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_SUMMARY};
 use crate::store::ManifestDbs;
 
 /// The payload an ASSET record embeds as: its text item's copy, read under
@@ -51,19 +52,29 @@ use crate::store::ManifestDbs;
 /// nothing.
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode.
+/// A store or file-body failure, or a mark that does not decode.
 pub(super) fn asset_payload_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
+    asset_payload_in(vault, &vault.store, txn, id, body)
+}
+
+/// [`asset_payload_in_txn`] through the caller's base or room view.
+pub(super) fn asset_payload_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<PendingEmbeddingPayload>> {
+    let filed = repo_file_body_in(vault, store, txn, id, body)?;
+    let body = filed.as_deref().unwrap_or(body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-    let Some(text) = super::media::asset_text(body, |blob| {
-        Ok(vault
-            .store
-            .port_entity_record(txn, blob)?
-            .map(|blob| blob.body))
-    })?
+    let Some(text) =
+        super::media::asset_text(body, |blob| repo_blob_body_in(vault, store, txn, blob))?
     else {
         return Ok(None);
     };
@@ -79,11 +90,12 @@ pub(super) fn asset_payload_in_txn(
 pub(super) fn pending_payload_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     entity_type: u8,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
     if entity_type == ENTITY_TYPE_ASSET {
-        return asset_payload_in_txn(vault, txn, body);
+        return asset_payload_in_txn(vault, txn, id, body);
     }
     Ok(super::embeddable_payload(entity_type, body))
 }
@@ -101,7 +113,7 @@ pub(super) fn asset_document_projected_in(
     kinds: &BTreeSet<InputKind>,
     report: &mut MediaEmbedReport,
 ) -> Result<Option<PendingMedia>> {
-    let Some(document) = asset_document_in(store, txn, id, kinds, report)? else {
+    let Some(document) = asset_document_in(vault, store, txn, id, kinds, report)? else {
         return Ok(None);
     };
     let marks = RepoIndexMarks::read_in_txn(vault, txn)?;
@@ -182,10 +194,11 @@ pub(super) fn media_copy_hash_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
+    let filed = repo_file_body_in(vault, store, txn, id, &row.body)?;
+    let body = filed.as_deref().unwrap_or(&row.body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-    let Some((_, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
-        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
-    })?
+    let Some((_, bytes)) =
+        crate::memory::asset_media_in(body, |blob| repo_blob_body_in(vault, store, txn, blob))?
     else {
         return Ok(None);
     };
@@ -209,6 +222,62 @@ pub(crate) fn repo_media_bytes(
     read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
 ) -> Result<Option<Vec<u8>>> {
     Ok(crate::memory::asset_media_in(body, read)?.map(|(_, bytes)| bytes))
+}
+
+/// Referenced blob bytes from the caller's snapshot, materializing a native
+/// file-plane body before its media envelope checks the size and hash.
+///
+/// # Errors
+/// A store failure, or a failure to read the file body.
+pub(crate) fn repo_blob_body_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    repo_blob_body_in(vault, &vault.store, txn, id)
+}
+
+/// Referenced blob bytes through the same view and transaction as its envelope.
+/// Native ASSET files live in the base body directory, including base rows a
+/// room view reads; manifest and key rows still come from that view.
+pub(super) fn repo_blob_body_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let Some(row) = store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        repo_file_body_in(vault, store, txn, id, &row.body)?.unwrap_or(row.body),
+    ))
+}
+
+/// Materializes a native ASSET file from the caller's current stored row body.
+/// An inline body returns `None`; manifest and file errors are never a raw-body fallback.
+/// The body, id and view must belong to the same transaction snapshot.
+///
+/// # Errors
+/// A manifest, key or file-body read failure.
+pub(super) fn repo_file_body_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, body)? else {
+        return Ok(None);
+    };
+    let _pin = vault.pin_result_body(manifest.facts.blake3);
+    let key = crate::store::body_key_row_in_txn(store, txn, &manifest.facts.blake3)?;
+    crate::store::CheckedAssetBody::read_all(
+        &vault.store.body_dir()?,
+        &manifest.facts,
+        key.as_ref(),
+    )
+    .map(Some)
 }
 
 /// What a mask change on the blobs `sources` reaches beyond the records
@@ -254,7 +323,8 @@ fn kept<T>(result: Result<T>) -> Result<Option<T>> {
 
 /// Every ASSET whose media bytes, the blob it holds read in `txn`, are by
 /// their own whole BLAKE3 a blob in `sources`: the envelope copies a mask
-/// change reaches.
+/// change reaches. In the same walk, every derived text whose own words
+/// are such a blob's whole bytes, which no edge links to it (FIX 10406).
 ///
 /// # Errors
 /// A store failure.
@@ -269,15 +339,24 @@ pub(crate) fn repo_envelope_copies_in_txn(
     }
     for row in vault.store.port_entity_records(txn)? {
         let (id, row) = row?;
-        if row.entity_type != ENTITY_TYPE_ASSET {
-            continue;
-        }
-        let bytes = repo_media_bytes(&row.body, |blob| {
-            Ok(vault
-                .store
-                .port_entity_record(txn, blob)?
-                .map(|blob| blob.body))
-        })?;
+        let bytes = match row.entity_type {
+            ENTITY_TYPE_ASSET => {
+                let logical;
+                let body = match crate::store::asset_file_in_txn(&vault.store, txn, &id, &row.body)?
+                {
+                    Some(manifest) => {
+                        logical = vault.asset_file_body(txn, &manifest)?;
+                        logical.as_slice()
+                    }
+                    None => row.body.as_slice(),
+                };
+                repo_media_bytes(body, |blob| repo_blob_body_in_txn(vault, txn, blob))?
+            }
+            ENTITY_TYPE_ASSET_TEXT | ENTITY_TYPE_SUMMARY => {
+                derived::derived_text_words(&row.body).map(String::into_bytes)
+            }
+            _ => continue,
+        };
         if bytes.is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes())) {
             copies.push(id);
         }
@@ -300,7 +379,13 @@ pub(crate) fn requeue_repo_embedding_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, entity)? else {
         return Ok(());
     };
-    if !super::eligibility::is_embeddable_in_txn(vault, wtxn, record.entity_type, &record.body)? {
+    if !super::eligibility::is_embeddable_in_txn(
+        vault,
+        wtxn,
+        entity,
+        record.entity_type,
+        &record.body,
+    )? {
         return Ok(());
     }
     let owed = vault

@@ -29,7 +29,7 @@ use super::AgentDispatcher;
 use super::spend_lease::observe_spend_walk;
 use super::spend_record::{SCOPE, SpendPayer, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
-use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::llm::run_admission::LeaseUnit;
 use crate::scan_check::EngineScan;
@@ -60,6 +60,7 @@ struct ScopeSkeleton {
     shown_at_ms: Option<u64>,
     opened_at: u64,
     closed_at: Option<u64>,
+    exploration_attempt: Option<AttemptId>,
     /// Whether an agent's settlement calibrates it.
     calibrates: bool,
     /// When its payer accepted its cap, if one did.
@@ -127,6 +128,7 @@ fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, S
             shown_at_ms: scope.shown_at_ms,
             opened_at: scope.opened_at,
             closed_at: scope.closed_at,
+            exploration_attempt: scope.exploration_attempt,
         });
     }
     Ok(Partitioned {
@@ -204,6 +206,10 @@ fn rejoin_in_txn(
             },
             (None, _) => None,
         };
+        let calibration_sample = SCOPE
+            .get(&vault.store, txn, &skeleton.scope.0)?
+            .filter(|local| local.agent == agent && local.unit == skeleton.unit)
+            .and_then(|local| local.calibration_sample);
         scopes.push(SpendScope {
             scope: skeleton.scope,
             parent: skeleton.parent,
@@ -216,7 +222,9 @@ fn rejoin_in_txn(
             shown_at_ms: skeleton.shown_at_ms,
             opened_at: skeleton.opened_at,
             closed_at: skeleton.closed_at,
+            exploration_attempt: skeleton.exploration_attempt,
             agent,
+            calibration_sample,
             payer,
         });
     }
@@ -227,7 +235,7 @@ impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
     type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 3;
+    const SCHEMA_VERSION: u16 = 4;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
@@ -514,6 +522,8 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
         && carried.shown_at_ms >= here.shown_at_ms
         && (here.state == SpendState::Open || carried.state == SpendState::Closed)
         && (here.closed_at.is_none() || here.closed_at == carried.closed_at)
+        && (here.exploration_attempt.is_none()
+            || here.exploration_attempt == carried.exploration_attempt)
 }
 
 /// Forgets `actor` in every local spend scope, in its erase's transaction

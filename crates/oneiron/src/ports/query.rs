@@ -283,14 +283,14 @@ pub trait JobQueueRead: Transactions {
     fn port_job_row(
         &self,
         txn: &Self::Read<'_>,
-        id: &crate::attempt_queue::AttemptId,
+        id: &crate::store::attempt_id::AttemptId,
     ) -> Result<Option<Vec<u8>>>;
     /// Rows in id order after `after`. A malformed key fails as the id parser does.
     fn port_job_rows<'a>(
         &self,
         txn: &'a Self::Read<'_>,
-        after: Option<crate::attempt_queue::AttemptId>,
-    ) -> Result<PortRows<'a, (crate::attempt_queue::AttemptId, Vec<u8>)>>;
+        after: Option<crate::store::attempt_id::AttemptId>,
+    ) -> Result<PortRows<'a, (crate::store::attempt_id::AttemptId, Vec<u8>)>>;
 }
 
 /// The global change stream in id order, for a consumer that resumes after
@@ -315,5 +315,5 @@ pub trait RetrievalIndexRead: Transactions {
         &self,
         txn: &Self::Read<'_>,
         codes: &[String],
-    ) -> Result<Vec<crate::pipeline::ScoredEntity>>;
+    ) -> Result<Vec<oneiron_retrieval::pipeline::ScoredEntity>>;
 }

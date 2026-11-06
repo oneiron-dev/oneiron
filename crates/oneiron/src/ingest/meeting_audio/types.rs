@@ -29,13 +29,13 @@ impl Pcm16 {
 
 /// Times always use milliseconds. VAD and diarization use the full-file clock;
 /// ASR uses the concatenated pack clock and is mapped by the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpeechSpan {
     pub start_ms: u64,
     pub end_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SourceSpan {
     pub source_start_ms: u64,
     pub source_end_ms: u64,
@@ -210,7 +210,7 @@ pub struct AsrOutput {
 
 /// The host must return a full-file exclusive track, not an overlapping
 /// diarization track. Speaker labels must keep their full-file identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpeakerTrack {
     pub start_ms: u64,
     pub end_ms: u64,

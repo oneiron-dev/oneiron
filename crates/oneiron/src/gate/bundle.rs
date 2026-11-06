@@ -15,14 +15,17 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::run_tree::{
-    GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle,
-    GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt, RunTreeAdapter,
-};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{
+    consent::bundle_projection::{
+        GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle,
+        GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt,
+    },
+    run_tree::RunTreeAdapter,
+};
 
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
@@ -69,6 +72,19 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
+
+/// Appends a reviewed run's outcome with every claim member's newest kept
+/// read context and the member refs that couple each member's erase to it.
+pub(crate) fn append_reviewed_run_decision_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut GateDecisionRecord,
+    run: &str,
+    members: &[EntityId],
+) -> Result<()> {
+    record.context = decision_context::bundle(vault, wtxn, run, members);
+    decision_context::append(vault, wtxn, record, members)
+}
 
 impl Vault {
     pub fn review_session_bundle(
@@ -144,6 +160,7 @@ impl Vault {
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        pending_prompt: None,
                     },
                     &policy,
                     GateWriteMode {
@@ -169,6 +186,7 @@ impl Vault {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred: member.occurred,
                     learned_at: member.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -443,6 +461,9 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
+                if action == GateConsentBundleAction::Approve {
+                    self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;
+                }
                 if machine {
                     let approve = action == GateConsentBundleAction::Approve;
                     resolved = crate::claim::transition::stage_consent_transition(
@@ -455,6 +476,7 @@ impl Vault {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at: header.learned_at,
+                    row_version: None,
                     data: data.clone(),
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -511,6 +533,7 @@ impl Vault {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -551,18 +574,18 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    crate::runtime_hooks::SettledFact {
+                    crate::consent::settlement_fact::SettledFact {
                         proposal: *id,
                         outcome: match action {
                             GateConsentBundleAction::Approve => {
-                                crate::runtime_hooks::SettledOutcome::Approved
+                                crate::consent::settlement_fact::SettledOutcome::Approved
                             }
                             GateConsentBundleAction::Decline => {
-                                crate::runtime_hooks::SettledOutcome::Declined
+                                crate::consent::settlement_fact::SettledOutcome::Declined
                             }
                         },
                         settled_by: actor.entity_ref(),
-                        kind: crate::runtime_hooks::SettlementKind::GateConsentBundle,
+                        kind: crate::consent::settlement_fact::SettlementKind::GateConsentBundle,
                     },
                 )?;
             }
@@ -860,6 +883,7 @@ fn replay_gate_consent_bundle_member(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         policy,
         GateWriteMode {

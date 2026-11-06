@@ -26,11 +26,10 @@ use super::transfer::{draining, holds_lineage_state};
 use super::{HomeWrite, store, takes_home_write_in_txn};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
-use crate::dreamer_runner::{
-    DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
-    free_time_item_waits_unstarted, free_time_line,
-};
+use crate::dreamer_runner::{free_time_item_waits_unstarted, free_time_line};
 use crate::error::Result;
+use crate::store::dreamer_attempt_kind::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND;
+use crate::store::dreamer_attempt_kind::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND;
 
 /// The free-time tries the host timer arms here, and the ones among them it
 /// arms without its home gate. The first set is every free-time try that

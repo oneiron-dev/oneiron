@@ -12,9 +12,10 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::side_table::{self, Named, SideTable};

@@ -5,11 +5,12 @@ use std::collections::HashMap;
 
 use crate::Vault;
 use crate::claim::ClaimBody;
+use crate::context_pack::profile_sources::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::psych_profile::{
-    PsychMirrorSourceCandidate, PsychProfile, PsychProfileKey, PsychProfileStaleReason,
-    PsychProfileState, psych_mirror_text_entropy, psych_profile_entity_id,
+use crate::write_envelope::profile_snapshot::{
+    PsychProfile, PsychProfileKey, PsychProfileStaleReason, PsychProfileState,
+    psych_profile_entity_id,
 };
 
 use super::types::ContextEntity;

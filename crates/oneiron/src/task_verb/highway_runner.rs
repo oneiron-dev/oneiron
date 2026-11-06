@@ -186,18 +186,10 @@ pub(crate) fn report_runner_task_in_txn(
 /// commit; a caller with no post-commit point leaves it to the wake pass,
 /// which replays it from the binding index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(
-    dead_code,
-    reason = "held for the resident pump, which runs it after its commit"
-)]
 pub(crate) struct RunnerTaskEffects {
     settled: Option<EntityId>,
 }
 
-#[allow(
-    dead_code,
-    reason = "held for the resident pump, which runs it after its commit"
-)]
 impl RunnerTaskEffects {
     /// The effects one runner receipt owes.
     pub(crate) fn of(receipt: &TaskCallReceipt) -> Self {
@@ -304,6 +296,18 @@ fn runner_caller_in(
     if record.task_ref.is_none() || !record.state.is_running() {
         return Ok(None);
     }
+    runner_report_actor_in(vault, txn, record)
+}
+
+/// [`runner_caller_in`]'s actor derivation without its running-lease gate:
+/// who a runner's report on `record` runs as. Shared by the ordinary turn
+/// and the queued turn a withdrawn try's terminal report takes before it
+/// claims (FIX 11687): one derivation, never two.
+fn runner_report_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<EntityId>> {
     if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
         && let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
         && payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
@@ -334,6 +338,38 @@ pub(crate) fn runner_report_turn(
         let txn = vault.store.env.read_txn()?;
         match AttemptQueue::new(vault).get_in_txn(&txn, attempt)? {
             Some(record) => runner_caller_in(vault, &txn, &record)?,
+            None => None,
+        }
+    };
+    Ok(caller.map(|caller| Arc::new(vault.admit_task_work_blocking(caller))))
+}
+
+/// The task-work turn a withdrawn try's terminal report runs on (Rule 5):
+/// [`runner_report_turn`] for a try still queued. A queued try owes its
+/// TASK the same terminal report a leased one does, on the same reporting
+/// actor; the ordinary running-lease gate would take no turn and the
+/// report would refuse it. `None`, with no wait, when the row is gone,
+/// names no TASK, or is no longer queued work. An operation that holds a
+/// turn already passes that one instead.
+pub(crate) fn queued_runner_report_turn(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<Option<Arc<TaskWorkTurn>>> {
+    let caller = {
+        let txn = vault.store.env.read_txn()?;
+        match AttemptQueue::new(vault).get_in_txn(&txn, attempt)? {
+            Some(record) => {
+                let queued = matches!(
+                    record.state,
+                    crate::attempt_queue::AttemptState::Queued
+                        | crate::attempt_queue::AttemptState::Scheduled
+                );
+                if record.task_ref.is_none() || !queued {
+                    None
+                } else {
+                    runner_report_actor_in(vault, &txn, &record)?
+                }
+            }
             None => None,
         }
     };

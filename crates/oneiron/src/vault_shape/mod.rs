@@ -85,16 +85,16 @@ pub enum ShapeCeiling {
     Proposed,
 }
 
-impl From<crate::agent_def::AgentCeiling> for ShapeCeiling {
-    fn from(ceiling: crate::agent_def::AgentCeiling) -> Self {
+impl From<crate::store::agent_record::AgentCeiling> for ShapeCeiling {
+    fn from(ceiling: crate::store::agent_record::AgentCeiling) -> Self {
         match ceiling {
-            crate::agent_def::AgentCeiling::Auto => Self::Auto,
-            crate::agent_def::AgentCeiling::Proposed => Self::Proposed,
+            crate::store::agent_record::AgentCeiling::Auto => Self::Auto,
+            crate::store::agent_record::AgentCeiling::Proposed => Self::Proposed,
         }
     }
 }
 
-impl From<ShapeCeiling> for crate::agent_def::AgentCeiling {
+impl From<ShapeCeiling> for crate::store::agent_record::AgentCeiling {
     fn from(ceiling: ShapeCeiling) -> Self {
         match ceiling {
             ShapeCeiling::Auto => Self::Auto,

@@ -126,8 +126,8 @@ fn keeps_bounds(successor: &VerifiedSlip, signed: &SignedBounds) -> bool {
         (None, _) => true,
         (Some((grant, scope)), Some((now_grant, now_scope))) => {
             grant == now_grant
-                && crate::federation::Ceiling::new(now_scope.clone())
-                    .is_within(&crate::federation::Ceiling::new(scope.clone()))
+                && oneiron_authority::federation::Ceiling::new(now_scope.clone())
+                    .is_within(&oneiron_authority::federation::Ceiling::new(scope.clone()))
         }
         (Some(_), None) => false,
     };

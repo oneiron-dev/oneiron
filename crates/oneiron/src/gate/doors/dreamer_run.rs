@@ -3,7 +3,6 @@ use rmpv::Value;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass};
 use crate::compaction::turn_session_membership_in_txn;
 use crate::dreamer_consolidation::decode_consolidation_evidence;
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -17,6 +16,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteEnvelope};
 
@@ -78,6 +78,23 @@ pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
         return None;
     }
     dreamer_run_id_from_provenance(envelope.provenance().value())
+}
+
+/// The actual promotion attempt named beside a Dreamer run. This is a replay
+/// coordinate, not proof that the attempt exists, has ended or may retry.
+pub(super) fn dreamer_attempt_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<[u8; 16]> {
+    dreamer_run_id_from_write_envelope(envelope)?;
+    let Value::Map(entries) = envelope.provenance().value() else {
+        return None;
+    };
+    entries.iter().find_map(|(key, value)| {
+        if key.as_str() != Some("job_id") {
+            return None;
+        }
+        let bytes = crate::deletion::parse_hex::<16>(value.as_str()?)?;
+        let attempt = crate::store::attempt_id::AttemptId::from_bytes(&bytes).ok()?;
+        Some(*attempt.as_bytes())
+    })
 }
 
 fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {

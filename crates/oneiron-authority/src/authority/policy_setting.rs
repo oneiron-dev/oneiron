@@ -2,10 +2,11 @@
 //! and its wire codec.
 //!
 //! The owner changes a vault-wide setting (the dreamer's wake policy, the
-//! inference defaults), or the owner or an agent within its Grant sets or
-//! clears one agent's free-time policy, from any surface where he is
-//! authenticated. The install that served the act, a live machine of the
-//! vault in any role, signs it with its install key; the record carries the
+//! inference defaults, the room-thread admin switches), or the owner or an
+//! agent within its Grant sets or clears one agent's free-time policy, from
+//! any surface where he is authenticated. The install that served the act,
+//! a live machine of the vault in any role, signs it with its install key;
+//! the record carries the
 //! act ([`OwnerAct`], kind `policy_setting` on the setting's reserved target
 //! ([`owner_act_target`]), or kind `free_time_policy` on the agent the policy
 //! is for). Its `seen` is the target's live acts as the deciding surface
@@ -68,9 +69,15 @@ pub enum PolicySetting {
     DreamerWakePolicy,
     /// The per-purpose inference defaults (`inference.defaults.replace`).
     InferenceDefaults,
+    /// The owner's two switches over Admins and private room threads
+    /// (`rooms.private_threads.admin_walk_in` /
+    /// `rooms.private_threads.admin_delete`).
+    RoomThreadAdmin,
     /// One agent's free-time policy (FIX 4453, FIX 5660): the act's target
     /// is that agent.
     FreeTimePolicy,
+    /// The owner's board cap and board layout layers (BOARD-LAYOUT).
+    BoardLayout,
 }
 
 impl PolicySetting {
@@ -81,7 +88,9 @@ impl PolicySetting {
         match self {
             Self::DreamerWakePolicy => "settings.dreamer_wake_policy",
             Self::InferenceDefaults => "settings.inference_defaults",
+            Self::RoomThreadAdmin => "settings.room_thread_admin",
             Self::FreeTimePolicy => "settings.free_time_policy",
+            Self::BoardLayout => "settings.board_layout",
         }
     }
 
@@ -91,7 +100,9 @@ impl PolicySetting {
         match self {
             Self::DreamerWakePolicy => "dreamer_wake_policy",
             Self::InferenceDefaults => "inference_defaults",
+            Self::RoomThreadAdmin => "room_thread_admin",
             Self::FreeTimePolicy => "free_time_policy",
+            Self::BoardLayout => "board_layout",
         }
     }
 
@@ -101,7 +112,9 @@ impl PolicySetting {
         Some(match wire {
             "dreamer_wake_policy" => Self::DreamerWakePolicy,
             "inference_defaults" => Self::InferenceDefaults,
+            "room_thread_admin" => Self::RoomThreadAdmin,
             "free_time_policy" => Self::FreeTimePolicy,
+            "board_layout" => Self::BoardLayout,
             _ => return None,
         })
     }
@@ -110,7 +123,10 @@ impl PolicySetting {
     #[must_use]
     pub fn act_kind(self) -> OwnerActKind {
         match self {
-            Self::DreamerWakePolicy | Self::InferenceDefaults => OwnerActKind::PolicySetting,
+            Self::DreamerWakePolicy
+            | Self::InferenceDefaults
+            | Self::RoomThreadAdmin
+            | Self::BoardLayout => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

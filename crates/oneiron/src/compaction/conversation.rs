@@ -26,14 +26,15 @@ use super::{
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;
-use crate::runtime_hooks::VerbHookStop;
-use crate::{EntityId, LlmRequest, Vault, WriteActor};
+use crate::error::VerbHookStop;
+use crate::{EntityId, Vault, WriteActor};
+use oneiron_model::llm::LlmRequest;
 
 mod log;
 mod storage;
 
 use log::ChatLogWindow;
-pub use log::{ChatLog, ChatLogLine, read_chat_log};
+pub use log::{ChatLog, ChatLogLine, read_action_pinned_log, read_chat_log};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 
 /// The run a conversation's paid compaction calls are filed under: the

@@ -26,9 +26,11 @@
 //!   receipts remain the always-on audit trail.
 
 mod actions;
+pub mod compilation_target;
 mod list;
 mod model;
 mod notification;
+pub use oneiron_store::inbox::notification_recipient;
 mod outbox_ask;
 mod projection;
 mod resolve;
@@ -38,9 +40,7 @@ mod traversal;
 mod unified;
 
 pub use self::actions::NotificationAction;
-pub use self::list::{
-    INBOX_PAGE_DEFAULT, INBOX_PAGE_MAX, NotificationMark, NotificationPage, NotificationRow,
-};
+pub use self::list::{INBOX_PAGE_DEFAULT, NotificationMark, NotificationPage, NotificationRow};
 pub use self::notification::{
     NOTIFICATION_PRODUCER_CONNECTOR, NOTIFICATION_PRODUCER_DOCS_IMPORT,
     NOTIFICATION_PRODUCER_FINDING, NOTIFICATION_PRODUCER_JOB, NotificationBody, NotificationEvent,
@@ -58,7 +58,7 @@ pub use self::unified::{
     UnifiedInboxGroup, UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
 };
 
-pub(crate) use self::notification::notification_id;
+pub(crate) use self::notification::{notification_id, scrub_finding_notification_subjects_in_txn};
 pub(crate) use self::projection::inbox_claim_hash;
 
 #[cfg(test)]
@@ -88,3 +88,5 @@ use crate::error::{Error, Result};
 use crate::store::GateDecisionRecord;
 #[cfg(test)]
 use crate::temporal::TimeRange;
+
+pub use oneiron_store::inbox::view_values;

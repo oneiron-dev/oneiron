@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::sync::Mutex;
 
 use rmpv::Value;
 
@@ -16,17 +17,20 @@ use super::payload::{
 };
 use super::spawn_replay::replay_request_match;
 use super::support::{
-    CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
-    expect_map, invalid_code_run_replay, map_get, str_value, validate_label, validate_text,
+    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
+    validate_text,
 };
 use super::types::{
     SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
 };
+mod checkpoint;
 mod position;
+
+pub use self::checkpoint::CodeRunStepCheckpoint;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
-pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
+pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
 /// Frozen nondeterministic inputs for one code run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +71,10 @@ pub struct CodeRunBridgeCall {
     /// A verb hook's view of this outcome was served to the guest. Its own
     /// read rows are not witnessed yet, so source capture stays unknown.
     pub hook_view_served: bool,
+    /// The dispatched rewritten call when a verb hook rewrote it (FIX 1442):
+    /// the guest's original stays in `request`. `None` for legacy rows and
+    /// un-rewritten calls.
+    pub rewritten_request: Option<Value>,
 }
 
 impl CodeRunBridgeCall {
@@ -97,11 +105,30 @@ impl CodeRunBridgeCall {
             action_digest: None,
             spawn_targets: super::spawn_replay::SpawnTargets::default(),
             hook_view_served: false,
+            rewritten_request: None,
         };
         row.scrub_target_erased_ask()?;
         row.validate_speech_coherence()?;
         row.validate_spawn_coherence()?;
+        row.validate_rewritten_coherence()?;
         Ok(row)
+    }
+
+    /// This row with the dispatched rewritten call beside the guest's
+    /// original request (FIX 1442): `None` leaves the row as offered. A
+    /// rewrite changes args, never the call: another effect is refused.
+    pub fn with_rewritten_request(mut self, rewritten: Option<&SelfCall>) -> Result<Self> {
+        let Some(rewritten) = rewritten else {
+            return Ok(self);
+        };
+        if rewritten.effect() != self.effect {
+            return Err(invalid_code_run_replay(
+                "rewritten request changes its call's effect",
+            ));
+        }
+        self.rewritten_request = Some(self_call_request_value(rewritten)?);
+        self.validate_rewritten_coherence()?;
+        Ok(self)
     }
 
     /// This row with its action digest over `inputs`, the versions the host
@@ -219,6 +246,12 @@ impl CodeRunBridgeCall {
                     "leader answer belongs to another effect",
                 ))
             }
+            SelfDispatchOutcome::StoredReply(super::SelfStoredReply {
+                kind: super::SelfStoredReplyKind::TeamStartReceipt,
+                ..
+            }) if self.effect != SelfEffect::Team => Err(invalid_code_run_replay(
+                "stored team receipt belongs to another effect",
+            )),
             SelfDispatchOutcome::Team(_) if self.effect != SelfEffect::Team => Err(
                 invalid_code_run_replay("team answer belongs to another effect"),
             ),
@@ -260,6 +293,58 @@ impl CodeRunBridgeCall {
             // the speech-specific checks above do not narrow those rows.
             _ => Ok(()),
         }
+    }
+
+    /// The rewritten request beside the original is coherent with this row
+    /// (FIX 1442): a rewrite changes args, never the call, so the rewritten
+    /// map carries its call's own shape; a speech rewrite carries the row's
+    /// own bridge stamp; a spawn rewrite's ask stays well-formed. `None`
+    /// (legacy rows, un-rewritten calls) skips.
+    pub(super) fn validate_rewritten_coherence(&self) -> Result<()> {
+        let Some(rewritten) = &self.rewritten_request else {
+            return Ok(());
+        };
+        let original = expect_map(&self.request, "bridge request must be a map")?;
+        let fields = expect_map(rewritten, "rewritten request must be a map")?;
+        let mut original_keys: Vec<&str> = original
+            .iter()
+            .filter_map(|(key, _)| key.as_str())
+            .collect();
+        let mut rewritten_keys: Vec<&str> =
+            fields.iter().filter_map(|(key, _)| key.as_str()).collect();
+        original_keys.sort_unstable();
+        rewritten_keys.sort_unstable();
+        if original_keys != rewritten_keys {
+            return Err(invalid_code_run_replay(
+                "rewritten request changes its call's shape",
+            ));
+        }
+        if self.effect.is_speech() {
+            let order = u32::try_from(self.seq)
+                .map_err(|_| invalid_code_run_replay("speech bridge seq exceeds u32"))?;
+            if u64_value(map_get(fields, "order")?)? != u64::from(order)
+                || u64_value(map_get(fields, "occurred_at")?)? != self.started_at_ms / 1000
+            {
+                return Err(invalid_code_run_replay(
+                    "rewritten speech contradicts its host bridge stamp",
+                ));
+            }
+        }
+        if self.effect == SelfEffect::AgentsSpawn {
+            let ask = match rewritten {
+                Value::Map(entries) => super::spawn_replay::ask_of(entries),
+                _ => None,
+            };
+            let erased = ask.is_some_and(super::spawn_replay::is_erased_ask);
+            let barrier = ask.is_some_and(super::spawn_replay::is_barrier_ask);
+            let live = ask.is_some_and(Value::is_str);
+            if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
+                return Err(invalid_code_run_replay(
+                    "rewritten spawn ask is not text, nil, or a typed marker",
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Whether this row is an explicit speech call that ACTUALLY emitted.
@@ -316,7 +401,10 @@ impl CodeRunBridgeCall {
         else {
             return None;
         };
-        let Value::Map(entries) = &self.request else {
+        // The bubble spoke the dispatched call: read the rewritten text when
+        // a hook rewrote it (FIX 1442).
+        let effective = self.rewritten_request.as_ref().unwrap_or(&self.request);
+        let Value::Map(entries) = effective else {
             return None;
         };
         entries
@@ -360,238 +448,10 @@ fn validate_speech_result(
     Ok(())
 }
 
-/// Deterministic checkpoint marker between bridge calls.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CodeRunStepCheckpoint {
-    pub seq: u64,
-    pub label: String,
-    pub state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
-    pub created_at_ms: u64,
-}
-
-impl CodeRunStepCheckpoint {
-    pub fn new(
-        seq: u64,
-        label: impl Into<String>,
-        state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
-        created_at_ms: u64,
-    ) -> Result<Self> {
-        let checkpoint = Self {
-            seq,
-            label: label.into(),
-            state_hash,
-            created_at_ms,
-        };
-        validate_label(&checkpoint.label, "checkpoint label")?;
-        Ok(checkpoint)
-    }
-}
-
-/// The preview text of a body the secret scan marked.
-pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
-    "[preview withheld: the secret scan found a secret in this result]";
-
-/// Compact preview stored in a replay record beside a raw output handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CodeRunOutputPreview {
-    pub codec: String,
-    pub text: String,
-    pub truncated: bool,
-}
-
-/// What a result body holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeRunOutputKind {
-    /// The whole body is UTF-8.
-    Text,
-    /// Anything else, kept byte for byte.
-    Binary,
-}
-
-impl CodeRunOutputKind {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Binary => "binary",
-        }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "text" => Some(Self::Text),
-            "binary" => Some(Self::Binary),
-            _ => None,
-        }
-    }
-}
-
-/// One result occurrence's manifest (OF-597): what the body is, measured
-/// as it was written. The body is stored once by its content handle, inline
-/// in LMDB or as a file beside `data.mdb`; authority stays with the
-/// occurrence, here, never with the shared bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CodeRunRawOutput {
-    pub handle: String,
-    pub path: String,
-    pub raw_blake3: [u8; CODE_RUN_REPLAY_HASH_LEN],
-    pub raw_len: u64,
-    pub kind: CodeRunOutputKind,
-    /// Lines in a text body: its newlines, plus one for an unterminated last
-    /// line.
-    pub lines: u64,
-    /// Whether the producer finished the body. An incomplete one is kept as
-    /// far as it got, and says so; it never reads as a success.
-    pub complete: bool,
-    /// Every row this occurrence's bytes were produced from; `None` when
-    /// any constituent is unknown (FIX 7104).
-    pub input_rows: Option<Vec<EntityId>>,
-    pub preview: CodeRunOutputPreview,
-}
-
-impl CodeRunRawOutput {
-    /// The manifest of a complete body held whole in memory.
-    pub fn from_bytes(path: impl Into<String>, raw: &[u8]) -> Result<Self> {
-        let mut meter = crate::store::BodyMeter::new();
-        meter.feed(raw);
-        Self::from_facts(
-            path,
-            &meter.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS),
-            true,
-        )
-    }
-
-    /// The manifest of a body measured as it streamed.
-    pub(crate) fn from_facts(
-        path: impl Into<String>,
-        facts: &crate::store::BodyFacts,
-        complete: bool,
-    ) -> Result<Self> {
-        let path = path.into();
-        validate_text(
-            &path,
-            CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
-            "raw output path",
-        )?;
-        Ok(Self {
-            handle: format!(
-                "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-                crate::entity_id::bytes_to_hex_lower(&facts.digest)
-            ),
-            path,
-            raw_blake3: facts.digest,
-            raw_len: facts.len,
-            kind: if facts.text {
-                CodeRunOutputKind::Text
-            } else {
-                CodeRunOutputKind::Binary
-            },
-            lines: facts.lines,
-            complete,
-            input_rows: None,
-            // A body the secret scan marked shows no preview: the view is
-            // redacted, the stored body never rewritten.
-            preview: CodeRunOutputPreview {
-                codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
-                text: match facts.secret {
-                    Some(_) => CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned(),
-                    None => facts.preview.clone(),
-                },
-                truncated: facts.preview_truncated || facts.secret.is_some(),
-            },
-        })
-    }
-
-    /// The manifest a context reference names, for reading its body by
-    /// digest and length; it carries no occurrence facts.
-    pub(crate) fn of_ref(source: crate::compaction::output::OutputRef) -> Self {
-        Self {
-            handle: format!(
-                "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-                crate::entity_id::bytes_to_hex_lower(&source.hash)
-            ),
-            path: String::new(),
-            raw_blake3: source.hash,
-            raw_len: source.byte_len,
-            kind: CodeRunOutputKind::Binary,
-            lines: 0,
-            complete: true,
-            input_rows: None,
-            preview: CodeRunOutputPreview {
-                codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
-                text: String::new(),
-                truncated: false,
-            },
-        }
-    }
-
-    /// The model-context reference of this body: its digest and length.
-    #[must_use]
-    pub fn output_ref(&self) -> crate::compaction::output::OutputRef {
-        crate::compaction::output::OutputRef {
-            hash: self.raw_blake3,
-            byte_len: self.raw_len,
-        }
-    }
-}
-
-/// One result occurrence (Docs Q08): what a result's taint and secret mark
-/// bind, as its authority does, never the bytes it shares with another. An
-/// owned output's occurrence is its owner and path, the id its body
-/// descriptor carries; an unowned body (a context output) has no occurrence
-/// beyond its content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ResultOccurrence(EntityId);
-
-impl ResultOccurrence {
-    /// The occurrence of `output` that `owner` holds, or of its bytes alone
-    /// when it has no owner. The one derivation of an occurrence id.
-    pub fn of(owner: Option<EntityId>, output: &CodeRunRawOutput) -> Result<Self> {
-        match owner {
-            Some(owner) => Self::owned(owner, &output.path),
-            None => Ok(Self(EntityId::derive(
-                b"oneiron:code-run-output-unowned:v1",
-                &[output.raw_blake3.as_slice()],
-            )?)),
-        }
-    }
-
-    /// The occurrence run `owner` holds at `path`.
-    pub fn owned(owner: EntityId, path: &str) -> Result<Self> {
-        Ok(Self(EntityId::derive(
-            b"oneiron:code-run-output-occurrence:v1",
-            &[owner.as_bytes().as_slice(), path.as_bytes()],
-        )?))
-    }
-
-    #[must_use]
-    pub const fn id(&self) -> EntityId {
-        self.0
-    }
-
-    /// The key of this occurrence's taint and secret rows: the handle of
-    /// its body, so a read naming the bytes alone and the body's collector
-    /// find every occurrence of them together, then the occurrence.
-    pub(crate) fn mark_key(&self, handle: &str) -> String {
-        format!("{}{}", Self::marks_prefix(handle), self.0.to_hex())
-    }
-
-    /// The key prefix the marks of every occurrence of `handle`'s body
-    /// share.
-    pub(crate) fn marks_prefix(handle: &str) -> String {
-        format!("{handle}/")
-    }
-
-    /// The body handle and the occurrence a mark row's key names.
-    pub(crate) fn parse_mark_key(key: &str) -> Result<(&str, Self)> {
-        let (handle, occurrence) = key
-            .rsplit_once('/')
-            .ok_or(Error::CorruptedIndex("code-run result mark key"))?;
-        Ok((handle, Self(EntityId::from_hex(occurrence)?)))
-    }
-}
+pub(crate) use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
+pub use crate::store::result_manifest::{
+    CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, ResultOccurrence,
+};
 
 /// One pinned host/guest record layout check carried by a replay record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -681,12 +541,95 @@ fn escape_code_run_frame_marks(payload: &str) -> String {
         .replace(CODE_RUN_CONSOLE_CLOSE, r"<\/console>")
 }
 
-/// Persisted deterministic replay record for a first-party code run.
+/// Transient decoded-row memos for one replay record. They are never
+/// persisted: a clone starts cold and equality ignores them because the rows
+/// are pure functions of `bridge_calls` (FIX 837).
+#[derive(Debug, Default)]
+pub(crate) struct VerbRowsCache {
+    agent: Mutex<IncrementalRows>,
+    resident: Mutex<IncrementalRows>,
+}
+
+impl Clone for VerbRowsCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for VerbRowsCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl VerbRowsCache {
+    fn invalidate(&self) {
+        *lock_incremental(&self.agent) = IncrementalRows::default();
+        *lock_incremental(&self.resident) = IncrementalRows::default();
+    }
+}
+
+#[derive(Debug)]
+struct IncrementalRows {
+    decoded: usize,
+    rows: Option<Vec<EntityId>>,
+}
+
+impl Default for IncrementalRows {
+    fn default() -> Self {
+        Self {
+            decoded: 0,
+            rows: Some(Vec::new()),
+        }
+    }
+}
+
+fn lock_incremental(cache: &Mutex<IncrementalRows>) -> std::sync::MutexGuard<'_, IncrementalRows> {
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn cached_rows(
+    cache: &Mutex<IncrementalRows>,
+    calls: &[CodeRunBridgeCall],
+    decode: impl Fn(&[CodeRunBridgeCall], usize) -> Option<Vec<EntityId>>,
+) -> Option<Vec<EntityId>> {
+    let mut cached = lock_incremental(cache);
+    if calls.len() < cached.decoded {
+        *cached = IncrementalRows::default();
+    }
+    if cached.decoded == calls.len() {
+        return cached.rows.clone();
+    }
+    // Unknown stays unknown: a later append cannot make an incomplete row
+    // witness look complete again.
+    if cached.rows.is_none() {
+        return None;
+    }
+    match decode(calls, cached.decoded) {
+        Some(rows) => {
+            if let Some(kept) = cached.rows.as_mut() {
+                kept.extend(rows);
+                cached.decoded = calls.len();
+            }
+        }
+        None => {
+            cached.rows = None;
+            cached.decoded = calls.len();
+        }
+    }
+    cached.rows.clone()
+}
+
+/// Persisted replay record for a first-party code run. Imported result
+/// outputs may have unknown frozen inputs and cannot seed deterministic execution.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct CodeRunReplayRecord {
     pub run_id: EntityId,
-    pub determinism: CodeRunDeterminism,
+    /// Frozen inputs when witnessed; imported outputs can retain unknown inputs.
+    pub determinism: Option<CodeRunDeterminism>,
     pub bridge_calls: Vec<CodeRunBridgeCall>,
     pub step_checkpoints: Vec<CodeRunStepCheckpoint>,
     pub outputs: Vec<CodeRunRawOutput>,
@@ -700,6 +643,9 @@ pub struct CodeRunReplayRecord {
     /// Skills loaded and other runs' result rows read so far (FIX 6999).
     /// `None` once any such constituent read is unknown.
     pub callable_rows: Option<Vec<EntityId>>,
+    /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
+    /// Any future in-place prefix outcome rewrite must invalidate them.
+    pub(crate) verb_rows_cache: VerbRowsCache,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -710,6 +656,12 @@ pub struct CodeRunReplayRecord {
 pub struct CodeRunResultBinding {
     pub name: String,
     pub handle: String,
+    /// The occurrence path the name was bound to (FIX 1393 follow-up): two
+    /// stores of the same bytes are two occurrences under one handle, and a
+    /// name resolves to its own occurrence, never the first with its bytes.
+    /// Empty on rows bound before occurrences were recorded; those match any
+    /// occurrence with their handle, as before.
+    pub path: String,
 }
 
 impl CodeRunResultBinding {
@@ -717,10 +669,15 @@ impl CodeRunResultBinding {
     pub const MAX_NAME_LEN: usize = 64;
 
     #[must_use]
-    pub fn new(name: impl Into<String>, handle: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        handle: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             handle: handle.into(),
+            path: path.into(),
         }
     }
 
@@ -766,8 +723,60 @@ impl CodeRunReplayGeneration {
 }
 
 impl CodeRunReplayRecord {
+    /// Whether this exact owned output is the stored receipt of a native
+    /// team start. Neither a matching digest nor caller-supplied card text
+    /// alone classifies an output as a receipt.
+    pub(crate) fn output_is_retained_receipt(&self, output: &CodeRunRawOutput) -> bool {
+        self.bridge_calls
+            .iter()
+            .any(|call| self.call_retains_output(call, output))
+    }
+
+    /// The same canonical classification for one call and its actual output.
+    pub(crate) fn call_retains_output(
+        &self,
+        call: &CodeRunBridgeCall,
+        output: &CodeRunRawOutput,
+    ) -> bool {
+        if call.effect != SelfEffect::Team
+            || call.validate_speech_coherence().is_err()
+            || !self.outputs.iter().any(|held| held == output)
+        {
+            return false;
+        }
+        let Ok(occurrence) = ResultOccurrence::owned(self.run_id, &output.path) else {
+            return false;
+        };
+        let Ok(SelfDispatchOutcome::StoredReply(stored)) =
+            decode_self_dispatch_outcome(&call.outcome)
+        else {
+            return false;
+        };
+        let reference = format!("occurrence:{}", occurrence.id().to_hex());
+        stored.kind == super::SelfStoredReplyKind::TeamStartReceipt
+            && stored.output.get("ref").and_then(serde_json::Value::as_str)
+                == Some(reference.as_str())
+            && stored
+                .output
+                .get("handle")
+                .and_then(serde_json::Value::as_str)
+                == Some(output.handle.as_str())
+            && stored
+                .output
+                .get("bytes")
+                .and_then(serde_json::Value::as_u64)
+                == Some(output.raw_len)
+    }
+
     #[must_use]
     pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
+        Self::with_determinism(run_id, Some(determinism))
+    }
+
+    pub(crate) fn with_determinism(
+        run_id: EntityId,
+        determinism: Option<CodeRunDeterminism>,
+    ) -> Self {
         Self {
             run_id,
             determinism,
@@ -778,6 +787,7 @@ impl CodeRunReplayRecord {
             bindings: Vec::new(),
             live_run: None,
             callable_rows: Some(Vec::new()),
+            verb_rows_cache: VerbRowsCache::default(),
         }
     }
 
@@ -831,7 +841,27 @@ impl CodeRunReplayRecord {
     /// such a run's answers.
     #[must_use]
     pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
-        agent_verb_rows_of(&self.bridge_calls)
+        cached_rows(
+            &self.verb_rows_cache.agent,
+            &self.bridge_calls,
+            |calls, from| agent_verb_rows_of_from(calls, from),
+        )
+    }
+
+    /// The second resident read-set fold, sharing the same append-only memo
+    /// so each output does not re-decode the whole record (FIX 837).
+    pub(crate) fn cached_resident_tool_answer_rows(&self) -> Option<Vec<EntityId>> {
+        cached_rows(
+            &self.verb_rows_cache.resident,
+            &self.bridge_calls,
+            |calls, from| super::read_set::resident_tool_answer_rows_of_from(calls, from, None),
+        )
+    }
+
+    /// A delivered reply can add rows to a parked prefix call. That is the
+    /// only in-loop prefix mutation; every replacement starts cold instead.
+    pub(crate) fn invalidate_verb_rows(&self) {
+        self.verb_rows_cache.invalidate();
     }
 }
 
@@ -842,8 +872,12 @@ impl CodeRunReplayRecord {
 /// definitions and attempts it served (FIX 5316). A board frame observed
 /// beside an answer adds the rows it was derived from (FIX 2135).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
+    agent_verb_rows_of_from(calls, 0)
+}
+
+fn agent_verb_rows_of_from(calls: &[CodeRunBridgeCall], from: usize) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
-    let verb_calls = calls.iter().filter(|call| {
+    let verb_calls = calls.get(from..)?.iter().filter(|call| {
         matches!(
             call.effect,
             SelfEffect::AgentVerb | SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch
@@ -964,6 +998,8 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         // A stored request keeps the handles the side-row wall placed where
         // the live call still holds the secrets (OF-067). This cursor issues
         // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
+        // A re-offered call meets its row by the guest's original request;
+        // hooks never run on replay (FIX 1442 H4: match stays on original).
         if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }

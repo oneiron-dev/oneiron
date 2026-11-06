@@ -1,3 +1,4 @@
+use crate::claim::ClaimRecordScope;
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
@@ -19,19 +20,9 @@ use super::input::{ExternalEffectGateContext, ExternalEffectPolicyRisk, GateActo
 use super::resolution::PolicyManifestResolution;
 
 /// One Scope's world axis, a NOTE's world witness is judged under.
-type WorldAxis = crate::federation::ScopeAxis<crate::federation::ScopeId>;
+type WorldAxis = oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PolicyScopedGrant {
-    pub(crate) actor_class: Option<String>,
-    pub(crate) actor_ref: Option<String>,
-    pub(crate) effector: String,
-    /// Purpose-specific selectors; these can only narrow `authority_scope`.
-    pub(crate) scope: Option<Value>,
-    pub(crate) authority_scope: crate::federation::Scope,
-    pub(crate) budget: Option<Value>,
-    pub(crate) receipt_required: bool,
-}
+pub(crate) use oneiron_store::policy_scoped_grant::PolicyScopedGrant;
 
 pub(crate) fn scoped_read_claim_allowed(
     policy: &PolicyManifestResolution,
@@ -56,7 +47,7 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
     actor_key: &ScopedReadActorKey,
     body: &ClaimBody,
     claim_facets: &[EntityId],
-    explicit_scope: Option<&crate::federation::Scope>,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     scoped_read_claim_view_allowed(
         policy,
@@ -71,7 +62,7 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
 /// a candidate that never landed has the one its Gate decision kept (FIX
 /// 7499).
 pub(crate) struct ClaimReadView<'a> {
-    pub(crate) record: crate::federation::Scope,
+    pub(crate) record: oneiron_authority::federation::Scope,
     pub(crate) scope: Option<&'a Value>,
     pub(crate) stale: bool,
     pub(crate) confidence: f32,
@@ -92,12 +83,73 @@ impl<'a> ClaimReadView<'a> {
     }
 }
 
+/// What the claim read selectors read of a policy manifest: whether it fails
+/// closed, and its scoped Grants. Nothing else of the manifest decides a
+/// claim read, so a claim's access class verdict, held per reader in one
+/// serving txn, is held under it (FIX 11915).
+#[derive(Debug, Clone)]
+pub(crate) struct ClaimReadPolicy<'p> {
+    fails_closed: bool,
+    grants: std::borrow::Cow<'p, [PolicyScopedGrant]>,
+}
+
+impl<'p> ClaimReadPolicy<'p> {
+    /// What the claim read selectors read of `policy`.
+    pub(crate) fn of(policy: &'p PolicyManifestResolution) -> Self {
+        Self {
+            fails_closed: policy.diagnostics().loaded_manifest_forces_fail_closed()
+                || policy.is_fail_closed(),
+            grants: std::borrow::Cow::Borrowed(policy.scoped_grants()),
+        }
+    }
+
+    /// The same, owning its Grants.
+    pub(crate) fn into_owned(self) -> ClaimReadPolicy<'static> {
+        ClaimReadPolicy {
+            fails_closed: self.fails_closed,
+            grants: std::borrow::Cow::Owned(self.grants.into_owned()),
+        }
+    }
+
+    /// Whether `other` reads every claim as this does: the same fail-closed
+    /// standing and the same scoped Grants.
+    /// The confidence and salience floors these Grants' selectors compare a
+    /// claim against: a class verdict holds for every claim whose scalars
+    /// fall on the same side of each (FIX 11915).
+    pub(crate) fn scalar_floors(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.grants.iter().filter_map(|grant| {
+            super::retrieval_filter::RetrievalPolicyFloor::from_scope(grant.scope.as_ref())
+                .map(|floor| (floor.min_confidence, floor.min_salience))
+        })
+    }
+
+    pub(crate) fn reads_as(&self, other: &ClaimReadPolicy<'_>) -> bool {
+        self.fails_closed == other.fails_closed && *self.grants == *other.grants
+    }
+}
+
 /// [`scoped_read_claim_allowed_with_scope`] over one claim's read view.
 pub(crate) fn scoped_read_claim_view_allowed(
     policy: &PolicyManifestResolution,
     actor_key: &ScopedReadActorKey,
     claim: &ClaimReadView<'_>,
-    explicit_scope: Option<&crate::federation::Scope>,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
+) -> bool {
+    claim_read_policy_allows(
+        &ClaimReadPolicy::of(policy),
+        actor_key,
+        claim,
+        explicit_scope,
+    )
+}
+
+/// [`scoped_read_claim_view_allowed`] under what the claim read selectors
+/// read of the policy.
+pub(crate) fn claim_read_policy_allows(
+    policy: &ClaimReadPolicy<'_>,
+    actor_key: &ScopedReadActorKey,
+    claim: &ClaimReadView<'_>,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     // This derived-data restriction narrows even a default-open vault. The
     // question's principal is a reader boundary, never a grant by itself.
@@ -116,22 +168,22 @@ pub(crate) fn scoped_read_claim_view_allowed(
     if actor_key.vault_owner_ref().is_some() {
         return true;
     }
-    let diagnostics = policy.diagnostics();
-    if diagnostics.loaded_manifest_forces_fail_closed() {
-        return false;
-    }
-    if policy.is_fail_closed() {
+    if policy.fails_closed {
         return false;
     }
 
-    if explicit_scope
-        .is_some_and(|scope| !scope.admits("read", &claim.record, &crate::federation::Scope::top()))
-    {
+    if explicit_scope.is_some_and(|scope| {
+        !scope.admits(
+            "read",
+            &claim.record,
+            &oneiron_authority::federation::Scope::top(),
+        )
+    }) {
         return false;
     }
     let mut saw_core_read_grant = false;
     for grant in policy
-        .scoped_grants()
+        .grants
         .iter()
         .filter(|grant| scoped_read_grant_has_read_effector(grant))
     {
@@ -148,10 +200,11 @@ pub(crate) fn scoped_read_claim_view_allowed(
         if !scoped_read_actor_matches(grant, actor_key) {
             continue;
         }
-        if grant
-            .authority_scope
-            .admits("read", &claim.record, &crate::federation::Scope::top())
-            && scoped_read_scope_matches_claim(grant.scope.as_ref(), claim)
+        if grant.authority_scope.admits(
+            "read",
+            &claim.record,
+            &oneiron_authority::federation::Scope::top(),
+        ) && scoped_read_scope_matches_claim(grant.scope.as_ref(), claim)
         {
             return true;
         }
@@ -165,7 +218,7 @@ pub(crate) fn scoped_read_claim_view_allowed(
 pub(crate) fn scoped_read_record_allowed(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
-    record: &crate::federation::Scope,
+    record: &oneiron_authority::federation::Scope,
 ) -> bool {
     scoped_read_record_allowed_with_scope(policy, actor, record, actor.authority_scope())
 }
@@ -177,8 +230,8 @@ pub(crate) fn scoped_read_record_allowed(
 pub(crate) fn scoped_read_record_allowed_with_scope(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
-    record: &crate::federation::Scope,
-    explicit_scope: Option<&crate::federation::Scope>,
+    record: &oneiron_authority::federation::Scope,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     record_allowed_held(policy, actor, record, explicit_scope, None)
 }
@@ -190,8 +243,8 @@ pub(crate) fn scoped_read_record_allowed_with_scope(
 pub(crate) fn scoped_read_note_allowed(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
-    record: &crate::federation::Scope,
-    explicit_scope: Option<&crate::federation::Scope>,
+    record: &oneiron_authority::federation::Scope,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
     note: (&NoteWorlds, &[&WorldAxis]),
 ) -> bool {
     record_allowed_held(policy, actor, record, explicit_scope, Some(note))
@@ -242,15 +295,16 @@ pub(crate) fn scoped_read_note_world_witness(
 /// or that world do not decode.
 fn selector_world_axis(selectors: Option<&Value>) -> Option<WorldAxis> {
     let entries = match selectors {
-        None | Some(Value::Nil) => return Some(crate::federation::ScopeAxis::All),
+        None | Some(Value::Nil) => return Some(oneiron_authority::federation::ScopeAxis::All),
         Some(Value::Map(entries)) => entries,
         Some(_) => return None,
     };
-    let mut axis = crate::federation::ScopeAxis::All;
+    let mut axis = oneiron_authority::federation::ScopeAxis::All;
     for (key, value) in entries {
         if matches!(key.as_str(), Some("world" | "world_ref" | "worldRef")) {
             let one = Value::Map(vec![(key.clone(), value.clone())]);
-            axis = crate::federation::scope_codec::legacy_read_scope(Some(&one))?.worlds;
+            axis =
+                oneiron_authority::federation::scope_codec::legacy_read_scope(Some(&one))?.worlds;
         }
     }
     Some(axis)
@@ -259,8 +313,8 @@ fn selector_world_axis(selectors: Option<&Value>) -> Option<WorldAxis> {
 fn record_allowed_held(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
-    record: &crate::federation::Scope,
-    explicit_scope: Option<&crate::federation::Scope>,
+    record: &oneiron_authority::federation::Scope,
+    explicit_scope: Option<&oneiron_authority::federation::Scope>,
     note: Option<(&NoteWorlds, &[&WorldAxis])>,
 ) -> bool {
     // `record` where the ceilings of one check hold it, a NOTE at its witness.
@@ -279,7 +333,7 @@ fn record_allowed_held(
         !scope.admits(
             "read",
             &held(&[&scope.worlds]),
-            &crate::federation::Scope::top(),
+            &oneiron_authority::federation::Scope::top(),
         )
     }) {
         return false;
@@ -310,19 +364,21 @@ fn record_allowed_held(
             _ => false,
         };
         if position_only
-            && crate::federation::scope_codec::legacy_read_scope(grant.scope.as_ref()).is_some_and(
-                |selectors| {
+            && oneiron_authority::federation::scope_codec::legacy_read_scope(grant.scope.as_ref())
+                .is_some_and(|selectors| {
                     let mut ceilings = vec![&selectors.worlds, &grant.authority_scope.worlds];
                     ceilings.extend(proof.map(|scope| &scope.worlds));
                     let record = held(&ceilings);
-                    selectors.admits("read", &record, &crate::federation::Scope::top())
-                        && grant.authority_scope.admits(
-                            "read",
-                            &record,
-                            &crate::federation::Scope::top(),
-                        )
-                },
-            )
+                    selectors.admits(
+                        "read",
+                        &record,
+                        &oneiron_authority::federation::Scope::top(),
+                    ) && grant.authority_scope.admits(
+                        "read",
+                        &record,
+                        &oneiron_authority::federation::Scope::top(),
+                    )
+                })
         {
             return true;
         }
@@ -366,7 +422,11 @@ fn scoped_read_scope_matches_claim(scope: Option<&Value>, claim: &ClaimReadView<
     let Some(selectors) = scoped_read_position_selectors(scope) else {
         return false;
     };
-    if !selectors.admits("read", &claim.record, &crate::federation::Scope::top()) {
+    if !selectors.admits(
+        "read",
+        &claim.record,
+        &oneiron_authority::federation::Scope::top(),
+    ) {
         return false;
     }
     let Some(Value::Map(entries)) = scope else {
@@ -410,7 +470,9 @@ fn scoped_read_scope_matches_claim(scope: Option<&Value>, claim: &ClaimReadView<
 
 /// The position Scope a legacy read selector names, or `None` when it names
 /// one ambiguously (two world keys) or carries a key no door knows.
-fn scoped_read_position_selectors(scope: Option<&Value>) -> Option<crate::federation::Scope> {
+fn scoped_read_position_selectors(
+    scope: Option<&Value>,
+) -> Option<oneiron_authority::federation::Scope> {
     if let Some(Value::Map(entries)) = scope
         && entries
             .iter()
@@ -420,7 +482,7 @@ fn scoped_read_position_selectors(scope: Option<&Value>) -> Option<crate::federa
     {
         return None;
     }
-    crate::federation::scope_codec::legacy_read_scope(scope)
+    oneiron_authority::federation::scope_codec::legacy_read_scope(scope)
 }
 
 /// Whether `grant` reads claims in `world` (`None` is base reality), as
@@ -436,13 +498,14 @@ fn scoped_read_position_selectors(scope: Option<&Value>) -> Option<crate::federa
 pub(crate) fn scoped_read_grant_reads_world(
     grant: &PolicyScopedGrant,
     world: Option<EntityId>,
-    credential: Option<&crate::federation::Scope>,
+    credential: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     if grant.receipt_required || grant.budget.is_some() {
         return false;
     }
     let scope = &grant.authority_scope;
-    let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    let id =
+        oneiron_authority::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
     if !scope.verbs.contains(&"read".to_owned())
         || !scope.worlds.contains(&id)
         || scope.audience.is_bottom()
@@ -511,8 +574,8 @@ pub(super) fn external_effect_grant_matches(
     // resource grant cannot be widened by treating missing context as a match.
     grant.authority_scope.admits(
         "effect",
-        &crate::federation::scope_codec::effect_preset(),
-        &crate::federation::Scope::top(),
+        &oneiron_authority::federation::scope_codec::effect_preset(),
+        &oneiron_authority::federation::Scope::top(),
     ) && external_effect_actor_matches(grant, actor)
         && external_effect_effector_matches(grant.effector.trim(), effect.verb.trim())
         && external_effect_scope_matches(grant.scope.as_ref(), effect)

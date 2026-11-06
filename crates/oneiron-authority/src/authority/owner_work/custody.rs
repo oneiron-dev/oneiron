@@ -14,6 +14,8 @@
 //! the anchor of the root the vault pins signs it, and no machine carries
 //! or executes it.
 
+use std::sync::Arc;
+
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -51,7 +53,9 @@ enum CustodyBodyShape {
     /// longer `Copy`. A set past one row rides as its commitment
     /// ([`CustodyPermitPieces`]) in that map and its permits in numbered
     /// main-log piece rows ([`CustodyPermitPiece`], FIX 11866); no permit
-    /// store of its own exists.
+    /// store of its own exists. The permits are one shared set
+    /// ([`CustodyRecipientPermits`], FIX 12281): a clone of the body copies
+    /// none.
     CloneNotCopy,
 }
 
@@ -142,6 +146,52 @@ pub struct CustodyRecipientPermit {
     pub profile: [u8; 32],
     /// The digest of the canonical encryption suite and public key.
     pub encryption_key: [u8; 32],
+}
+
+/// The recipients a custody change permits, in its order: one shared,
+/// immutable set (FIX 12281). A clone shares it and copies no permit, so
+/// every request the fold keeps on one joined set holds the same bytes.
+/// Read through the slice it derefs to; its serde form, its ordering, its
+/// `Hash` and its `Debug` text are the slice's. Built once from a list,
+/// whose buffer it keeps without copying a permit.
+#[derive(
+    Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct CustodyRecipientPermits(Arc<Vec<CustodyRecipientPermit>>);
+
+impl CustodyRecipientPermits {
+    /// The permits, in their order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[CustodyRecipientPermit] {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for CustodyRecipientPermits {
+    type Target = [CustodyRecipientPermit];
+
+    fn deref(&self) -> &[CustodyRecipientPermit] {
+        &self.0
+    }
+}
+
+impl From<Vec<CustodyRecipientPermit>> for CustodyRecipientPermits {
+    fn from(permits: Vec<CustodyRecipientPermit>) -> Self {
+        Self(Arc::new(permits))
+    }
+}
+
+impl From<&[CustodyRecipientPermit]> for CustodyRecipientPermits {
+    fn from(permits: &[CustodyRecipientPermit]) -> Self {
+        Self::from(permits.to_vec())
+    }
+}
+
+impl std::fmt::Debug for CustodyRecipientPermits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_slice(), f)
+    }
 }
 
 /// The commitment to a custody change's complete permitted set, in its
@@ -380,15 +430,18 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
     let listed = required(work, "recipients")?;
     let (recipients, pieces) = match (CUSTODY_SHARED_BODY, listed) {
         (CustodyBodyShape::CloneNotCopy, Value::Array(permits)) => (
-            permits
-                .iter()
-                .map(decode_permit)
-                .collect::<Result<Vec<_>>>()?,
+            CustodyRecipientPermits::from(
+                permits
+                    .iter()
+                    .map(decode_permit)
+                    .collect::<Result<Vec<_>>>()?,
+            ),
             None,
         ),
-        (CustodyBodyShape::CloneNotCopy, Value::Map(_)) => {
-            (Vec::new(), Some(decode_permit_pieces(listed)?))
-        }
+        (CustodyBodyShape::CloneNotCopy, Value::Map(_)) => (
+            CustodyRecipientPermits::default(),
+            Some(decode_permit_pieces(listed)?),
+        ),
         _ => return Err(invalid_authority()),
     };
     Ok(OwnerWorkBody::Custody {

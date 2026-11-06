@@ -304,6 +304,7 @@ pub(super) fn reconcile_connector_task(
             )?;
             return Ok(true);
         }
+        let fresh = attempt_receipt.is_none();
         let mut receipt = attempt_receipt.unwrap_or_else(|| {
             crate::receipt::outbound_intent_receipt(
                 receipt_id.to_owned(),
@@ -320,6 +321,25 @@ pub(super) fn reconcile_connector_task(
             SendReceiptOutcome::Ambiguous => "ambiguous",
         }
         .to_owned();
+        // FIX 10960: a freshly built reconcile receipt names its typed next
+        // step, as dispatch_result_receipt does (FIX 7965). An inherited
+        // receipt keeps the richer suggestions dispatch already filed.
+        if fresh {
+            let outcome = match receipt_outcome {
+                SendReceiptOutcome::Failed => {
+                    super::dispatch_types::OutboundDispatchOutcome::Failed
+                }
+                SendReceiptOutcome::Ambiguous => {
+                    super::dispatch_types::OutboundDispatchOutcome::Ambiguous
+                }
+                SendReceiptOutcome::Delivered => {
+                    super::dispatch_types::OutboundDispatchOutcome::DeliveredToChannel
+                }
+            };
+            let suggestions =
+                super::recovery_suggestions::recovery_suggestions_for(outcome, None, None, now);
+            super::recovery_suggestions::append_recovery_suggestions(&mut receipt, &suggestions);
+        }
         super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
         if let Some(party) = task.counterparty_ref.as_ref() {
             receipt

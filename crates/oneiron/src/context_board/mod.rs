@@ -5,13 +5,15 @@
 
 mod capabilities;
 mod children;
+pub mod consult_result;
+pub mod task_kind;
 pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };
 mod explain;
 mod fanout;
 pub use explain::{GateExplanation, MemoryExplanation};
-pub use fanout::fanout_action_rows;
+pub use fanout::{fanout_action_rows, fanout_action_rows_for};
 mod people;
 pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
@@ -27,18 +29,19 @@ mod observations_tests;
 mod own_changes;
 mod read_set;
 mod room;
+pub(crate) mod room_offer;
 mod room_verbs;
 #[cfg(test)]
 mod room_verbs_tests;
 mod worlds;
-pub use capabilities::{CapabilityHit, SkillsSection};
+pub use capabilities::{CapabilityHit, SkillsSection, split_skills_section};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
     ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{
-    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch, RosterParty, room_scope,
 };
 pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
@@ -64,6 +67,7 @@ mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+mod memory_writers;
 pub use hook_pins::{HookPin, HookShare};
 mod notifications;
 pub use memories::MemoryTier;
@@ -85,27 +89,44 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_body_for_announcement;
+pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
-    SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
+    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
+mod layout;
+mod layout_store;
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
 
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
-    BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
-    CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
-    SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_tasks_section, render_board_block,
-    resolve_board_budget, section_policy_for_budget_ref, shed,
+    BoardFrameError, BoardLegend, BoardPart, BoardRender, BoardRenderMetadata, BoardSection,
+    BudgetPolicyRef, CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES,
+    PLUGIN_SECTION_BUDGET_POLICY_REF, SHED_ORDER, SectionPolicy, SectionView, ShedOutcome,
+    ShedRank, ShedSection, SplitBoardRender, TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES,
+    assemble_tasks_section, render_board_block, render_split_board_block, resolve_board_budget,
+    section_policy_for_budget_ref, shed,
 };
+mod turn_opener;
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,
+};
+pub use layout::{
+    BOARD_FILTER_STATUSES_MAX, BOARD_FOLD_KEEP_MAX, BOARD_FOLD_NOTE_MAX_BYTES,
+    BOARD_LAYOUT_SECTIONS_MAX, BOARD_SECTION_KEY_MAX_BYTES, BoardActorClass, BoardLayout,
+    BoardLayoutError, BoardWhoFilter, FOLD_ATTENTION_ROWS_MAX, FoldBaseline, FoldCount, FoldCounts,
+    FoldSummary, LaidOutBoard, SectionFilter, SectionFold, SectionLayout, apply_board_layout,
+    fold_line, is_section_key, unfold_command,
+};
+pub use layout_store::{BoardLayoutCandidate, BoardLayoutState};
+pub(crate) use layout_store::{
+    board_layouts_in_txn, erase_board_layout_actor_in_txn, inherit_board_layout_in_txn,
 };
 pub use memories::{
     CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor,
@@ -139,12 +160,19 @@ pub use plugin::{
     render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
     validate_manifest_for_proposal,
 };
+pub(crate) use plugin::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
+};
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
     TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
+pub use turn_opener::{
+    TURN_WAKE_GRAMMAR, TurnWake, is_turn_opener_line, turn_opener_line, turn_wake_line,
+    wake_batch_opener,
+};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,
@@ -160,3 +188,9 @@ pub(super) fn one_line_token(s: &str) -> String {
         })
         .collect()
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
+
+pub mod agent_run_status;

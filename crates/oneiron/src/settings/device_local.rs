@@ -21,9 +21,21 @@ impl Vault {
     /// answer across a later send.
     #[cfg(feature = "sync")]
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
+        self.rows_may_leave_for(rows, &crate::settings::CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::rows_may_leave_device`] toward `destination`: every row goes
+    /// only while no world withheld from one of its machines keeps it
+    /// (FIX 5588). Nothing is kept from a caller on this device.
+    #[cfg(feature = "sync")]
+    pub fn rows_may_leave_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}
@@ -39,7 +51,7 @@ impl Vault {
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         Ok(
-            device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?
+            device_local_worlds_at(self, &rtxn, crate::settings::CallerLocality::OffDevice)?
                 .contains(&world),
         )
     }
@@ -53,7 +65,7 @@ impl Vault {
     /// may carry any world's text, so it goes only while no world stays on
     /// this device.
     pub fn model_call_may_leave_device(&self, world: Option<EntityId>) -> Result<bool> {
-        self.model_call_may_leave_for(world, &crate::claim::CallerLocality::OffDevice.into())
+        self.model_call_may_leave_for(world, &crate::settings::CallerLocality::OffDevice.into())
     }
 
     /// [`Self::model_call_may_leave_device`] for a model at `endpoint`: a
@@ -82,24 +94,34 @@ impl Vault {
         endpoint: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
+        self.model_call_hold_in_txn(&rtxn, world, endpoint)
+    }
+
+    /// The same model-world verdict in the caller's snapshot.
+    pub(crate) fn model_call_hold_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+        endpoint: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        let flagged = device_local_worlds_for(self, rtxn, endpoint)?;
         let Some(world) = world else {
             return Ok(
-                (!flagged.is_empty()).then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint))
+                (!flagged.is_empty()).then(|| worlds_hold_in(self, rtxn, &flagged, endpoint))
             );
         };
         if flagged.contains(&world) {
             let world = std::collections::BTreeSet::from([world]);
-            return Ok(Some(worlds_hold_in(self, &rtxn, &world, endpoint)));
+            return Ok(Some(worlds_hold_in(self, rtxn, &world, endpoint)));
         }
-        if world == crate::claim::base_world_id() {
+        if world == oneiron_contracts::claim::base_world_id() {
             return Ok(None);
         }
-        if self.get_entity_type_in_txn(&rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
+        if self.get_entity_type_in_txn(rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
             return Ok(Some(ReleaseHold::Placement));
         }
         let visibility =
-            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
+            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &world)?;
         Ok(
             (visibility.deleted || visibility.archived || visibility.stale)
                 .then_some(ReleaseHold::Placement),
@@ -134,7 +156,7 @@ impl Vault {
     /// no device-local world keeps ([`Self::device_local_keeps`]), judged in
     /// one read.
     pub fn off_device_readable(&self, ids: Vec<EntityId>) -> Result<Vec<EntityId>> {
-        self.off_device_readable_for(ids, &crate::claim::CallerLocality::OffDevice.into())
+        self.off_device_readable_for(ids, &crate::settings::CallerLocality::OffDevice.into())
     }
 
     /// [`Self::off_device_readable`] for a read toward `destination`, judged
@@ -159,7 +181,7 @@ impl Vault {
 
 /// [`Vault::device_local_keeps`], read in the caller's transaction.
 pub(crate) fn device_local_keeps_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    let flagged = device_local_worlds_at(vault, txn, crate::claim::CallerLocality::OffDevice)?;
+    let flagged = device_local_worlds_at(vault, txn, crate::settings::CallerLocality::OffDevice)?;
     device_local_keeps_among(&vault.store, txn, &flagged, id)
 }
 
@@ -170,7 +192,7 @@ pub(crate) fn device_local_keeps_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityI
 pub(crate) fn device_local_worlds_at(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    locality: crate::claim::CallerLocality,
+    locality: crate::settings::CallerLocality,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     device_local_worlds_for(vault, txn, &locality.into())
 }
@@ -184,6 +206,19 @@ pub(crate) fn device_local_worlds_for(
     destination: &ReadDestination,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     device_only_worlds_in(vault, txn, destination)
+}
+
+/// The worlds whose rows the receiving placement withholds: every world the
+/// world settings withhold from `receiving`, folded once in `txn` (FIX 5588).
+/// `Unknown` is exactly today's [`device_local_worlds_at`]`(OffDevice)`
+/// expansion (same `load_in` arm, same withheld set); a named machine only
+/// withholds fewer worlds, never more.
+pub(crate) fn device_local_worlds_for_machine(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    receiving: oneiron_base::machine_destination::Destination,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    crate::authority::WorldPrivacyView::load_in(vault, txn)?.withheld_for(receiving)
 }
 
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in

@@ -17,8 +17,8 @@ use crate::dreamer_consolidation::KeptDecision;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::nightly_merge::{Proposal, identity_key, subject_label};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
-use crate::llm::decision::catalogue::NIGHTLY_LINK;
-use crate::llm::decision::{
+use crate::model_decision::catalogue::NIGHTLY_LINK;
+use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionQuestion, MAX_DECISION_STATE_BYTES,
 };
 use crate::{EntityId, Result};

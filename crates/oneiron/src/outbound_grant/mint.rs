@@ -178,7 +178,7 @@ impl Vault {
     ) -> Result<StandingOutboundGrant> {
         let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
         let grant = StandingOutboundGrant {
-            authority_scope: crate::federation::scope_codec::effect_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::effect_preset(),
             principal_ref: intent.publisher_principal.to_hex(),
             origin_component_id: BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID.to_owned(),
             origin_action_id: BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID.to_owned(),
@@ -308,6 +308,7 @@ impl Vault {
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

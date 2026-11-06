@@ -1,8 +1,8 @@
 //! Caller-selected world and project filters. These never grant authority.
 use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::EntityId;
+use crate::claim::world_access::WorldAuthoritySet;
 use crate::corpus::CorpusScope;
-use crate::pipeline::WorldAuthoritySet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

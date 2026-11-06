@@ -12,17 +12,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
-use crate::agent_dispatch::CoordinationPattern;
+use crate::claim::learning_estimate::ESTIMATOR_VERSION;
+use crate::claim::learning_estimate::Estimate;
+use crate::claim::learning_estimate::EstimateForm;
+use crate::claim::learning_estimate::EstimateLabels;
+use crate::claim::learning_estimate::OwnTally;
+use crate::claim::learning_estimate::Prior;
+use crate::claim::learning_estimate::PriorOrigin;
+use crate::claim::learning_estimate::Window;
+use crate::claim::learning_estimate::fold_value;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::error::Result;
-use crate::learning::estimate::{OwnTally, fold_value};
 use crate::learning::ranking::rank_by_estimate;
-use crate::learning::{
-    ESTIMATOR_VERSION, Estimate, EstimateForm, EstimateLabels, LearningPredicate, Prior,
-    PriorOrigin, Window,
-};
 use crate::learning_setting::SettingScope;
 use crate::learning_setting_choice::{ChoiceValue, SpawnChoice};
-use crate::llm::ModelId;
+use crate::team::team_shape::CoordinationPattern;
+use oneiron_model::llm::ModelId;
 
 use super::payoff::PATTERN_EXPLORATION;
 use super::receipt::{ReceiptScan, TeamReceipt, team_receipts_in_txn};

@@ -24,11 +24,9 @@ use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::HexId;
 use crate::store::Store;
+pub(crate) use crate::store::conversation_body::AUDIENCE_EDIT_BOUND;
 use crate::vault::live_entity_row_in_txn;
 use std::cell::RefCell;
-
-/// The bound a plain delete or unlink of a kept edit meets.
-pub(crate) const AUDIENCE_EDIT_BOUND: &str = "a thread audience edit stays while its thread's root lives; erase the thread or its people instead";
 
 thread_local! {
     /// The edits their root's erase is tearing on this thread now. A write
@@ -146,6 +144,7 @@ pub(super) fn tear_root_edits_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     root: &EntityId,
+    deindex: &dyn Fn(&mut heed::RwTxn<'_>, &EntityId) -> Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let sources: Vec<EntityId> = crate::ports::EdgeStoreRead::port_edges(
         store,
@@ -167,7 +166,7 @@ pub(super) fn tear_root_edits_in_txn(
             continue;
         }
         let _torn = TornWithRoot::begin(edit);
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &edit)?;
+        let (_, vector, graph, neighbors) = deindex(txn, &edit)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &edit, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;

@@ -1,9 +1,9 @@
 //! Canonical citation checks on the same document snapshot a promotion commits,
 //! and the citation pins every local claim write keeps (FIX 904).
 use super::{invalid, storage, verbs};
-use crate::claim::{ClaimBody, EvidenceKind, EvidenceRef};
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, EvidenceKind, EvidenceRef};
 use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
 
@@ -172,7 +172,7 @@ fn stored_claim_citations(
     let stored = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .filter(|_| is_claim)
-        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .and_then(|body| crate::write_envelope::claim_body::decode_claim_body(body, true).ok())
         .and_then(|stored| stored.evidence_refs().ok());
     Ok(stored.unwrap_or_default())
 }

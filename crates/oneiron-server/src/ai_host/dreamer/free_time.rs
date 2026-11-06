@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::dreamer_consolidation::{
@@ -12,7 +13,7 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::dreamer_runner::{DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, FreeTimeItemBinding};
 use oneiron::llm::run_admission::RunAttribution;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::{HostInferenceContext, WorkClass, WorkContext};
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
 use super::super::policy::extraction_egress;
@@ -47,11 +48,7 @@ impl ResidentLend<'_> {
         let (model, host_binding, ladder, role) = match own {
             Some((model, locality, ladder)) => (
                 model.clone(),
-                HostInferenceBinding::Advertised {
-                    model,
-                    locality,
-                    keyless: ladder.all_keyless_own_server(),
-                },
+                ladder.host_binding(model, locality, ladder.all_keyless_own_server()),
                 ladder,
                 None,
             ),
@@ -83,9 +80,11 @@ impl ResidentLend<'_> {
         // The driver settles what this line charges if the item fails or
         // parks before it reports its spend (SCAN C012).
         ctx.meter_run_line(&line);
-        let backend = SourcedRunBackend::new(
-            ladder,
-            self.runtime.attributed_run(
+        let deadline =
+            Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+        let run = self
+            .runtime
+            .attributed_run(
                 line_id.clone(),
                 line,
                 RunAttribution {
@@ -95,8 +94,17 @@ impl ResidentLend<'_> {
                     purpose: binding.kind.purpose(),
                     spend_scope: binding.spend_scope.as_str().to_owned(),
                 },
-            ),
-        );
+            )
+            .with_work_context(WorkContext {
+                class: WorkClass::Background,
+                deadline,
+                // Free-time runs admit under the pass's device-work
+                // cancellation (FIX 11963): tripping it beside the wake flag
+                // aborts their in-flight device work with the pass.
+                cancel: ctx.device_cancel.clone().unwrap_or_default(),
+                ..Default::default()
+            });
+        let backend = SourcedRunBackend::new(ladder, run);
         // Its durable step meters on a line of its own: one meter on both
         // layers would charge twice.
         let step = self.vault.policy_budget_guard(

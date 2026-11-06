@@ -18,6 +18,11 @@
 //! `owner_unproven`, and an owned open that meets the confirm's lease waits
 //! for it ([`Vault::hold_writer_lease_for_owner_act`]).
 
+#[cfg(target_os = "macos")]
+pub(crate) mod clipboard;
+#[cfg(target_os = "macos")]
+pub(crate) mod private_copy;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +31,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultWriterLease};
 use tauri::{AppHandle, Manager};
+use zeroize::Zeroizing;
 
 use crate::{
     DESKTOP_ROOT_SECRET_SOURCE, RootSecretSource, SourceFailure, copy, with_effective_secret,
@@ -201,17 +207,18 @@ pub fn root_rekey_confirm(
     install: String,
     secret: String,
 ) -> Result<RekeyConfirmed, String> {
+    let secret = Zeroizing::new(secret);
     let state = app.state::<RekeyState>();
     let _one_at_a_time = state
         .confirming
         .lock()
         .map_err(|_| "the re-key state is unavailable".to_owned())?;
     let shown = LocalHostRootContext {
-        vault_id: parse_hex32(&vault_id).ok_or("the vault id is not 64 hex characters")?,
+        vault_id: *parse_hex32(&vault_id).ok_or("the vault id is not 64 hex characters")?,
         install: EntityId::from_hex(&install)
             .map_err(|_| "the install id is not a machine id".to_owned())?,
     };
-    Ok(confirm(&state, &shown, &secret))
+    Ok(confirm(&state, &shown, &*secret))
 }
 
 fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> RekeyConfirmed {
@@ -257,7 +264,7 @@ fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> Re
             }
         }
         Ok(Some(RootSecretSource::RetainedSlot)) => {
-            replace_retained(state, &owner, shown, &kept, root_key)
+            replace_retained(state, &owner, shown, &*kept, root_key)
         }
     }
 }
@@ -271,7 +278,7 @@ fn replace_retained(
     kept: &[u8],
     root_key: String,
 ) -> RekeyConfirmed {
-    let Ok(slot_secret) = <[u8; 32]>::try_from(kept) else {
+    let Ok(slot_secret) = <[u8; 32]>::try_from(kept).map(Zeroizing::new) else {
         return RekeyConfirmed::SlotCannotHold {
             root_key,
             steps: copy::REKEY_STEPS_SERVER_CONFIG,
@@ -279,7 +286,7 @@ fn replace_retained(
     };
     match state
         .vault
-        .replace_retained_host_root_secret(owner, shown, &slot_secret)
+        .replace_retained_host_root_secret(owner, shown, &*slot_secret)
     {
         Ok(RetainedHostRootReplace::Replaced(validated)) => match reread(state, &validated) {
             Ok(root_key) => RekeyConfirmed::Rekeyed {
@@ -306,16 +313,16 @@ fn validate(
     owner: &AuthenticatedOwner,
     shown: &LocalHostRootContext,
     secret: &str,
-) -> Result<(LocalHostRootValidated, Vec<u8>), String> {
+) -> Result<(LocalHostRootValidated, Zeroizing<Vec<u8>>), String> {
     let text = secret.as_bytes();
     let refusal = match vault.validate_local_host_root_replacement(owner, shown, text) {
-        Ok(validated) => return Ok((validated, text.to_vec())),
+        Ok(validated) => return Ok((validated, Zeroizing::new(text.to_vec()))),
         Err(error) => error.to_string(),
     };
     if let Some(bytes) = parse_hex32(secret)
-        && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &bytes)
+        && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &*bytes)
     {
-        return Ok((validated, bytes.to_vec()));
+        return Ok((validated, Zeroizing::new(bytes.to_vec())));
     }
     Err(refusal)
 }
@@ -398,7 +405,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// 64 hex characters as the 32 bytes they spell; anything else is `None`.
-fn parse_hex32(text: &str) -> Option<[u8; 32]> {
+fn parse_hex32(text: &str) -> Option<Zeroizing<[u8; 32]>> {
     let text = text.as_bytes();
     if text.len() != 64 {
         return None;
@@ -407,7 +414,7 @@ fn parse_hex32(text: &str) -> Option<[u8; 32]> {
     for (byte, pair) in bytes.iter_mut().zip(text.chunks_exact(2)) {
         *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
-    Some(bytes)
+    Some(Zeroizing::new(bytes))
 }
 
 const fn nibble(digit: u8) -> Option<u8> {

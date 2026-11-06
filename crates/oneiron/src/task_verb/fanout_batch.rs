@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use super::create_origin::task_create_origin_in_txn;
 use super::fanout_launch::{LaunchPayload, WaveLaunchGate, wave_launch_ref};
-use super::sdk::{FanoutLaunchRequest, FanoutLaunchView};
 use super::{TaskTerminalDisposition, VaultWaveTaskPort};
+use crate::agent_dispatch::FanoutStatement;
 use crate::agent_dispatch::{AgentDispatcher, SpendRead, SpendScope, SpendState};
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::claim::ClaimReadStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::task_verb::FanoutLaunchReceipt;
 use crate::wave_orchestration::{
     PlannedTask, WAVE_PLAN_SCHEMA_VERSION, WaveOrchestrator, WavePlan,
 };
@@ -373,4 +374,51 @@ pub fn fanout_batch_rows(view: &FanoutBatchView) -> Vec<EntityId> {
     rows.sort_unstable();
     rows.dedup();
     rows
+}
+
+/// `vault.fanout.launch`'s input: the launch to read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutLaunchRequest {
+    pub launch_ref: EntityId,
+}
+
+/// The durable hold of a launch that waits.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FanoutLaunchHold {
+    pub surface_ref: String,
+    pub denied: bool,
+}
+
+/// What the launch doors answer: the launch as it stands, with the
+/// statement frozen before anything launched.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FanoutLaunchView {
+    pub launch_ref: EntityId,
+    pub plan_digest: String,
+    pub statement: FanoutStatement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<FanoutLaunchHold>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_row_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice_receipt_ref: Option<String>,
+    pub task_refs: Vec<EntityId>,
+}
+
+impl From<FanoutLaunchReceipt> for FanoutLaunchView {
+    fn from(receipt: FanoutLaunchReceipt) -> Self {
+        Self {
+            launch_ref: receipt.launch_ref,
+            plan_digest: bytes_to_hex_lower(&receipt.plan_digest),
+            statement: receipt.statement,
+            held: receipt.paused.map(|pause| FanoutLaunchHold {
+                surface_ref: pause.surface_ref,
+                denied: pause.denied,
+            }),
+            check_row_ref: receipt.check_row_ref,
+            choice_receipt_ref: receipt.choice_receipt_ref,
+            task_refs: receipt.task_refs,
+        }
+    }
 }

@@ -1,5 +1,7 @@
+//! One TASK intent plus its node-local realizing-attempt input.
+//! Entry [`TaskCreateSpec`]; consumed by `create_facade` and `create_validation`.
+//! Owned by `task_verb`; additive fields stay optional for ticket compatibility.
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::task_type::TaskTypeRef;
@@ -121,18 +123,4 @@ impl TaskCreateSpec {
     }
 }
 
-/// Per-actor create quota within one node-local time window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskCreateRateLimit {
-    pub limit: usize,
-    pub window_seconds: u64,
-}
-
-impl Default for TaskCreateRateLimit {
-    fn default() -> Self {
-        Self {
-            limit: 10,
-            window_seconds: 60,
-        }
-    }
-}
+pub use crate::gate::consult_fanout_values::TaskCreateRateLimit;

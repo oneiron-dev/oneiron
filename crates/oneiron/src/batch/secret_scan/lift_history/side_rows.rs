@@ -1,7 +1,8 @@
 //! The side tables the catalog classes as authored. A row that holds a hit
 //! is admitted as a write of it is, by the side-row wall, and stored with its
 //! handles. At a write the wall checks a masked copy with the table's own
-//! codec; here the check is that the copy keeps the row's shape, each value
+//! codec; here the check is the table's declared typed acceptance when it
+//! names one (FIX 2680), else that the copy keeps the row's shape, each value
 //! its kind, so the row's own type still reads it. A copy that does not
 //! keeps its row and files a proposal.
 
@@ -21,6 +22,7 @@ use crate::side_table::{CodecName, SideTableDecl, authored_vault_meta};
 pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize) -> Result<Page> {
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };
@@ -60,8 +62,9 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     let Some(reason) = write_payload_hit(&row) else {
         return Ok(Done::Clean);
     };
-    let admitted = admit_side_row(vault, txn, decl, key, &row, |copy| {
-        keeps_shape(decl, &row, copy)
+    let admitted = admit_side_row(vault, txn, decl, key, &row, |copy| match decl.accepts {
+        Some(accepts) => accepts(copy),
+        None => keeps_shape(decl, &row, copy),
     })?;
     let Some(masked) = admitted else {
         return Ok(Done::Propose(LiftCause::Unplaceable, reason));

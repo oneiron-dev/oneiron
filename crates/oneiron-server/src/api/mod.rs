@@ -98,18 +98,17 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
-pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
-pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
-#[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
-mod off_record_rooms;
+pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 12477: the redeem door's per-address failure backoff, held by the server.
+pub(crate) use self::pairing::PairingRedeemBackoff;
 // FIX 922: the kit door to the sealed cloud bundle.
 mod recovery_bundle;
 mod sessions;
@@ -120,6 +119,7 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+pub(crate) use facade::is_slim_lifecycle_observation;
 pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.
 pub(crate) mod host_action;
@@ -135,6 +135,8 @@ pub(crate) use self::facade::{
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
 pub(crate) use self::facade::clock_ingress;
+// FIX 12323: a facade route's caller, as its receipt layer resolved it.
+pub(crate) use self::facade::resolved_facade_caller;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -150,6 +152,7 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -173,13 +176,14 @@ pub(crate) use owner_routes::owner;
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
+mod phone_line;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the

@@ -108,6 +108,9 @@ impl From<MemoryError> for FacadeApiError {
             // A verb hook asked first: accepted, not run, and the body names
             // the ask a retry with the same invocation waits on.
             MEMORY_CODE_PENDING_ASK => StatusCode::ACCEPTED,
+            // A budget window paced the call and the engine holds it in its
+            // caller's line (FIX 8753): accepted, run on its turn.
+            oneiron::memory::MEMORY_CODE_PACED_HOLD => StatusCode::ACCEPTED,
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
@@ -233,6 +236,31 @@ impl From<ApiError> for FacadeApiError {
 }
 
 impl FacadeApiError {
+    /// The engine holds the call rather than answering it: a hook accepted
+    /// it only to ask first, or a budget window paced it into its caller's
+    /// line (FIX 8753). Neither is an asynchronous job's answer, and a
+    /// same-id retry reaches the held call again. Chat keeps its own wire
+    /// code, but carries the same native stop.
+    pub(super) fn is_held_call(status: u16, body: &serde_json::Value) -> bool {
+        if status != StatusCode::ACCEPTED.as_u16() {
+            return false;
+        }
+        if matches!(
+            body.pointer("/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some(MEMORY_CODE_PENDING_ASK | oneiron::memory::MEMORY_CODE_PACED_HOLD)
+        ) {
+            return true;
+        }
+        body.pointer("/error/hook")
+            .and_then(|stop| {
+                serde_json::from_value::<oneiron::runtime_hooks::VerbHookStop>(stop.clone()).ok()
+            })
+            .is_some_and(|stop| {
+                matches!(stop, oneiron::runtime_hooks::VerbHookStop::Pending { .. })
+            })
+    }
+
     /// The refusal with a failed run's program type feedback beside it (FIX
     /// 10389), each item as its destination is given it: never among its
     /// words, its status, code and retry as they were.
@@ -242,6 +270,46 @@ impl FacadeApiError {
     ) -> Self {
         self.body.error.program_steps = program_steps;
         self
+    }
+
+    /// The refusal a replayed invocation's first call answered with, read
+    /// back from that reply's `body` (FIX 2005): its status, every word and
+    /// field it carried and its narrowing, the first call's receipt among
+    /// them, under a request id of its own. `None` for a reply that is no
+    /// facade refusal, or carries a member this envelope does not, which
+    /// then goes again as it was.
+    pub(super) fn replayed(status: StatusCode, body: &serde_json::Value) -> Option<Self> {
+        if (status.is_success() && !Self::is_held_call(status.as_u16(), body))
+            || !body
+                .as_object()?
+                .keys()
+                .all(|key| key == "error" || key == "narrowing")
+        {
+            return None;
+        }
+        let error = body.get("error")?;
+        if !error
+            .as_object()?
+            .keys()
+            .all(|key| REPLAYED_ERROR_FIELDS.contains(&key.as_str()))
+        {
+            return None;
+        }
+        let code = error.get("code")?.as_str()?;
+        let message = replayed_field::<String>(error, "message").unwrap_or_default();
+        let mut refusal = Self::new(status, code, message, Vec::<String>::new());
+        let replayed = &mut refusal.body.error;
+        replayed.suggestions = replayed_field(error, "suggestions").unwrap_or_default();
+        replayed.receipt_ref = replayed_field(error, "receiptRef");
+        replayed.wrong_root = serde_json::from_value(error.clone()).ok().map(Box::new);
+        replayed.hook = replayed_field(error, "hook").map(Box::new);
+        replayed.retry_after = replayed_field(error, "retryAfter");
+        replayed.resets_at = replayed_field(error, "resetsAt").unwrap_or_default();
+        replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
+        replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
+        replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
+        refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
+        Some(refusal)
     }
 
     /// The refusal's wire reply: its status and `{error, narrowing?}` body,
@@ -284,6 +352,33 @@ impl IntoResponse for FacadeApiError {
         response.extensions_mut().insert(self);
         response
     }
+}
+
+/// Every member a facade refusal's `error` states on the wire
+/// ([`FacadeErrorBody`], its wrong-root correction flattened in).
+const REPLAYED_ERROR_FIELDS: [&str; 14] = [
+    "code",
+    "message",
+    "requestId",
+    "suggestions",
+    "receiptRef",
+    "attempted",
+    "replacement",
+    "schemaRef",
+    "hook",
+    "retryAfter",
+    "resetsAt",
+    "reasonCodes",
+    "legal_hold",
+    "programSteps",
+];
+
+/// Member `name` of a replayed reply's JSON `object`, when it reads as `T`.
+fn replayed_field<T: serde::de::DeserializeOwned>(
+    object: &serde_json::Value,
+    name: &str,
+) -> Option<T> {
+    serde_json::from_value(object.get(name)?.clone()).ok()
 }
 
 /// Diagnostic correlation id for one facade error.

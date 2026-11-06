@@ -2,6 +2,12 @@
 use super::ContextPackBuilder;
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Carries the same read key into private-note and PPR candidate work.
+    pub(crate) fn scoped_note_reader(mut self, reader: crate::claim::ScopedReadActorKey) -> Self {
+        self.pipeline = self.pipeline.scoped_note_reader(reader);
+        self
+    }
+
     /// Apply the same scoped retrieval floor to every candidate channel.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.pipeline = self.pipeline.authority_filter(filter);
@@ -23,14 +29,17 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub(crate) fn filter_candidates(
         mut self,
-        filter: &'a crate::pipeline::CandidateFilter<'a>,
+        filter: &'a crate::store::retrieval_values::CandidateFilter<'a>,
     ) -> Self {
         self.pipeline = self.pipeline.filter_candidates(filter);
         self
     }
 
     /// [`crate::pipeline::PipelineBuilder::gate_candidates`] (FIX 11648).
-    pub(crate) fn gate_candidates(mut self, gate: &'a dyn crate::pipeline::CandidateGate) -> Self {
+    pub(crate) fn gate_candidates(
+        mut self,
+        gate: &'a dyn crate::store::retrieval_values::CandidateGate,
+    ) -> Self {
         self.pipeline = self.pipeline.gate_candidates(gate);
         self
     }
@@ -41,7 +50,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn facet(
         mut self,
         facet_id: &crate::EntityId,
-        mode: crate::pipeline::FacetMode,
+        mode: crate::claim::retrieval_scope::FacetMode,
     ) -> Self {
         self.pipeline = self.pipeline.facet(facet_id, mode);
         self

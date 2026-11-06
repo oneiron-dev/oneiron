@@ -29,6 +29,11 @@ pub struct ModelRouter {
     aliases: BTreeMap<String, ModelId>,
     /// Each chat model's catalog entry, as the owner's other nodes see it.
     entries: BTreeMap<ModelId, LlmCatalogEntry>,
+    /// The on-device view of each configured model or seat a managed worker
+    /// this server supervises serves over its native channel (I2-LOCAL): the
+    /// ladder a call routed on device takes, which never sends anywhere
+    /// else. Its default route, in `routes`, keeps every other transport.
+    on_device: BTreeMap<ModelId, Arc<OfferLadder>>,
 }
 
 impl ModelRouter {
@@ -39,6 +44,33 @@ impl ModelRouter {
         ladder: Arc<OfferLadder>,
     ) {
         self.routes.insert(model, (locality, ladder));
+    }
+
+    /// Records `ladder` as `model`'s on-device view: a ladder that sends
+    /// only over supervised native channels ([`OfferLadder::native_local`]).
+    /// Any other ladder is left out, so this view never names a transport
+    /// that can leave the device.
+    pub(super) fn insert_on_device(&mut self, model: ModelId, ladder: Arc<OfferLadder>) {
+        if ladder.native_local() {
+            self.on_device.insert(model, ladder);
+        }
+    }
+
+    /// Where `model` runs and the ladder that serves it for a call routed at
+    /// `route` (I2-LOCAL): on device, its on-device view when it has one;
+    /// at any other route, or with no such view, [`Self::served`]. The
+    /// caller still compares the locality with the route it asked for.
+    pub(crate) fn served_at(
+        &self,
+        model: &ModelId,
+        route: ModelLocality,
+    ) -> Option<(ModelLocality, Arc<OfferLadder>)> {
+        if route == ModelLocality::OnDevice
+            && let Some(ladder) = self.on_device.get(model)
+        {
+            return Some((ModelLocality::OnDevice, Arc::clone(ladder)));
+        }
+        self.served(model)
     }
 
     /// Records `model`, served alone by its own id, as a chat model of
@@ -101,6 +133,24 @@ impl ModelRouter {
                 .map(|(locality, ladder)| (*locality, Arc::clone(ladder)))
         };
         route(&self.routes).or_else(|| route(&self.discovered()))
+    }
+
+    /// Every model this router serves now, configured or mesh-discovered,
+    /// with where each runs, in id order (FIX 2745): the birth-time snapshot
+    /// a seat birth admits its pick from. A configured route wins over a
+    /// discovered one, as `served` reads them.
+    pub fn served_models(&self) -> BTreeMap<ModelId, ModelLocality> {
+        let mut served: BTreeMap<ModelId, ModelLocality> = self
+            .discovered()
+            .iter()
+            .map(|(model, (locality, _))| (model.clone(), *locality))
+            .collect();
+        served.extend(
+            self.routes
+                .iter()
+                .map(|(model, (locality, _))| (model.clone(), *locality)),
+        );
+        served
     }
 
     /// Each model the last mesh catalog refresh found, with the machine id

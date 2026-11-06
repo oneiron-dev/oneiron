@@ -19,7 +19,7 @@ use super::chunks::{self, WakePreparationChunks};
 use super::retry::Lineage;
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::ScopeResource;
+use oneiron_model::llm::ScopeResource;
 
 /// Splits every part of `plan` that cannot be read whole in `sources`, or
 /// one of whose TURNs' texts is in `refused_texts`, off into owed siblings,

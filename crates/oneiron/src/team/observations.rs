@@ -19,7 +19,7 @@ use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::self_heal::audit::ObjectiveConfession;
 
 /// The host's measurements over a team's members.

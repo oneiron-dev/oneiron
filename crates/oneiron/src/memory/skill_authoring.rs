@@ -7,8 +7,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
-use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
+use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -151,7 +151,7 @@ impl Memory<'_> {
         &self,
         id: EntityId,
         proposed: &SkillRecord,
-        files: Vec<crate::skill_hub::HubFile>,
+        files: Vec<crate::write_envelope::skill_source::HubFile>,
         expected_version: Option<&str>,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
@@ -170,7 +170,7 @@ impl Memory<'_> {
         proposed: &SkillRecord,
         expected_version: Option<&str>,
         now: u64,
-        source: Option<Vec<crate::skill_hub::HubFile>>,
+        source: Option<Vec<crate::write_envelope::skill_source::HubFile>>,
     ) -> MemoryResult<SkillAuthoringReceipt> {
         let actor = self.write_actor();
         verify_live_actor(self.vault, txn, actor)?;
@@ -182,7 +182,7 @@ impl Memory<'_> {
         }
         let mut record = proposed.clone();
         if let Some(files) = &source {
-            let hash = crate::skill::canonical_skill_tree_hash(
+            let hash = crate::write_envelope::skill_record::canonical_skill_tree_hash(
                 files
                     .iter()
                     .map(|file| (file.path.as_str(), file.content.as_slice())),
@@ -245,10 +245,10 @@ impl Memory<'_> {
             self.birth_skill_in_txn(txn, id, &mut record, now)?
         };
         if let Some(files) = source {
-            let package = crate::skill_hub::package_from_source(
+            let package = crate::store::skill_package::package_from_source(
                 &record,
                 files,
-                crate::skill_hub::SkillPackageFormat::Native,
+                crate::write_envelope::skill_source::SkillPackageFormat::Native,
             )?;
             self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
         }
@@ -336,10 +336,22 @@ impl Memory<'_> {
             let package =
                 self.vault
                     .fork_skill_package_in_txn(txn, &parent, &stored, &mut record)?;
+            if let Some((document, frontier)) =
+                crate::entity_doc::source_document_pin_in_txn(&self.vault.store, txn, &parent)?
+            {
+                crate::write_envelope::skill_record::retain_fork_parent_pin(
+                    &mut record,
+                    document,
+                    frontier,
+                )?;
+            }
             let (author, proof) = self.birth_skill_in_txn(txn, id, &mut record, now)?;
             if let Some(package) = package {
-                let package =
-                    crate::skill_hub::package_from_source(&record, package.files, package.format)?;
+                let package = crate::store::skill_package::package_from_source(
+                    &record,
+                    package.files,
+                    package.format,
+                )?;
                 self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
             }
             self.vault
@@ -402,7 +414,7 @@ impl Memory<'_> {
             Value::from(AUTHOR_PROOF),
             Value::from(receipt.decision_id.to_hex()),
         ));
-        let data = crate::skill::encode_skill_record(record)?;
+        let data = crate::write_envelope::skill_record::encode_skill_record(record)?;
         receipt.diff_handle = blake3::hash(&data).as_bytes().to_vec();
         self.vault.put_skill_record_in_txn(
             txn,

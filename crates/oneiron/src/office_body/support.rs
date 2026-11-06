@@ -2,16 +2,69 @@
 //! Entry: `erase_in_txn`.
 //! Definitions live here; office_body forwards their original names.
 
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::*;
+use crate::provenance::made_by::{MadeByClass, MadeByProcess};
+
+/// Clears the words `artifact`'s export records keep, for the owner's
+/// discard of a world copy that takes the artifact (FIX 14534): the author
+/// each export showed and what its projection adapted. Each record's
+/// version, frontiers, actor, token and clock stay, as do the revision
+/// author rows and the token index.
+pub(crate) fn discard_export_payload_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    let mut cleared = Vec::new();
+    for (key, mut record) in EXPORTS.scan_from(store, txn, artifact.as_bytes())? {
+        if record.artifact != *artifact || (record.author.is_empty() && record.effects.is_empty()) {
+            continue;
+        }
+        record.author.clear();
+        record.effects.clear();
+        cleared.push((key, record));
+    }
+    for (key, record) in cleared {
+        EXPORTS.put(store, txn, &key, &record)?;
+    }
+    Ok(())
+}
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
-/// office records, its proposals and its export records. The body itself, a Loro document in
+/// office records, its proposals and its export and revision-author records. The body itself, a Loro document in
 /// every format, goes with its forks in the typed body's own eraser.
 /// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
+    // The token lookup's refs to this artifact's rows go in the same writer
+    // (FIX 12403): a token-keyed row is not artifact-prefixed, so collect
+    // the doomed rows first, delete, then unref.
+    let mut doomed_exports = Vec::new();
+    for (key, record) in EXPORTS.scan_from(store, txn, entity.as_bytes())? {
+        if let Some(token) = record.token {
+            doomed_exports.push((token, key));
+        }
+    }
+    let mut doomed_authors = Vec::new();
+    for (key, record) in EXPORT_AUTHORS.scan_from(store, txn, entity.as_bytes())? {
+        doomed_authors.push((record.token, key));
+    }
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
+    EXPORT_AUTHORS.delete_from(store, txn, entity.as_bytes())?;
+    for (token, key) in &doomed_exports {
+        author_token::index::unref_export(store, txn, token, key)?;
+    }
+    for (token, key) in &doomed_authors {
+        author_token::index::unref_author(store, txn, token, key)?;
+    }
+    for (group, route) in LIVE_EDIT_GROUPS.scan(store, txn)? {
+        if route.artifact == *entity {
+            LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
+        }
+    }
+    consent::revoke_office_edit_grants_naming_in_txn(store, txn, entity)?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }
@@ -171,6 +224,60 @@ pub(super) fn three_way(
     })
 }
 
+/// Finish landing an XLSX fork whose base is `base` on the live head `head`:
+/// when one side moved rows or columns and the other wrote cells or names,
+/// the merged document holds the writes at their old addresses, so the
+/// merger's one commit moves them by the same edits (FIX 3036). The head it
+/// leaves, or `None` when the merge already reads so.
+pub(super) fn land_moved_xlsx(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    (base, head): (&[u8], &[u8]),
+    proposal: &LoroDoc,
+    actor: WriteActor,
+) -> Result<Option<Vec<u8>>> {
+    let (_, merged) = vault.loro_body(wtxn, artifact, OfficeBodyKind::Xlsx, None)?;
+    let at = |frontier: &[u8]| -> Result<XlsxBody> {
+        let frontier =
+            loro::Frontiers::decode(frontier).map_err(|_| invalid("invalid body frontier"))?;
+        let doc = merged
+            .fork_at(&frontier)
+            .map_err(|_| invalid("unknown body frontier"))?;
+        xlsx::read(&doc)
+    };
+    let Some(body) = xlsx::landed(
+        &at(base)?,
+        &at(head)?,
+        &xlsx::read(proposal)?,
+        &xlsx::read(&merged)?,
+    )?
+    else {
+        return Ok(None);
+    };
+    let made_by = MadeBy {
+        inputs: Vec::new(),
+        process: MadeByProcess {
+            actor: actor.entity_ref(),
+            class: MadeByClass::Concluded,
+            identity: "office_body.merge".to_owned(),
+            version: "1".to_owned(),
+            params_hash: blake3::hash(b"").to_hex().to_string(),
+        },
+        at: vault.now_recorded_at(),
+        trigger: None,
+    };
+    let (_, commit) = edit_typed_body_in_txn(
+        vault,
+        wtxn,
+        artifact,
+        None,
+        writer(OfficeBodyKind::Xlsx, actor, &made_by),
+        |doc| xlsx::write_body(doc, &body),
+    )?;
+    Ok(Some(commit.frontier))
+}
+
 /// Recalculate a projected workbook in process at `at`, read in `zone`'s
 /// local time, seeded by the projected package, so the result is
 /// deterministic in all three and no vault frontier reaches the file
@@ -269,4 +376,34 @@ pub(crate) fn fork_waits(proposal: &EntityId, refused: Option<&str>) -> Error {
         "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it, {asked}",
         proposal.to_hex()
     ))
+}
+
+/// A live edit that waits on its owner ask `ask` (FIX 596): the editor
+/// retries the same call once the owner answers.
+pub(crate) fn live_edit_waits(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "the live edit by {} on artifact {} waits on owner ask {}; no standing entity.office.edit grant covers it yet",
+        editor.to_hex(),
+        artifact.to_hex(),
+        ask.to_hex(),
+    ))
+}
+
+/// A live edit whose owner ask `ask` was accepted while its coverage still
+/// holds (FIX 596): the editor retries the same call carrying the ops
+/// again, which now lands; nothing was applied.
+pub(crate) fn live_edit_granted(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "owner ask {} accepted live edits by {} on artifact {}; retry the same edit, which now lands",
+        ask.to_hex(),
+        editor.to_hex(),
+        artifact.to_hex(),
+    ))
+}
+
+/// The typed refusal of a live edit the owner declined or let lapse
+/// (FIX 596): rejection or lapse alone refuses; pending and admission
+/// failure wait instead.
+pub(crate) fn live_edit_refused(reason: &str) -> Error {
+    Error::Refused(reason.to_owned())
 }

@@ -28,14 +28,22 @@ pub struct MediaUsage {
 }
 
 impl MediaUsage {
+    /// Whether the call's charge counts the provider's token report (FIX
+    /// 11481): true when it reported any tokens, false when the charge
+    /// falls back to the host/caller's own native counts at the row's
+    /// rates.
+    #[must_use]
+    pub fn is_provider_counted(&self) -> bool {
+        self.input_tokens.saturating_add(self.output_tokens) > 0
+    }
+
     /// The call's charge in token units: the tokens the provider counted,
     /// else each native count at `caps`' rate for it. `None` when it
     /// counted nothing, so the run charges the call's reservation.
     #[must_use]
     pub fn token_units(&self, operation: AiOperation, caps: &MediaCaps) -> Option<u64> {
-        let tokens = self.input_tokens.saturating_add(self.output_tokens);
-        if tokens > 0 {
-            return Some(tokens);
+        if self.is_provider_counted() {
+            return Some(self.input_tokens.saturating_add(self.output_tokens));
         }
         let seconds = |ms: u64| ms.div_ceil(1_000);
         let native = [

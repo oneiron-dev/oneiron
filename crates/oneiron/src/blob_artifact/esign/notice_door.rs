@@ -21,11 +21,13 @@ use super::notice_dispatch::{
 use super::notice_scope::NoticeScope;
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
-use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
-};
+use crate::memory::Memory;
+use crate::outbound::{OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft};
+use crate::store::outbound_actor::OutboundDispatchActor;
+use crate::store::outbound_actor::OutboundDispatchGate;
+use crate::store::outbound_trigger::OutboundIntentTrigger;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
+use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use serde::{Deserialize, Serialize};
 
 /// The signing document whose staged notices the caller sends.

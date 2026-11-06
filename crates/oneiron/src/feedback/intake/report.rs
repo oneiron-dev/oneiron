@@ -11,11 +11,16 @@ pub(crate) use erase::{
 
 use super::{FeedbackDedup, normalized};
 use crate::feedback::{IssueCategory, ReportIssue, ReportKind, ReportRoute, ReportStatus};
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 const CLUSTERS: SideTable<EntityId, ReportCluster, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_CLUSTER);
+
+/// Each cluster under every member ISSUE it copied a vector from (FIX 10835):
+/// parseable member ids only. Key: id16(member) + id16(root).
+const CLUSTER_BY_MEMBER: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::FEEDBACK_REPORT_CLUSTER_BY_MEMBER);
 
 /// Membership is evidence, not a report counter. The centroid is recomputed
 /// from the retained host vectors, so it is never the only copy of a summary;
@@ -112,7 +117,18 @@ impl Vault {
         if !erase::remake_live_in_txn(self, txn, &mut cluster, Some(&issue.issue_ref))? {
             return Err(Error::CorruptedIndex("report cluster dimensions"));
         }
+        // Membership write-through (FIX 10835): diff the stored row's parseable members
+        // against the final row's, in the same txn. The stored row is re-read because
+        // `remake_live_in_txn` already removed Gone members in-memory, so the in-hand
+        // `best` cluster cannot supply the old set; a new cluster is a pure add. A
+        // stored row that does not decode has no index rows to drop, so it reads lenient.
+        let old = if duplicate.is_some() {
+            CLUSTERS.get_lenient(&self.store, txn, &id)?
+        } else {
+            None
+        };
         CLUSTERS.put(&self.store, txn, &id, &cluster)?;
+        erase::sync_cluster_membership(&self.store, txn, &id, old.as_ref(), Some(&cluster))?;
         Ok(duplicate)
     }
 }

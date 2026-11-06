@@ -119,6 +119,7 @@ fn settle_with_cutoff_in(
 ) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
         // A replay runs the continuation again; it acts at most once.
+        super::contribution_pair::resolve_answer_in(vault, txn, &result, owner)?;
         super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
         deliver_to_parked_runs(vault, txn, id, &result, now)?;
         crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
@@ -196,6 +197,16 @@ fn settle_with_cutoff_in(
     }
     if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
         || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
+        || !super::contribution_pair::may_cut(vault, txn, &group, reason, &decision, owner)?
+        || !crate::office_body::may_cut_live_edit(
+            vault,
+            txn,
+            id,
+            &group.requested.intent_key,
+            reason,
+            &decision,
+            owner,
+        )?
     {
         return Ok(None);
     }
@@ -300,7 +311,9 @@ fn settle_with_cutoff_in(
     super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_offer_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_swap_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
+    super::contribution_pair::resolve_answer_in(vault, txn, &result, owner)?;
     super::comm_widen::resolve_answer_in(vault, txn, &group, &result)?;
+    crate::office_body::resolve_live_edit_holder_ask_in_txn(vault, txn, &result, owner)?;
     crate::office_body::resolve_holder_ask_in_txn(vault, txn, &result)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;

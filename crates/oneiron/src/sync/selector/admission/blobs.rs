@@ -9,7 +9,7 @@ use loro::LoroDoc;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
+use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::{
@@ -20,7 +20,7 @@ use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 
 #[cfg(feature = "sync")]
 use super::super::validators::{admit_federated_authority_log, validate_federated_pack};
-use super::routing::{GuestCopy, Routes, rename_world_edge_subject};
+use super::routing::{GuestCopy, Routes, rename_world_edge_subject, rename_world_entity_subject};
 use super::{
     ImportGrading, refuse_peer_agent_definition_widening, validate_admitted_replicated_body,
 };
@@ -65,7 +65,13 @@ pub(super) fn copy_admitted_entities(
         )
         .and_then(|(here, blob)| map_insert_bytes(&target_entities, &here.to_hex(), &blob));
     });
-    result
+    // FIX 6870: a repo's manifest lands only beside a CODE row this part
+    // admitted into `target`.
+    result.and_then(|()| {
+        crate::sync::repo_manifests::copy_repo_manifest_heads(source, target, |code| {
+            routes.entity_part(&code.to_hex()) == Some(part)
+        })
+    })
 }
 
 #[cfg(feature = "sync")]
@@ -189,7 +195,12 @@ fn admit_federated_entity_blob_graded(
         return Ok((here, blob.to_vec()));
     }
 
-    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let body = validate_claim_body_and_decode_in_txn(
+        &vault.store,
+        txn,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    )?;
     let mut body = match grading {
         ImportGrading::Imported { scale } => {
             downweight_federated_claim(restamp_federated_claim_source(body), scale)?
@@ -202,6 +213,7 @@ fn admit_federated_entity_blob_graded(
         body.world =
             Some(crate::federation::guest_claim_world(guest.source, body.world)?.entity_id());
         rename_world_edge_subject(&mut body.subject, guest.worlds);
+        rename_world_entity_subject(&mut body.subject, guest);
     }
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;

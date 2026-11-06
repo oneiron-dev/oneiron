@@ -11,9 +11,7 @@ use crate::entity_id::derived_domains::CAMPAIGN_STEP_BODY_BLOB;
 use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
-/// Every campaign step body ref starts with this:
-/// `campaign-step-body:<artifact hex>@<version>`.
-pub const CAMPAIGN_STEP_BODY_PREFIX: &str = "campaign-step-body:";
+pub use crate::blob_artifact::body_tags::CAMPAIGN_STEP_BODY_PREFIX;
 const STEP_BODY_MEDIA_TYPE: &str = "text/plain";
 /// The run-ref prefix a campaign step body's versions are written under.
 const STEP_BODY_RUN_PREFIX: &str = "campaign-step:";

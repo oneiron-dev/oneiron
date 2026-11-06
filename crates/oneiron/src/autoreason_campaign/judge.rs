@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{CampaignError, CampaignResult};
 use crate::EntityId;
-use crate::llm::decision::catalogue::CAMPAIGN_TASTE;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionReceipt, DecisionRung, Reversibility,
+use crate::llm::decision::{DecisionLadder, DecisionReceipt};
+use crate::model_decision::catalogue::CAMPAIGN_TASTE;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
+    Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 

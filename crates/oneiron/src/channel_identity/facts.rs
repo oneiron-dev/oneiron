@@ -335,6 +335,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: true,
@@ -345,7 +346,7 @@ impl Vault {
                     kind: EdgeKind::ClaimOf,
                     tgt: subject,
                     weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 },
             ],
             self.text_index_trusted

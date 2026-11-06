@@ -19,11 +19,11 @@ use super::{
     push_admission, receive_pack_repo_identity_hex,
 };
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::error::Result;
-use crate::federation::git_push::GitPushRefChange;
+use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::origin::secret_marks::{admitted_marks, record_receive_secret_marks_in_txn};
+use crate::store::code_snapshot::RepoRef;
 
 impl Vault {
     pub(in crate::origin::smart_http) fn record_receive_pack_intent(
@@ -79,8 +79,12 @@ impl Vault {
                 .iter()
                 .enumerate()
                 .map(|(index, update)| {
-                    let pointers = door.ref_lfs_pointers.get(index).cloned();
-                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
+                    let pointers = door
+                        .ref_lfs_pointers
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| (0..door.lfs_pointers.len()).collect());
+                    held_by_ref(&door.lfs_pointers, Some(pointers.as_slice()))
                         .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
                     Ok(ReceivePackIntentRef {
                         name: update.name.clone(),
@@ -121,7 +125,11 @@ impl Vault {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
-            self.recheck_git_push_in_txn(wtxn, push, &g1_repo, changes)?;
+            let ref_grants = self.recheck_git_push_in_txn(wtxn, push, &g1_repo, changes)?;
+            // The intent names the Grant that admitted each ref move (FIX 7138).
+            if let Some(recorded) = intent.push.as_mut() {
+                recorded.record_ref_grants(&ref_grants);
+            }
             let mark_count = record_receive_secret_marks_in_txn(
                 self,
                 wtxn,

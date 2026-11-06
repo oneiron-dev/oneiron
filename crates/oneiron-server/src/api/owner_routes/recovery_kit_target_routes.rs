@@ -66,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::owner_work_routes::request_entry;
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
@@ -76,6 +76,7 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod authority_enrollment;
 pub(crate) mod pad_access;
 pub(crate) mod root_doors;
 pub(crate) mod secret_anchor;
@@ -87,9 +88,14 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/roots/requests/run",
             summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
             row: None,
+            shape: Some(RestShape::json(
+                run_root_request_body_schema,
+                root_work_answer_schema,
+            )),
         },
         post(run),
     )];
+    table.extend(authority_enrollment::owner_table());
     table.extend(pad_access::owner_table());
     table.extend(root_doors::owner_table());
     table.extend(secret_anchor::owner_table());

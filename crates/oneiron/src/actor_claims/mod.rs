@@ -23,7 +23,6 @@
 //! | [`PREDICATE_ACTOR_FAILURE_MODE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SCOPE_NOTE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SKILL_FIT`] | fit in `0..=1` | ONE per `(actor, skill)`, superseding |
-//! | [`PREDICATE_ACTOR_EDIT_COST`](crate::claim::PREDICATE_ACTOR_EDIT_COST) | cost in `0..=1` | ONE per `(actor, scope)`, superseding |
 //!
 //! A set row DEDUPES rather than supersedes: two different lessons are two
 //! standing facts, and re-observing one is not news. `skill_fit` is the
@@ -31,10 +30,7 @@
 //! the pair scope (`{skill}`) is the conflict-set key. Scoping fit per PAIR
 //! rather than per actor is load-bearing: an actor good at one skill and bad at
 //! another has two live rows, and the router ([`skill_fit_for`], SK-05's
-//! bandit) reads exactly the one it asked about. `edit_cost` (ED-03, ONE-1759)
-//! is the same estimate shape on a different axis — `{scope}` instead of
-//! `{skill}` — and its third evidence lane cites amendment receipts rather than
-//! attempt receipts.
+//! bandit) reads exactly the one it asked about.
 //!
 //! **Namespace, not `agent.*` (r1).** Actors are agents AND humans AND peers
 //! AND connectors; the ledger is about whoever acted. `actor.*` joins `edge.*`
@@ -113,9 +109,9 @@ pub use self::evidence::ActorClaimEvidence;
 pub(crate) use self::evidence::KEY_ENGINE_VER;
 pub use self::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_EDIT_COST_SCOPE_KEY,
-    ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY,
-    ActorClaimRow, ActorNote, ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE,
-    PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT,
+    ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimRow, ActorNote, ActorNoteKind,
+    LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT,
 };
 pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};

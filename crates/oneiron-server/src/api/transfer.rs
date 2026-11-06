@@ -9,10 +9,13 @@
 //! process or its spool for as long as the socket stays open. A transfer that
 //! keeps moving, however slowly, is never cut.
 
+mod sealed;
+
 use std::any::Any;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -38,11 +41,13 @@ const LARGEST_PAGE: u64 = 32 * 1024;
 /// The room in memory one chunk exchange takes past its request's decoded
 /// selector, and the least either half of the memory row holds: sixteen
 /// times the 8 MiB frame it reads whole. Its frame and its decoded request;
-/// its manifest's row (within a frame, or it is not read) as read and as the
-/// two window docs its selector is judged in hold it, twice each; and its
-/// reply, the manifest read again (as stored, decoded and encoded), the
-/// chunks it carries and its encoding. Its selector is decoded, and gone,
-/// before the manifest is read ([`Transfers::exchange_room`]).
+/// a frame of its manifest's row (a larger row's copies past the frame are
+/// charged when its worker names the object: [`Transfers::charge_exchange_manifest`],
+/// FIX 9032) as read and as the two window docs its selector is judged in
+/// hold it, twice each; and its reply, the manifest read again (as stored,
+/// decoded and encoded), the chunks it carries and its encoding. Its
+/// selector is decoded, and gone, before the manifest is read
+/// ([`Transfers::exchange_room`]).
 pub(crate) const LFS_MEMORY_ROOM: u64 = 16 * FRAME;
 
 /// The frame a chunk exchange reads whole.
@@ -68,6 +73,12 @@ pub(super) const READ_ROOM: u64 = 1024 * 1024;
 /// as read, its body, its references decoded, and their encoding as its id is
 /// checked, counted generously.
 const MANIFEST_COPIES: u64 = 4;
+
+/// Copies of its manifest's row a chunk exchange holds at once, past the
+/// frame [`LFS_MEMORY_ROOM`] already counts: as read, in each of the two
+/// window docs its selector is judged in, twice each, and in its reply as
+/// stored, decoded and encoded. Counted generously, as the room's are.
+const EXCHANGE_MANIFEST_COPIES: u64 = 8;
 
 /// A pair of a read's room in memory and its transfer permit, taken in that
 /// order and held together until the read's last byte is handed on.
@@ -125,7 +136,7 @@ pub(crate) struct Transfers {
     /// The room each sealed bundle upload the home stages claims on `disk`,
     /// by its machine and object: held across its parts, through the commit
     /// or replace that writes its stored copy (FIX 3354).
-    sealed_stages: Mutex<HashMap<(EntityId, SealedBundleObject), Arc<DiskClaim>>>,
+    sealed_stages: Mutex<HashMap<sealed::SealedStageKey, Arc<DiskClaim>>>,
     /// The page size the vault's object plane is stored in, which each
     /// stored chunk rounds up to; the largest LMDB writes in when it cannot
     /// be read.
@@ -206,7 +217,7 @@ impl Transfers {
             wait,
         };
         // An upload staged before this start claims the rest it takes.
-        transfers.reconcile_sealed_stages(vault);
+        transfers.restore_sealed_stages(vault)?;
         Ok(transfers)
     }
 
@@ -269,76 +280,6 @@ impl Transfers {
             .unwrap_or_else(PoisonError::into_inner) = Some(page);
     }
 
-    /// The room a sealed bundle upload of a `total`-byte object, `staged`
-    /// bytes in, still takes on the disk: [`SEALED_BUNDLE_DISK_COPY_COUNT`]
-    /// copies of the object, each in parts of at most
-    /// [`SEALED_BUNDLE_PUT_PART_MAX`] that take at most a page more than their
-    /// bytes once rounded up to whole pages, less the stage written so far.
-    fn sealed_stage_room(&self, total: u64, staged: u64) -> u64 {
-        let page = self.lfs_page();
-        let on_disk = |bytes: u64| {
-            bytes.saturating_add(
-                bytes
-                    .div_ceil(SEALED_BUNDLE_PUT_PART_MAX as u64)
-                    .saturating_mul(page),
-            )
-        };
-        on_disk(total)
-            .saturating_mul(SEALED_BUNDLE_DISK_COPY_COUNT)
-            .saturating_sub(on_disk(staged))
-    }
-
-    /// Claims the room `machine`'s upload of `object` still takes before its
-    /// next part, `staged` bytes of `total` in (FIX 3354). The claim stays
-    /// with the stage across its parts; hold the one returned until the part
-    /// is staged. `None` when that room would cross the disk's floor.
-    pub(crate) fn hold_sealed_stage(
-        &self,
-        machine: EntityId,
-        object: SealedBundleObject,
-        total: u64,
-        staged: u64,
-    ) -> Option<Arc<DiskClaim>> {
-        let claim = Arc::clone(
-            self.sealed_stages
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry((machine, object))
-                .or_insert_with(|| self.disk.claim()),
-        );
-        self.disk
-            .hold(&claim, self.sealed_stage_room(total, staged))
-            .then_some(claim)
-    }
-
-    /// Sets each sealed bundle upload's claim to the rest its stage header in
-    /// `vault` says it takes: a stage committed, replaced or idled out gives
-    /// its room back, and one staged before a restart claims its rest again.
-    /// A claim a part still holds stays until that part is staged.
-    pub(crate) fn reconcile_sealed_stages(&self, vault: &oneiron::Vault) {
-        let Ok(stages) = sealed_bundle_stages(vault) else {
-            return;
-        };
-        let mut claims = self
-            .sealed_stages
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        claims.retain(|key, claim| {
-            Arc::strong_count(claim) > 1
-                || stages
-                    .iter()
-                    .any(|stage| (stage.machine, stage.object) == *key)
-        });
-        for stage in stages {
-            let claim = claims
-                .entry((stage.machine, stage.object))
-                .or_insert_with(|| self.disk.claim());
-            // A rest that no longer fits keeps the claim it had.
-            self.disk
-                .hold(claim, self.sealed_stage_room(stage.total, stage.staged));
-        }
-    }
-
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.
     pub(super) async fn admit_lfs(&self, principal: Option<&str>) -> Result<Permit, WaitTimedOut> {
         self.lfs
@@ -365,6 +306,38 @@ impl Transfers {
     pub(super) fn exchange_room(declared: Option<u64>) -> u64 {
         let request = declared.map_or(FRAME, |declared| declared.min(FRAME));
         LFS_MEMORY_ROOM.saturating_add(request.saturating_mul(DECODED_PER_BYTE))
+    }
+
+    /// The line LFS reads take their room on, lent to a chunk exchange's
+    /// worker so it can charge its manifest's copies (below) on the hold it
+    /// already has.
+    pub(super) fn lfs_reads_line(&self) -> Arc<ByteLine> {
+        Arc::clone(&self.lfs_reads)
+    }
+
+    /// Charges a chunk exchange's hold (taken at [`Self::exchange_room`] =
+    /// `room`) for the copies of a manifest whose row is `row` bytes past
+    /// the frame the room counts (FIX 9032). The exchange names its object
+    /// only once its worker decodes the request, holding its transfer
+    /// permit, and no permit holder waits for the reads line (the lock
+    /// order [`crate::byte_line`] names), so the copies are charged, never
+    /// waited for: past the line's free bytes the line owes them and the
+    /// row asks ([`ByteLine::charge`]).
+    pub(super) fn charge_exchange_manifest(
+        line: &ByteLine,
+        questions: &LimitQuestions,
+        held: &mut HeldBytes,
+        room: u64,
+        row: u64,
+    ) {
+        let extra = row
+            .saturating_sub(FRAME)
+            .saturating_mul(EXCHANGE_MANIFEST_COPIES);
+        if extra == 0 {
+            return;
+        }
+        let target = usize::try_from(room.saturating_add(extra)).unwrap_or(usize::MAX);
+        line.charge(held, target, questions);
     }
 
     /// The room a download or a verify of `oid` takes: its manifest's row,
@@ -575,13 +548,15 @@ pub(super) type BodyPiece = io::Result<Option<Bytes>>;
 ///
 /// Only the wait for the client is timed: a full channel is the worker's
 /// backpressure, and the worker bounds its own waits.
-pub(super) async fn feed_body(
+pub(super) fn feed_body(
     body: Body,
     pieces: mpsc::Sender<BodyPiece>,
     idle: Duration,
     max_piece: usize,
-) {
-    feed_pieces(body, pieces, Some(idle), max_piece).await;
+) -> impl std::future::Future<Output = ()> {
+    // Capture before a caller spawns this future on a different task.
+    let revocation = crate::http_listener::current_body_revocation();
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -592,7 +567,29 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece).await;
+    feed_pieces(body, pieces, None, max_piece, None, None).await;
+}
+
+/// Feeds a spool worker, ending its memory wait before enqueueing a failed input.
+pub(super) fn feed_body_stoppable(
+    body: Body,
+    pieces: mpsc::Sender<BodyPiece>,
+    idle: Option<Duration>,
+    max_piece: usize,
+    stopped: Arc<AtomicBool>,
+) -> impl std::future::Future<Output = ()> {
+    let revocation = idle.and_then(|_| crate::http_listener::current_body_revocation());
+    async move {
+        feed_pieces(
+            body,
+            pieces,
+            idle,
+            max_piece,
+            revocation,
+            Some(stopped.as_ref()),
+        )
+        .await;
+    }
 }
 
 async fn feed_pieces(
@@ -600,13 +597,27 @@ async fn feed_pieces(
     pieces: mpsc::Sender<BodyPiece>,
     idle: Option<Duration>,
     max_piece: usize,
+    revocation: Option<crate::http_listener::BodyRevocation>,
+    stopped: Option<&AtomicBool>,
 ) {
     let mut stream = body.into_data_stream();
+    let stop_failed_feed = || {
+        if let Some(stopped) = stopped {
+            stopped.store(true, Ordering::Relaxed);
+        }
+    };
     loop {
         let next = match idle {
-            Some(idle) => match tokio::time::timeout(idle, stream.next()).await {
-                Ok(next) => next,
-                Err(_) => {
+            Some(idle) => match crate::http_listener::body_read_timeout(
+                revocation.as_ref(),
+                idle,
+                stream.next(),
+            )
+            .await
+            {
+                Some(next) => next,
+                None => {
+                    stop_failed_feed();
                     let _ = pieces
                         .send(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -625,6 +636,7 @@ async fn feed_pieces(
                 return;
             }
             Some(Err(error)) => {
+                stop_failed_feed();
                 let _ = pieces.send(Err(body_failure(error))).await;
                 return;
             }
@@ -637,6 +649,7 @@ async fn feed_pieces(
                 .await
                 .is_err()
             {
+                stop_failed_feed();
                 return;
             }
         }

@@ -14,7 +14,7 @@ use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus
 use super::input::drop_inputs_for_in_txn;
 use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
-use crate::authority::{ActSurface, CustodyChange, OwnerWorkBody};
+use crate::authority::{ActSurface, CustodyChange, CustodyRecipientPermits, OwnerWorkBody};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
@@ -89,7 +89,7 @@ impl Vault {
             generation: record.rotation_generation,
             input: None,
             holder: None,
-            recipients: Vec::new(),
+            recipients: CustodyRecipientPermits::default(),
             pieces: None,
             authority: crate::authority::CustodyRequestAuthority::Install,
         };
@@ -267,6 +267,20 @@ pub(crate) fn drop_revoked_copies_in_txn(
 ) -> Result<bool> {
     let carrier = drop_sealed_carrier_in_txn(vault, txn, id)?;
     Ok(drop_inputs_for_in_txn(vault, txn, id)? > 0 || carrier)
+}
+
+pub(crate) fn drop_revoked_copies_for_store_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let carrier = super::super::transition::drop_sealed_carrier_for_store_in_txn(store, txn, id)?;
+    let fold = crate::authority::authority_view_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    Ok(super::input::drop_inputs_with_fold_in_txn(store, txn, id, &fold)? > 0 || carrier)
 }
 
 /// Whether an admitted custody revoke names record `id` in `txn`'s fold:

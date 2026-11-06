@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::MadeByReader;
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, validate_pending_ref};
 use super::receipts::already_settled;
@@ -38,6 +39,7 @@ struct WaitRow {
     verb: String,
     call: Vec<u8>,
     trigger: Option<MadeByTrigger>,
+    submitter: Option<EntityId>,
     held_by: EntityId,
     held_by_class: u8,
     held_at: u64,
@@ -59,6 +61,11 @@ pub struct OrganWait {
     /// The call, as the organ host encodes it.
     pub call: Vec<u8>,
     pub trigger: Option<MadeByTrigger>,
+    /// The authenticated principal who submitted the call, when one did:
+    /// its proposals' made_by is admitted through that principal's own read
+    /// when they land, a redrive's included (FIX 9310). None for a host's own
+    /// call, whose envelope waits as the host built it.
+    pub submitter: Option<EntityId>,
     /// Who asked: the actor its proposals are made by.
     pub held_by: WriteActor,
     pub held_at: u64,
@@ -110,6 +117,7 @@ impl WaitRow {
             verb: self.verb.clone(),
             call: self.call.clone(),
             trigger: self.trigger.clone(),
+            submitter: self.submitter,
             held_by: WriteActor::new(self.held_by, class),
             held_at: self.held_at,
         })
@@ -128,6 +136,23 @@ fn bounded(text: &str) -> String {
 }
 
 impl Vault {
+    /// Whose read an organ call's landed outputs are admitted under (FIX
+    /// 9310): the submitting principal's own lane, rebuilt from the vault as
+    /// a resumed wake's is, so the trigger and the receipt's inputs must each
+    /// resolve for it; with no submitter, the host's receipt, kept as it was
+    /// built.
+    ///
+    /// # Errors
+    /// The principal's lane cannot be read.
+    pub fn organ_landing_reader(&self, submitter: Option<EntityId>) -> Result<MadeByReader<'_>> {
+        Ok(match submitter {
+            Some(principal) => MadeByReader::Lane(crate::llm::decision::questions::principal_lane(
+                self, principal,
+            )?),
+            None => MadeByReader::OrganReceipt,
+        })
+    }
+
     /// Holds one organ call until a node can run it, saying why it waits.
     /// A ref already settled, already waiting as a proposal, or already
     /// held is refused.
@@ -151,6 +176,7 @@ impl Vault {
             verb: bounded(&wait.verb),
             call: wait.call.clone(),
             trigger: wait.trigger.clone(),
+            submitter: wait.submitter,
             held_by: wait.held_by.entity_ref(),
             held_by_class: wait.held_by.actor_class() as u8,
             held_at: wait.held_at,
@@ -170,6 +196,11 @@ impl Vault {
                 return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                     "a proposal or a held organ call already waits under this ref",
                 )));
+            }
+            self.get_blob_artifact_in_txn(wtxn, &wait.artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            if super::artifact_retention_deleted_in_txn(&self.store, wtxn, &wait.artifact_id)? {
+                return Err(Error::EntityNotFound);
             }
             WAITS.put(&self.store, wtxn, &key, &row)
         })?;
@@ -229,6 +260,41 @@ impl Vault {
         })
     }
 
+    /// Whether this exact held call still waits beside a live artifact.
+    /// Checks the retained call and the artifact's durable delete markers
+    /// in one snapshot; it does not claim or lock a running call.
+    pub fn organ_wait_is_current(&self, wait: &OrganWait) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
+        let Some(row) = WAITS.get(&self.store, &txn, &key)? else {
+            return Ok(false);
+        };
+        if row.failed.is_some()
+            || row.run_ref != wait.run_ref
+            || row.organ != wait.organ
+            || row.verb != wait.verb
+            || row.call != wait.call
+            || row.trigger != wait.trigger
+            || row.submitter != wait.submitter
+            || row.held_by != wait.held_by.entity_ref()
+            || row.held_by_class != wait.held_by.actor_class() as u8
+            || row.held_at != wait.held_at
+        {
+            return Ok(false);
+        }
+        if self
+            .get_blob_artifact_in_txn(&txn, &wait.artifact_id)?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        Ok(!super::artifact_retention_deleted_in_txn(
+            &self.store,
+            &txn,
+            &wait.artifact_id,
+        )?)
+    }
+
     /// Drops a held call: it ran and landed, or a person let it go.
     /// `true` when one was held under the ref.
     pub fn release_organ_wait(&self, artifact_id: &EntityId, run_ref: &str) -> Result<bool> {
@@ -254,4 +320,15 @@ impl Vault {
             WAITS.put(&self.store, wtxn, &key, &row)
         })
     }
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in WAITS.scan_keys(store, txn, artifact_id.as_bytes())? {
+        WAITS.delete(store, txn, &key)?;
+    }
+    Ok(())
 }

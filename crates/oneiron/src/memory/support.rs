@@ -78,7 +78,7 @@ pub struct Memory<'v> {
     pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
-    pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    pub(super) invocation: Option<crate::store::verb_invocation::InvocationId>,
     /// The hook pause a transport's call names as the one it resumes, by
     /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
     /// pause the keep no longer holds then refuses, never running as a new
@@ -92,6 +92,9 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
+    /// Actual request or same-connection upgrade observations, for signing
+    /// audit records only; never identity or authority.
+    pub(super) signing_request_transport: Option<SigningRequestTransport>,
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
     pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
@@ -145,6 +148,28 @@ pub struct Memory<'v> {
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
 }
 
+/// Actual transport metadata from a host's request or socket upgrade.
+/// This is audit context, never signer identity or authority. It is not
+/// serialized; a socket uses only its own upgrade observations and an
+/// absent peer stays absent.
+#[derive(Clone, Debug)]
+pub struct SigningRequestTransport {
+    peer_ip: Option<std::net::IpAddr>,
+    user_agent: Option<String>,
+}
+
+impl SigningRequestTransport {
+    /// Binds only the transport peer and the actual User-Agent header,
+    /// never forwarded headers or verb arguments.
+    #[must_use]
+    pub fn new(peer_ip: Option<std::net::IpAddr>, user_agent: Option<String>) -> Self {
+        Self {
+            peer_ip,
+            user_agent,
+        }
+    }
+}
+
 /// A door's admission of a verb hook's rewritten args, run on the verb's name
 /// and the new args after the row's own input check, as if the caller sent
 /// them (ARCH-0080 §3). The reason refuses the rewrite.
@@ -172,7 +197,7 @@ pub struct HostWriteOrigin {
     /// 1a), built by the dispatcher from the executor's own bridge position,
     /// never from the guest: a hold for consent alone binds a code consent
     /// wait to it.
-    code_consent: Option<crate::code_run::CodeConsentCallSite>,
+    code_consent: Option<crate::consent::code_wait_state::CodeConsentCallSite>,
     /// The hook pause a call the run makes again resumes (FIX 5526): the ask
     /// an earlier try of the same call in its durable run parked on, read
     /// from the run's own history, never from the guest. It names the pause
@@ -191,10 +216,21 @@ pub struct HostWriteOrigin {
     /// invocation the dispatcher derives from the call's place, the same
     /// across replays of the run, never from the guest. A `reveal.wait` a
     /// live re-attempt of that step makes reads its value again under it.
-    step: Option<crate::runtime_hooks::InvocationId>,
+    step: Option<crate::store::verb_invocation::InvocationId>,
+    /// Evidence collected only while this native call serves its reads.
+    read_capture: Option<super::read_capture::ReadCapture>,
 }
 
 impl HostWriteOrigin {
+    pub(crate) fn with_read_capture(mut self, capture: super::read_capture::ReadCapture) -> Self {
+        self.read_capture = Some(capture);
+        self
+    }
+
+    pub(in crate::memory) fn read_capture(&self) -> Option<super::read_capture::ReadCapture> {
+        self.read_capture.clone()
+    }
+
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
         Self {
             envelope,
@@ -205,13 +241,14 @@ impl HostWriteOrigin {
             read_proof: None,
             bound_run: None,
             step: None,
+            read_capture: None,
         }
     }
 
     /// This origin naming the code-mode step its call is, if it is one.
     pub(crate) const fn with_step(
         mut self,
-        step: Option<crate::runtime_hooks::InvocationId>,
+        step: Option<crate::store::verb_invocation::InvocationId>,
     ) -> Self {
         self.step = step;
         self
@@ -232,7 +269,10 @@ impl HostWriteOrigin {
 
     /// This origin with the call's place in its durable run, for a call a
     /// code consent wait may bind.
-    pub(crate) fn with_code_consent(mut self, site: crate::code_run::CodeConsentCallSite) -> Self {
+    pub(crate) fn with_code_consent(
+        mut self,
+        site: crate::consent::code_wait_state::CodeConsentCallSite,
+    ) -> Self {
         self.code_consent = Some(site);
         self
     }

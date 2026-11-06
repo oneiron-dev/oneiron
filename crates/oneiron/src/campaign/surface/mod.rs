@@ -46,11 +46,12 @@ pub use self::actions::{
 };
 pub use self::campaign::{
     CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord,
-    CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign, read_campaign,
-    update_campaign,
+    CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign,
+    launch_campaign, read_campaign, update_campaign,
 };
 pub(crate) use self::campaign::{
-    campaign_type_byte, load_campaign_in_txn, load_registered_campaign, owned_campaign_in_txn,
+    apply_campaign_complaint_answer_in_txn, campaign_type_byte, load_campaign_in_txn,
+    load_registered_campaign, owned_campaign_in_txn, project_campaign_complaint_pause_in_txn,
 };
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};
 pub use self::membership::{
@@ -76,11 +77,12 @@ pub use self::saved_query::{
 pub(crate) use self::saved_query::{saved_query_membership_page_view, saved_query_record_view};
 pub use self::verbs::{
     CAMPAIGN_PROGRAM_VERBS, CAMPAIGN_SELF_VERBS, CampaignSurfaceVerb, SELF_CAMPAIGN_ARCHIVE,
-    SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ, SELF_CAMPAIGN_UPDATE,
-    SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE, SELF_SAVED_QUERY_EVALUATE,
-    SELF_SAVED_QUERY_MEMBERS, SELF_SAVED_QUERY_READ, SELF_SAVED_QUERY_UPDATE, SurfaceCall,
-    SurfaceReply, VAULT_CAMPAIGN_PROGRAM_ARCHIVE, VAULT_CAMPAIGN_PROGRAM_CREATE,
-    VAULT_CAMPAIGN_PROGRAM_READ, VAULT_CAMPAIGN_PROGRAM_UPDATE, invoke_campaign_surface,
+    SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_LAUNCH, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ,
+    SELF_CAMPAIGN_UPDATE, SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE,
+    SELF_SAVED_QUERY_EVALUATE, SELF_SAVED_QUERY_MEMBERS, SELF_SAVED_QUERY_READ,
+    SELF_SAVED_QUERY_UPDATE, SurfaceCall, SurfaceReply, VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
+    VAULT_CAMPAIGN_PROGRAM_CREATE, VAULT_CAMPAIGN_PROGRAM_READ, VAULT_CAMPAIGN_PROGRAM_UPDATE,
+    invoke_campaign_surface,
 };
 
 // The flat surface.rs module used to provide these names to the sibling test

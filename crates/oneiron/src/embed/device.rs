@@ -6,8 +6,6 @@
 //! vector in a declared space is marked the same way, per space (FIX 7796).
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::space::{
     embedding_space_in_txn, has_media_vector_in_txn, media_vector_ids_in_txn, space_key,
 };
@@ -26,90 +24,7 @@ const EMBEDDING_DEVICE: SideTable<EntityId, EmbeddingProvenance, Named> =
 const MEDIA_DEVICE: SideTable<([u8; 16], EntityId), EmbeddingProvenance, Named> =
     SideTable::new(&side_table::EMBEDDING_MEDIA_DEVICE);
 
-/// The family of device an embedding vector was computed on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum EmbeddingDevice {
-    Cpu,
-    Cuda,
-    Metal,
-    /// Computed behind an endpoint the vault called; its device is not known
-    /// to the vault.
-    Remote,
-    /// Not recorded: a vector written before provenance was, or one a caller
-    /// supplied. A family a later build adds reads as this one.
-    #[serde(other)]
-    Unknown,
-}
-
-impl EmbeddingDevice {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cpu => "cpu",
-            Self::Cuda => "cuda",
-            Self::Metal => "metal",
-            Self::Remote => "remote",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl std::str::FromStr for EmbeddingDevice {
-    type Err = String;
-
-    fn from_str(name: &str) -> std::result::Result<Self, Self::Err> {
-        [
-            Self::Cpu,
-            Self::Cuda,
-            Self::Metal,
-            Self::Remote,
-            Self::Unknown,
-        ]
-        .into_iter()
-        .find(|device| device.as_str() == name)
-        .ok_or_else(|| format!("{name:?} is not cpu, cuda, metal, remote or unknown"))
-    }
-}
-
-/// The device family and runtime that computed a vector: provenance only,
-/// never part of the embedding space.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct EmbeddingProvenance {
-    pub device: EmbeddingDevice,
-    /// The runtime's name and version (a local build), or the id of the
-    /// endpoint that answered.
-    pub runtime: String,
-}
-
-impl EmbeddingProvenance {
-    #[must_use]
-    pub fn new(device: EmbeddingDevice, runtime: impl Into<String>) -> Self {
-        Self {
-            device,
-            runtime: runtime.into(),
-        }
-    }
-
-    /// What a vector with no record reads as.
-    #[must_use]
-    pub fn unknown() -> Self {
-        Self::new(EmbeddingDevice::Unknown, "unknown")
-    }
-
-    fn is_unknown(&self) -> bool {
-        self.device == EmbeddingDevice::Unknown
-    }
-}
-
-/// How many stored vectors one device and runtime computed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct EmbeddingProvenanceCount {
-    pub device: EmbeddingDevice,
-    pub runtime: String,
-    pub vectors: u64,
-}
+pub use crate::store::embedding::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
 
 /// Records who computed the vector just written for `id`, in the same
 /// transaction; `None` or an unknown device leaves no row, so a vector a caller
@@ -163,6 +78,16 @@ pub(super) fn record_media_device_in_txn(
     }
 }
 
+/// The mark beside a media row in the same read snapshot as that row.
+#[cfg(feature = "sync")]
+pub(super) fn media_provenance_in_txn(
+    store: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &([u8; 16], EntityId),
+) -> Result<Option<EmbeddingProvenance>> {
+    MEDIA_DEVICE.get(store, txn, key)
+}
+
 /// Drops the mark of the media vector under `key`, with that vector.
 pub(super) fn drop_media_device_in_txn(
     store: &impl SideTableDbs,
@@ -186,6 +111,16 @@ pub(super) fn clear_media_devices_in_txn(
 /// vector, held outside the room's byte budget as the vector is (FIX 2345).
 pub(super) fn media_device_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
     MEDIA_DEVICE.key_bytes(&(space_key(space_id), *id))
+}
+
+impl Vault {
+    pub(crate) fn embedding_provenance_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbeddingProvenance>> {
+        EMBEDDING_DEVICE.get(&self.store, txn, id)
+    }
 }
 
 impl Vault {

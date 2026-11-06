@@ -4,8 +4,8 @@ use crate::authority::{CapabilitySlip, HostSlipIssuer, SlipClaims};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::connector_key::ConnectorKeyRecord;
 use crate::error::{Error, RecordError, Result};
-use crate::federation::{Scope, ScopeAxis};
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
@@ -169,6 +169,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: actor_bytes,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -254,6 +255,8 @@ impl Vault {
                 invitation_ref: None,
                 delegation: None,
                 comm: None,
+                trusted_contact: None,
+                seat_claim: None,
             },
         )?;
         txn.commit()?;

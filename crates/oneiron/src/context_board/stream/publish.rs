@@ -84,6 +84,32 @@ impl CommittedTaskBoardState {
     }
 }
 
+/// The id a committed TASK carrier announces to board subscribers.
+///
+/// An authority fact announces its subject TASK; every other carrier keeps
+/// its own id. An undecodable carrier falls back to that id, preserving the
+/// existing announcement rather than inventing a new refusal in sync ingest.
+pub(crate) fn task_for_announcement(carrier: &[u8], fallback: EntityId) -> EntityId {
+    let body = carrier
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default();
+    task_body_for_announcement(body, fallback)
+}
+
+/// The id a committed TASK body announces to board subscribers.
+///
+/// Same mapping as [`task_for_announcement`] for body-only bytes.
+pub(crate) fn task_body_for_announcement(body: &[u8], fallback: EntityId) -> EntityId {
+    if crate::write_envelope::task_body::task_role_from_body_bytes(body).ok()
+        != Some(crate::write_envelope::task_body::TaskRole::AuthorityFact)
+    {
+        return fallback;
+    }
+    crate::task_authority::decode_task_authority_fact_body(body)
+        .map(|fact| fact.task_ref)
+        .unwrap_or(fallback)
+}
+
 /// The TASK revision an event names: a digest of the committed state the
 /// board reads, its durable body revision and status, and each attempt head
 /// the status folds from. The body revision alone stays put when a retried

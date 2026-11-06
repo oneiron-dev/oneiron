@@ -299,16 +299,17 @@ impl CodeModeCompaction {
         self,
         provider: McpQuickJsProvider,
         status: &StatusCell,
-        embedder: Option<Arc<EmbedderSlot>>,
+        slots: Arc<crate::server::SharedModelSlots>,
         live: Arc<dyn LiveAdmission>,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
-        let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
         provider.with_compaction(Arc::new(
             move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
                 let seat = self.for_run(host, credential, spend, &live);
-                match &vectors {
-                    Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
+                // The live slot, read at each birth: a run created after
+                // first-run setup compacts with the serving embedder.
+                match slots.load().embedder.clone() {
+                    Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                     None => seat,
                 }
             },

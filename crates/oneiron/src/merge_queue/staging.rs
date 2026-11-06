@@ -1,13 +1,24 @@
 //! Bounded speculation, materialization and cleanup through the shared repo writer.
+//!
+//! Owner staging composes disjoint same-file proposals (FIX 4360): each mask
+//! adds a later proposal's changed lines to the bytes earlier ones staged,
+//! from their one verified base. CALL A keeps the automatic driver's
+//! same-path pairs out of staging, so it never reaches this composition.
+use super::composition::LineComposition;
 use super::types::QueueRecord;
-use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, RepoQueueOrder, SpeculativePath};
+use super::{
+    BatchState, MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue,
+    RepoQueueOrder, SpeculativePath,
+};
 use crate::{
-    contract_oracle::{invalid, safe_path},
     error::{CodeError, Error, Result},
     git_wire::{GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv},
-    repo_mutation::{RepoMutationOperation, RepoMutationRequest, RepoMutationStatus},
+    repo_mutation::RepoMutationRequest,
+    store::contract_oracle::{invalid, safe_path},
+    store::repo_mutation_record::RepoMutationOperation,
+    store::repo_mutation_record::RepoMutationStatus,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// How many proposals one speculation window spans: a batch stages every
@@ -55,12 +66,26 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
-        let id = self.next_batch_id(&mut queue, &proposals)?;
+        let mut batch = self.queued_batch(&mut queue, proposals)?;
+        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(batch))
+    }
+
+    /// A new Queued batch of `proposals` on `queue`'s current head and
+    /// green, its id drawn from `queue`'s sequence; not yet saved.
+    fn queued_batch(
+        &self,
+        queue: &mut QueueRecord,
+        proposals: Vec<MergeProposal>,
+    ) -> Result<MergeBatch> {
+        let id = self.next_batch_id(queue, &proposals)?;
         let changed = proposals
             .iter()
             .flat_map(|p| p.files.iter().map(|f| f.path.as_str()));
         let selected_tests = queue.graph.affected_tests(changed)?;
-        let mut batch = MergeBatch {
+        Ok(MergeBatch {
             schema_version: 1,
             id,
             expected_head: queue.pointers.head.clone(),
@@ -76,11 +101,7 @@ impl MergeQueue<'_> {
             selected_tests,
             run_order: None,
             drive: None,
-        };
-        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
-            return Ok(Err(refused));
-        }
-        Ok(Ok(batch))
+        })
     }
 
     /// The id a new batch of `proposals` takes. The sequence only salts the
@@ -191,7 +212,14 @@ impl MergeQueue<'_> {
         Ok(batch)
     }
 
+    /// One mask's speculative commit. Included proposals apply in batch
+    /// order. A path's first write checks its exact base; a repeated path
+    /// recomposes from that common verified base in this mask alone, so an
+    /// excluded proposal's lines are never in it (FIX 4360).
     fn materialize(&self, batch: &MergeBatch, mask: u64, root: &Path) -> Result<(String, String)> {
+        // Each written path's composition; `None` when only its exact whole
+        // file is supported, so a repeat keeps the stale-base refusal.
+        let mut written: BTreeMap<&str, Option<LineComposition>> = BTreeMap::new();
         for (index, proposal) in batch.proposals.iter().enumerate() {
             if mask & (1 << index) == 0 {
                 continue;
@@ -203,6 +231,9 @@ impl MergeQueue<'_> {
                 .any(|file| file.metadata_edit.is_some())
             {
                 super::file_metadata::materialize_received_merge_files(root, &proposal.files)?;
+                for file in &proposal.files {
+                    written.insert(file.path.as_str(), None);
+                }
                 continue;
             }
             for file in &proposal.files {
@@ -212,12 +243,30 @@ impl MergeQueue<'_> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error.into()),
                 };
-                if actual != file.expected {
-                    return Err(Error::ConcurrentWrite(
-                        "proposal bytes overlap or base is stale",
-                    ));
-                }
-                if let Some(content) = &file.content {
+                let composed = match written.get_mut(file.path.as_str()) {
+                    // A repeat whose whole preimage is the staged bytes (a
+                    // proposal made on an earlier one's result) writes whole,
+                    // as before; the path composes no further.
+                    Some(composition) if file.expects(actual.as_deref()) => {
+                        *composition = None;
+                        None
+                    }
+                    Some(composition) => Some(compose_staged(
+                        composition.as_mut(),
+                        file,
+                        actual.as_deref(),
+                    )?),
+                    None if file.expects(actual.as_deref()) => {
+                        written.insert(file.path.as_str(), first_composition(file));
+                        None
+                    }
+                    None => {
+                        return Err(Error::ConcurrentWrite(
+                            "proposal bytes overlap or base is stale",
+                        ));
+                    }
+                };
+                if let Some(content) = composed.as_ref().or(file.content.as_ref()) {
                     if let Some(parent) = path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
@@ -249,6 +298,11 @@ impl MergeQueue<'_> {
 
     /// Requeue only survivors of a diagnosed red batch. No changed base is silently
     /// accepted; the caller must submit a fresh reviewed proposal in that case.
+    /// Survivors keep their original proposals, so staging recomposes a shared
+    /// path from their retained originals, without a quarantined one (FIX 4360).
+    /// A run's survivors keep its accepted order, its predecessors and its
+    /// sequence, so they wait as before and its work still lists them (FIX
+    /// 7066).
     pub fn requeue_survivors(&self, id: &str) -> Result<Option<MergeBatch>> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let batch = self.batch(id)?;
@@ -266,10 +320,17 @@ impl MergeQueue<'_> {
             .filter(|p| !quarantine.proposal_ids.contains(&p.id))
             .collect();
         if survivors.is_empty() {
-            Ok(None)
-        } else {
-            self.enqueue(survivors).map(Some)
+            return Ok(None);
         }
+        let mut queue = self.queue()?;
+        self.require_current(&queue)?;
+        self.require_clean(self.repo.repo_root())?;
+        validate_proposals(&survivors, &queue.pointers.green)?;
+        let run_order = survivor_run_order(batch.run_order, &survivors);
+        let mut child = self.queued_batch(&mut queue, survivors)?;
+        child.run_order = run_order;
+        self.save(&queue, &[&child])?;
+        Ok(Some(child))
     }
 
     /// Abandon only unlanded work. Landing/rollback intents require recovery.
@@ -410,6 +471,58 @@ impl MergeQueue<'_> {
     }
 }
 
+/// The composition a path's first ordinary write starts (FIX 4360): its
+/// verified base bytes and reviewed bytes, both UTF-8 text. `None` for a new
+/// file, a hash-only base or other bytes: a repeat there refuses as before.
+fn first_composition(file: &MergeFile) -> Option<LineComposition> {
+    match (&file.expected, &file.content) {
+        (Some(MergeFileExpected::Bytes(base)), Some(content)) => {
+            LineComposition::new(base, content)
+        }
+        _ => None,
+    }
+}
+
+/// A repeated path's staged bytes (FIX 4360): `file`'s changed lines added
+/// to the `actual` bytes earlier proposals staged, when it names the same
+/// verified base and no change overlaps. Anything else keeps the exact
+/// whole-file refusal.
+fn compose_staged(
+    composition: Option<&mut LineComposition>,
+    file: &MergeFile,
+    actual: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let stale = || Error::ConcurrentWrite("proposal bytes overlap or base is stale");
+    let (Some(composition), Some(MergeFileExpected::Bytes(base)), Some(content), Some(actual)) =
+        (composition, &file.expected, &file.content, actual)
+    else {
+        return Err(stale());
+    };
+    if base.as_slice() != composition.base() {
+        return Err(stale());
+    }
+    composition
+        .compose(actual, content)
+        .map(|composed| composed.bytes)
+        .ok_or_else(stale)
+}
+
+/// A run's accepted order narrowed to its `survivors`: the same work,
+/// declaration, predecessors and sequence (FIX 7066).
+pub(super) fn survivor_run_order(
+    order: Option<RepoQueueOrder>,
+    survivors: &[MergeProposal],
+) -> Option<RepoQueueOrder> {
+    order.map(|mut order| {
+        order.proposals.retain(|stored| {
+            survivors
+                .iter()
+                .any(|proposal| proposal.id == stored.to_hex())
+        });
+        order
+    })
+}
+
 pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
     // More than one window is admitted whole and speculated a window at a
     // time (FIX 9948); the mask's width is the batch's one bound.
@@ -447,7 +560,7 @@ pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Re
                         "merge deletion requires a reviewed delete operation",
                     ));
                 }
-                None if file.expected == file.content => {
+                None if file.expects(file.content.as_deref()) => {
                     return Err(invalid("duplicate, oversized or empty merge edit"));
                 }
                 None => {}
@@ -457,7 +570,11 @@ pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Re
             }
             total = total
                 .saturating_add(file.content.as_ref().map_or(0, Vec::len))
-                .saturating_add(file.expected.as_ref().map_or(0, Vec::len));
+                .saturating_add(
+                    file.expected
+                        .as_ref()
+                        .map_or(0, super::MergeFileExpected::stored_len),
+                );
         }
     }
     if total > 64 * 1024 * 1024 {

@@ -14,6 +14,7 @@ use super::codec_core::{
 };
 use super::enrollment_law::{decode_legal_evidence, encode_legal_evidence};
 use super::math_keys::{corrupt_voice_row, require_session_key, validate_voice_vector};
+use super::metadata::PrintMetadata;
 use super::types::{
     VoiceAttributionEvidence, VoicePrintCalibration, VoicePrintPurpose, VoicePrintRecordV1,
     VoiceResolvedSegment, VoiceSessionRosterV1,
@@ -90,8 +91,8 @@ const EVIDENCE_KIND_INVITE: &str = "invite_elimination";
 const EVIDENCE_KIND_RESIDUAL: &str = "residual_cluster";
 
 /// The [`side_table::Raw`](crate::side_table::Raw) codec for
-/// [`super::storage_admission::PRINT_RECORD`]: this hand-rolled `rmpv` layout
-/// IS the codec, so encode/decode just call it.
+/// the native public print record. Stored recognition rows keep their vector
+/// material separately; this public record codec still carries an admitted vector.
 impl RawValue for VoicePrintRecordV1 {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         Ok(encode_print_record(self)?)
@@ -115,7 +116,18 @@ impl RawValue for VoiceSessionRosterV1 {
 }
 
 pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>> {
-    let value = Value::Map(vec![
+    write_body(&encode_print_value(
+        &PrintMetadata::from(record),
+        encode_vector(&record.centroid),
+    ))
+}
+
+pub(super) fn encode_print_metadata(record: &PrintMetadata) -> Result<Vec<u8>> {
+    write_body(&encode_print_value(record, Value::Nil))
+}
+
+fn encode_print_value(record: &PrintMetadata, centroid: Value) -> Value {
+    Value::Map(vec![
         encode_schema_version(),
         (
             Value::from(PRINT_KEYS[1]),
@@ -134,7 +146,7 @@ pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>
             Value::from(record.consent_event_ref.clone()),
         ),
         (Value::from(PRINT_KEYS[5]), encode_space(&record.space)),
-        (Value::from(PRINT_KEYS[6]), encode_vector(&record.centroid)),
+        (Value::from(PRINT_KEYS[6]), centroid),
         (
             Value::from(PRINT_KEYS[7]),
             encode_string_list(&record.sample_ids),
@@ -175,8 +187,7 @@ pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>
             Value::from(PRINT_KEYS[16]),
             encode_legal_evidence(&record.legal),
         ),
-    ]);
-    write_body(&value)
+    ])
 }
 
 pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
@@ -184,11 +195,24 @@ pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
     let entries = map_entries(&value)?;
     validate_keys(entries, &PRINT_KEYS)?;
     require_schema_version(entries)?;
-
-    let space = decode_space(required_value(entries, PRINT_KEYS[5])?)?;
+    let metadata = decode_print_fields(entries)?;
     let centroid = decode_vector(required_value(entries, PRINT_KEYS[6])?)?;
-    validate_voice_vector(&centroid, space.dimension).map_err(|_| corrupt_voice_row())?;
+    validate_voice_vector(&centroid, metadata.space.dimension).map_err(|_| corrupt_voice_row())?;
+    Ok(metadata.with_centroid(centroid))
+}
 
+pub(super) fn decode_print_metadata(bytes: &[u8]) -> Result<PrintMetadata> {
+    let value = read_body(bytes)?;
+    let entries = map_entries(&value)?;
+    validate_keys(entries, &PRINT_KEYS)?;
+    require_schema_version(entries)?;
+    if !matches!(required_value(entries, PRINT_KEYS[6])?, Value::Nil) {
+        return Err(corrupt_voice_row());
+    }
+    decode_print_fields(entries)
+}
+
+fn decode_print_fields(entries: &[(Value, Value)]) -> Result<PrintMetadata> {
     let delete_after_value = required_value(entries, PRINT_KEYS[12])?;
     let delete_after = if matches!(delete_after_value, Value::Nil) {
         None
@@ -206,7 +230,7 @@ pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(VoicePrintRecordV1 {
+    Ok(PrintMetadata {
         subject_ref: decode_entity_ref(required_value(entries, PRINT_KEYS[1])?)?,
         contact_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[2])?)?,
         relationship_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[3])?)?,
@@ -214,8 +238,7 @@ pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
         world_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[14])?)?,
         consented_purposes,
         legal: decode_legal_evidence(required_value(entries, PRINT_KEYS[16])?)?,
-        space,
-        centroid,
+        space: decode_space(required_value(entries, PRINT_KEYS[5])?)?,
         sample_ids: decode_string_list(required_value(entries, PRINT_KEYS[7])?)?,
         sample_languages: decode_string_list(required_value(entries, PRINT_KEYS[8])?)?,
         calibration: decode_str(required_value(entries, PRINT_KEYS[9])?)

@@ -8,15 +8,21 @@
 //! the check and nothing is refused for it.
 use serde::{Deserialize, Serialize};
 
+mod outputs;
+
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
 use crate::code_sandbox::source::{PreparedSource, prepare_source};
-use crate::code_sandbox::{
-    SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
-};
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
+use crate::{
+    code_sandbox::SandboxProposalWrite,
+    store::{
+        sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier},
+        sandbox_path::SandboxMountTable,
+    },
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -161,7 +167,7 @@ impl From<MemoryError> for ForeignCodeFailure {
 type ForeignLaunch<'a> = (
     ForeignCodeArtifact<'a>,
     crate::code_sandbox::microvm::ExecutionBudget,
-    std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
 );
 
 #[derive(Deserialize)]
@@ -198,7 +204,7 @@ impl Memory<'_> {
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
-        spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+        spool: std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
         type_feedback: Option<&TypeFeedback>,
     ) -> Result<ForeignCodeRunResult, ForeignCodeFailure> {
         let proof = self.foreign_code_credential()?;
@@ -266,12 +272,16 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool)?;
-        let output: StepOutput = serde_json::from_str(&outcome.result_json)
+        let mut streamed =
+            crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
+        let outcome =
+            execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
+        let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
+        outputs::merge(streamed, &mut output)?;
         for file in &output.outputs {
-            let path = crate::code_sandbox::SandboxVirtualPath::try_new(&file.path)?;
-            if path.mount() != crate::code_sandbox::SandboxMount::Outputs {
+            let path = crate::store::sandbox_path::SandboxVirtualPath::try_new(&file.path)?;
+            if path.mount() != crate::store::sandbox_path::SandboxMount::Outputs {
                 return Err(MemoryError::bad_request(
                     "foreign output must name /mnt/outputs",
                 ));

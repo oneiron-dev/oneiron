@@ -9,7 +9,6 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
@@ -18,7 +17,7 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, record_scope::note_world};
+use crate::federation::record_scope::note_world;
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -27,6 +26,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
+use oneiron_authority::federation::Scope;
+use oneiron_contracts::affect::Vad;
 
 use super::disclosable_set::DisclosableSet;
 use super::disclosure_tier;
@@ -259,6 +260,7 @@ impl Vault {
                 end: learned_at,
             },
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,
@@ -425,17 +427,19 @@ impl DisclosureContext {
         if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
             return Ok(false);
         }
-        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
+        let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
         // A NOTE sits at one world it is in that the clearance holds
         // (FIX-LIST 9433).
         let held = [&self.disclosable.clearance().worlds];
-        let Some(record_scope) = note_world::blob_scope_held_at(store, rtxn, *id, &raw, &held)?
+        let Some(record_scope) =
+            note_world::blob_scope_held_at(store, rtxn, *id, &row.encode(), &held)?
         else {
             return Ok(false);
         };
-        Ok(self.disclosable.admits(&record_scope))
+        Ok(self.disclosable.admits(&record_scope)
+            && super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)?)
     }
 
     /// A withdrawn record never reaches anyone but the owner (P3): a deleted,

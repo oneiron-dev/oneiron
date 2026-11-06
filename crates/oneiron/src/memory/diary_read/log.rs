@@ -2,12 +2,18 @@
 //! read rows and review requests, newest first, with no hidden count cut.
 //! An omitted limit returns everything; an explicit one is the caller's own
 //! recent-window choice, and spent requests join only on `include_used`.
+//! Beside it, the companion's owner's view of a work vault Admin's reads of
+//! the agent's sealed pads (ARCH-0032 #private-reads).
 
 use super::{
-    DIARY_READ_LOG, DIARY_READ_REQUEST, DiaryReadsRequest, DiaryReadsView, DiaryReviewState,
-    agent_reviews_diary_reads_in_txn,
+    DIARY_READ_LOG, DIARY_READ_REQUEST, DiaryReadRecord, DiaryReadsRequest, DiaryReadsView,
+    DiaryReviewState, SealedPadReader, agent_reviews_diary_reads_in_txn,
 };
+use crate::EntityId;
+use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::error::Error;
+use crate::memory::authorship::authority_denied;
 use crate::memory::{Memory, MemoryResult, verify_actor_binding};
 
 impl Memory<'_> {
@@ -45,5 +51,50 @@ impl Memory<'_> {
             reads,
             requests,
         })
+    }
+}
+
+impl Memory<'_> {
+    /// The reads a work vault's Admin made of `agent`'s sealed pads, newest
+    /// first, as the companion's owner sees them: in a work vault Admins
+    /// read through a logged access step, and the companion's owner sees the
+    /// log (ARCH-0032 #private-reads). The caller is a person with their
+    /// authentication, and the companion's owner: the PERSON `agent`'s
+    /// subject anchor names, or, for an agent anchored to no person (an
+    /// ORG's, the vault's own), a live owner of the vault. Anyone else is
+    /// refused. The agent sees the same rows in its own log.
+    pub fn admin_pad_reads(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+    ) -> MemoryResult<Vec<DiaryReadRecord>> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if self.actor_class != EdgeActorClass::Human
+            || self.actor != owner.revalidate_person_in_txn(self.vault, &txn)?
+        {
+            return Err(authority_denied(
+                "the companion's owner reads the admin log with their own authentication",
+            )
+            .into());
+        }
+        let at = crate::ports::job_recorded_at_in_txn(&self.vault.store, &txn)?;
+        let companion_owner =
+            match crate::workspace_roster::person_of_actor_in_txn(self.vault, &txn, agent, at)? {
+                Some(person) => person == self.actor,
+                None => {
+                    crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &self.actor)?
+                }
+            };
+        if !companion_owner {
+            return Err(authority_denied("only the companion's owner reads its admin log").into());
+        }
+        Ok(DIARY_READ_LOG
+            .scan_from(&self.vault.store, &txn, agent.as_bytes())?
+            .into_iter()
+            .rev()
+            .map(|(_, record)| record)
+            .filter(|record| record.ruled_reader == Some(SealedPadReader::Admin))
+            .collect())
     }
 }

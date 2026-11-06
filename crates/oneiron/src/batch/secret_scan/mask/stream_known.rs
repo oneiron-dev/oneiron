@@ -28,11 +28,13 @@ use zeroize::Zeroizing;
 use super::REASON_KNOWN_VALUE;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::{
-    KeptValues, KeySpan, KnownValues, MASKED_FILE_BAND, MaskedFile, masked_file_in_txn,
-    put_masked_file_in_txn,
-};
+use crate::file_secret_marks::KeySpan;
+use crate::secret_custody::KeptValues;
 use crate::store::Store;
+use crate::store::file_key_masks::{
+    MASKED_FILE_BAND, MaskedFile, masked_file_in_txn, put_masked_file_in_txn,
+};
+use crate::store::known_value_index::KnownValues;
 
 /// How a streamed ASSET body meets a value custody holds (CALLS
 /// KNOWN_VALUE_STREAM_FINDER).
@@ -86,7 +88,10 @@ impl KnownStreamFinder {
     /// What the stream held, read to its end once it ends.
     pub(crate) fn finish(mut self) -> StreamKnown {
         self.find_until(self.held.len());
-        StreamKnown(self.hits)
+        StreamKnown {
+            known: Some(self.known),
+            hits: self.hits,
+        }
     }
 
     /// Finds each value in the held bytes that starts before `limit`, the
@@ -112,7 +117,10 @@ impl KnownStreamFinder {
 
 /// What a finder found in one stream, for the put's transaction.
 #[derive(Default)]
-pub(crate) struct StreamKnown(Vec<StreamHit>);
+pub(crate) struct StreamKnown {
+    known: Option<Arc<KnownValues>>,
+    hits: Vec<StreamHit>,
+}
 
 impl StreamKnown {
     /// Marks the values found in the file `hash` names, which ASSET `record`
@@ -132,7 +140,7 @@ impl StreamKnown {
         hash: &[u8; 32],
         read: impl Fn(u64, usize) -> Result<Vec<u8>>,
     ) -> Result<()> {
-        if self.0.is_empty() {
+        if self.hits.is_empty() {
             return Ok(());
         }
         let keys = match KNOWN_VALUE_STREAM_FINDER {
@@ -169,14 +177,23 @@ impl StreamKnown {
         record: &EntityId,
         read: impl Fn(u64, usize) -> Result<Vec<u8>>,
     ) -> Result<Vec<KeySpan>> {
+        let Some(known) = &self.known else {
+            return Ok(Vec::new());
+        };
         let kept = KeptValues::for_records_in_txn(store, txn, [*record])?;
-        let mut keys = Vec::with_capacity(self.0.len());
-        for hit in &self.0 {
+        let mut keys = Vec::with_capacity(self.hits.len());
+        for hit in &self.hits {
             if !kept.is_empty() {
                 let len = usize::try_from(hit.span.end - hit.span.start)
                     .map_err(|_| Error::ArithmeticOverflow("streamed known value length"))?;
                 let value = Zeroizing::new(read(hit.span.start, len)?);
-                if kept.holds(record, &value) {
+                // Re-read the exact matches within the source quanta; the
+                // widened bytes need not equal the value the owner kept.
+                if !known
+                    .spans_except(&value, |value| kept.holds(record, value))
+                    .iter()
+                    .any(|found| found.custody == hit.custody)
+                {
                     continue;
                 }
             }

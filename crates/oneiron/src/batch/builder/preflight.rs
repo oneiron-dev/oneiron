@@ -1,5 +1,6 @@
 //! Claim-gate preflight loop including CommitmentGapDecay arms.
 
+use super::super::base_apply::pending_prompt_for;
 use super::super::*;
 use super::BatchOp;
 
@@ -7,11 +8,21 @@ use std::collections::{HashMap, VecDeque};
 
 use heed::RwTxn;
 
-use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::llm::BoundedAutoChecker;
 use crate::store::Store;
+use oneiron_contracts::claim::ClaimApprovalStatus;
+
+/// The first native Pending-Auto refusal and its exact probe occurrences.
+/// The committing terminal either settles a staged reference denial or keeps
+/// this first receipt; neither outcome commits the probe's rows.
+pub(super) struct DeferredPreflight {
+    pub(super) err: Error,
+    pub(super) first_decision: crate::store::GateDecisionId,
+    pub(super) probes:
+        HashMap<crate::store::GateDecisionId, super::super::gate_mode::PendingAutoProbe>,
+}
 
 /// Evaluates local claim gates and appends their decisions to `wtxn`.
 ///
@@ -28,10 +39,13 @@ pub(super) fn preflight_gate_decisions_in_txn(
     checker: Option<&BoundedAutoChecker>,
     origin: BaseWriteOrigin<'_>,
     caller_envelopes: &HashMap<EntityId, crate::WriteEnvelope>,
-) -> Result<()> {
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+    defer_pending_auto: bool,
+) -> Result<Option<DeferredPreflight>> {
     if !contains_local_claim_put(ops) {
-        return Ok(());
+        return Ok(None);
     }
+    let mut deferred: Option<DeferredPreflight> = None;
 
     // #493 now owns this caller-provided transaction: gate receipts remain
     // atomic with phase-2 apply and metrics are emitted only after commit.
@@ -94,9 +108,12 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        // Derived lapse rows carry no pending birth on this
+                        // door; do not infer one from a stored revision.
+                        pending_prompt: None,
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,
@@ -128,9 +145,12 @@ pub(super) fn preflight_gate_decisions_in_txn(
             } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && !*allow_reserved_predicate =>
             {
+                let mut auto = false;
                 let result =
                     crate::claim::validate_claim_body_and_decode_in_txn(store, wtxn, data, false)
                         .and_then(|body| {
+                            auto = body.approval == ClaimApprovalStatus::Auto;
+                            let pending_prompt = pending_prompt_for(births, id);
                             crate::gate::check_claim_policy_for_write_with_record(
                                 store,
                                 wtxn,
@@ -145,9 +165,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                     defer_metrics_until_commit: true,
                                     transition: None,
                                     owner_authored: None,
+                                    pending_prompt: pending_prompt.as_deref(),
                                 },
                                 &policy,
-                                crate::gate::GateWriteMode {
+                                crate::store::GateWriteMode {
                                     record_decision: true,
                                     persist_pending_consent: false,
                                     resolve_pending: false,
@@ -157,7 +178,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                 &mut recorded_decision,
                             )
                         });
-                Some((id, result))
+                Some((id, auto, result))
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -169,6 +190,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 let body = (**candidate)
                     .clone()
                     .into_claim_body(envelope, default_facet)?;
+                let pending_prompt = pending_prompt_for(births, id);
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
@@ -185,9 +207,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        pending_prompt: pending_prompt.as_deref(),
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,
@@ -196,23 +219,61 @@ pub(super) fn preflight_gate_decisions_in_txn(
                     },
                     &mut recorded_decision,
                 );
-                Some((id, result))
+                Some((id, body.approval == ClaimApprovalStatus::Auto, result))
             }
             _ => None,
         };
-        let Some((eligible_id, result)) = eligible else {
+        let Some((eligible_id, auto, result)) = eligible else {
             continue;
         };
-        stage_preflight_decision(
-            store,
-            wtxn,
-            eligible_id,
-            recorded_decision,
-            result,
-            staged_decisions,
-            preflight_gate_decision_ids,
-        )?;
+        match (result, recorded_decision) {
+            (Err(err), Some(decision))
+                if defer_pending_auto
+                    && auto
+                    && decision.outcome() == "pending"
+                    && matches!(
+                        &err,
+                        Error::Gate(GateError::GateWriteRejected {
+                            outcome: "pending",
+                            ..
+                        })
+                    ) =>
+            {
+                let decision_id = decision.decision_id();
+                stage_preflight_decision(
+                    store,
+                    wtxn,
+                    eligible_id,
+                    Some(decision),
+                    Ok(()),
+                    staged_decisions,
+                    preflight_gate_decision_ids,
+                )?;
+                let probe = super::super::gate_mode::PendingAutoProbe {
+                    claim: *eligible_id,
+                    decision: decision_id,
+                };
+                if let Some(deferred) = deferred.as_mut() {
+                    deferred.probes.insert(decision_id, probe);
+                } else {
+                    deferred = Some(DeferredPreflight {
+                        err,
+                        first_decision: decision_id,
+                        probes: HashMap::from([(decision_id, probe)]),
+                    });
+                }
+            }
+            (result, decision) => stage_preflight_decision(
+                store,
+                wtxn,
+                eligible_id,
+                decision,
+                result,
+                staged_decisions,
+                preflight_gate_decision_ids,
+            )?,
+        }
     }
 
-    Ok(())
+    Ok(deferred)
 }

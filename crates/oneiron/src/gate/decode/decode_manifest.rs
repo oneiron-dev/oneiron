@@ -6,7 +6,6 @@ use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
 use super::experiment_selection::parse_experiment_selection;
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
@@ -15,9 +14,7 @@ use crate::gate::ceiling::{
 };
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::constants::{
-    ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
-    ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
-    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
+    ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
     POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
     POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
@@ -42,6 +39,7 @@ use crate::gate::constants::{
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::fanout_policy::{
     FanoutControls, FanoutPrecedence, FanoutScopedRow, parse_controls, parse_precedence,
     parse_scoped_rows,
@@ -63,11 +61,11 @@ use crate::gate::resolution::{
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::llm::{
+use crate::gate::voice_ref_limits::VoiceRefLimitPolicy;
+use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
     parse_failure_rules,
 };
-use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_class_policy::{parse_act_policy, parse_wait_policy};
 use super::decode_map_util::{
@@ -152,18 +150,18 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) connector_class_role: ConnectorClassRole,
     pub(in crate::gate) connector_class_precedence: Option<ConnectorClassPrecedence>,
 
-    pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) slide_review_policy: crate::model_decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
     pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
     pub(in crate::gate) diagnostic_bounds:
         Option<crate::self_heal::tripwires::ManifestTripwireBounds>,
-    pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(in crate::gate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
-    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
+    pub(in crate::gate) goal_limits: Option<crate::policy_model::goal_limits::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
@@ -182,10 +180,12 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(in crate::gate) entity_resolution_bands:
+        Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
-        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+        Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,
@@ -307,8 +307,7 @@ fn decode_owner_policy_precedence(entries: &[(Value, Value)]) -> Option<PolicyOw
 }
 
 /// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
-/// refuse the row instead of silently widening its meaning. Holder entries
-/// are narrow-only relative to the vault limit and to other packs.
+/// refuse the row instead of silently widening its meaning.
 fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
     let Value::Map(entries) = value else {
         return None;
@@ -316,10 +315,7 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
     for (key, _) in entries {
         if !matches!(
             key.as_str()?,
-            ATTRIBUTION_REASON_MAX_BYTES_KEY
-                | ATTRIBUTION_RECEIPTS_PER_PASS_KEY
-                | ATTRIBUTION_HOLDER_REASON_BYTES_KEY
-                | ATTRIBUTION_PRECEDENCE_KEY
+            ATTRIBUTION_RECEIPTS_PER_PASS_KEY | ATTRIBUTION_PRECEDENCE_KEY
         ) {
             return None;
         }
@@ -328,45 +324,12 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
         return None;
     }
     let mut limits = AttributionLimits::default();
-    for (key, target) in [
-        (
-            ATTRIBUTION_REASON_MAX_BYTES_KEY,
-            &mut limits.reason_max_bytes,
-        ),
-        (
-            ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
-            &mut limits.receipts_per_pass,
-        ),
-    ] {
-        match single_map_value(entries, key) {
-            MapValue::Missing => {}
-            MapValue::Duplicate => return None,
-            MapValue::Present(value) => *target = value.as_u64().filter(|v| *v > 0)?,
-        }
-    }
-    match single_map_value(entries, ATTRIBUTION_HOLDER_REASON_BYTES_KEY) {
+    match single_map_value(entries, ATTRIBUTION_RECEIPTS_PER_PASS_KEY) {
         MapValue::Missing => {}
         MapValue::Duplicate => return None,
-        MapValue::Present(Value::Array(rows)) => {
-            for row in rows {
-                let Value::Map(fields) = row else { return None };
-                if fields.len() != 2 {
-                    return None;
-                }
-                let actor = required_string(fields, ATTRIBUTION_HOLDER_ACTOR_KEY)?;
-                let holder = crate::EntityId::from_hex(&actor).ok()?;
-                if holder.to_hex() != actor {
-                    return None;
-                }
-                let bytes = required_value(fields, ATTRIBUTION_HOLDER_MAX_BYTES_KEY)?
-                    .as_u64()
-                    .filter(|v| *v > 0)?;
-                if limits.holder_reason_bytes.insert(holder, bytes).is_some() {
-                    return None;
-                }
-            }
+        MapValue::Present(value) => {
+            limits.receipts_per_pass = value.as_u64().filter(|v| *v > 0)?;
         }
-        MapValue::Present(_) => return None,
     }
     Some(limits)
 }
@@ -436,7 +399,7 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
                         return None;
                     };
                     let holder = required_string(fields, "holder_ref")?;
-                    if !crate::llm::manifest::valid_teacher_probe_holder_ref(&holder) {
+                    if !crate::teacher_probe_policy::valid_holder_ref(&holder) {
                         return None;
                     }
                     let floor =
@@ -453,7 +416,7 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
     }
     let minimum = minimum.filter(|floor| (1..=1_000_000).contains(floor))?;
     let holders = holders.unwrap_or_default();
-    if probe_id != Some(crate::llm::manifest::TEACHER_PROBE_ID)
+    if probe_id != Some(crate::teacher_probe_policy::TEACHER_PROBE_ID)
         || holders
             .values()
             .any(|floor| *floor < minimum || *floor > 1_000_000)

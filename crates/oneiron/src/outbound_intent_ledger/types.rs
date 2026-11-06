@@ -7,7 +7,7 @@ use super::store::hash_frozen_payload;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::{EffectorBudgetRowId, ScopedCapabilityProvenance};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
+use crate::error::{Error, SecretError};
 
 /// Current schema version for device-local outbound intent rows.
 ///
@@ -23,7 +23,7 @@ pub const OUTBOUND_BINDING_VERSION: u64 = 2;
 
 pub type IntentLedgerResult<T> = std::result::Result<T, IntentLedgerError>;
 
-pub type IntentId = [u8; 32];
+pub use crate::receipt::intent_id::IntentId;
 
 /// Typed failure surface for durable outbound intent operations.
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,7 @@ pub enum IntentLedgerError {
     #[error("the durable step failure is not eligible for an effect")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
@@ -139,36 +139,7 @@ impl OutboundAuthorizationBinding {
     }
 }
 
-/// Semantic accounting class. It is persisted so recovery never re-derives
-/// whether this intent consumed the sends dimension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BudgetClass {
-    Send,
-    Operation,
-}
-
-impl BudgetClass {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Send => "send",
-            Self::Operation => "operation",
-        }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "send" => Some(Self::Send),
-            "operation" => Some(Self::Operation),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn is_send(self) -> bool {
-        matches!(self, Self::Send)
-    }
-}
+pub use crate::connector_key::budget_class::BudgetClass;
 
 /// Durable proof that accounting and `Pending` were committed together.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -476,11 +447,88 @@ pub enum OutboundFailureKind {
     EndpointChanged,
 }
 
+/// Which typed secret refusal stopped a connector send at its credential
+/// door (FIX 11565): the send-side mirror of the table operation's typed
+/// refusal (FIX 4491), small and `Copy` like [`OutboundFailureKind`]. The
+/// spellings settle into a settled call's reasons, so they are wire-stable
+/// once shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SecretSendRefusalKind {
+    GrantStale,
+    GrantSpent,
+    GrantTargetMismatch,
+    LeaseNotActive,
+    LeaseNotFound,
+    BindingDenied,
+    TierDenied,
+    DoorPolicyRefused,
+    CustodyNotActive,
+    RefNotFound,
+    LeafUnreadable,
+    /// Any other typed secret refusal, including variants added later:
+    /// still a typed refusal, never a transport failure.
+    Refused,
+}
+
+impl SecretSendRefusalKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GrantStale => "secret_grant_stale",
+            Self::GrantSpent => "secret_grant_spent",
+            Self::GrantTargetMismatch => "secret_grant_target_mismatch",
+            Self::LeaseNotActive => "secret_lease_not_active",
+            Self::LeaseNotFound => "secret_lease_not_found",
+            Self::BindingDenied => "secret_binding_denied",
+            Self::TierDenied => "secret_tier_denied",
+            Self::DoorPolicyRefused => "secret_door_policy_refused",
+            Self::CustodyNotActive => "secret_custody_not_active",
+            Self::RefNotFound => "secret_ref_not_found",
+            Self::LeafUnreadable => "credential_leaf_unreadable",
+            Self::Refused => "secret_refused",
+        }
+    }
+}
+
+/// The typed secret refusal that stopped a send, carried beside the
+/// failure's kind and code (FIX 11565), as `provider_wait` rides its
+/// settlement: in memory only, never a ledger column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SecretSendRefusal {
+    pub kind: SecretSendRefusalKind,
+}
+
+impl SecretSendRefusal {
+    /// The refusal a typed secret error names. Every `SecretError` maps:
+    /// an unlisted or future variant keeps the generic typed refusal.
+    pub fn from_secret_error(error: &SecretError) -> Self {
+        let kind = match error {
+            SecretError::SecretGrantStale { .. } => SecretSendRefusalKind::GrantStale,
+            SecretError::SecretGrantSpent { .. } => SecretSendRefusalKind::GrantSpent,
+            SecretError::SecretGrantTargetMismatch { .. } => {
+                SecretSendRefusalKind::GrantTargetMismatch
+            }
+            SecretError::SecretLeaseNotActive { .. } => SecretSendRefusalKind::LeaseNotActive,
+            SecretError::SecretLeaseNotFound { .. } => SecretSendRefusalKind::LeaseNotFound,
+            SecretError::SecretBindingDenied { .. } => SecretSendRefusalKind::BindingDenied,
+            SecretError::SecretTierDenied { .. } => SecretSendRefusalKind::TierDenied,
+            SecretError::SecretDoorPolicyRefused { .. } => SecretSendRefusalKind::DoorPolicyRefused,
+            SecretError::SecretCustodyNotActive { .. } => SecretSendRefusalKind::CustodyNotActive,
+            SecretError::SecretRefNotFound { .. } => SecretSendRefusalKind::RefNotFound,
+            SecretError::CredentialLeafUnreadable { .. } => SecretSendRefusalKind::LeafUnreadable,
+            _ => SecretSendRefusalKind::Refused,
+        };
+        Self { kind }
+    }
+}
+
 /// Definite non-delivery result with no raw body, URL, or provider text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutboundSendFailure {
     pub kind: OutboundFailureKind,
     pub code: Option<u16>,
+    /// The typed secret refusal that stopped the send at its credential
+    /// door, when one did (FIX 11565).
+    pub secret: Option<SecretSendRefusal>,
 }
 
 /// Transport result for a frozen outbound call.
@@ -504,30 +552,42 @@ pub(crate) trait OutboundSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
 }
 
-/// Gate-attested one-send owner approval, minted only while the Gate spends
-/// that tap and the Pending row is inserted on the same write transaction.
-/// It is admission metadata, never a caller-supplied transport payload field.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AdmittedApproval {
-    intent_id: IntentId,
-    effect_digest: crate::consent::EffectDigest,
+pub(crate) use crate::consent::approval_proof::AdmittedApproval;
+
+/// What a call's ledger row keeps outside the call's checkpoint compartment
+/// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
+/// uncertainty, state and clocks, the record's own entries for them. A
+/// restore that cannot open the call keeps this, never its request, server,
+/// tool, binding or proof, so the call is known as admitted and is never
+/// asked or paid for again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallAccounting {
+    pub(crate) budget_accounting: BudgetChargeMarker,
+    pub(crate) recorded_outcome: Option<RecordedOutboundOutcome>,
+    pub(crate) delivery_uncertain: bool,
+    pub(crate) state: IntentState,
+    pub(crate) created_ms: u64,
+    pub(crate) updated_ms: u64,
 }
 
-impl AdmittedApproval {
-    pub(crate) const fn from_gate(
-        intent_id: IntentId,
-        effect_digest: crate::consent::EffectDigest,
-    ) -> Self {
-        Self {
-            intent_id,
-            effect_digest,
+impl CallAccounting {
+    /// This accounting as the owner's erase of the call's request leaves
+    /// a row (`erase_call_request_in_txn`, KS7-4b): a restore that cannot
+    /// open the call's compartment holds it after that erase. A send still
+    /// Pending or Deferred stops for [`IntentEscalationReason::OwnerErased`],
+    /// keeping that it may have crossed the wire; a settled send stays as it
+    /// settled.
+    #[must_use]
+    pub(crate) fn erased(mut self) -> Self {
+        if matches!(self.state, IntentState::Pending | IntentState::Deferred) {
+            self.delivery_uncertain |=
+                self.recorded_outcome.is_none() || self.state == IntentState::Deferred;
+            self.state = IntentState::Abandoned;
+            self.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+                IntentEscalationReason::OwnerErased,
+            ));
         }
-    }
-    pub(crate) const fn intent_id(self) -> IntentId {
-        self.intent_id
-    }
-    pub(crate) const fn effect_digest(self) -> crate::consent::EffectDigest {
-        self.effect_digest
+        self
     }
 }
 

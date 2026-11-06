@@ -24,6 +24,12 @@ use super::replay::{self, HookReplayEntry, HookReplayResult};
 
 /// One record per binding: the contract its last good body passed under.
 const REGEN: SideTable<EntityId, HookRegenRecord, Named> = SideTable::new(&side_table::HOOKS_REGEN);
+/// Whether a masked copy of a `HOOKS_REGEN` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_regen_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookRegenRecord, Named>(bytes)
+}
+
 /// The newest saved runs one regen replays as its golden set.
 const GOLDEN_ENTRIES: usize = 256;
 /// The `hub_ref` a vault's own pack records (`vault.packs.put`).
@@ -574,7 +580,7 @@ impl Vault {
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
         let record = self.hook_regen_record(binding)?;
-        let (candidate, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+        let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
         let source = self
             .get_pack_source(&row.source)?
             .ok_or(Error::EntityNotFound)?;
@@ -590,43 +596,47 @@ impl Vault {
                 }
             })
             .collect();
-        let disposition = self.put_pack(owner, files)?;
-        // A Candidate or Blocked put bound nothing: the hook still runs its
-        // last good body, and the decision still waits on its record.
-        if !matches!(disposition, PackInstallDisposition::Installed(_)) {
-            return Ok(disposition);
-        }
-        // The new body binds under a new id; the old binding stops.
-        let rebound = self
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(_, bound)| {
-                bound.pack == row.pack
-                    && bound.hook == row.hook
-                    && bound.body_hash == candidate_hash
-            })
-            .map(|(id, _)| id)
-            .filter(|id| *id != binding);
-        let adopted = HookRegenRecord {
-            body_hash: candidate_hash.to_owned(),
-            stamp: target,
-            intent: record.and_then(|record| record.intent),
-            pending: None,
-        };
-        self.with_write_txn_grouped(|txn| {
-            // The fence again, in the write that moves the record: a regen
-            // that replaced the decision since keeps its own.
-            let stored = REGEN.get(&self.store, txn, &binding)?;
-            let enacted = stored
-                .as_ref()
-                .and_then(HookRegenRecord::candidate_hash)
-                .as_deref()
-                == Some(candidate_hash);
-            for id in enacted.then_some(binding).into_iter().chain(rebound) {
+        let prepared = self.prepare_owner_pack_put(files)?;
+        let disposition = self.with_write_txn_grouped(|txn| {
+            let (_, current) = self
+                .pack_hook_bindings_in_txn(txn)?
+                .into_iter()
+                .find(|(id, _)| *id == binding)
+                .ok_or(Error::EntityNotFound)?;
+            let record = REGEN.get(&self.store, txn, &binding)?;
+            let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
+            // A Candidate or Blocked put keeps the pending decision and the
+            // native proposal records, without advancing the last good body.
+            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+                return Ok(disposition);
+            }
+            // The new body binds under a new id; resolve it in this writer,
+            // before any other regen decision or pack install can intervene.
+            let rebound = self
+                .pack_hook_bindings_in_txn(txn)?
+                .into_iter()
+                .find(|(_, bound)| {
+                    bound.pack == current.pack
+                        && bound.hook == current.hook
+                        && bound.body_hash == candidate_hash
+                })
+                .map(|(id, _)| id)
+                .filter(|id| *id != binding);
+            let adopted = HookRegenRecord {
+                body_hash: candidate_hash.to_owned(),
+                stamp: target,
+                intent: record.and_then(|record| record.intent),
+                pending: None,
+            };
+            for id in std::iter::once(binding).chain(rebound) {
                 REGEN.put(self, txn, &id, &adopted)?;
             }
-            Ok(())
+            Ok(disposition)
         })?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
         Ok(disposition)
     }
 

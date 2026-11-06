@@ -10,6 +10,7 @@ use super::super::base::{SyncClient, home_reads_window};
 use super::super::types::SyncResidenceMode;
 use super::{OpenedItem, ThinItem};
 use crate::EntityId;
+use crate::sync::residence::{ContentWorld, RESIDENCE_PAGE_REPLY_BYTES};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::{self, TransportError};
 use crate::sync::types::WindowKey;
@@ -21,8 +22,96 @@ use super::rpc::{ResidenceRpc, refused, residence_budgets};
 struct TouchReply {
     window: String,
     entity_id: String,
-    blob: String,
-    document: String,
+    blob: TouchItemReply,
+    document: TouchItemReply,
+    /// Where the row sits (FIX 14534); unknown from a home that sends none.
+    #[serde(default)]
+    content_world: ContentWorld,
+}
+
+/// One of a touch's two items (FIX 12116): `inline` in base64, or named by
+/// reference, its BLAKE3 in base64 and its length, to fetch in parts.
+#[derive(Deserialize)]
+struct TouchItemReply {
+    #[serde(default)]
+    inline: Option<String>,
+    #[serde(default)]
+    hash: Option<String>,
+    #[serde(default)]
+    total: Option<u64>,
+}
+
+/// One part of a touched item the home named by reference.
+#[derive(Deserialize)]
+struct TouchPartReply {
+    total: u64,
+    part: String,
+}
+
+/// The bytes of `item`, the touch item `name` of `touch` (its window,
+/// selector and entity id): inline, or read from the home a part at a time
+/// (`residence.touch.part`) and checked whole against the hash the touch
+/// named (FIX 12116). `limit` keeps a caller's whole-item ceiling where
+/// one applies. A logical document has no single-frame ceiling: its parts
+/// keep their existing reply bound and its complete digest is still checked.
+async fn touch_item_bytes(
+    rpc: &mut ResidenceRpc,
+    touch: &serde_json::Value,
+    name: &str,
+    item: TouchItemReply,
+    limit: Option<u64>,
+) -> Result<Vec<u8>, TransportError> {
+    let decode = |encoded: &str| {
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| refused())
+    };
+    let (hash, total) = match item {
+        TouchItemReply {
+            inline: Some(inline),
+            hash: None,
+            total: None,
+        } => {
+            let bytes = decode(&inline)?;
+            if limit.is_some_and(|limit| bytes.len() as u64 > limit) {
+                return Err(refused());
+            }
+            return Ok(bytes);
+        }
+        TouchItemReply {
+            inline: None,
+            hash: Some(hash),
+            total: Some(total),
+        } => (hash, total),
+        _ => return Err(refused()),
+    };
+    if limit.is_some_and(|limit| total > limit) {
+        return Err(refused());
+    }
+    let digest = <[u8; 32]>::try_from(decode(&hash)?.as_slice()).map_err(|_| refused())?;
+    let mut bytes = Vec::new();
+    while (bytes.len() as u64) < total {
+        let mut params = touch.clone();
+        params["item"] = json!(name);
+        params["hash"] = json!(hash);
+        params["offset"] = json!(bytes.len());
+        let reply: TouchPartReply =
+            serde_json::from_value(rpc.request("residence.touch.part", params).await?)
+                .map_err(|_| refused())?;
+        let part = decode(&reply.part)?;
+        if reply.total != total
+            || part.is_empty()
+            || part.len() > RESIDENCE_PAGE_REPLY_BYTES
+            || part.len() as u64 > total - bytes.len() as u64
+        {
+            return Err(refused());
+        }
+        bytes.extend_from_slice(&part);
+    }
+    if *blake3::hash(&bytes).as_bytes() != digest {
+        return Err(refused());
+    }
+    Ok(bytes)
 }
 
 impl SyncClient {
@@ -77,25 +166,31 @@ impl SyncClient {
                 "home may not read this world".into(),
             ));
         }
-        let reply: TouchReply = serde_json::from_value(
-            rpc.request(
-                "residence.touch",
-                json!({
-                    "window": window.as_str(), "selector": selector, "entityId": item.to_hex()
-                }),
-            )
-            .await?,
-        )
-        .map_err(|_| refused())?;
+        let touch = json!({
+            "window": window.as_str(), "selector": selector, "entityId": item.to_hex()
+        });
+        let reply: TouchReply =
+            serde_json::from_value(rpc.request("residence.touch", touch.clone()).await?)
+                .map_err(|_| refused())?;
         if reply.entity_id != item.to_hex() || reply.window != window.as_str() {
             return Err(refused());
         }
-        let blob = base64::engine::general_purpose::STANDARD
-            .decode(reply.blob)
-            .map_err(|_| refused())?;
+        let content_world = reply.content_world;
+        // A row or document past what one reply holds comes in parts (FIX
+        // 12116), and a row past one frame, such as an authority entry, is
+        // taken whole (FIX 8246).
+        // The row keeps the remote-read ceiling. The logical document is
+        // fetched whole over the same bounded parts, not one wire frame.
+        let blob = touch_item_bytes(
+            &mut rpc,
+            &touch,
+            "blob",
+            reply.blob,
+            Some(crate::memory::caps::MAX_REMOTE_RESPONSE_BYTES as u64),
+        )
+        .await?;
+        let document = touch_item_bytes(&mut rpc, &touch, "document", reply.document, None).await?;
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
-        // A row past one frame, such as an authority entry, is taken whole:
-        // the RPC reply's own bound holds it (FIX 8246).
         if window
             .start_timestamp()
             .is_none_or(|start| header.learned_at < start)
@@ -105,15 +200,10 @@ impl SyncClient {
         {
             return Err(refused());
         }
-        let document = base64::engine::general_purpose::STANDARD
-            .decode(reply.document)
-            .map_err(|_| refused())?;
-        if document.len() > transport::MAX_DECODED_PAYLOAD_BYTES
-            || document.first() != Some(&transport::TAG_DOCUMENT)
-        {
+        if document.first() != Some(&transport::TAG_DOCUMENT) {
             return Err(refused());
         }
-        let document_frame = transport::decode_document(&document[1..])?;
+        let document_frame = transport::decode_unsplit_document(&document[1..])?;
         if document_frame.entity != item
             || !matches!(
                 document_frame.kind,
@@ -144,6 +234,15 @@ impl SyncClient {
                     }
                     return Ok(());
                 }
+                // A copy of an item erased here, or of a NOTE that cites one,
+                // is not kept: the home may not have erased it yet (FIX 18400).
+                crate::note::refuse_erased_residence_copy_in_txn(
+                    &self.vault,
+                    txn,
+                    item,
+                    header.entity_type,
+                    &document,
+                )?;
                 self.vault
                     .store
                     .sync_state
@@ -158,6 +257,15 @@ impl SyncClient {
                     &format!("ro:e:{}", item.to_hex()),
                     window.as_str().as_bytes(),
                 )?;
+                // The witness belongs to these bytes: one an earlier fetch
+                // kept never stands for them (FIX 14534).
+                let witness = format!("ri:c:{}", item.to_hex());
+                match content_world.encode() {
+                    Some(bytes) => self.vault.store.sync_state.put(txn, &witness, &bytes)?,
+                    None => {
+                        self.vault.store.sync_state.delete(txn, &witness)?;
+                    }
+                }
                 crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
                 // FIX 4385: a machine history the cached row needs is owed.
                 crate::sync::machine_history::owe_touched_in_txn(

@@ -1,7 +1,8 @@
 # Your vault: where it lives, backups, restore, export, and one-act approvals
 
-Everything here works with no model configured. Each action has a CLI command and, for a
-running server, a route under `/v1/owner`. The CLI commands read the same config as
+Everything here works with no model configured. Each action has a CLI command. Except for
+notes-to-Files conversion, each also has a running-server route under `/v1/owner`.
+The CLI commands read the same config as
 `oneiron serve` (`--config FILE`, `--vault-path DIR`, `ONEIRON_*`). Commands that open the
 vault need the server stopped, because one process holds a vault at a time. Two commands
 also work while `serve` runs: `restore --rehearse`, which never opens the vault, and
@@ -42,7 +43,7 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
-The server's status also carries `link_bytes`: what every sync link moved since the process
+The server's status also carries `link_bytes`: what every sync and LLM mesh link moved since the process
 started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
 `out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
 `in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
@@ -71,6 +72,25 @@ has none; a rehearsal or a restore on this device unlocks it from that wrap, and
 host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
 The install that takes a backup signs it, and a restore checks that signature first. While any
 legal hold stands, no backup is pruned, whatever `keep` says.
+
+An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps the whole
+canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
+use a separate automatic selection. When an entity's known world dependencies are all resolved
+to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
+and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
+known Off worlds' window snapshots and durable window updates. Shared document proposals keep
+their other owners' fragments. Authority-log rows and non-payload links stay intact.
+
+This is partial world selection, not a guarantee that an Off world's every byte is absent.
+Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
+queued or mixed carriers and exterior custody publication still need their own world
+projection. The read setting **One machine** alone does not exclude a sealed backup.
+
+Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
+Content and custody positions must match exactly. A whole-vault artifact can satisfy an
+automatic idle-backup duty at that same position, keeping its original mark; an automatic mark
+never certifies a whole-vault backup. Reusing an artifact copies or publishes nothing new.
+Old marker formats read as changed; there is no marker migration or old-format reader.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment, or with the owner's backup setting (below):
@@ -190,7 +210,14 @@ binds the gate-decision key custody the restored vault keeps, so it is archived:
 reads, but refuses every write, erase and key retirement, which would otherwise reach the
 restored vault's keys. A restore that stops part-way through the swap (a crash, a power cut)
 leaves the same rule: whichever vault sits at the vault's path is the live one, and the other
-opens archived. To use the archived vault again, activate it:
+opens archived. On a later restore, sealed staging left by an interrupted swap is claimed
+as the previous vault only when both page-seal mirrors identify the post-swap state. After
+that rename, the archive mirror is narrowed to the previous vault's verified incarnation,
+keeping its carried key wraps. A mirror rewrite failure is logged and does not undo the
+claim; the archive's next sealed open can still narrow it. Plain, ambiguous, or locked
+staging stays whole and is named in the restore's `staging_notes`.
+
+To use the archived vault again, activate it:
 
 ```sh
 oneiron restore --activate /path/to/vault.pre-restore-<UTC time>
@@ -312,6 +339,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
+| `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -739,6 +767,46 @@ a restore (LIVE), so a restore never revives a spent push; one whose commit the 
 refused at dispatch (`objects_missing`). Erasing an actor scrubs it from every request it acted
 on.
 
+## Attach a folder as Files
+
+`oneiron files attach <folder>` reads a folder of this host into this install's Files
+world: every file lands as a note, a file past the note bound as its parts, and a file
+the host cannot read by name only. The attach is your standing act — from then on
+`oneiron serve` rescans the folder with the others, and `oneiron files rescan` (no path
+rescans every attached Files folder) does it now. Symbolic links under the folder are
+never followed, and nothing is written to it. The Files world is read on this install
+only; no sealed copy travels. A file that is gone is retracted on the next rescan; a
+folder inside that will not open is counted in the report (the first is named) and
+left alone until a later rescan.
+
+`--include <pattern>` keeps only matching files (`*` within a name, `**` across
+folders, `?` one character). `--exclude <pattern>` also passes over what matches, added
+to the default exclusions (hidden entries, version control, dependency and build
+folders, credential stores and key files); `--no-default-exclude` drops the defaults so
+only `--exclude` is passed over. The same surface on a running server is
+`vault.files.sources.attach` — there `exclude` works the other way: absent keeps the
+default list, and a list, even an empty one, replaces it.
+
+`oneiron files list` shows the attached folders, `oneiron files files <folder>` the
+files one holds, and `oneiron files detach <folder>` stops every rescan from reading
+it again (a folder that is gone is detached by the name it was attached by; its notes
+stay).
+
+`oneiron files convert <folder>` changes a folder already attached as notes into a
+Files source in one owner act. Its include patterns, note kind and source attribution
+stay. The notes already imported, their history and their links stay where they are;
+they are not moved into the Files world. The conversion clears only the old rescan
+ledger and replaces the source placement in the same transaction. It then runs the
+ordinary Files rescan, which creates Files copies under that source's own identity.
+A first rescan that reports an error does not undo the conversion; `oneiron files
+rescan <folder>` retries it. A missing source or one already attached as Files is not
+converted, and its ledger is unchanged.
+
+Conversion uses the Files default exclusions. `--exclude <pattern>` adds to them;
+`--no-default-exclude` drops the defaults, just as for attach. The command requires a
+stopped vault. There is no running-server conversion verb in this slice; the existing
+attach, rescan and detach verbs keep their behavior.
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
@@ -1026,6 +1094,15 @@ archived until you accept, and the engine refuses the automatic posture.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
+The per-item `vault.cleanup.review` answer reads each record through the owner's native
+`vault.get` admission and projection in the same snapshot as its eligibility, evidence and
+revision. Completed-attempt content and native NOTE document reads also share that snapshot.
+A bound room's NOTE reads use one overlay view captured before the snapshot, with their own
+native NOTE versions; the cleanup revision still binds the base bytes the decision changes.
+Native diary completion runs after the snapshot closes. The review keeps its three-read bound
+and marks a slot that continues changing; its content remains from the snapshot beside its
+facts, not a newer read. The snapshot change does not add an archive or delete action.
+
 ## Review NOTE tombstones
 
 Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
@@ -1311,12 +1388,23 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 
 The Coach reads the open inbox with a triage skill you bind, and files what it finds as
 proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
-`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
-`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
-is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+`GET /v1/owner/feedback/triage/binding` returns
+`{skill, enqueue_on_intake, revision, set_at}`. `PUT` with
+`{"skill": "<SKILL id>", "enqueue_on_intake": false, "seen": <revision>}` binds it
+(`"skill": null` unbinds; a stale `seen` is refused). The required
+`enqueue_on_intake` boolean defaults to false while never set, keeping manual/nightly
+batching. Set it true to queue the same ordinary sweep as each new inbox note lands;
+running work retains one coalesced later sweep. Turning it off leaves already admitted
+work intact. This is scheduling under the owner's setting, not anonymous authority.
+The repo's `skills/feedback-triage/SKILL.md` is a starting skill. Details:
+[`Feedback triage on intake`](feedback-triage-intake.md).
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
-already going is joined. The sweep reads every note past its cursor, keeps each note revision as
+already going is joined. If that sweep is already running, the request also retains one later
+ordinary sweep, so notes arriving after its last read need not wait for the nightly. Several such
+requests coalesce into that one follow-up. A queued, paused or scheduled sweep already covers the
+request and queues no extra sweep. The returned attempt still names the joined sweep, not its
+later follow-up. The sweep reads every note past its cursor, keeps each note revision as
 evidence and triages it as its own job. A note too long for the Coach model's context window is
 triaged in parts: the whole note is split into parts that each fit, every part is its own job,
 synthesis jobs combine the part answers in order, and the note's own job files the findings once
@@ -1494,6 +1582,34 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Answer a Coach training offer
+
+`POST /v1/owner/coach/training-offers/answer` takes the shown `offer`, its `digest`,
+and an `answer`: `keep_baseline`, `approve_switch`, `approve_train`, `decline` or
+`postpone`. A train approval may also name its prepared `training` choice. The SDK
+verb `vault.coach.training_offers.answer` takes the same offer, digest and answer;
+its training run is authorized separately.
+
+Both replies contain `answer` (the immutable answer record) and `staged` (the
+current embedder binding for that offer). The binding is read after the answer
+commits, not copied into its stored record. `staged` is `null` when no binding row
+exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
+`undone`, including settled moves. The SDK's `vault.coach.training_offers` and
+`.get` views also include `staged`, read anew on each request. An embedder approval
+can therefore be shown as waiting or filling while the old index still serves;
+answering the offer does not mean that its new binding is already applied.
+
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
@@ -1514,6 +1630,10 @@ export checks and overlaps, every swap receipt, every swap question and `serving
 hashes the view showed; a result that moved since is refused as changed. `{"kind":
 "explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
 on its receipt. Either answer closes the run's other open questions.
+
+An evaluated swap needs a present, non-retired cohort and records a Promotion exposure. An
+explicit override records no Promotion exposure, so a missing or retired cohort does not by
+itself block it. Owner, viewed-result, checkpoint and manifest checks still apply.
 
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
@@ -1755,7 +1875,8 @@ sealed, so a restore elsewhere unlocks the pages with either.
 
 The world kit carries your recovery root: the key every private world's key is also wrapped to.
 It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
-nothing. No piece ever lives on the host. Run these on a stopped vault:
+nothing. A `this-machine` home keeps its piece in the install's keystore; the other homes leave it
+with you. Run these on a stopped vault:
 
 ```sh
 oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
@@ -1766,7 +1887,8 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+`security-key`, `passphrase` or `this-machine`. Each stored piece is written to `--out` as
+`piece-<x>.txt`, its
 recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
 `file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
 with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
@@ -1775,8 +1897,9 @@ you saved them. Confirm makes the kit's root live on this machine and marks ever
 replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
 `world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
 that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
-their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
-slot can hold a piece.
+their own old root; replacing a kit does not revoke it. `this-machine` keeps its piece in the
+install's keystore, and a restore on that install counts it as one of the two. It is refused when
+the keystore cannot hold the piece.
 
 `issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
@@ -1901,7 +2024,9 @@ refusal shows the root its pieces rebuild. Pass `--fingerprint <root>`, read on 
 machines that pins it, or go ahead with `--confirm-root <root>`, the root the refusal showed. The
 go-ahead holds for that root alone: pieces that rebuild another root are refused with the root
 they do rebuild, so you confirm again in one step. A kit this vault still lists as pending is
-refused: `confirm` it instead.
+refused: `confirm` it instead. On an install that keeps a piece, `restore` counts it: give one
+fewer `--piece`, down to no `--piece` when the kept piece and the passphrase open the kit. A
+`confirm` still re-reads the pieces you saved and never counts the kept piece.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
 pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit
@@ -1913,7 +2038,10 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 ```
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
-with any other unlock, it refuses `--piece` and `--vault-id`.
+with any other unlock, it refuses `--piece` and `--vault-id`. On an already-open plain vault,
+add-device counts this install's kept piece of the same kit id for either kit kind and asks for a
+passphrase only when the available pieces need one. Fresh restores and sealed opens keep their
+existing pre-open piece and passphrase rules.
 
 ### Publish the sealed bundle to a home
 
@@ -1929,8 +2057,9 @@ is named beside the receipt; that note decides nothing.
 
 On an install that holds no copy of the vault yet, the world kit alone restores it from its sealed
 cloud bundle. Run it on a stopped install, with the world kit's pieces, not the vault-key kit's:
-two `--piece` files, or one and the passphrase from stdin or `--secret-file`. `--vault-id` is the
-64-hex id the kit is bound to, as `status` prints it on one of your machines. Name one source:
+two `--piece` files, or one and the passphrase from stdin or `--secret-file`. No kept piece joins
+this pre-open restore; it uses only the pieces given. `--vault-id` is the 64-hex id the kit is
+bound to, as `status` prints it on one of your machines. Name one source:
 
 ```sh
 oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt --vault-id <hex> --sealed-bundle bundle --sealed-pads pads
@@ -1967,6 +2096,11 @@ clearance (the `vault.disclosure.offer` verb, under an agent credential that car
 `propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
 contact offer.
 
+- `GET /v1/owner/disclosure/offers?limit=20` lists your open offers, unresolved and
+  unexpired, in proposal-reference order. The reply holds `offers` (the same frozen views as
+  the singular read) and `next_after`. Pass that reference as `after` for the next page;
+  `next_after: null` means done. Choose `limit` on every request; zero returns an empty page.
+  The list grants nothing and never includes another owner's offers.
 - `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
   the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
 - `POST /v1/owner/disclosure/confirm` with
@@ -2052,6 +2186,12 @@ an owner pin replaces the spawn call's own seed, and the call's own pin always s
 row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
 width is passed over for the next row, and a budget only ever narrows the caller's budget.
 
+An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
+seed, for its inherited project and placed task type. Its launch preview reads the same setting;
+actual admission records and reserves under that cap through the normal spend path. An explicit
+budget always stands. Planned launches, workflows and reader loans keep their existing handling.
+The setting supplies a cap, not funds, and does not change the identity of a retried request.
+
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
 oneiron learning-settings list --key health.loop.repeats
@@ -2114,6 +2254,25 @@ room turn, or when it comes from a credential that binds no principal or read ke
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
 with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
+
+## Pairing code guesses
+
+A pairing code is short enough to type, so `POST /v1/core/pairing/redeem` counts each client
+address's redemptions. An address may make five that no success answers. After that it waits
+before its next code is read: one second, then twice as long after each try, up to an hour.
+While it waits the door answers `429 TOO_MANY_ATTEMPTS` with `Retry-After`. A success, or an
+hour with no redemption from the address, starts it over. Every address counts alike, loopback
+and paired mesh machines too, and no address ever waits for another, so a stranger cannot block
+your own pairing. Behind a managed host's supervisor or relay the server sees no caller's own
+address, so it counts nothing there; the managed edge bounds those callers. A restart forgets the
+count. Change the rows in `[limits]`:
+
+```toml
+[limits]
+pairing_redeem_free_failures = 5          # redemptions an address makes before it waits
+pairing_redeem_wait_ceiling_ms = 3600000  # the longest wait
+pairing_redeem_quiet_ms = 3600000         # no redemption this long starts the address over
+```
 
 ## Live agent runs
 
@@ -2256,6 +2415,14 @@ same under the owner's credential. Where Oneiron hosts the bytes, a legal order 
 can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
 the order whole, with its reference and terms, unless the order itself requires silence; then you
 see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+
+An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
+answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
+confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
+delete has already begun and runs to its end. A withdrawn erase erases nothing, its `erase` act
+goes, a hold the confirm lifted stays lifted, and each hold the confirm met logs
+`erase_withdrawn`.
 
 ## Erase a text's history
 
@@ -2490,6 +2657,15 @@ and tells you to rewrap the secret as its holder instead. No SDK verb takes the 
 server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
 ([owner-custody.md](owner-custody.md)).
 
+## Pack lens slot decisions
+
+Selecting or clearing a pack lens slot records one decision in the shared Gate ledger in the
+same transaction as the slot change. The returned `LensActivationReceipt.decision_ref` is that
+ledger decision's id; it also names the selected slot's decision while the slot is active.
+The ledger records the authenticated owner and a digest of the returned receipt. Clearing a
+slot deletes its active selection but keeps this audit record. These records grant no standing
+consent and change no revision, installation or expected-active checks.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of
@@ -2510,6 +2686,12 @@ oneiron api raw POST /v1/owner/backups
 oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ```
+
+## Shared-merge evidence questions
+
+Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
+evidence question's bound. The value must be a positive integer. The default remains
+4,096 rows; the override does not change the question policy.
 
 ## Limits today
 

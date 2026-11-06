@@ -138,6 +138,7 @@ impl Vault {
                             end: header.occurred_end,
                         },
                         learned_at: header.learned_at,
+                        row_version: None,
                         data: encode_claim_body(&approved)?,
                         allow_maintenance: false,
                         allow_reserved_predicate: false,
@@ -203,6 +204,7 @@ impl Vault {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at: header.learned_at,
+                    row_version: None,
                     data: encode_claim_body(&resolved)?,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
@@ -254,18 +256,18 @@ impl Vault {
         crate::runtime_hooks::record_settlement_in_txn(
             self,
             wtxn,
-            crate::runtime_hooks::SettledFact {
+            crate::consent::settlement_fact::SettledFact {
                 proposal: id,
                 outcome: match action {
                     GateConsentBundleAction::Approve => {
-                        crate::runtime_hooks::SettledOutcome::Approved
+                        crate::consent::settlement_fact::SettledOutcome::Approved
                     }
                     GateConsentBundleAction::Decline => {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }
                 },
                 settled_by: actor.entity_ref(),
-                kind: crate::runtime_hooks::SettlementKind::ClaimSettlement,
+                kind: crate::consent::settlement_fact::SettlementKind::ClaimSettlement,
             },
         )?;
         Ok(SettledProposal {

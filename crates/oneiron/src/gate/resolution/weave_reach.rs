@@ -2,10 +2,10 @@
 //! and land a `Generated`-lineage claim as Auto at the unstamped band.
 use super::PolicyManifestResolution;
 use crate::claim::{ClaimSource, ScopedReadActorKey, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
-use crate::federation::Scope;
-use crate::federation::scope_codec::read_preset;
 use crate::gate::PolicyApprovalCeiling;
 use crate::gate::grants::{scoped_read_actor_matches, scoped_read_grant_has_read_effector};
+use oneiron_authority::federation::Scope;
+use oneiron_authority::federation::scope_codec::read_preset;
 
 impl PolicyManifestResolution {
     /// A receipt-free, unbudgeted read grant whose authority covers every

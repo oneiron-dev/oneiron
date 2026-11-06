@@ -68,37 +68,7 @@ pub(super) fn event_pair_prefix(query_ref: &EntityId, entity_ref: &EntityId) -> 
     prefix
 }
 
-/// Cached match-evaluator verdict for one `(query, entity, evidence)` triple.
-pub(super) const MEMOS: SideTable<VerdictMemoKey, VerdictMemoRow, Raw> =
-    SideTable::new(&side_table::SAVED_QUERY_MEMO);
-
-impl SideKey for VerdictMemoKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.query_ref.as_bytes());
-        out.extend_from_slice(self.entity_ref.as_bytes());
-        out.extend_from_slice(&self.evidence_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (query_ref, rest) = bytes.split_at_checked(16)?;
-        let (entity_ref, evidence_hash) = rest.split_at_checked(16)?;
-        Some(Self {
-            query_ref: EntityId::from_bytes(query_ref.try_into().ok()?).ok()?,
-            entity_ref: EntityId::from_bytes(entity_ref.try_into().ok()?).ok()?,
-            evidence_hash: evidence_hash.try_into().ok()?,
-        })
-    }
-}
-
-impl RawValue for VerdictMemoRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_memo_row(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_memo_row(bytes)?)
-    }
-}
+pub(super) use crate::store::query_memos::MEMOS;
 
 /// Predicate rewrite map for one pack move. An operator's is keyed by
 /// `{from_pack_id}@{from_version}->{to_pack_id}@{to_version}`; one a pack
@@ -240,6 +210,7 @@ pub(super) fn store_record_in_txn(
                 end: record.updated_at,
             },
             learned_at: record.updated_at,
+            row_version: None,
             data: encode_record(record)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -553,76 +524,7 @@ fn matcher_from_json(value: &Value) -> Result<MatcherSpec> {
     }
 }
 
-pub(super) fn encode_memo_row(row: &VerdictMemoRow) -> Result<Vec<u8>> {
-    let mut root = JsonMap::new();
-    root.insert(
-        "query_ref".to_owned(),
-        Value::String(row.key.query_ref.to_hex()),
-    );
-    root.insert(
-        "entity_ref".to_owned(),
-        Value::String(row.key.entity_ref.to_hex()),
-    );
-    root.insert(
-        "evidence_hash".to_owned(),
-        Value::String(hex_lower(&row.key.evidence_hash)),
-    );
-    root.insert(
-        "definition_version".to_owned(),
-        Value::from(row.definition_version),
-    );
-    root.insert(
-        "verdict".to_owned(),
-        Value::String(row.verdict.as_str().to_owned()),
-    );
-    root.insert("why".to_owned(), Value::String(row.why.clone()));
-    // Absent while the sources are not known whole (FIX 10089).
-    if let Some(sources) = &row.source_refs {
-        let refs = sources.iter().map(|id| Value::String(id.to_hex()));
-        root.insert("source_refs".to_owned(), Value::Array(refs.collect()));
-    }
-    root.insert(
-        "envelope".to_owned(),
-        serde_json::to_value(&row.envelope)
-            .map_err(|_| Error::InvariantViolation("saved query envelope encode failed"))?,
-    );
-    root.insert("evaluated_at".to_owned(), Value::from(row.evaluated_at));
-    canonical_json_bytes(&Value::Object(root))
-}
-
-pub(super) fn decode_memo_row(raw: &[u8]) -> Result<VerdictMemoRow> {
-    const CONTEXT: &str = "saved query verdict memo";
-    let value = parse_row(raw, CONTEXT)?;
-    Ok(VerdictMemoRow {
-        key: VerdictMemoKey {
-            query_ref: required_entity_ref(&value, "query_ref", CONTEXT)?,
-            entity_ref: required_entity_ref(&value, "entity_ref", CONTEXT)?,
-            evidence_hash: required_hash(&value, "evidence_hash", CONTEXT)?,
-        },
-        definition_version: required_u64(&value, "definition_version", CONTEXT)?,
-        verdict: MatchVerdict::parse(&required_string(&value, "verdict", CONTEXT)?)
-            .ok_or(Error::CorruptedIndex(CONTEXT))?,
-        why: required_string(&value, "why", CONTEXT)?,
-        source_refs: value
-            .get("source_refs")
-            .map(|refs| {
-                refs.as_array()
-                    .ok_or(Error::CorruptedIndex(CONTEXT))?
-                    .iter()
-                    .map(|id| parse_entity_ref(id).map_err(|_| Error::CorruptedIndex(CONTEXT)))
-                    .collect::<Result<Vec<_>>>()
-            })
-            .transpose()?,
-        envelope: serde_json::from_value(
-            value
-                .get("envelope")
-                .cloned()
-                .ok_or(Error::CorruptedIndex(CONTEXT))?,
-        )
-        .map_err(|_| Error::CorruptedIndex(CONTEXT))?,
-        evaluated_at: required_u64(&value, "evaluated_at", CONTEXT)?,
-    })
-}
+pub(super) use crate::store::query_memos::{decode_memo_row, encode_memo_row};
 
 pub(super) fn encode_event(event: &MembershipEvent) -> Result<Vec<u8>> {
     let mut root = JsonMap::new();
@@ -681,56 +583,7 @@ pub(super) fn encode_member_value_bytes(value: &CampaignMemberValue) -> Result<V
     Ok(out)
 }
 
-fn parse_row(raw: &[u8], context: &'static str) -> Result<Value> {
-    serde_json::from_slice(raw).map_err(|_| Error::CorruptedIndex(context))
-}
-
-fn required_string(value: &Value, key: &str, context: &'static str) -> Result<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or(Error::CorruptedIndex(context))
-}
-
-fn required_actor_class(value: &Value, key: &str, context: &'static str) -> Result<EdgeActorClass> {
-    match required_string(value, key, context)?.as_str() {
-        "human" => Ok(EdgeActorClass::Human),
-        "agent" => Ok(EdgeActorClass::Agent),
-        "system" => Ok(EdgeActorClass::System),
-        _ => Err(Error::CorruptedIndex(context)),
-    }
-}
-
-fn required_u64(value: &Value, key: &str, context: &'static str) -> Result<u64> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .ok_or(Error::CorruptedIndex(context))
-}
-
-fn required_entity_ref(value: &Value, key: &str, context: &'static str) -> Result<EntityId> {
-    let hex = required_string(value, key, context)?;
-    EntityId::from_hex(&hex).map_err(|_| Error::CorruptedIndex(context))
-}
-
-fn required_hash(
-    value: &Value,
-    key: &str,
-    context: &'static str,
-) -> Result<[u8; EVIDENCE_HASH_LEN]> {
-    let hex = required_string(value, key, context)?;
-    if hex.len() != EVIDENCE_HASH_LEN * 2 {
-        return Err(Error::CorruptedIndex(context));
-    }
-    let mut bytes = [0u8; EVIDENCE_HASH_LEN];
-    for (index, slot) in bytes.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(
-            hex.get(index * 2..index * 2 + 2)
-                .ok_or(Error::CorruptedIndex(context))?,
-            16,
-        )
-        .map_err(|_| Error::CorruptedIndex(context))?;
-    }
-    Ok(bytes)
-}
+use crate::store::query_memos::{
+    parse_row, required_actor_class, required_entity_ref, required_hash, required_string,
+    required_u64,
+};

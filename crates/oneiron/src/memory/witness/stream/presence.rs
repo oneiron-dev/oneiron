@@ -1,9 +1,9 @@
 //! Native EphemeralStore publication. Frames use the existing TAG_EPHEMERAL.
 //! A host's relay takes each all-devices frame with its scope (FIX 9537).
 use super::*;
-use crate::sync::{
-    EphemeralStore, LoroValue, MessagePresenceScope, ScopedPresenceFrame, transport,
-};
+use crate::memory::message_presence::MessagePresenceScope;
+use crate::memory::message_presence::ScopedPresenceFrame;
+use crate::sync::{EphemeralStore, LoroValue, transport};
 use tokio::sync::broadcast;
 const FRAME_BUDGET: usize = 64 * 1024;
 /// Frames the lossy channel buffers for a socket that has not read them.

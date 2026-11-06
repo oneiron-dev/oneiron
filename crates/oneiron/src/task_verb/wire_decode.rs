@@ -14,10 +14,10 @@ use crate::consult_ladder::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::write_envelope::task_body::TaskRole;
 
-use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
+use super::consts::TASK_VERB_BODY_SCHEMA_VERSIONS;
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
 use super::refusal::TaskRefusalRecord;
@@ -26,6 +26,7 @@ use super::terminal_state::{
 };
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use crate::error::RecordError;
+pub(super) use crate::store::linear_task_revision::task_body_has_typed_subkind;
 
 pub(super) fn task_verb_body(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskVerbBody>> {
     let rtxn = vault.store.env.read_txn()?;
@@ -215,7 +216,8 @@ pub(super) fn task_entity_role_in(
     if header.entity_type != ENTITY_TYPE_TASK {
         return Ok(None);
     }
-    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    crate::write_envelope::task_body::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(Some)
 }
 
 pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
@@ -381,27 +383,7 @@ pub(super) fn decode_stored_brief(value: &Value) -> Result<super::brief::StoredB
 
 /// Reads one additive body key. Absent (schema-v1 row) and explicitly `Nil`
 /// both mean "not set"; a duplicated key is still a corrupt body.
-pub(super) fn task_body_optional<'a>(
-    entries: &'a [(Value, Value)],
-    name: &str,
-) -> Result<Option<&'a Value>> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let Some(value) = values.next() else {
-        return Ok(None);
-    };
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(match value {
-        Value::Nil => None,
-        value => Some(value),
-    })
-}
+pub(super) use crate::store::task_body_checks::task_body_optional;
 
 pub(super) fn decode_entity_ref(value: &Value, context: &'static str) -> Result<EntityId> {
     value
@@ -812,23 +794,7 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     }
 }
 
-pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let value = values
-        .next()
-        .ok_or(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )))?;
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(value)
-}
+pub(super) use crate::store::task_body_checks::task_body_field;
 
 /// What a TASK body says authorizes the asks bound to the task: who owns it,
 /// whom it is assigned to, and the ask class its spec sets.
@@ -860,28 +826,29 @@ pub(crate) fn task_binding(body: &[u8]) -> Option<TaskBinding> {
     })
 }
 
-pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
-    let mut cursor = body;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
-    if !cursor.is_empty() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    let Some(entries) = value.as_map() else {
-        return Ok(false);
+/// Inverse of [`super::wire_encode::encode_task_realization_input`]: the one
+/// decoder of a queued TASK realization's input, shared by the runner and
+/// admission (FIX 11687). The wrapper is current-only: `spec` and
+/// `requester` are both required keys, `requester` nil for unmarked work,
+/// else the native JSON string both carriers share. A raw spec, or any
+/// wrapper missing a key, is a corrupt input.
+pub(crate) fn decode_task_realization_input(
+    value: &Value,
+) -> Result<(Value, Option<crate::agent_dispatch::QueuedRequester>)> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("tasks.realize.input"));
+    let entries = value.as_map().ok_or_else(invalid)?;
+    let spec = task_body_field(entries, "spec")
+        .map_err(|_| invalid())?
+        .clone();
+    let stored = task_body_field(entries, "requester").map_err(|_| invalid())?;
+    let requester = if matches!(stored, Value::Nil) {
+        None
+    } else {
+        let raw = stored.as_str().ok_or_else(invalid)?;
+        Some(
+            serde_json::from_str::<crate::agent_dispatch::QueuedRequester>(raw)
+                .map_err(|_| invalid())?,
+        )
     };
-    Ok(entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("subkind"))
-        .count()
-        == 1
-        && entries
-            .iter()
-            .filter(|(key, value)| {
-                key.as_str() == Some("subkind") && value.as_str() == Some(TASK_VERB_BODY_SUBKIND)
-            })
-            .count()
-            == 1)
+    Ok((spec, requester))
 }

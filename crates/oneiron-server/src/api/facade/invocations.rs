@@ -10,7 +10,9 @@ use crate::invocation_claims::{InvocationClaimStore, invocation_claim_key};
 /// one's reply and gets it, and one naming it for another call is refused at
 /// once. An action's verb-table row reaches its route here with its step's
 /// id, and is claimed once, here. A request no credential authenticates, or
-/// whose header is no id, is left to its route's own refusal.
+/// whose header is no id, is left to its route's own refusal. The caller is
+/// the one the receipt layer resolved for this call ([`ResolvedCaller`],
+/// FIX 2005), never resolved a second time.
 pub(super) async fn facade_invocation_claim(
     State(server): State<Arc<SyncServer>>,
     request: Request,
@@ -20,8 +22,16 @@ pub(super) async fn facade_invocation_claim(
         return next.run(request).await;
     };
     let (mut parts, body) = request.into_parts();
-    let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
-        return next.run(Request::from_parts(parts, body)).await;
+    let resolved = parts
+        .extensions
+        .get::<ResolvedCaller>()
+        .map(|resolved| resolved.auth.clone());
+    let auth = match resolved {
+        Some(auth) => auth,
+        None => match CoreAuth::from_request_parts(&mut parts, &server).await {
+            Ok(auth) => auth,
+            Err(_) => return next.run(Request::from_parts(parts, body)).await,
+        },
     };
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
@@ -66,16 +76,28 @@ pub(super) async fn facade_invocation_claim(
             // The waiter's credential is judged again once the wait is over,
             // before a reply is its (FIX 8212): a revoked or expired one gets
             // the refusal it gets anywhere.
-            let auth = match CoreAuth::from_request_parts(&mut parts, &server).await {
-                Ok(auth) if auth.credential_is_live(server.vault()) => auth,
-                Ok(_) => {
-                    return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
-                        .into_response();
-                }
-                Err(refused) => return refused.into_response(),
-            };
+            if !auth.credential_is_live(server.vault()) {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
+            // An account key carries no slip, token id or attested owner
+            // for the check above to judge, so it always reads live there.
+            // Judge it again after the wait instead (review-4320 P1): a
+            // live cached verdict answers from memory, while a cache miss
+            // (lease race, eviction, full cache) re-presents the waiter's
+            // own bearer to the verifier. Only revoked or expired keys,
+            // or an unreachable control plane, refuse here.
+            if auth.verified_slip().is_none()
+                && auth.jti().is_none()
+                && auth.managed_owner().is_none()
+                && auth.instrument().is_some()
+                && !auth.account_key_still_live(&server, &parts.headers).await
+            {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
             let verb = parts.uri.path().trim_start_matches('/');
-            door_replay_for(server.vault(), &auth, verb, outcome)
+            facade_replay(server.vault(), &auth, verb, outcome)
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -120,6 +142,53 @@ pub(super) async fn facade_invocation_claim(
     }
 }
 
+/// The caller the facade's receipt layer resolved for one request, carried
+/// in its extensions to the invocation claim and the route inside it, so
+/// one call resolves its credential once (FIX 2005, FIX 12323). It keeps
+/// the path and headers it was resolved from: a request built on another
+/// one's extensions (an action's row, FIX 10938) is not the request it
+/// names.
+#[derive(Clone)]
+pub(super) struct ResolvedCaller {
+    pub(super) auth: CoreAuth,
+    path: String,
+    headers: HeaderMap,
+}
+
+impl ResolvedCaller {
+    /// `auth`, as resolved for the request `parts` head.
+    pub(super) fn of(auth: CoreAuth, parts: &axum::http::request::Parts) -> Self {
+        Self {
+            auth,
+            path: parts.uri.path().to_owned(),
+            headers: parts.headers.clone(),
+        }
+    }
+}
+
+/// The caller the receipt layer resolved for this same request, its path
+/// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
+/// 12323). Only a caller whose standing the server reads again here, a
+/// slip, a token id or an attested owner, is taken, and only while it is
+/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
+/// extractor resolves it as before, so a revoked or expired credential is
+/// refused there exactly as before, and an account key meets its own
+/// verifier again.
+pub(crate) fn resolved_facade_caller(
+    parts: &axum::http::request::Parts,
+    server: &SyncServer,
+) -> Option<CoreAuth> {
+    let resolved = parts.extensions.get::<ResolvedCaller>()?;
+    let auth = &resolved.auth;
+    let standing =
+        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    (resolved.path == parts.uri.path()
+        && resolved.headers == parts.headers
+        && standing
+        && auth.credential_is_live(server.vault()))
+    .then(|| auth.clone())
+}
+
 /// How long a request naming an invocation another request is running
 /// waits for that call's reply before it is told to retry.
 pub(super) const INVOCATION_WAIT: Duration = Duration::from_secs(30);
@@ -157,26 +226,40 @@ pub(crate) enum DoorClaim {
     StoreFailed,
 }
 
-/// The live claim plus its durable intent. A normal drop without `finish`
-/// releases the intent, matching the old live-only retry behavior. A process
-/// crash runs no drop, so the intent stands and a duplicate cannot rerun.
+/// A live claim, with a durable intent for ordinary calls. Session-owned
+/// claims have no durable twin. A normal durable drop releases its intent;
+/// a process crash leaves it standing so a duplicate cannot rerun.
 pub(crate) struct DoorInvocationClaim {
     live: Option<InvocationClaim>,
+    durable: Option<DurableDoorInvocation>,
+}
+
+struct DurableDoorInvocation {
     store: InvocationClaimStore,
-    store_key: String,
+    key: String,
 }
 
 impl DoorInvocationClaim {
-    /// Runs a route future with its durable intent open on every poll, so
-    /// grouped writes count on it (FIX 10379). Detached workers carry it too.
+    /// Runs an ordinary route with its durable intent open on every poll,
+    /// so grouped writes count on it (FIX 10379). A session claim runs with
+    /// no durable invocation state.
     pub(crate) async fn run<F: std::future::Future>(&self, run: F) -> F::Output {
-        crate::idempotency::run_under_intent(&self.store_key, run).await
+        match &self.durable {
+            Some(durable) => crate::idempotency::run_under_intent(&durable.key, run).await,
+            None => run.await,
+        }
     }
 
-    /// Saves a successful JSON outcome, releases a failed one, and wakes the
-    /// live waiters in either case. A storage error is logged and leaves the
-    /// durable intent standing rather than permitting a second run.
+    /// Saves a successful JSON outcome, releases a failed or held one, and
+    /// wakes the live waiters in either case. A pending ask or a paced hold
+    /// is not an accepted asynchronous job: the next same-id retry must
+    /// reach the held call again. A storage error leaves the durable intent
+    /// standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
+        if FacadeApiError::is_held_call(outcome.status, &outcome.body) {
+            self.finish_failed(outcome);
+            return;
+        }
         let keep = outcome.status < 400;
         self.finish_with(outcome, keep);
     }
@@ -188,20 +271,26 @@ impl DoorInvocationClaim {
     }
 
     fn finish_with(mut self, outcome: InvocationOutcome, keep: bool) {
-        let kept = if keep {
-            self.store.settle(&self.store_key, &outcome).map(|_| ())
-        } else {
-            self.store.release_intent(&self.store_key)
-        };
-        if let Err(error) = kept {
-            tracing::error!(
-                reason = "invocation_claim_finish_failed",
-                error = %error,
-                "failed to finish the durable invocation claim; its intent stands"
-            );
+        if let Some(durable) = &self.durable {
+            let kept = if keep {
+                durable.store.settle(&durable.key, &outcome).map(|_| ())
+            } else {
+                durable.store.release_intent(&durable.key)
+            };
+            if let Err(error) = kept {
+                tracing::error!(
+                    reason = "invocation_claim_finish_failed",
+                    error = %error,
+                    "failed to finish the durable invocation claim; its intent stands"
+                );
+            }
         }
         if let Some(live) = self.live.take() {
-            live.finish(outcome);
+            if self.durable.is_none() && !keep {
+                live.finish_unkept(outcome);
+            } else {
+                live.finish(outcome);
+            }
         }
     }
 }
@@ -209,7 +298,8 @@ impl DoorInvocationClaim {
 impl Drop for DoorInvocationClaim {
     fn drop(&mut self) {
         if self.live.is_some()
-            && let Err(error) = self.store.release_intent(&self.store_key)
+            && let Some(durable) = &self.durable
+            && let Err(error) = durable.store.release_intent(&durable.key)
         {
             tracing::error!(
                 reason = "invocation_claim_release_failed",
@@ -262,8 +352,10 @@ pub(crate) async fn claim_door_invocation(
                         }
                         return DoorClaim::Run(DoorInvocationClaim {
                             live: live.take(),
-                            store,
-                            store_key,
+                            durable: Some(DurableDoorInvocation {
+                                store,
+                                key: store_key,
+                            }),
                         });
                     }
                     crate::invocation_claims::InvocationClaimLookup::Replay(outcome) => {
@@ -284,11 +376,10 @@ pub(crate) async fn claim_door_invocation(
                     crate::invocation_claims::InvocationClaimLookup::Interrupted {
                         committed_writes,
                     } if waited => {
-                        return if committed_writes == 0 {
-                            DoorClaim::InFlight
-                        } else {
-                            DoorClaim::ReplyNotKept { committed_writes }
-                        };
+                        // No live runner exists here, so even zero counted
+                        // writes means the reply was not kept, not InFlight
+                        // for a same-id retry that cannot succeed (FIX 12350).
+                        return DoorClaim::ReplyNotKept { committed_writes };
                     }
                     crate::invocation_claims::InvocationClaimLookup::Interrupted { .. } => {
                         waited = true;
@@ -376,12 +467,41 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
+    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    (status, Json(body)).into_response()
+}
+
+/// [`door_replay_for`] for a facade waiter: a refusal goes again as the
+/// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
+/// field the first one carried under a request id of its own, so this
+/// call's receipt records its code, while it still names the first call's
+/// receipt, the original.
+fn facade_replay(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    outcome: InvocationOutcome,
+) -> Response {
+    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    match FacadeApiError::replayed(status, &body) {
+        Some(refusal) => refusal.into_response(),
+        None => (status, Json(body)).into_response(),
+    }
+}
+
+/// The first call's status and body, released again for the waiter `auth`.
+fn replayed_reply(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    outcome: InvocationOutcome,
+) -> (StatusCode, serde_json::Value) {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match outcome.release {
         Some(release) => replayed_value(vault, auth, verb, release),
         None => rereleased_refusal(vault, auth, outcome.body),
     };
-    (status, Json(body)).into_response()
+    (status, body)
 }
 
 /// A refusal the first call kept with nothing beside it, released again for
@@ -424,4 +544,26 @@ fn rereleased_refusal(
         error.remove("legal_hold");
     }
     body
+}
+
+impl DoorClaim {
+    /// Adapts an actual native session-owned claim without opening a durable
+    /// intent. The native owner retains successful outcomes until close.
+    pub(crate) async fn from_session(entry: InvocationEntry) -> Self {
+        match entry {
+            InvocationEntry::Claimed(live) => Self::Run(DoorInvocationClaim {
+                live: Some(live),
+                durable: None,
+            }),
+            InvocationEntry::Conflict => Self::Conflict,
+            InvocationEntry::Busy(wait) => {
+                match super::clock_ingress::run_blocking(move || wait.outcome(INVOCATION_WAIT))
+                    .await
+                {
+                    Ok(Some(outcome)) => Self::Answered(outcome),
+                    _ => Self::InFlight,
+                }
+            }
+        }
+    }
 }

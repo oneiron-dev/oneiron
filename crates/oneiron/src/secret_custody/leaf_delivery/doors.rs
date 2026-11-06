@@ -22,15 +22,21 @@ use super::{
 use crate::Vault;
 use crate::authority::{CustodyChange, OwnerWorkBody, PeerMachine, authority_refused};
 use crate::error::Result;
-use crate::store::{CredentialLeaf, CustodyKind};
+use crate::store::{CredentialLeaf, CustodyKind, Store};
 
-impl Vault {
+impl Store {
     /// This handle's live leaf delivery state, in memory only.
     pub(crate) fn custody_leaves(&self) -> MutexGuard<'_, CustodyLeafSession> {
-        self.world_keys
-            .custody_leaves
+        self.custody_leaves
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Vault {
+    /// This handle's live leaf delivery state, shared with its store writes.
+    pub(crate) fn custody_leaves(&self) -> MutexGuard<'_, CustodyLeafSession> {
+        self.store.custody_leaves()
     }
 
     /// The key of `carrier` this install holds, read in the caller's
@@ -320,7 +326,9 @@ impl Vault {
     ) -> Result<()> {
         let mut session = self.custody_leaves();
         match cause {
-            LeafKeyFailureCause::HolderOffline | LeafKeyFailureCause::ExecutorOffline => {}
+            LeafKeyFailureCause::HolderOffline
+            | LeafKeyFailureCause::ExecutorOffline
+            | LeafKeyFailureCause::HolderFault => {}
             LeafKeyFailureCause::Expired | LeafKeyFailureCause::Replayed => {
                 session.asks.remove(&request_id);
             }

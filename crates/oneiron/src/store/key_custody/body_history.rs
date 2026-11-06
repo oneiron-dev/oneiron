@@ -5,8 +5,10 @@
 //! The rows are the vault's own custody-state rows, ids only: each instance
 //! a row-held response was carried under, by each owner its stamps name
 //! (`PROVENANCE_BODY_RESPONSE_OWNER`); each instance a body digest was bound
-//! under that its row no longer names (`PROVENANCE_BODY_INSTANCE`); and each
-//! instance an owner's erase retired or owes (`PROVENANCE_BODY_ERASED`). The
+//! under that its row no longer names (`PROVENANCE_BODY_INSTANCE`); each
+//! instance an owner's erase retired or owes (`PROVENANCE_BODY_ERASED`); and
+//! each actual historical source fact naming its source, body owner,
+//! published digest, and real vault instance (`PROVENANCE_BODY_SOURCE`). The
 //! writer that adds one journals it as a `BodyHistory` frame, synced, before
 //! it commits, so an aborted writer leaves the journal a row more, never one
 //! less, and the log moves on, so every member's head is sealed and
@@ -26,7 +28,10 @@ use oneiron_crypto::Purpose;
 use super::KeyCustody;
 use super::files::{LocalCustody, read_whole, replace_file, write_once};
 use super::identity::{CustodyId, CustodyKind};
-use super::log::{Control, CustodyPosition, Journal, LogEntry, log_corrupt, open_sym, seal_sym};
+use super::log::{
+    Control, CustodyPosition, Journal, LogEntry, frame_hash, log_corrupt, open_frame, open_sym,
+    seal_sym,
+};
 use crate::error::Result;
 use crate::side_table;
 
@@ -42,17 +47,25 @@ const CACHE: &str = "history";
 const BASE: &str = "history.base";
 const HISTORY_KEY_ID: &[u8] = b"oneiron/custody-body-history/v1";
 const HISTORY_RECIPIENT: &[u8] = b"oneiron/custody-body-history/fold/v1";
+/// The cache of the minted-instances fold, beside the frames (FIX 9067).
+/// No base beside it: a takeover lineage minted nothing here, and starting
+/// empty is the spec.
+const MINTED: &str = "minted";
+const MINTED_KEY_ID: &[u8] = b"oneiron/custody-body-minted/v1";
+const MINTED_RECIPIENT: &[u8] = b"oneiron/custody-body-minted/fold/v1";
 /// The most rows one fold part or one frame holds: a codec bound that keeps
 /// each far inside one envelope; more take more parts or frames.
 const FOLD_PART_ROWS: usize = 16 * 1024;
 
 /// The families a history row may be of, and the bytes each key holds after
-/// its prefix: an id16 or a digest32, then the instance16.
-fn families() -> [(&'static [u8], usize); 3] {
+/// its prefix: an id16 or a digest32, then the instance16; a source fact
+/// names source16, owner16, and digest32, then the instance16.
+fn families() -> [(&'static [u8], usize); 4] {
     [
         (side_table::PROVENANCE_BODY_ERASED.prefix, 32),
         (side_table::PROVENANCE_BODY_INSTANCE.prefix, 48),
         (side_table::PROVENANCE_BODY_RESPONSE_OWNER.prefix, 32),
+        (side_table::PROVENANCE_BODY_SOURCE.prefix, 80),
     ]
 }
 
@@ -316,6 +329,198 @@ impl Journal {
         let _ = self.write_fold(control, CACHE, at, &rows, false);
         Ok(rows)
     }
+
+    /// The body instances this lineage minted on this host, at `at` (FIX
+    /// 9067): the cached fold when it stands on this log at this base,
+    /// extended by every frame after it, else the whole walk from the
+    /// base, which is what every read paid before. The set only grows
+    /// within a lineage, so a fold that does not stand is only slow; one
+    /// that stands is exact, as each frame past it is replayed and its
+    /// chain checked. The fold is rewritten best-effort whenever a frame
+    /// was folded in.
+    pub(super) fn minted_body_instances_cached(
+        &self,
+        control: &Control,
+        at: &CustodyPosition,
+    ) -> Result<BTreeSet<[u8; 16]>> {
+        if let Some(fold) = self.read_minted_fold(control)
+            && fold.seq <= at.seq
+            && fold.base_seq == control.base_seq()
+            && fold.base_tip == control.base_tip()
+            && self.stands(control, fold.seq, &fold.tip).unwrap_or(false)
+            && let Ok((minted, folded)) = self.replay_minted(control, fold, at)
+        {
+            if folded {
+                let _ = self.write_minted_fold(control, at, &minted);
+            }
+            return Ok(minted);
+        }
+        let minted = self.minted_from_base(control, at)?;
+        if at.seq > control.base_seq() {
+            let _ = self.write_minted_fold(control, at, &minted);
+        }
+        Ok(minted)
+    }
+
+    /// Every Mint frame's body instance from after the base to `at`: the
+    /// walk the cache only shortens, kept as it read before the cache.
+    fn minted_from_base(
+        &self,
+        control: &Control,
+        at: &CustodyPosition,
+    ) -> Result<BTreeSet<[u8; 16]>> {
+        let mut minted = BTreeSet::new();
+        for seq in control.base_seq().saturating_add(1)..=at.seq {
+            let frame = self.frame(seq)?.ok_or_else(log_corrupt)?;
+            let (_, entry) = open_frame(control, &frame)?;
+            collect_minted(&mut minted, &entry)?;
+        }
+        Ok(minted)
+    }
+
+    /// `fold` carried to `at`, each frame's chain checked as
+    /// [`Self::body_history`] checks it; whether any frame was folded in.
+    fn replay_minted(
+        &self,
+        control: &Control,
+        fold: MintedFold,
+        at: &CustodyPosition,
+    ) -> Result<(BTreeSet<[u8; 16]>, bool)> {
+        let MintedFold {
+            mut seq,
+            mut tip,
+            mut minted,
+            ..
+        } = fold;
+        let folded = seq < at.seq;
+        while seq < at.seq {
+            seq += 1;
+            let frame = self.frame(seq)?.ok_or_else(log_corrupt)?;
+            let (header, entry) = open_frame(control, &frame)?;
+            if header.seq != seq || header.prev != tip {
+                return Err(log_corrupt());
+            }
+            tip = frame_hash(&frame);
+            collect_minted(&mut minted, &entry)?;
+        }
+        if tip != at.tip {
+            return Err(log_corrupt());
+        }
+        Ok((minted, folded))
+    }
+
+    /// The minted fold kept beside the frames; `None` on any doubt about
+    /// it, as a cache is only ever a shortcut to the walk.
+    fn read_minted_fold(&self, control: &Control) -> Option<MintedFold> {
+        let mut fold = MintedFold {
+            seq: 0,
+            tip: [0; 32],
+            base_seq: 0,
+            base_tip: [0; 32],
+            minted: BTreeSet::new(),
+        };
+        let mut count = 1;
+        let mut index = 0;
+        while index < count {
+            let sealed = read_whole(&self.dir().join(format!("{MINTED}.{index}"))).ok()??;
+            let plain = open_sym(
+                Purpose::CustodyLogFrame,
+                self.vault(),
+                MINTED_KEY_ID,
+                MINTED_RECIPIENT,
+                &control.log_kek(),
+                &sealed,
+            )
+            .ok()?;
+            let seq = u64::from_be_bytes(plain.get(..8)?.try_into().ok()?);
+            let tip: [u8; 32] = plain.get(8..40)?.try_into().ok()?;
+            let at_part = u32::from_be_bytes(plain.get(40..44)?.try_into().ok()?);
+            let of = u32::from_be_bytes(plain.get(44..48)?.try_into().ok()?);
+            let base_seq = u64::from_be_bytes(plain.get(48..56)?.try_into().ok()?);
+            let base_tip: [u8; 32] = plain.get(56..88)?.try_into().ok()?;
+            let rows = u32::from_be_bytes(plain.get(88..92)?.try_into().ok()?) as usize;
+            let bytes = plain.get(92..)?;
+            if bytes.len() != rows.checked_mul(16)? {
+                return None;
+            }
+            if index == 0 {
+                (fold.seq, fold.tip, fold.base_seq, fold.base_tip, count) =
+                    (seq, tip, base_seq, base_tip, of);
+            }
+            if at_part != index
+                || of != count
+                || seq != fold.seq
+                || tip != fold.tip
+                || base_seq != fold.base_seq
+                || base_tip != fold.base_tip
+            {
+                return None;
+            }
+            for instance in bytes.chunks_exact(16) {
+                fold.minted.insert(instance.try_into().ok()?);
+            }
+            index += 1;
+        }
+        Some(fold)
+    }
+
+    /// Keeps `minted`, the fold at `at`, as the minted parts: the position
+    /// and the base it stands on in each part's header, then the instances
+    /// in order, `u32be count` first.
+    fn write_minted_fold(
+        &self,
+        control: &Control,
+        at: &CustodyPosition,
+        minted: &BTreeSet<[u8; 16]>,
+    ) -> Result<()> {
+        let minted: Vec<[u8; 16]> = minted.iter().copied().collect();
+        let parts: Vec<_> = minted.chunks(FOLD_PART_ROWS).collect();
+        let count = u32::try_from(parts.len().max(1)).map_err(|_| log_corrupt())?;
+        for index in 0..count {
+            let part: &[[u8; 16]] = parts.get(index as usize).copied().unwrap_or_default();
+            let mut plain = zeroize::Zeroizing::new(at.seq.to_be_bytes().to_vec());
+            plain.extend_from_slice(&at.tip);
+            plain.extend_from_slice(&index.to_be_bytes());
+            plain.extend_from_slice(&count.to_be_bytes());
+            plain.extend_from_slice(&control.base_seq().to_be_bytes());
+            plain.extend_from_slice(&control.base_tip());
+            plain.extend_from_slice(&(part.len() as u32).to_be_bytes());
+            for instance in part {
+                plain.extend_from_slice(instance);
+            }
+            let sealed = seal_sym(
+                Purpose::CustodyLogFrame,
+                self.vault(),
+                MINTED_KEY_ID,
+                MINTED_RECIPIENT,
+                &control.log_kek(),
+                &plain,
+            )?;
+            replace_file(self.dir(), &format!("{MINTED}.{index}"), &sealed)?;
+        }
+        Ok(())
+    }
+}
+
+/// A minted fold read back from its parts: where it stands, the base it
+/// was folded from, and its instances.
+struct MintedFold {
+    seq: u64,
+    tip: [u8; 32],
+    base_seq: u64,
+    base_tip: [u8; 32],
+    minted: BTreeSet<[u8; 16]>,
+}
+
+/// A Mint frame's body instance into `minted`, as the fold reads it.
+fn collect_minted(minted: &mut BTreeSet<[u8; 16]>, entry: &LogEntry) -> Result<()> {
+    if let LogEntry::Mint(id) = entry
+        && id.kind() == CustodyKind::BodyInstance
+        && let Some(instance) = id.subject().item().get(..16)
+    {
+        minted.insert(instance.try_into().map_err(|_| log_corrupt())?);
+    }
+    Ok(())
 }
 
 impl LocalCustody<'_> {

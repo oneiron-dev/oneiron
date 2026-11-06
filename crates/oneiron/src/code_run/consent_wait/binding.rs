@@ -26,18 +26,20 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
 const CODE_CONSENT_WAIT_DOMAIN: &[u8] = b"oneiron:code-consent-wait:v1";
 
 /// The hash domain of a binding digest.
-const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v1";
+const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
-/// `connector.call`; a browser click, click at a point or batch binds the
-/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// `connector.call`, including one through `self.use`; a browser click,
+/// click at a point or batch binds the act its grant's press held (FIX 10423),
+/// as do a library run's steps and
 /// every desktop verb that can press (FIX 11499). Every other verb keeps
 /// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
     matches!(
         verb,
         AgentVerb::ConnectorCall
+            | AgentVerb::SelfUse
             | AgentVerb::SelfBrowserClick
             | AgentVerb::SelfBrowserClickAt
             | AgentVerb::SelfBrowserBatch
@@ -172,14 +174,14 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         }
         principal.opener_slip = Some(slip);
     }
-    let Some(owner) = crate::policy_model::owners_in_txn(vault, txn)?
+    let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
-        .min()
-    else {
+        .collect();
+    if owners.is_empty() {
         return Ok(None);
-    };
+    }
     let question = CodeConsentQuestion {
-        owner,
+        owners,
         conversation: vault.store.clock.entity_id()?,
         turn: vault.store.clock.entity_id()?,
         message: vault.store.clock.entity_id()?,
@@ -229,8 +231,8 @@ pub(crate) fn mint_code_consent_wait_in_txn(
 }
 
 /// The binding digest: BLAKE3 over the stable call site, the request and
-/// frozen digests, the original caller's instrument and the pending effect.
-/// It names no effect digest, ask, time, checkpoint or receipt, so nothing
+/// frozen digests, the frozen owner audience, the original caller's instrument
+/// and the pending effect. It names no effect digest, ask, time, checkpoint or receipt, so nothing
 /// computed from it later feeds back into it.
 pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
@@ -250,8 +252,13 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     field(binding.verb_row.as_bytes());
     field(&binding.request_digest);
     field(&binding.frozen_input_digest);
+    field(&(binding.question.owners.len() as u64).to_le_bytes());
+    for owner in &binding.question.owners {
+        field(owner.as_bytes());
+    }
     let original = &binding.original;
     field(original.actor_ref.as_bytes());
+    field(&[original.actor_class]);
     field(
         original
             .opener_slip
@@ -291,6 +298,26 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             field(call.server.as_bytes());
             field(call.tool.as_bytes());
             field(call.endpoint.as_bytes());
+            field(call.payload_data_class.as_str().as_bytes());
+            field(&[u8::from(call.remember_context.is_some())]);
+            if let Some(context) = &call.remember_context {
+                field(&[u8::from(context.connection.is_some())]);
+                field(
+                    context
+                        .connection
+                        .as_ref()
+                        .map_or(&[][..], |connection| &connection.as_bytes()[..]),
+                );
+                field(&[u8::from(context.project.is_some())]);
+                field(
+                    context
+                        .project
+                        .as_ref()
+                        .map_or(&[][..], |project| &project.as_bytes()[..]),
+                );
+                field(&[u8::from(context.lineage.is_some())]);
+                field(context.lineage.as_ref().map_or(&[][..], |root| &root[..]));
+            }
             field(&call.manifest_hash);
             field(call.protocol_revision.as_bytes());
             field(
@@ -314,10 +341,23 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             ] {
                 field(text.as_bytes());
             }
-            for text in [&action.page, &action.document, &action.stopped] {
+            for text in [
+                &action.page,
+                &action.audience,
+                &action.document,
+                &action.stopped,
+            ] {
                 field(&[u8::from(text.is_some())]);
                 field(text.as_deref().unwrap_or_default().as_bytes());
             }
+            field(&[action.actor_class]);
+            field(&[u8::from(action.project.is_some())]);
+            field(
+                action
+                    .project
+                    .as_ref()
+                    .map_or(&[][..], |project| &project.as_bytes()[..]),
+            );
             field(&[u8::from(action.hook_pre.is_some())]);
             field(
                 &action
@@ -327,6 +367,10 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
                     .unwrap_or_default(),
             );
         }
+    }
+    field(&[u8::from(binding.remember_offer.is_some())]);
+    if let Some(offer) = &binding.remember_offer {
+        field(offer.settings_act.as_bytes());
     }
     *hasher.finalize().as_bytes()
 }

@@ -10,15 +10,17 @@ use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 pub mod backup;
+pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
-pub mod model_versioning;
+pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
+pub use oneiron_store::settings::web_connector;
 
 pub use destination::{
-    ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
+    CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
 };
 pub(crate) use destination::{
     machine_recipient_hold_in, recipient_limits_in, withheld_row_hold_in, withheld_worlds_in,
@@ -26,12 +28,16 @@ pub(crate) use destination::{
 };
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
+    device_local_worlds_for_machine,
 };
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
     minted_worlds_in,
 };
 
+pub use board_layout::{
+    AgentBoardLayoutOverride, BOARD_LAYOUT_AGENT_OVERRIDES_MAX, BoardLayoutSettings,
+};
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,
@@ -90,12 +96,23 @@ impl RawValue for PluginSuggestionsFlag {
 /// Persisted customization profile. Key: ().
 const CUSTOMIZATION_SETTINGS: SideTable<(), CustomizationSettings, Named> =
     SideTable::new(&side_table::CUSTOMIZATION_SETTINGS);
+/// Whether a masked copy of a `CUSTOMIZATION_SETTINGS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn customization_settings_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CustomizationSettings, Named>(bytes)
+}
+
 /// Monotonic sequence counter for customization change-notification events. Key: ().
 const CUSTOMIZATION_EVENT_SEQUENCE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::CUSTOMIZATION_EVENT_SEQUENCE);
 /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
 const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Named> =
     SideTable::new(&side_table::CUSTOMIZATION_EVENT);
+/// Whether a masked copy of a `CUSTOMIZATION_EVENT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn customization_event_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CustomizationSettingsChangeEvent, Named>(bytes)
+}
 
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
@@ -601,9 +618,10 @@ mod tests;
 /// Every world whose settings keep it off the machines `destination` names:
 /// the world settings' one judge, asked for each machine a read's rows go to,
 /// its proof revalidated in `txn` (mesh PR2b). Only a destination no live
-/// machine proof names is unknown. Only [`device_local_worlds_for`] reads
-/// it: every door asks that one function which worlds a caller's rows are
-/// withheld from.
+/// machine proof names is unknown. Read through [`device_local_worlds_for`],
+/// and through `device_local_worlds_for_machine` (FIX 5588 S4), which judges
+/// the same settings via `WorldPrivacyView::withheld_for`: every door asks
+/// one of those two functions which worlds a caller's rows are withheld from.
 fn device_only_worlds_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -611,3 +629,7 @@ fn device_only_worlds_in(
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     withheld_worlds_in(vault, txn, destination)
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::models::model_owner_fallback_accepts_masked;

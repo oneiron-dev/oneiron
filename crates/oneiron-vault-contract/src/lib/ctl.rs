@@ -451,6 +451,40 @@ pub enum LegalHoldsNotProven {
     ReadFailed,
 }
 
+/// How a vault VM's outbox companion answered the engine's last completed
+/// probe (FIX 11073), as `Ping` reports it beside `vm_outbox_revision`.
+/// `Up` carries the revision that probe reported; `Down` that it answered
+/// nothing. Neither says the companion is healthy now, and `Down` is not
+/// proof its process ended. Until a probe completes, `Ping` carries none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum VmOutboxCompanionState {
+    /// The probe reported the carrier's wire revision.
+    Up { revision: u32 },
+    /// The probe answered nothing: the companion never came up, it ended,
+    /// or its endpoint went.
+    Down,
+}
+
+impl From<Option<u32>> for VmOutboxCompanionState {
+    fn from(revision: Option<u32>) -> Self {
+        revision.map_or(Self::Down, |revision| Self::Up { revision })
+    }
+}
+
+/// Requires `Ping.vm_outbox_companion`'s key: serde reads a missing `Option`
+/// field as `None` unless its deserializer says otherwise, so this delegates
+/// to `Option`'s own read, which takes an explicit `null` as unobserved but
+/// no longer takes a missing key.
+fn deserialize_vm_outbox_companion<'de, D>(
+    deserializer: D,
+) -> Result<Option<VmOutboxCompanionState>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<VmOutboxCompanionState>::deserialize(deserializer)
+}
+
 /// Untagged: variant selection is structural, tried in declaration order.
 /// INVARIANT: each variant's required-field set must stay disjoint from every
 /// variant above it, and new variants are appended last — otherwise a
@@ -487,7 +521,10 @@ pub enum CtlResponse {
     /// FIX 5187), and `artifact_internal_host_revision` that of the internal
     /// authority its artifact origin answers on
     /// ([`ARTIFACT_INTERNAL_HOST_REVISION`](crate::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION),
-    /// FIX 6716). `slim_recovery_revision` is that of the supervisor SLIM
+    /// FIX 6716). `preview_origin_revision` is that of the lease-labelled
+    /// live preview origin codec
+    /// ([`PREVIEW_ORIGIN_REVISION`](crate::artifact_origin::PREVIEW_ORIGIN_REVISION),
+    /// FIX 1115). `slim_recovery_revision` is that of the supervisor SLIM
     /// recovery surface
     /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
     /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`.
@@ -495,7 +532,10 @@ pub enum CtlResponse {
     /// ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION),
     /// FIX 5235), sent only when its storage, its companion and its
     /// attachment to the carrier port are all in place; a node's process
-    /// vault sends none. `relay_delete_revision` is that of the relay locker
+    /// vault sends none. `vm_outbox_companion` is how that companion answered
+    /// the engine's last completed probe ([`VmOutboxCompanionState`], FIX
+    /// 11073): `null` until one completes, never a claim it is healthy now.
+    /// `relay_delete_revision` is that of the relay locker
     /// delete the engine executes
     /// ([`RELAY_DELETE_REVISION`](crate::relay_delete::RELAY_DELETE_REVISION),
     /// FIX 6826), and `engine_instance` this process's boot: 16 random bytes
@@ -535,6 +575,12 @@ pub enum CtlResponse {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "super::version::observed_revision"
         )]
+        preview_origin_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
         slim_recovery_revision: Option<u32>,
         #[serde(
             default,
@@ -542,6 +588,8 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         vm_outbox_revision: Option<u32>,
+        #[serde(deserialize_with = "deserialize_vm_outbox_companion")]
+        vm_outbox_companion: Option<VmOutboxCompanionState>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",

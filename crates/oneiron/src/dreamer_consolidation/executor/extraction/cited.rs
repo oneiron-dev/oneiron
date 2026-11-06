@@ -7,14 +7,14 @@
 
 use super::wire::{CallPins, ReplyContext, read_candidate};
 use super::{check_extraction_reply, extraction_reply, resolve_proposal};
-use crate::LlmResponse;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::branch::BranchAxes;
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people};
 use crate::dreamer_consolidation::resources::{BranchResources, OwnedPins};
-use crate::llm::{FinishReason, Scope};
+use oneiron_model::llm::LlmResponse;
+use oneiron_model::llm::{FinishReason, Scope};
 
 /// What one partition's extraction replies are checked against: its
 /// branch's pins and cited texts, owned, what a candidate builds with, and

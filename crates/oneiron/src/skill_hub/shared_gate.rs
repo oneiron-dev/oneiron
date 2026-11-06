@@ -5,16 +5,17 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, PairedReading,
+    Reversibility,
+};
 use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
     limit_ask::EngineLimit,
-    llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        PairedReading, Reversibility, TypedDecision,
-    },
+    llm::decision::TypedDecision,
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,
@@ -484,6 +485,13 @@ impl Vault {
                 crate::skill_optimize::displaced_judge_revision_in_txn(self, &txn, revision)?;
         }
         Ok(receipt)
+    }
+    /// Whether a merge of `candidate` waits on the owner's answer, as
+    /// [`Self::merge_shared_skill_delta`] reads it now.
+    pub fn shared_skill_merge_needs_owner(&self, candidate: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let snapshot = self.shared_merge_snapshot(&txn, candidate)?;
+        self.merge_needs_owner_in_txn(&txn, &snapshot)
     }
     /// The owner answers a merge only where a review is required. A widening
     /// is any capability the candidate declares beyond the base's admitted

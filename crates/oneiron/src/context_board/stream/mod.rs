@@ -6,6 +6,7 @@ mod provenance;
 mod publish;
 mod registry;
 mod review;
+mod room_wake;
 mod wake;
 
 #[cfg(test)]
@@ -23,8 +24,11 @@ pub use self::frames::{
     StreamConnectionId,
 };
 pub use self::publish::CommittedTaskBoardState;
+pub(crate) use self::publish::task_body_for_announcement;
+pub(crate) use self::publish::task_for_announcement;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::review::PendingDiaryReview;
+pub use self::room_wake::{PendingRoomWake, RoomWakeRead};
 pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;

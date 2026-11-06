@@ -8,9 +8,7 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::ChannelIdentityState;
-use crate::comm::{
-    CommClaim, CommClaimValue, PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_REACHABLE_VIA,
-};
+use crate::comm::{CommClaim, CommClaimValue};
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -22,6 +20,7 @@ use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON, ENTITY_T
 use crate::task_verb::{
     task_create_owner, task_follow_up_dedupe_key, task_human_assignee, task_is_terminal,
 };
+use crate::write_envelope::communication::{PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_REACHABLE_VIA};
 
 use super::model::{
     FOLLOWUP_SWEEP_ROWS, FOLLOWUP_WAKE_LIMIT, HUMAN_FOLLOWUP_VERB,

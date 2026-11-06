@@ -10,7 +10,7 @@ side_tables! {
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
     DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named
-        => crate::llm::decision::erase_rule_actor_in_txn;
+        => crate::store::decision_rule_rows::erase_rule_actor_in_txn;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -47,7 +47,7 @@ side_tables! {
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
-    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored;
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored [accepts: crate::receipt::dispatch_observation_accepts_masked];
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;
@@ -60,6 +60,41 @@ side_tables! {
     INGEST_DOCS_EXTRACTION: VaultMeta b"docs-extraction:v1:" Raw;
     /// Set of chunk/summary member content-refs recorded for one imported docs asset. Key: hex32.
     INGEST_DOCS_MEMBERSHIP: VaultMeta b"docs-membership:v1:" LegacyJson;
+    /// FIX 12569: one target's active drafter pointer, stock or a retained version of the
+    /// vault's own, with its generation and the version it replaced. Key: hash32 (the target's
+    /// pins).
+    DRAFTER_BINDING: VaultMeta b"drafter:binding:v1:" Named Engine;
+    /// FIX 14975: one drafter version's evaluation: the arms' identities, each case's counts,
+    /// times and output digest, the allowed ties' logits, the speed comparison, the decision
+    /// and the observation after an activation; never a token, a text or a key. Key: id16
+    /// (the evaluation). An erase of a version it names drops it.
+    DRAFTER_EVALUATION: VaultMeta b"drafter:evaluation:v1:" Named Engine;
+    /// FIX 12569: one content-free drafter event: a night's retrain outcome, a qualification,
+    /// an activation, a rollback, a revert, an erase or a policy change. Key: id16 (the event,
+    /// time-ordered).
+    DRAFTER_EVENT: VaultMeta b"drafter:event:v1:" Named Engine;
+    /// FIX 15128: one answered chat reply's drafter training example, apart from its chat
+    /// breakpoint: its conversation, reply, generation, TURN, agent, requester, the wire model
+    /// its rung named, its source family, its dependency set and its sealed body's pin, never
+    /// a text. Key: id16 (the example, time-ordered). An erase of a record its dependency set
+    /// names drops it and retires its key.
+    DRAFTER_EXAMPLE: VaultMeta b"drafter:example:v1:" Named Engine;
+    /// FIX 15128, FIX 15129: one example's request exactly as its rung sent it and the span
+    /// the reply generated (reasoning, tool calls and text), sealed under the example's own
+    /// erasable key. Key: id16 (the example).
+    DRAFTER_EXAMPLE_BODY: VaultMeta b"drafter:example_body:v1:" Raw Ciphertext;
+    /// FIX 15128: marker that an example's dependency set names a record, for the erase of
+    /// that record. Key: id16 (the record) + id16 (the example).
+    DRAFTER_EXAMPLE_SOURCE: VaultMeta b"drafter:example_source:v1:" Raw Engine;
+    /// FIX 12569: the owner's drafter policy: on or off, the excluded worlds and the recipe, at
+    /// its revision. Key: ().
+    DRAFTER_POLICY: VaultMeta b"drafter:policy:v1" Named;
+    /// FIX 12569: one drafter version and its run: target, parent, recipe, pinned policy and
+    /// cutoff, dependency set, job, state, generation and sealed artifact reference, never a
+    /// key. Key: id16 (the version). Its scrub erases an actor or source from the drafter
+    /// families (binding, evaluation, event, policy, version), so the others name none.
+    DRAFTER_VERSION: VaultMeta b"drafter:version:v1:" Named
+        => crate::drafter::erase_drafter_actor_in_txn;
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
     DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw;
@@ -121,10 +156,12 @@ side_tables! {
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
     /// accidental collision if the same (attempt, artifact_id) pair is ever used from both callers.
     /// Key: id16 + u16be + string.
-    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored
+    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored [accepts: crate::critic::critique_artifact_accepts_masked]
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// Operator-set conversation ids excluded from Dreamer consolidation. Key: ().
+    DREAMER_EXCLUDED_CONVERSATIONS: VaultMeta b"dreamer:excluded_conversations:v1" Named;
     /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
     /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
     /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
@@ -134,7 +171,7 @@ side_tables! {
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
     /// FIX 7510: one follower model result: a suffix's batch readings with its cache evidence, or
     /// a keyframe's folded text. Key: id16(attempt) + u64be(session sequence).
-    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored;
+    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored [accepts: crate::dreamer_wake::dreamer_follower_result_accepts_masked];
     /// FIX 7510: one follower session's cursors, prefix digest, epoch, keyframe ref, writer fence
     /// and prepared suffix. Key: hash32(session).
     DREAMER_FOLLOWER_STATE: VaultMeta b"dreamer:follower:state:v1:" Named Engine;
@@ -144,7 +181,7 @@ side_tables! {
     /// FIX 4453: one free-time cycle: its policy snapshot, period, root spend scope, items, the
     /// agent's note to its human (its own words, admitted at the wall) and its own-time choice.
     /// Key: id16 (agent) + u64be (boundary).
-    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored;
+    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored [accepts: crate::dreamer_runner::dreamer_free_time_cycle_accepts_masked];
     /// FIX 4453: the immutable binding of one free-time item attempt to its agent, cycle, item,
     /// label and spend scope, stamped when its cycle opened. Key: id16 (attempt).
     DREAMER_FREE_TIME_ITEM: VaultMeta b"dreamer:free_time:item:v1:" Named;
@@ -177,11 +214,24 @@ side_tables! {
     /// and the identity rows of DREAMER_MAINTENANCE_APPLIED (FIX 8707).
     DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named
         => crate::dreamer_runner::maintenance::identity::erase_actor_sources_in_txn;
+    /// Each open identity ask under every id its erase reads (FIX 10376):
+    /// its turn, message, candidates, provisional and surfaced turn. Key:
+    /// id16(source) + hash32(ask key).
+    DREAMER_IDENTITY_ASK_BY_SOURCE: VaultMeta b"dreamer:identity:v1:ask_by_source:" Raw;
     /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
     DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
     /// A settled identity's context hint: each answered mention's own name, the words around it
     /// and its span, for the entity it named. Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// Each saved identity hint under every id its erase reads (FIX 10376):
+    /// the entity it named and each contribution's turn and message. Key:
+    /// id16(source) + u8(kind) + hash32(name) + id16(entity).
+    DREAMER_IDENTITY_HINT_BY_SOURCE: VaultMeta b"dreamer:identity:v1:hint_by_source:" Raw;
+    /// Each background identity disposition's inverse under every id its
+    /// erase reads (FIX 10376): the ask copy's ids, the held provisionals'
+    /// ids/origins/spans, the settled entity and the hint copies' spans.
+    /// Key: id16(source) + hash32(ask key = the APPLIED IdentityAsk target).
+    DREAMER_IDENTITY_INVERSE_BY_SOURCE: VaultMeta b"dreamer:identity:v1:inverse_by_source:" Raw;
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).
     DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
@@ -214,7 +264,7 @@ side_tables! {
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
-    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
+    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored [accepts: crate::dreamer_runner::dreamer_parked_accepts_masked];
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
     /// ref).
     DREAMER_PEER_WAIT: VaultMeta b"dreamer:peer_wait:v1:" Raw;
@@ -230,7 +280,7 @@ side_tables! {
     /// Prefilter skip receipt. Key: bytes32 + id16.
     PREFILTER_SKIP: VaultMeta b"dreamer:prefilter:skip:v1:" Named;
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
-    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored;
+    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_digest_accepts_masked];
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
@@ -315,7 +365,7 @@ side_tables! {
     DREAMER_STEP_RESPONSE_PIN: VaultMeta b"dreamer:step_response_pin:v1:" Named Engine;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
-    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;
+    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored [accepts: crate::llm::dreamer_step_state_accepts_masked];
     /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
     /// value: u64be.
     DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
@@ -416,15 +466,20 @@ side_tables! {
     /// erase re-keys the project it names (FIX 6038). Key: string.
     EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Uncaptured-amendment counters per door (FIX 11542): how many store-row
+    /// and inbox amendments measured nothing. Key: string (door).
+    EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT: VaultMeta b"edit_distance/amendment_uncaptured_count/v1\0" Raw;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
-    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Standing escalation policy for one (scope, trigger) pair, keyed by what the row governs. Key:
     /// id16 + u8.
-    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Publisher digest-interview session state, keyed by the digest artifact id. Key: id16.
     EDIT_DISTANCE_INTERVIEW_SESSION: VaultMeta b"edit_distance/interview_session/v1\0" Raw;
     /// Stored publisher issue-signature (category, artifact, version, model, counts, content hash).
@@ -437,6 +492,9 @@ side_tables! {
     EDIT_DISTANCE_JUDGE_AUDIT: VaultMeta b"edit_distance/judge_audit/v1\0" Raw;
     /// Monotonic counter behind EDIT_DISTANCE_JUDGE_AUDIT's sequence half. Key: ().
     EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE: VaultMeta b"edit_distance/judge_audit_sequence/v1" Raw;
+    /// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the receipt ids taught
+    /// on one claim. Key: id16.
+    EDIT_DISTANCE_MINER_CLAIM_RECEIPTS: VaultMeta b"edit_distance/miner_claim_receipts/v1\0" Named;
     /// Mint-mark preventing a re-mint of the same substitution cluster, keyed by cluster handle. Key:
     /// hash32.
     EDIT_DISTANCE_MINER_MINT_MARK: VaultMeta b"edit_distance/miner_mint_mark/v1\0" Raw;
@@ -452,7 +510,7 @@ side_tables! {
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
+    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored [accepts: crate::edit_distance::edit_distance_proposal_artifact_accepts_masked]
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Raw proposal document whose served texts were custody-marked before it was kept, outside
     /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
@@ -531,6 +589,12 @@ side_tables! {
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
+    /// The erase previews a caller was shown and may still confirm (FIX
+    /// 12522): the digest the preview showed, and when it was issued and
+    /// expires on the vault's recording clock. Key: id16 (caller) + id16
+    /// (record).
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
@@ -540,7 +604,8 @@ side_tables! {
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
     /// Held automated sign act, one per recipient. Key: hex32/string.
-    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named
+        => crate::blob_artifact::esign::erase_held_signing_actor_in_txn;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// The send act a signing document's staged notices go out under with no caller (FIX 6219):
@@ -568,8 +633,10 @@ side_tables! {
     ESIGN_SEALED_DOCUMENT: VaultMeta b"esign.sealed.v1/" LegacyJson;
     /// Signature image ownership marker. Key: id16 + string + string.
     ESIGN_SIGNATURE_IMAGE_BINDING: VaultMeta b"esign.signature_image.v1/" Raw;
-    /// One whole-vault export receipt: when, which format, how many bytes and their digest, by
-    /// whom; never the exported bytes. Key: u64be(sequence).
+    /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
+    /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
+    /// actor, and the copy's length and digest where its door read the copy back; never the
+    /// exported bytes. Key: u64be(sequence).
     EXPORT_RECEIPT: VaultMeta b"export:receipt:v1:" Named;
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.

@@ -21,111 +21,17 @@
 //! recipient, epoch and member BLAKE3, and passes it to `finish`; any other,
 //! or none, is unknown, warned and never a refusal.
 
-use std::num::NonZeroU64;
-
 use getrandom::SysRng;
-use oneiron_crypto::HybridPublicKey;
-use oneiron_crypto::backup::{
-    HostHoldsBinding, SealedHostHolds, host_holds_recipient_id, seal_host_holds,
-};
+use oneiron_crypto::backup::{HostHoldsBinding, SealedHostHolds, seal_host_holds};
 use serde::{Deserialize, Serialize};
 
 use super::HostOrderHolds;
 use crate::recovery::checkpoint::{CheckpointImage, CheckpointKey};
 use crate::{Error, Result};
 
-/// The host recipient a hosted vault seals its checkpoints' host-order
-/// family to: the public bundle its supervisor pinned and delivered (a
-/// hybrid public key's wire form), its id (SHA-256 of the bundle's bytes)
-/// and its nonzero epoch. Never read from the owner's settings.
-#[derive(Clone, PartialEq)]
-pub struct HostHoldsRecipient {
-    public: HybridPublicKey,
-    id: [u8; 32],
-    epoch: NonZeroU64,
-}
+pub use crate::store::checkpoint_host_recipient::{HostHoldsRecipient, HostHoldsSealing};
 
-impl std::fmt::Debug for HostHoldsRecipient {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("HostHoldsRecipient(..)")
-    }
-}
-
-impl HostHoldsRecipient {
-    /// The recipient whose public bundle is `bundle`, at `epoch`.
-    ///
-    /// # Errors
-    ///
-    /// A bundle that is not a hybrid public key, or a zero epoch.
-    pub fn new(bundle: &[u8], epoch: u64) -> Result<Self> {
-        let public = HybridPublicKey::from_bytes(bundle).map_err(|_| {
-            Error::InvalidConfig("the host-holds recipient is not a hybrid public key".into())
-        })?;
-        let epoch = NonZeroU64::new(epoch).ok_or_else(|| {
-            Error::InvalidConfig("the host-holds recipient's epoch is zero".into())
-        })?;
-        Ok(Self {
-            public,
-            id: host_holds_recipient_id(bundle),
-            epoch,
-        })
-    }
-
-    /// Its id: SHA-256 of its bundle's bytes.
-    #[must_use]
-    pub fn id(&self) -> [u8; 32] {
-        self.id
-    }
-
-    /// Its epoch.
-    #[must_use]
-    pub fn epoch(&self) -> u64 {
-        self.epoch.get()
-    }
-}
-
-/// Whether a vault's checkpoints carry its host-order family, as its host
-/// configured it (`VaultConfig::checkpoint_host_holds`).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum HostHoldsSealing {
-    /// No host carries the vault: a self-hosted vault seals none.
-    #[default]
-    NotHosted,
-    /// Sealed to this recipient.
-    To(Box<HostHoldsRecipient>),
-    /// A host carries the vault and gave no usable recipient: each receipt
-    /// says the member is unavailable. Never a refused start.
-    RecipientMissing,
-}
-
-/// Why a hosted vault's checkpoint carries no host-order family. Content
-/// free.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HostHoldsUnavailable {
-    /// The host gave no usable recipient.
-    RecipientMissing,
-    /// The family did not read in the snapshot's transaction.
-    ExportFailed,
-    /// The family did not serialize or seal.
-    SealFailed,
-}
-
-/// What a checkpoint carries of its vault's host-order family, for its host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostHoldsAvailability {
-    /// No host carries the vault: none is sealed, and none is owed.
-    NotHosted,
-    /// The complete family, sealed to this recipient at this epoch; its
-    /// member's BLAKE3, which a restore's tag names.
-    Sealed {
-        recipient_id: [u8; 32],
-        recipient_epoch: u64,
-        member_blake3: [u8; 32],
-    },
-    /// None is sealed, and why.
-    Unavailable(HostHoldsUnavailable),
-}
+pub use oneiron_crypto::backup::{HostHoldsAvailability, HostHoldsUnavailable};
 
 /// A sealed member as an image carries it: opaque bytes, MessagePack binary.
 #[derive(Clone, PartialEq, Eq)]

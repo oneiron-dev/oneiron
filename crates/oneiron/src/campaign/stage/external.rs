@@ -11,23 +11,7 @@ use super::projector::{
 use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageKey};
 use crate::{EntityId, Result, Vault};
 
-/// A typed request from an evidence source CA-04 does not own.
-///
-/// Deposit, audit/delivery, desk, and renewal inputs enter ONLY through this
-/// hook. Their source truth stays with the counterparty ledger (ONE-1542),
-/// commitments, or TASK_LIST machinery; CA-04 stores the stage and the evidence
-/// reference and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalStageEvidenceHook {
-    /// PERSON the stage is about.
-    pub party_ref: EntityId,
-    /// Campaign the stage is scoped to.
-    pub campaign_ref: EntityId,
-    /// Stage the evidence claims to earn.
-    pub target_stage: StageKey,
-    /// The evidence itself.
-    pub evidence: StageEvidence,
-}
+pub use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
 
 // ---------------------------------------------------------------------------
 // External evidence hooks

@@ -5,7 +5,7 @@
 //! deleted; an erase retires it at once. Between the two, an instance no
 //! row names may still be needed: by a writer that minted it and has yet to
 //! name it, by a kept checkpoint image or parked archive that carries it, or
-//! by a standing hold. [`body_retention_policy`] is the one hook that says
+//! by a standing customer hold. [`body_retention_policy`] is the one hook that says
 //! when none does: only then is a Retention retirement staged for it, and
 //! only then do its historical obligations (each owner's
 //! response-to-instance row, each digest's remembered instance) expire with
@@ -47,7 +47,8 @@ pub(crate) enum KeepReason {
     Leased,
     /// A kept image or a parked archive carries it.
     KeptCopy,
-    /// A standing legal hold keeps every kept copy.
+    /// A standing customer hold keeps every kept copy. A host order keeps
+    /// none: its clone holds its own keys in the host's legal-hold store.
     Hold,
     /// Another host minted it: who holds its copies is not known here.
     NotMintedHere,
@@ -142,7 +143,7 @@ impl RetentionContext {
                 .collect(),
             hold: crate::store::legal_hold::holds_in_txn(store, txn)?
                 .iter()
-                .any(|hold| hold.stands()),
+                .any(crate::deletion::LegalHold::keeps_vault_data),
         }))
     }
 }
@@ -167,24 +168,25 @@ fn named_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Option<BTreeSet<[u8; 1
 /// Whether a Retention intent for `instance` may still run, read again by
 /// the finisher under the custody write guard and the LMDB writer: no lease,
 /// kept copy or standing hold needs it now. Its live uses the caller reads.
+/// `kept` is the pass's holder snapshot (FIX 9067), read once per holder
+/// epoch under the same guard; the lease and hold checks stay per intent.
 pub(super) fn retention_ready_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     instance: &[u8; 16],
+    kept: &BTreeSet<[u8; 16]>,
 ) -> Result<bool> {
-    let Some(custody) = store.core.key_custody.local() else {
+    if store.core.key_custody.local().is_none() {
         return Ok(false);
-    };
+    }
     if store.core.key_custody.body_leased(instance)
         || crate::store::legal_hold::holds_in_txn(store, txn)?
             .iter()
-            .any(|hold| hold.stands())
+            .any(crate::deletion::LegalHold::keeps_vault_data)
     {
         return Ok(false);
     }
-    Ok(custody
-        .kept_image_instances()
-        .is_ok_and(|kept| !kept.contains(instance)))
+    Ok(!kept.contains(instance))
 }
 
 impl Store {
@@ -315,7 +317,9 @@ impl Store {
         if instances.is_empty() {
             return Ok(None);
         }
-        custody.hold_image_instances(&instances).map(Some)
+        let holder = custody.hold_image_instances(&instances)?;
+        self.core.key_custody.bump_holders_epoch();
+        Ok(Some(holder))
     }
 
     /// Registers a holder of every body instance this vault's own rows name,
@@ -336,6 +340,7 @@ impl Store {
         };
         if !named.is_empty() {
             custody.hold_image_instances(&named)?;
+            self.core.key_custody.bump_holders_epoch();
         }
         Ok(())
     }
@@ -357,7 +362,9 @@ impl crate::Vault {
         let Some(custody) = self.store.core.key_custody.local() else {
             return Ok(false);
         };
-        custody.rename_image_copy(image.as_bytes(), &copy_at(path)?)
+        let named = custody.rename_image_copy(image.as_bytes(), &copy_at(path)?)?;
+        self.store.core.key_custody.bump_holders_epoch();
+        Ok(named)
     }
 
     /// Releases the local holder of the backup copy that landed at `path`,
@@ -373,7 +380,9 @@ impl crate::Vault {
         let Some(custody) = self.store.core.key_custody.local() else {
             return Ok(false);
         };
-        custody.release_image_copy(&copy_at(path)?)
+        let released = custody.release_image_copy(&copy_at(path)?)?;
+        self.store.core.key_custody.bump_holders_epoch();
+        Ok(released)
     }
 
     /// [`Store::sweep_body_retention`], then the finisher: post-commit and

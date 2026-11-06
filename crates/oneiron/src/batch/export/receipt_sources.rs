@@ -1,9 +1,9 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
 use crate::{
-    claim::ClaimBody,
     error::{Error, Result},
-    receipt::ReceiptRecord,
     serialize::ExportBody,
+    store::receipt_row::ReceiptRecord,
+    write_envelope::claim_body::ClaimBody,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -123,9 +123,11 @@ impl ExportReceiptSource {
 }
 /// Exact owning citation positions, not a recursive scan for arbitrary strings.
 pub(crate) fn task_receipt_refs(claim: &ClaimBody) -> BTreeSet<String> {
-    let citations = if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+    let citations = if claim.predicate
+        == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY
+    {
         claim.evidence.as_ref()
-    } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
+    } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
         let Some(Value::Map(entries)) = claim.evidence.as_ref() else {
             return BTreeSet::new();
         };
@@ -187,6 +189,6 @@ pub(crate) fn receipt_sources_for_body(
 pub(super) fn task_receipt_refs_from_body(body: &ExportBody) -> BTreeSet<String> {
     body.to_bytes()
         .ok()
-        .and_then(|bytes| crate::claim::decode_claim_body(&bytes, true).ok())
+        .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, true).ok())
         .map_or_else(BTreeSet::new, |claim| task_receipt_refs(&claim))
 }

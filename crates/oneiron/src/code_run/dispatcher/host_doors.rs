@@ -216,11 +216,11 @@ impl<'a> HostSelfDispatcher<'a> {
     /// wave launch gate and child routing. No child receives a copied cap.
     pub fn spawn_fanout_from_host(
         &self,
-        input: crate::task_verb::sdk::FanoutBatchInput,
+        input: crate::task_verb::fanout_batch::FanoutBatchInput,
         proof: &crate::authority::VerifiedSlip,
         locality: crate::claim::CallerLocality,
         decisions: Option<&crate::fanout_auto::FanoutDecisions<'_>>,
-    ) -> MemoryResult<crate::task_verb::sdk::FanoutBatchView> {
+    ) -> MemoryResult<crate::task_verb::fanout_batch::FanoutBatchView> {
         self.live_parent()?;
         let binding = self.task_host_binding()?.ok_or_else(|| {
             MemoryError::bad_request("a batch requires its caller's acquired parent lease")

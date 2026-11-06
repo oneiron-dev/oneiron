@@ -192,7 +192,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let now = vault.store.clock.now_recorded_at();
         if vault.person_substrate(&target.companion, now)?
-            != Some(crate::subject_model::PersonSubstrate::Model)
+            != Some(crate::write_envelope::subject_record::PersonSubstrate::Model)
         {
             return Err(refused().into());
         }
@@ -269,7 +269,7 @@ impl Vault {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             if crate::subject_model::person_substrate_in_txn(self, txn, &target.companion, now)?
-                != Some(crate::subject_model::PersonSubstrate::Model)
+                != Some(crate::write_envelope::subject_record::PersonSubstrate::Model)
                 || companion_principal_in(self, txn, &target.companion)?
                     .is_some_and(|principal| principal != actor)
                 || self

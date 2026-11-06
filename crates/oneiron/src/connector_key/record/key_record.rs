@@ -11,44 +11,7 @@ use super::{
 };
 use crate::error::RecordError;
 
-/// ConnectorKeyRecord lifecycle status.
-///
-/// Catalogued keys and per-grant scoped keys start Pending; only the
-/// qualification suite can activate them, and a protocol-revision change
-/// returns them to Pending. Legacy catalog-free budget keys retain their
-/// Active registration door.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConnectorKeyStatus {
-    Pending,
-    Active,
-    Suspended,
-    Revoked,
-}
-
-impl ConnectorKeyStatus {
-    /// Returns the pinned on-disk status string.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Active => "active",
-            Self::Suspended => "suspended",
-            Self::Revoked => "revoked",
-        }
-    }
-
-    /// Parses a pinned on-disk status string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "pending" => Some(Self::Pending),
-            "active" => Some(Self::Active),
-            "suspended" => Some(Self::Suspended),
-            "revoked" => Some(Self::Revoked),
-            _ => None,
-        }
-    }
-}
+pub use crate::connector_key_status::ConnectorKeyStatus;
 
 /// How one catalogued connector's calls are classified for effector
 /// budgeting (ARCH-0054: *"the Send class applies to counterparty
@@ -235,6 +198,11 @@ pub struct ConnectorKeyRecord {
     pub retained_manifest: Option<ResolvedConnectorManifest>,
     /// Candidate awaiting qualification and graded owner re-consent.
     pub pending_manifest: Option<PendingConnectorManifest>,
+    /// An expanding same-revision refresh's slate, staged beside `slate_ref`
+    /// on an admitted catalog key (FIX 11677): the key keeps routing on
+    /// `slate_ref` until the owner stamps this one and a fresh suite passes,
+    /// and then this one replaces it. `None`: no slate waits.
+    pub staged_slate_ref: Option<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -279,6 +247,7 @@ impl ConnectorKeyRecord {
             qualification_receipt: None,
             retained_manifest: None,
             pending_manifest: None,
+            staged_slate_ref: None,
         }
     }
 
@@ -368,6 +337,20 @@ impl ConnectorKeyRecord {
                 || self.consent_required)
         {
             return Err(invalid_body("qualification fields require a catalog"));
+        }
+        // A staged slate waits beside an admitted catalog key's routing one;
+        // a key that goes back to Pending or is revoked drops it.
+        if let Some(staged) = self.staged_slate_ref
+            && (self.catalog.is_none()
+                || !matches!(
+                    self.status,
+                    ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended
+                )
+                || self.slate_ref.is_none_or(|routing| routing == staged))
+        {
+            return Err(invalid_body(
+                "staged slate requires an admitted catalog key",
+            ));
         }
         // An Active catalog route without an admission pin is never a valid
         // stored body, including when it enters through decode/import.

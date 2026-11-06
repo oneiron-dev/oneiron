@@ -37,53 +37,9 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
 }
 
-/// The aggregation SESSION one queue's tested chain shares.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_aggregation_session(store: &str, init_work: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-aggregation-session:v1",
-        &[store.as_bytes(), init_work.as_bytes()],
-    )
-}
-
-/// The deterministic id of one tested revision: the queue's store and
-/// checked init, the target, the exact checked commit and tree and the plan.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_revision_id(
-    store: &str,
-    init_work: &str,
-    target: &str,
-    commit: &str,
-    tree: &str,
-    plan_digest: &str,
-) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-tested-revision:v1",
-        &[
-            store.as_bytes(),
-            init_work.as_bytes(),
-            target.as_bytes(),
-            commit.as_bytes(),
-            tree.as_bytes(),
-            plan_digest.as_bytes(),
-        ],
-    )
-}
-
-/// The aggregate provenance claim's id for `revision`.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_provenance_id(revision: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-revision-provenance:v1",
-        &[revision.as_bytes()],
-    )
-}
+pub(crate) use crate::store::code_revision_identity::{
+    queue_aggregation_session, queue_provenance_id, queue_revision_id,
+};
 
 /// The aggregation SESSION's body: derived queue bookkeeping, named as such.
 fn session_body(tested: &QueueTestedRevision) -> Result<Vec<u8>> {
@@ -127,6 +83,9 @@ impl Vault {
                 ));
             }
             seal.attach_in_txn(self, &mut wtxn)?;
+            crate::skill_attribution::note_queue_revision_derivations_in_txn(
+                self, &mut wtxn, revision,
+            );
             wtxn.commit()?;
             return Ok(revision.revision_id);
         }
@@ -141,7 +100,9 @@ impl Vault {
                 "a tested queue revision must advance its aggregation session",
             ));
         }
+        super::queue_root::put_queue_root_in_txn(&self.store, &mut wtxn, revision)?;
         seal.attach_in_txn(self, &mut wtxn)?;
+        crate::skill_attribution::note_queue_revision_derivations_in_txn(self, &mut wtxn, revision);
         wtxn.commit()?;
         Ok(revision.revision_id)
     }
@@ -261,10 +222,9 @@ pub(crate) fn validate_queue_revision_in_txn(
         .commit_metadata
         .as_ref()
         .ok_or_else(|| invalid("a tested queue revision needs canonical metadata"))?;
-    if vault
-        .store
-        .port_entity_record(txn, &metadata.author)?
-        .is_none()
+    // An author erased before the seal leaves none to read (FIX 7348).
+    if let Some(author) = &metadata.author
+        && vault.store.port_entity_record(txn, author)?.is_none()
     {
         return Err(Error::EntityNotFound);
     }

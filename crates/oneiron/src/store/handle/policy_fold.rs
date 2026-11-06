@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::gate::PolicyManifestResolution;
 
-use super::{SessionStoreView, Store, StoreRead};
+use super::{CoreDbs, SessionStoreView, Store, StoreRead};
 
 /// One committed snapshot's fold, under its LMDB transaction id. A read
 /// transaction's id is the id of the write it sees, so every read of one
@@ -25,6 +25,12 @@ pub(crate) trait PolicyFoldSource {
 }
 
 impl PolicyFoldSource for Store {
+    fn policy_fold_cache(&self) -> Option<(&PolicyFoldCache, &heed::Env)> {
+        Some((&self.core.policy_fold_cache, &*self.core.env))
+    }
+}
+
+impl PolicyFoldSource for CoreDbs<'_> {
     fn policy_fold_cache(&self) -> Option<(&PolicyFoldCache, &heed::Env)> {
         Some((&self.core.policy_fold_cache, &*self.core.env))
     }

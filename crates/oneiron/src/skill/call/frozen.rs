@@ -7,7 +7,8 @@
 //!
 //! An erase reaches them ([`erase`]): an erased caller is kept in its erased
 //! form, an erased skill's cases go, and so does a case naming an erased row,
-//! found through the cases' [`index`].
+//! found through the cases' [`index`]. A call's own caller may record the
+//! answer it should have given ([`amend`]), which its case then expects.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -19,7 +20,6 @@ use super::{
     CallableSkillAnswer, bind_isolated_lane, callable_script, callable_tier, invalid, matches_shape,
 };
 use crate::code_run::{CodeRunDeterminism, SelfCall, SelfDispatchOutcome, SelfFailedResult};
-use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
     StepCancellation,
@@ -31,11 +31,16 @@ use crate::skill::helper::CallableCase;
 use crate::skill::{SkillRecord, SkillRole};
 use crate::skill_hub::HubFile;
 use crate::store::Store;
+use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::{EntityId, Vault};
 
+mod amend;
 mod erase;
 mod index;
 
+pub use self::amend::{
+    CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest, amend_callable_case,
+};
 pub(crate) use self::erase::{erase_callable_case_actor_in_txn, erase_callable_cases_in_txn};
 
 /// Most frozen cases one skill keeps: as a new one lands, the oldest past
@@ -46,6 +51,11 @@ const FROZEN_CASES_PER_SKILL: usize = 64;
 /// Key: id16 (the skill that ran) + u64be at + u64be step seq + receipt.
 const CASES: SideTable<Vec<u8>, FrozenCall, Named> =
     SideTable::new(&side_table::SKILL_CALLABLE_CASE);
+/// Whether a masked copy of a `SKILL_CALLABLE_CASE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn skill_callable_case_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<FrozenCall, Named>(bytes)
+}
 
 /// Who a frozen call was made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,8 +90,12 @@ struct FrozenCall {
     source_rows: Option<Vec<EntityId>>,
     /// JSON text.
     arguments: String,
-    /// JSON text: the answer that passed the return contract.
+    /// JSON text: the answer that passed the return contract, or the one
+    /// its caller later recorded in its place ([`amend`]).
     answer: String,
+    /// When its caller last recorded the answer in its place; `None` keeps
+    /// the answer the call gave.
+    amended_at: Option<u64>,
 }
 
 /// Where a call that passed was made.
@@ -128,6 +142,7 @@ pub(super) fn freeze_callable_case(
         source_rows: None,
         arguments,
         answer: text,
+        amended_at: None,
     };
     vault.with_write_txn_grouped(|txn| {
         // The side-row wall admits the texts as it does other caller text.
@@ -313,6 +328,8 @@ impl JsCodeModeHost for CaseHost {
             outcome: SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: "callable_case_no_caller".to_owned(),
+                code: None,
+                disk_floor: None,
             }),
             budget: None,
             view: None,

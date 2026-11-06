@@ -51,14 +51,16 @@ use crate::engine_executor::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::call_as_step;
 use crate::llm::seat::ModelSeat;
-use crate::llm::{
-    BudgetGuard, BudgetLease, DurableStepContext, DurableStepError, FatalLlmError, LlmBackend,
-    LlmCapability, LlmError, LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult,
-    LlmStreamResult, ModelId, StepOutcome, call_as_step,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, ModelId,
+};
 
 use super::deadline::WakePassDeadline;
 use super::types::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
@@ -140,6 +142,14 @@ impl<'p, E> TurnProgramExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -152,6 +162,17 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
             Some(runtime) => run_program(runtime, self.shared, attempt, ctx).await,
             None => hold(ctx, &attempt.status.attempt, ProgramHold::Unbound),
         }
+    }
+
+    /// A window holds plain Micro partitions only, never a turn program, so
+    /// it goes to the inner executor whole: the trait's serial default here
+    /// ran every window of the host's wrapped executor one partition after
+    /// another (FIX 12487 windows, Dreamer proof run 4).
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
     }
 
     async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {

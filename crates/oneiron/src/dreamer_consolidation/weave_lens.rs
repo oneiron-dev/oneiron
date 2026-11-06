@@ -22,14 +22,17 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
-    call_as_step,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
+};
 use std::collections::BTreeMap;
 
 /// Why a weave lens render parks on a host that lends no Dreamer model.
@@ -161,7 +164,7 @@ fn lens_request(
         model,
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // The items leave the vault as an extraction's records do, so
             // they pass the same egress gate.
             purpose: CallPurpose::Extraction,
@@ -250,10 +253,15 @@ pub async fn run_weave_lens(
     }
     let (reader, scheduled_for, rendered_at) =
         crate::claim::weave_lens_attempt_period(&attempt.status.payload.input)?;
+    let report_revision = crate::claim::weave_lens_attempt_revision(&attempt.status.payload.input)?;
     let Some(stored) = ctx.vault.weave_digest_for_lens(reader, scheduled_for)? else {
         return owed_nothing();
     };
-    if stored.rendered_at != rendered_at || stored.lens.is_some() || stored.lens_refused.is_some() {
+    if stored.rendered_at != rendered_at
+        || stored.report_revision != report_revision
+        || stored.lens.is_some()
+        || stored.lens_refused.is_some()
+    {
         return owed_nothing();
     }
     // The render reads the skill's pack and the period's report: both
@@ -361,6 +369,7 @@ pub async fn run_weave_lens(
                     reader,
                     scheduled_for,
                     rendered_at,
+                    report_revision,
                     &WeaveLensRender {
                         plan,
                         skill_ref: skill.to_hex(),
@@ -401,6 +410,7 @@ pub async fn run_weave_lens(
         reader,
         scheduled_for,
         rendered_at,
+        report_revision,
         &WeaveLensRefusal {
             reason,
             skill_ref: skill.to_hex(),

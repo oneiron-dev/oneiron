@@ -2,13 +2,13 @@ use super::*;
 
 use heed::RwTxn;
 
-use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ppr;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::write_envelope::ClaimCandidate;
+use oneiron_contracts::affect::Vad;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -36,8 +36,9 @@ pub(super) fn apply_claim_candidate(
         indexing,
         write_policy,
         owner_authored,
+        pending_prompt,
     } = request;
-    crate::gate::validate_write_envelope(envelope)?;
+    crate::write_envelope::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();
@@ -46,17 +47,21 @@ pub(super) fn apply_claim_candidate(
             .ok_or(Error::EntityNotFound)?;
     let actor_header =
         EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+        actor_header.entity_type,
+        actor.actor_class(),
+    )?;
 
     let subject = candidate.subject();
-    if candidate.predicate() == crate::pipeline::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-        && subject != crate::claim::ClaimSubject::Entity(actor.entity_ref())
+    if candidate.predicate()
+        == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+        && subject != crate::write_envelope::claim_body::ClaimSubject::Entity(actor.entity_ref())
     {
         return Err(Error::InvalidClaimBody(
             "world default subset must be authored by its subject agent",
         ));
     }
-    if let crate::claim::ClaimSubject::Entity(subject_id) = subject
+    if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) = subject
         && !crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &subject_id)?
     {
         return Err(Error::EntityNotFound);
@@ -97,8 +102,8 @@ pub(super) fn apply_claim_candidate(
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.
-    let birth_weight = crate::claim::claim_initial_claim_of_weight(&body)?;
-    let data = crate::claim::encode_claim_body(&body)?;
+    let birth_weight = crate::store::claim_lineage::claim_initial_claim_of_weight(&body)?;
+    let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(
             store,
@@ -113,7 +118,12 @@ pub(super) fn apply_claim_candidate(
         )?;
     }
     let applied_put = apply_put(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {
@@ -122,6 +132,7 @@ pub(super) fn apply_claim_candidate(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version: None,
             },
             // A candidate opens no admit band and no hub inlet.
             options: PutOptions {
@@ -143,6 +154,7 @@ pub(super) fn apply_claim_candidate(
                 transition: None,
                 posture: config.privacy.posture,
                 owner_authored,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
     )?;
@@ -161,12 +173,65 @@ pub(super) fn apply_claim_candidate(
         had_prior,
     )?;
 
+    // FIX 7757: a candidate birth carries its canonical `FacetOf` edge in the
+    // same txn as its row, at the body's facet; a re-put keeps its birth stamp.
+    let birth_edge_written = if !had_prior {
+        let facet = body.scope_facet;
+        let owner = crate::vault::embedded_owner_actor_id()?;
+        if facet == crate::claim::substrate_facet_id(owner)?
+            && stored_entity_type(store, wtxn, &owner)?.is_none()
+        {
+            apply_ops_with_origin(
+                store,
+                config,
+                analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id: owner,
+                    entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                    occurred,
+                    learned_at,
+                    row_version: None,
+                    data: crate::vault::encode_embedded_owner_actor_body()?,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                text_index_trusted,
+                ApplyOpsGateMode::new(false, false),
+                BaseWriteOrigin::Ordinary,
+            )?;
+        }
+        let found = stored_entity_type(store, wtxn, &facet)?;
+        if found != Some(crate::registry::ENTITY_TYPE_FACET) {
+            return Err(Error::Registry(crate::error::RegistryError::InvalidFacet {
+                facet,
+                found,
+            }));
+        }
+        apply_edge_with_created_at(
+            store,
+            wtxn,
+            id,
+            EdgeKind::FacetOf,
+            facet,
+            1.0,
+            learned_at,
+            Vad::NEUTRAL,
+            None,
+        )?;
+        ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
+        true
+    } else {
+        false
+    };
+
     let subject_id = match subject {
-        crate::claim::ClaimSubject::Entity(subject_id) => Some(subject_id),
-        crate::claim::ClaimSubject::Edge { .. } => None,
+        crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) => Some(subject_id),
+        crate::write_envelope::claim_body::ClaimSubject::Edge { .. } => None,
     };
     let removed_claim_of = reconcile_claim_of_edges(store, wtxn, &id, subject_id)?;
-    let mut had_graph_mutation = !removed_claim_of.is_empty();
+    let mut had_graph_mutation = birth_edge_written || !removed_claim_of.is_empty();
     for removed_subject in &removed_claim_of {
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, removed_subject)?;
     }
@@ -203,18 +268,27 @@ pub(super) fn apply_claim_candidate(
 }
 
 /// The exact birth facet kept by both the final materializer and signer.
+/// FIX 7757: the stored `FacetOf` birth edge is authoritative when present;
+/// the body and the vault default stay as fallback for rows born without one.
 pub(crate) fn claim_candidate_birth_facet(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<EntityId> {
+    if let Some(facet) = crate::federation::record_scope::birth_facet(store, txn, *id)? {
+        return Ok(facet);
+    }
     let stored_facet = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| {
             EntityMetadataHeader::parse(raw)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         })
         .and_then(|raw| {
-            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+            crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .ok()
         })
         .map(|stored| stored.scope_facet);
     match stored_facet {

@@ -147,6 +147,24 @@ impl Vault {
         self.attach_machine_signature(&txn, id, candidate, envelope, signer)
     }
 
+    /// The registered MACHINE door in the caller's transaction. A missing
+    /// retained signer is still an error; the native Gate verifies enrollment.
+    pub(crate) fn sign_registered_machine_claim_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &mut WriteEnvelope,
+    ) -> Result<()> {
+        if envelope.actor().actor_class() != EdgeActorClass::System {
+            return Err(denied());
+        }
+        let signer = self
+            .retained_machine_signer(envelope.actor().entity_ref())?
+            .ok_or_else(denied)?;
+        self.attach_machine_signature(txn, id, candidate, envelope, signer)
+    }
+
     /// An engine writer signs its own MACHINE candidate inside the caller's
     /// transaction with the signer the host retained for the envelope's
     /// actor. Without one the envelope stays unsigned and the write door
@@ -399,7 +417,7 @@ pub(crate) fn machine_claim_read_admitted(
                     == *body => {}
             // A superseded history's same-id successor is an ordinary claim.
             Ok(projection)
-                if projection.admits_successor_by(crate::memory::claim_author(body))
+                if projection.admits_successor_by(crate::claim::claim_author(body))
                     && !machine_claim_needs_history(store, txn, body)? => {}
             Ok(_)
             | Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))
@@ -510,6 +528,29 @@ pub(crate) fn machine_history_authority_descends(
     old: &[u8; 32],
     successor: &[u8; 32],
 ) -> Result<bool> {
+    let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?;
+    machine_history_authority_descends_with_image(
+        store,
+        txn,
+        old,
+        successor,
+        adopted
+            .as_deref()
+            .map(super::VerifiedAuthorityCheckpoint::image),
+    )
+}
+
+/// [`machine_history_authority_descends`] with the adopted image read once by
+/// the caller: a handoff chain that checks one descent per packet hoists the
+/// image read out of the packet loop (FIX 3449) instead of re-verifying per
+/// packet. `image` must be the vault's adopted image on `txn`'s snapshot.
+pub(crate) fn machine_history_authority_descends_with_image(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    old: &[u8; 32],
+    successor: &[u8; 32],
+    image: Option<&super::checkpoint_image::AuthorityCheckpointV2>,
+) -> Result<bool> {
     let mut by_hash = std::collections::BTreeMap::new();
     for id in
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -528,10 +569,6 @@ pub(crate) fn machine_history_authority_descends(
         }
         by_hash.insert(hash, entry);
     }
-    let adopted = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?;
-    let image = adopted
-        .as_ref()
-        .map(super::VerifiedAuthorityCheckpoint::image);
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))

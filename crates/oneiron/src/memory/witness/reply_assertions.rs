@@ -25,10 +25,10 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{ReplyAssertionRecord, ReplyAssertions};
 use crate::memory::WitnessAssertions;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::{ResponseCarriage, ResponseOwners, ResponseScan, Store};
+use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
 /// The reply assertions one MESSAGE was born with whole. Key: id16(message).
 const BIRTHS: SideTable<EntityId, MessageReplyAssertions, Named> =
@@ -59,7 +59,7 @@ pub struct MessageReplyAssertions {
 ///
 /// Storage errors.
 pub(crate) fn admitted_reply_assertions_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     sets: &[&WitnessAssertions],
 ) -> Result<ReplyAssertions> {
@@ -81,12 +81,22 @@ pub(crate) fn admitted_reply_assertions_in_txn(
 
 /// The record `id` names, by its stored type; `None` for an id that does not
 /// parse or names no row.
-fn stored_record(store: &Store, txn: &RoTxn<'_>, id: &str) -> Result<Option<ReplyAssertionRecord>> {
+fn stored_record(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &str,
+) -> Result<Option<ReplyAssertionRecord>> {
     let Ok(id) = EntityId::from_hex(id) else {
         return Ok(None);
     };
-    Ok(crate::batch::stored_entity_type(store, txn, &id)?
-        .map(|entity_type| ReplyAssertionRecord { entity_type, id }))
+    crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+        let header = crate::batch::EntityMetadataHeader::parse(raw)
+            .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+        Ok(ReplyAssertionRecord {
+            entity_type: header.entity_type,
+            id,
+        })
+    })
 }
 
 /// Keeps `row` for its MESSAGE, in the witness write that landed it.

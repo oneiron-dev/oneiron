@@ -26,32 +26,20 @@ use super::support::{
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-/// Claim predicate for mutable hub aliases attached to canonical skill identity.
-pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
+pub use crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 
 /// Cached capability-surface projection for a hub-derived skill entity.
 const CAPABILITY: SideTable<EntityId, SkillCapabilitySurface, Raw> =
     SideTable::new(&side_table::SKILL_HUB_CAPABILITY);
-/// Empty-marker index from a skill content hash to every entity holding it.
-pub(super) const CONTENT_HASH_INDEX: SideTable<([u8; 32], EntityId), (), Raw> =
-    SideTable::new(&side_table::SKILL_HUB_CONTENT_HASH_INDEX);
-/// Schema-version byte gating the one-time content-hash-index backfill.
-pub(super) const SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
-    SideTable::new(&side_table::SKILL_HUB_CONTENT_HASH_INDEX_SCHEMA_VERSION);
-pub(super) const CONTENT_HASH_INDEX_SCHEMA_VERSION: u8 = 1;
+pub(super) use crate::store::skill_content_index::{
+    CONTENT_HASH_INDEX, CONTENT_HASH_INDEX_SCHEMA_VERSION, SCHEMA_VERSION,
+};
+pub(crate) use crate::store::skill_content_index::{
+    backfill_content_hash_index_if_needed, maintain_skill_content_hash_index_for_delete,
+    maintain_skill_content_hash_index_for_put,
+};
 
-impl RawValue for SkillCapabilitySurface {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(
-            &encode_capability_surface_value(self),
-            "capability surface MessagePack encode failed",
-        )?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_capability_surface(bytes)?)
-    }
-}
+pub(super) use crate::store::skill_package::capability::encode_capability_surface_value;
 
 impl Vault {
     /// The holder of these exact canonical bytes, whichever birth path put it
@@ -281,6 +269,7 @@ impl Vault {
                 ClaimLifecycleStatus::Active,
             )?;
             body.source = Some(ClaimSource::Observed);
+            body.scope_facet = self.default_facet_in_txn(wtxn)?;
             self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
             replacement_id
         };
@@ -331,6 +320,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        body.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {
             self.supersede_reserved_claim_in_txn(
@@ -433,179 +423,63 @@ impl Vault {
         surface.validate()?;
         CAPABILITY.put(&self.store, wtxn, entity, surface)
     }
-}
 
-pub(crate) fn maintain_skill_content_hash_index_for_put(
-    store: &crate::store::Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    entity: &EntityId,
-    previous_hash: Option<SkillContentHash>,
-    content_hash: Option<SkillContentHash>,
-) -> Result<()> {
-    if previous_hash != content_hash
-        && let Some(previous_hash) = previous_hash
-    {
-        CONTENT_HASH_INDEX.delete(store, wtxn, &(*previous_hash.as_bytes(), *entity))?;
-    }
-    if let Some(content_hash) = content_hash {
-        CONTENT_HASH_INDEX.put(store, wtxn, &(*content_hash.as_bytes(), *entity), &())?;
-    }
-    Ok(())
-}
-
-pub(crate) fn maintain_skill_content_hash_index_for_delete(
-    store: &crate::store::Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    entity: &EntityId,
-    content_hash: SkillContentHash,
-) -> Result<()> {
-    CONTENT_HASH_INDEX.delete(store, wtxn, &(*content_hash.as_bytes(), *entity))?;
-    Ok(())
-}
-
-/// Rebuilds the content-hash → holder index at open time when it is missing or
-/// stale (schema-version gated), so import/sync dedup can resolve holders that
-/// pre-date the index. ONE-1741: scan verdicts no longer ride this table (they
-/// anchor to the content bytes), so this reconstructs ONLY the holder index —
-/// the old verdict-dedup migration is gone.
-pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()> {
-    let store = &vault.store;
-    let rtxn = store.env.read_txn()?;
-    let stored_version = match SCHEMA_VERSION.get(store, &rtxn, &())? {
-        Some(raw) if raw.len() == 1 => raw[0],
-        Some(_) => return Err(Error::InvalidKey),
-        None => 0,
-    };
-    drop(rtxn);
-
-    if stored_version > CONTENT_HASH_INDEX_SCHEMA_VERSION {
-        return Err(Error::InvalidKey);
-    }
-    if stored_version == CONTENT_HASH_INDEX_SCHEMA_VERSION {
-        return Ok(());
-    }
-
-    // Collect holders first, then write: the type-index cursor is dropped
-    // before any vault_meta write, matching the proven pre-ONE-1741 pattern.
-    let mut wtxn = store.env.write_txn()?;
-    let mut holders = Vec::<(SkillContentHash, EntityId)>::new();
-    for entry in store.port_entity_ids_by_type(&wtxn, ENTITY_TYPE_SKILL, None)? {
-        let entity = entry?;
-        let raw = store
-            .port_entity_record(&wtxn, &entity)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("skill type index"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_SKILL {
-            return Err(Error::CorruptedIndex("skill type index"));
-        }
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let record = match decode_skill_record(body) {
-            Ok(record) => record,
-            Err(error)
-                if error.kind() == ErrorKind::InvalidSkillBody
-                    && crate::skill::is_legacy_opaque_skill_body(body) =>
-            {
-                continue;
+    /// The installed holder of one hub skill alias: the loadable skill of
+    /// this `name`, or its Superseded lineage anchor, whose current bytes
+    /// one consolidation-eligible provenance claim ties to `source` (same
+    /// claim carries the alias, the matching content hash and the
+    /// eligibility). Pure vault read; only actual consumers decide Active
+    /// load. No Candidate/Quarantined/Stale lift.
+    pub(crate) fn installed_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        self.find_structured_skill_entity_in_txn(txn, |entity, record| {
+            if record.skill_id.as_str() != name {
+                return Ok(None);
             }
-            Err(error) => return Err(error),
-        };
-        if let Some(content_hash) = record.content_hash {
-            holders.push((content_hash, entity));
-        }
+            if !crate::skill::skill_loadable(record)
+                && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
+            {
+                return Ok(None);
+            }
+            let Some(content_hash) = record.content_hash else {
+                return Ok(None);
+            };
+            let expected = content_hash.to_hex();
+            for (claim_id, body, _) in self.active_claims_for_predicate_in_txn(
+                txn,
+                &entity,
+                PREDICATE_SKILL_HUB_PROVENANCE,
+            )? {
+                let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                if hash_text != expected {
+                    continue;
+                }
+                let Some(ref_value) = map_value(&body.value, "hubRef") else {
+                    continue;
+                };
+                if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
+                    continue;
+                }
+                if !crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim_id,
+                    crate::gate::ConsolidationReader::HubDefaultPresence,
+                )? {
+                    continue;
+                }
+                return Ok(Some(entity));
+            }
+            Ok(None)
+        })
     }
-
-    for (content_hash, entity) in &holders {
-        CONTENT_HASH_INDEX.put(store, &mut wtxn, &(*content_hash.as_bytes(), *entity), &())?;
-    }
-
-    SCHEMA_VERSION.put(
-        store,
-        &mut wtxn,
-        &(),
-        &vec![CONTENT_HASH_INDEX_SCHEMA_VERSION],
-    )?;
-    wtxn.commit()?;
-    Ok(())
-}
-
-pub(super) fn encode_capability_surface_value(surface: &SkillCapabilitySurface) -> Value {
-    Value::Map(vec![
-        (Value::from("bins"), string_set_value(&surface.bins)),
-        (Value::from("env"), string_set_value(&surface.env)),
-        (Value::from("mcp"), string_set_value(&surface.mcp)),
-        (
-            Value::from("allowedTools"),
-            string_set_value(&surface.allowed_tools),
-        ),
-    ])
-}
-
-fn decode_capability_surface(bytes: &[u8]) -> Result<SkillCapabilitySurface> {
-    const KEYS: [&str; 4] = ["bins", "env", "mcp", "allowedTools"];
-    let value = decode_value(bytes, "invalid admitted capability surface")?;
-    let entries = exact_map(&value, &KEYS, "invalid admitted capability surface")?;
-    let surface = SkillCapabilitySurface {
-        bins: decode_string_set(required_value(
-            entries,
-            KEYS[0],
-            "invalid admitted capability surface",
-        )?)?,
-        env: decode_string_set(required_value(
-            entries,
-            KEYS[1],
-            "invalid admitted capability surface",
-        )?)?,
-        mcp: decode_string_set(required_value(
-            entries,
-            KEYS[2],
-            "invalid admitted capability surface",
-        )?)?,
-        allowed_tools: decode_string_set(required_value(
-            entries,
-            KEYS[3],
-            "invalid admitted capability surface",
-        )?)?,
-    };
-    surface.validate()?;
-    Ok(surface)
-}
-
-fn string_set_value(values: &BTreeSet<String>) -> Value {
-    Value::Array(
-        values
-            .iter()
-            .map(|value| Value::from(value.as_str()))
-            .collect(),
-    )
-}
-
-fn decode_string_set(value: &Value) -> Result<BTreeSet<String>> {
-    let Value::Array(values) = value else {
-        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-            "capability entries must be an array",
-        )));
-    };
-    let mut decoded = BTreeSet::new();
-    for value in values {
-        let text = value
-            .as_str()
-            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "capability entry must be text",
-            )))?;
-        validate_text(
-            text,
-            MAX_CAPABILITY_TEXT_BYTES,
-            "capability entries must be non-empty",
-        )?;
-        if !decoded.insert(text.to_owned()) {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "duplicate capability entry",
-            )));
-        }
-    }
-    Ok(decoded)
 }
 
 pub(super) fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {

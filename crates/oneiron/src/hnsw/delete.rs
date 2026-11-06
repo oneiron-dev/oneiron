@@ -4,7 +4,7 @@ use heed::RwTxn;
 
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::discipline::{LinkDiscipline, read_link_discipline};
 use super::keys::{
@@ -23,7 +23,7 @@ use super::storage::{
 /// Search still keeps defensive existence checks because vectors/entities can
 /// become partially inconsistent for reasons outside HNSW bookkeeping.
 pub(crate) fn hnsw_deindex(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
@@ -35,13 +35,13 @@ pub(crate) fn hnsw_deindex(
 /// so tests can pin that symmetric-graph deletes never iterate the full
 /// `hnsw_neighbors` DB (ONE-325 AC1).
 pub(super) fn hnsw_deindex_probed(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let own_neighbors = match store.hnsw_neighbors().get(&*wtxn, id.as_bytes())? {
+    let own_neighbors = match store.index_neighbors().get(&*wtxn, id.as_bytes())? {
         Some(raw) => decode_neighbors(&raw, false)?,
         None => return Ok(()),
     };
@@ -62,7 +62,7 @@ pub(super) fn hnsw_deindex_probed(
     let new_count = count
         .checked_sub(1)
         .ok_or(Error::CorruptedIndex(ERR_COUNT_UNDERFLOW))?;
-    store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
+    store.index_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
     scrub_backlinks_in_place(store, wtxn, id, &backlink_targets, ops)?;
     if discipline == LinkDiscipline::Symmetric {
@@ -75,28 +75,43 @@ pub(super) fn hnsw_deindex_probed(
     }
 
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &new_count.to_le_bytes())?;
 
     if new_count == 0 {
-        store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+        store.index_meta().delete(wtxn, ENTRY_POINT_KEY)?;
         return Ok(());
     }
 
     let entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
     if entry_point == *id {
-        let (replacement_key, _) = store
-            .hnsw_neighbors()
-            .first(&*wtxn)?
-            .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
+        // The neighbor delete above stages into the session overlay, which a
+        // session view's pinned snapshot cannot see: first() may still yield
+        // the removed id. Skip it so the repaired entry point is a live node
+        // (base targets read their own write, so the skip is a no-op there).
+        // The iterator holds the read borrow until it drops: resolve the
+        // replacement to owned bytes inside its scope so the entry-point put
+        // below can borrow the write transaction mutably.
+        let replacement_key: Vec<u8> = {
+            let mut remaining = store.index_neighbors().iter(&*wtxn)?;
+            loop {
+                let (key, _) = remaining
+                    .next()
+                    .transpose()?
+                    .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
+                if key.as_ref() != id.as_bytes() {
+                    break key.into_owned();
+                }
+            }
+        };
         let replacement =
             parse_entity_id(&replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
                 Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
                 other => other,
             })?;
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;
     }
 

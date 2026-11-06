@@ -126,7 +126,7 @@ impl Vault {
             return Ok(None);
         };
         if spans.is_some() {
-            if let Some(reason) = crate::batch::secret_scan::write_tree_hit(&copy) {
+            if let Some(reason) = crate::batch::secret_scan::write_tree_hit(&copy, None) {
                 return Err(masked_copy_withheld(reason));
             }
             return Ok(Some(copy));

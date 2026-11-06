@@ -16,8 +16,9 @@ use heed::{RoTxn, RwTxn};
 use super::super::write_payload_hit;
 use super::{Done, LiftCause, Page, hex};
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, decode_record};
 use crate::error::Result;
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_record_codec::decode_record;
 
 /// The attempt rows after `after` (an attempt id; empty at the start), up to
 /// `limit`.
@@ -29,6 +30,7 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
     };
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };
@@ -67,13 +69,14 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let mut record = decode_record(&raw, AttemptId::from_bytes(key)?)?;
-    if record.kind == crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND
+    if record.kind == crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND
         && let Some(payload) =
             crate::surface_event::lift_intake_payload_in_txn(vault, txn, &record.payload)?
     {
         record.payload = payload;
     }
-    let stored = crate::attempt_queue::encode_admitted_signal_record(vault, txn, &mut record)?;
+    let stored =
+        crate::store::attempt_record_codec::encode_admitted_signal_record(vault, txn, &mut record)?;
     vault.store.attempt_records.put(txn, key, &stored)?;
     Ok(match hit(key, &stored) {
         Some(left) => Done::Propose(LiftCause::NoDoor, left),

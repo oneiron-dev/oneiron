@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 
 use super::{
-    RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs,
+    RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
+    SecretShowSupplementArgs, SecretUnbindArgs, VaultUnlockArgs,
 };
 use crate::config::ServeArgs;
 
@@ -116,6 +117,12 @@ pub struct MaintainArgs {
     /// CLAIM is reported and left as it is.
     #[arg(long, value_name = "ID")]
     pub reclassify_corrupt_claim: Vec<String>,
+
+    /// Remove a completed local training run's staged base files and training
+    /// rows (32-hex run id); repeat for more. Keep output, receipt, stderr and
+    /// its idempotency directory. Nothing is removed without this flag.
+    #[arg(long, value_name = "ID")]
+    pub cleanup_training_inputs: Vec<String>,
 
     /// Queue a historical secret lift run and work it to its end: every
     /// record and authored row is read again by the write door's rules, each
@@ -487,6 +494,16 @@ pub enum SecretsCommand {
     /// A restore's credentials pending on their source's evidence, and the
     /// typed confirm that keeps a batch without it.
     Pending(Box<SecretPendingArgs>),
+    /// Import one export secret supplement on this install, the recipient
+    /// machine your export named: reads the supplement read's JSON (`GET
+    /// /v1/core/export-secret-supplements/{request}`) from stdin, opens its
+    /// sealed copy here and restores its secret. Prints what the import did.
+    ImportSupplement(Box<SecretImportSupplementArgs>),
+    /// Read one export secret supplement on this stopped vault, by its
+    /// request's entry: the same supplement `GET
+    /// /v1/core/export-secret-supplements/{request}` returns. Prints the
+    /// read. Reads nothing from stdin.
+    ShowSupplement(Box<SecretShowSupplementArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).
@@ -628,6 +645,68 @@ pub struct SecretAnchorSignArgs {
     /// An install the value is sealed to, as 32 hex. Repeat for more.
     #[arg(long = "recipient", value_name = "MACHINE", required = true)]
     pub recipients: Vec<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// Remove an installed pack from a stopped vault.
+#[derive(Subcommand, Clone, Debug)]
+pub enum PacksCommand {
+    /// Remove an installed pack: its receipt leaves the Active catalog and
+    /// every hook binding of it stops. Reads nothing from stdin.
+    Remove(Box<PackRemoveArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct PackRemoveArgs {
+    /// The installed pack's name.
+    pub pack: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// An agent's subscriptions to a built-in channel's messages.
+#[derive(Subcommand, Clone, Debug)]
+pub enum SubscriptionsCommand {
+    /// Subscribe the agent to the messages the channel routes to it.
+    Put(Box<SubscriptionPutArgs>),
+    /// The agent's subscriptions, standing and revoked.
+    List(Box<SubscriptionListArgs>),
+    /// Stop a subscription: it wakes nothing more. Reads nothing from stdin.
+    Revoke(Box<SubscriptionRevokeArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionPutArgs {
+    /// The agent that answers, as 32 hex.
+    #[arg(long)]
+    pub agent: String,
+
+    /// `slack` or `line`.
+    #[arg(long)]
+    pub channel: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionListArgs {
+    /// The agent whose subscriptions to show, as 32 hex.
+    #[arg(long)]
+    pub agent: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SubscriptionRevokeArgs {
+    /// The subscription to stop, as 32 hex.
+    #[arg(long)]
+    pub subscription: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

@@ -17,7 +17,6 @@ use super::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
     machine_claim_transition_transcript,
 };
-use crate::authority::{AuthorityKey, ROLE_OWNER};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::history_projection::{
     machine_history_for_restriction, machine_history_rows, pin_key, project_machine_claim,
@@ -36,6 +35,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;
 use crate::{EntityId, TimeRange, VaultConfig};
+use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 
 fn incomplete() -> Error {
     Error::Claim(ClaimError::MachineClaimHistoryIncomplete)
@@ -192,7 +192,10 @@ pub(crate) fn stage_machine_claim_transition(
         | ClaimTransitionKind::SupersedeClose
         | ClaimTransitionKind::Decay
         | ClaimTransitionKind::Weaken
-        | ClaimTransitionKind::Stale => machine_history_for_restriction(store, txn, &fold, target)?,
+        | ClaimTransitionKind::Stale
+        | ClaimTransitionKind::ConfirmLapse => {
+            machine_history_for_restriction(store, txn, &fold, target)?
+        }
     };
     let prior_tips: Vec<_> = if before.frontier.is_empty() {
         vec![rows.birth.digest]
@@ -330,6 +333,7 @@ pub(crate) fn stage_machine_claim_transition(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&control)?,
             allow_maintenance: false,
             allow_reserved_predicate: true,
@@ -340,7 +344,7 @@ pub(crate) fn stage_machine_claim_transition(
             kind: EdgeKind::FacetOf,
             tgt: original.scope_facet,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
     crate::batch::apply_ops_with_gate_mode(

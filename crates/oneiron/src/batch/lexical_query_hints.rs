@@ -6,19 +6,20 @@ use std::str;
 use heed::RwTxn;
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::affect::Vad;
-use crate::claim::ClaimSubject;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
-use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::claim_body::ClaimSubject;
+use crate::write_envelope::task_body::TaskRole;
+use oneiron_contracts::affect::Vad;
 
 /// Which builder a raw put arrived through.
 ///
@@ -51,6 +52,13 @@ pub(super) enum RawPutDoor {
     /// and the crate's internal one — and the witness program writes its rows
     /// through `batch_in()` like every other engine door.
     WitnessMessage,
+    /// The FIX 7777 archive MESSAGE door
+    /// ([`super::BatchBuilder::put_archived_message`]).
+    ///
+    /// Reachable only by presenting a `memory::ArchivedMessageAdmission`,
+    /// whose sole constructor proves the body a canonical envelope an import
+    /// marked: a capability, like the witness arm, never a caller's flag.
+    ArchivedMessage,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
@@ -68,19 +76,17 @@ pub(super) fn validate_public_raw_put(
 ) -> Result<()> {
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            let body = crate::claim::validate_claim_body_and_decode(data, false)?;
+            // The actual write transaction validates the class descriptor;
+            // this builder-only preflight reads the envelope's source/predicate.
+            let body = crate::claim::decode_claim_body(data, false)?;
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
-            // The family refusal reaches the raw CLAIM door too, and it has to
-            // be its own check rather than a consequence of the two above.
-            // `validate_claim_body_and_decode` shape-validates this family —
-            // subject kind and value vocabulary — without requiring a source,
-            // and the envelope rule only rejects a source that IS present. So
-            // a structurally valid SOURCE-LESS expression preference passed
-            // both and reached the write path, which is the forked chain
-            // F90, F97 and F108 closed on every other door.
-            if crate::claim::is_expression_preference_predicate(&body.predicate) {
+            // The source rule alone does not refuse a source-less expression
+            // preference. Its lifecycle still belongs to the typed door.
+            if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+                &body.predicate,
+            ) {
                 return Err(Error::InvalidClaimBody(
                     "expression preference lifecycle is owned by set_expression_preference",
                 ));
@@ -110,13 +116,22 @@ pub(super) fn validate_public_raw_put(
         // `Vault::batch_in()` — because a second engine-tier door disagreeing
         // about the same body is not a seam, it is a hole. The witness door
         // says so by name, with the ceiling's own proof in hand.
-        crate::registry::ENTITY_TYPE_MESSAGE if door != RawPutDoor::WitnessMessage => {
+        crate::registry::ENTITY_TYPE_MESSAGE
+            if !matches!(
+                door,
+                RawPutDoor::WitnessMessage | RawPutDoor::ArchivedMessage
+            ) =>
+        {
             return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             )));
         }
-        ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
+        ENTITY_TYPE_SKILL => {
+            crate::write_envelope::skill_record::validate_skill_record_bytes(data)?
+        }
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::validate_agent_definition_bytes(data)?
+        }
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only
         // replicated door deliberately does NOT run this check — it accepts a
@@ -124,7 +139,7 @@ pub(super) fn validate_public_raw_put(
         // inbound counters from the local reducer, so a peer cannot mint a
         // streak either.
         ENTITY_TYPE_TASK => {
-            crate::habit::reject_public_streak_fields(data)?;
+            crate::write_envelope::task_body::reject_public_streak_fields(data)?;
             // Coherence the DECODER already demands: a terminal claiming
             // `countered` names its counter, and one naming a counter claims
             // it. Held here as well as there, because a body that fails only
@@ -133,7 +148,7 @@ pub(super) fn validate_public_raw_put(
             // wrong. Both doors run it: an engine settle body is coherent by
             // construction, so this costs the internal path nothing and
             // closes the raw path completely.
-            crate::task_verb::reject_incoherent_task_terminal(data)?;
+            crate::store::task_body_checks::reject_incoherent_task_terminal(data)?;
             // A deadline already past is a task born expired, and the facade
             // refuses one. The PUBLIC raw door joins that invariant, against
             // the same clock the row is stamped with — the facade compares
@@ -147,7 +162,9 @@ pub(super) fn validate_public_raw_put(
             // invariant, and the board derives `Expired`, which is the truth
             // about that row.
             if door == RawPutDoor::Public {
-                crate::task_verb::reject_born_expired_task_deadline(data, learned_at)?;
+                crate::store::task_body_checks::reject_born_expired_task_deadline(
+                    data, learned_at,
+                )?;
             }
         }
         _ => {}
@@ -156,7 +173,10 @@ pub(super) fn validate_public_raw_put(
 }
 
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
-    let body = crate::note::decode_note_body_using(data, crate::note::NoteKind::wire)?;
+    let body = crate::store::note_body::decode_note_body_using(
+        data,
+        crate::store::note_body::NoteKind::wire,
+    )?;
     if !body.author_ref.is(*author) {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",
@@ -166,7 +186,7 @@ pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Res
 }
 
 pub(super) fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
-    match crate::habit::task_role_from_body_bytes(data)? {
+    match crate::write_envelope::task_body::task_role_from_body_bytes(data)? {
         TaskRole::HabitCheckin => Ok(()),
         _ => Err(Error::Record(RecordError::InvalidTaskBody(
             "habit check-in writes require HabitCheckin role",
@@ -174,12 +194,17 @@ pub(super) fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
     }
 }
 
-pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimBody) -> bool {
+pub(super) fn is_legacy_raw_claim_compatibility_body(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+) -> bool {
     // Code-revision integrity uses legacy raw CLAIM records as provenance anchors.
     body.predicate == "code.revision"
-        && matches!(body.subject, crate::claim::ClaimSubject::Entity(_))
-        && body.approval == crate::claim::ClaimApprovalStatus::Auto
-        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+        && matches!(
+            body.subject,
+            crate::write_envelope::claim_body::ClaimSubject::Entity(_)
+        )
+        && body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Auto
+        && body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
 }
 
 /// Refuses a candidate whose predicate belongs to a family that owns its own
@@ -197,7 +222,9 @@ pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimB
 /// PUBLIC builder doors, where an outside caller reaches the candidate path,
 /// and on the crate-private candidate put that the code-run traps reach.
 pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Result<()> {
-    if crate::claim::is_expression_preference_predicate(candidate.predicate()) {
+    if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+        candidate.predicate(),
+    ) {
         return Err(Error::InvalidClaimBody(
             "expression preference lifecycle is owned by set_expression_preference",
         ));
@@ -224,15 +251,18 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
     {
         *validation_error = Some(err);
     }
-    let normalized_hints = match crate::claim::normalize_lexical_query_hints(hints) {
-        Ok(hints) => hints,
-        Err(err) => {
-            if validation_error.is_none() {
-                *validation_error = Some(err);
+    let normalized_hints =
+        match crate::write_envelope::claim_body::lexical_query_hint::normalize_lexical_query_hints(
+            hints,
+        ) {
+            Ok(hints) => hints,
+            Err(err) => {
+                if validation_error.is_none() {
+                    *validation_error = Some(err);
+                }
+                Vec::new()
             }
-            Vec::new()
-        }
-    };
+        };
     // A machine signature binds the parent's transcript, not a derived stale
     // hint CLAIM's. Signed machine claims still land; their hints stay empty.
     let normalized_hints = if envelope.machine_signature().is_some() {
@@ -263,9 +293,11 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
         };
         hint_ids.push(hint_id);
         let hint_candidate = ClaimCandidate::new(
-            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT,
             ClaimSubject::Entity(*id),
-            crate::claim::encode_lexical_query_hint_value(id, &hint),
+            crate::write_envelope::claim_body::lexical_query_hint::encode_lexical_query_hint_value(
+                id, &hint,
+            ),
             1.0,
         )
         .with_stale(true);
@@ -304,7 +336,9 @@ pub(super) fn lexical_query_hint_claim_id(
     material.extend_from_slice(hint.as_bytes());
 
     let mut bytes = xxh3_128(&material).to_le_bytes();
-    bytes[..2].copy_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
+    bytes[..2].copy_from_slice(
+        &crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX,
+    );
     bytes[ENTITY_ID_LEN - 1] &= 0x7F;
     EntityId::from_bytes(bytes)
         .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
@@ -318,18 +352,23 @@ pub(super) fn lexical_query_hint_for_replayed_put(
 ) -> Result<Option<(EntityId, String)>> {
     if !replicated
         || entity_type != crate::registry::ENTITY_TYPE_CLAIM
-        || !id
-            .as_bytes()
-            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        || !id.as_bytes().starts_with(
+            &crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX,
+        )
     {
         return Ok(None);
     }
-    let body = crate::claim::decode_claim_body(data, true)?;
-    if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+    let body = crate::write_envelope::claim_body::decode_claim_body(data, true)?;
+    if body.predicate
+        != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+    {
         return Ok(None);
     }
-    crate::claim::lexical_query_hint_target(&body)?;
-    let hint = crate::claim::decode_lexical_query_hint_value(&body.value)?;
+    crate::write_envelope::claim_body::lexical_query_hint::lexical_query_hint_target(&body)?;
+    let hint =
+        crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(
+            &body.value,
+        )?;
     Ok(Some((hint.target, hint.query)))
 }
 
@@ -341,8 +380,9 @@ pub(super) fn lexical_query_hint_target_is_ready(
     let Some(body) = stored_claim_body(store, wtxn, target)? else {
         return Ok(false);
     };
-    Ok(body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT
-        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+    Ok(body.predicate
+        != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+        && body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active)
 }
 
 pub(super) struct LexicalHintTextIndexing<'a> {
@@ -392,7 +432,7 @@ pub(super) fn materialize_lexical_query_hint_text_if_target_ready(
             )?;
             *text_indexing.manifest_checked = true;
         }
-        crate::bm25::index_text(
+        crate::store::text_index::index_text(
             store,
             wtxn,
             text_indexing.analyzer,
@@ -414,7 +454,10 @@ pub(super) fn materialize_lexical_query_hints_for_target(
         let Some(body) = stored_claim_body(store, wtxn, &hint_id)? else {
             continue;
         };
-        let hint = crate::claim::decode_lexical_query_hint_value(&body.value)?;
+        let hint =
+            crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(
+                &body.value,
+            )?;
         if materialize_lexical_query_hint_text_if_target_ready(
             store,
             wtxn,
@@ -437,11 +480,12 @@ pub(super) struct DeletedLexicalQueryHints {
 }
 
 pub(super) fn delete_lexical_query_hint_claims_for_target(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     keep: &HashSet<EntityId>,
 ) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
     let mut result = DeletedLexicalQueryHints::default();
     let mut pending_targets = VecDeque::from([*target]);
     let mut visited_targets = HashSet::new();
@@ -458,7 +502,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
                 continue;
             }
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                deindex_entity_without_lexical_query_hint_cascade(store, wtxn, &hint_id)?;
+                deindex_entity_without_lexical_query_hint_cascade(write, wtxn, &hint_id)?;
             if existed {
                 pending_targets.push_back(hint_id);
                 result.deleted.push((hint_id, neighbors));
@@ -499,11 +543,15 @@ pub(super) fn lexical_query_hint_claim_ids_for_target(
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             continue;
         }
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
             continue;
         };
-        if body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+        if body.predicate
+            == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+        {
             hint_ids.push(source);
         }
     }
@@ -527,7 +575,7 @@ pub(crate) fn legacy_lexical_query_hint_claim_ids_for_target(
 ) -> Result<Vec<EntityId>> {
     let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
     let mut candidates = Vec::new();
-    let hint = crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX;
+    let hint = crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX;
     // The type stream resumes after an id: the largest id below the hint
     // prefix starts it at the first hint, and the first id past them ends it.
     let mut floor = [u8::MAX; ENTITY_ID_LEN];
@@ -554,10 +602,14 @@ pub(crate) fn legacy_lexical_query_hint_claim_ids_for_target(
         let Some(body) = stored_claim_body(store, wtxn, &candidate)? else {
             continue;
         };
-        if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+        if body.predicate
+            != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+        {
             continue;
         }
-        let Ok(Some(hint_target)) = crate::claim::lexical_query_hint_target(&body) else {
+        let Ok(Some(hint_target)) =
+            crate::write_envelope::claim_body::lexical_query_hint::lexical_query_hint_target(&body)
+        else {
             continue;
         };
         if hint_target == *target {
@@ -575,7 +627,8 @@ pub(super) fn stored_entity_is_lexical_query_hint_claim(
     let Some(body) = stored_claim_body(store, wtxn, id)? else {
         return Ok(false);
     };
-    Ok(body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT)
+    Ok(body.predicate
+        == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT)
 }
 
 pub(super) fn stored_entity_is_claim_type(
@@ -596,7 +649,7 @@ pub(super) fn stored_claim_body(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<Option<crate::claim::ClaimBody>> {
+) -> Result<Option<crate::write_envelope::claim_body::ClaimBody>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(None);
     };
@@ -606,7 +659,10 @@ pub(super) fn stored_claim_body(
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+    let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    ) else {
         return Ok(None);
     };
     Ok(Some(body))

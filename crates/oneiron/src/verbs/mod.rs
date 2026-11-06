@@ -5,6 +5,7 @@ mod agents;
 mod anonymous_chat;
 mod asr;
 mod authority_history;
+mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
@@ -29,6 +30,7 @@ mod eval_cohort;
 mod explain;
 mod fanout_launch;
 mod federation;
+#[cfg(feature = "sync")]
 mod federation_burst;
 mod feedback;
 mod files;
@@ -50,6 +52,7 @@ mod note_history;
 mod off_record;
 mod off_record_rooms;
 mod off_record_runs;
+mod outbound_call_erase;
 mod outbox_diverged;
 mod pack_preview;
 mod persona;
@@ -77,10 +80,13 @@ mod shared_policy;
 mod skill_attribution;
 mod skill_defaults;
 mod skill_execution;
+mod skill_fit;
 mod skill_fork;
 mod skills;
 mod standing;
 mod support_grant;
+#[cfg(feature = "sync")]
+mod sync_quarantine;
 mod trusted_contact;
 mod voice_bank;
 mod weave;
@@ -102,54 +108,7 @@ pub struct TaskCanAskRequest {
     pub ask: crate::task_verb::TaskAskSpec,
 }
 
-/// One SDK verb with two disjoint wire shapes. Rich fields cannot be
-/// reinterpreted as first-answer shorthand after Serde drops field presence.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum TaskAskRequest {
-    Rich(Box<TaskAskSpec>),
-    Short(Box<TaskAskShort>),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskShort {
-    #[serde(default)]
-    pub who: Option<TaskAskTarget>,
-    pub what: TaskAskQuestion,
-    #[serde(default)]
-    pub until: Option<u64>,
-    #[serde(default)]
-    pub default: TaskAskDefault,
-}
-
-impl TaskAskRequest {
-    /// The ask spec this request names: a short call's retry key is derived
-    /// from exactly what it requested.
-    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
-        match self {
-            Self::Rich(spec) => Ok(*spec),
-            Self::Short(short) => {
-                // The key names the *requested* short call, never a cutoff
-                // derived from the current clock or the resolved electorate.
-                let bytes =
-                    rmp_serde::to_vec_named(&(&short.who, &short.what, short.until, short.default))
-                        .map_err(|_| MemoryError::bad_request("short ask encoding"))?;
-                let mut spec =
-                    TaskAskSpec::shorthand(short.who, short.what, short.until, short.default);
-                spec.intent_key = format!("short/v1/{}", blake3::hash(&bytes).to_hex());
-                Ok(spec)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskWaitRequest {
-    pub handle: TaskAskHandle,
-    pub step_key: String,
-}
+pub use crate::task_verb::{TaskAskRequest, TaskAskShort, TaskWaitRequest};
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
@@ -294,26 +253,7 @@ pub struct WorkCompanionSetRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
-/// `tasks.update`: a typed report on a TASK (progress, blocked work, a
-/// durable result, a failure, a release or a brief revision) through the
-/// task highway under the caller's `report_key`, fenced by the `attempt` an
-/// accept returned when the caller holds one; without a report, the owner's
-/// acknowledgement of a failed TASK. `resultRef` is reserved for a code
-/// run's reader child: it names the finding one of that run's results
-/// holds, which only the run resolves, so a host door refuses it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskUpdateRequest {
-    pub task_ref: String,
-    #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
-    pub result_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report: Option<crate::task_verb::TaskReportBody>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attempt: Option<crate::task_verb::AttemptHandle>,
-}
+pub use crate::task_verb::TaskUpdateRequest;
 /// `vault.projects.proposals`: the conversation whose project cards to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -462,6 +402,11 @@ pub struct BoardWakeRequest {}
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeReply {
     pub wakes: Vec<crate::context_board::WakeEnvelope>,
+    /// The wake opener the woken session appends after its own log, rendered
+    /// at this delivery and never stored with a wake (FIX 15011). Absent when
+    /// no wake is delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
@@ -476,88 +421,9 @@ pub struct RoomEntry {
     pub id: String,
     pub room: crate::workspace_roster::ProjectRoom,
 }
-/// `vault.recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
-///
-/// Every field but `query` is optional and defaults to the contract's default,
-/// so an omitting client and a spelling-everything client reach the same
-/// engine call.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RecallRequest {
-    pub query: String,
-    /// One of the five effort levels, or `call`: call mode for live calls,
-    /// light effort under a hard deadline. Omitted means `medium`.
-    #[serde(default)]
-    pub effort: Option<crate::memory::RecallEffort>,
-    #[serde(default)]
-    pub scope: Option<crate::memory::RecallScope>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub format: Option<String>,
-    /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
-    /// Omitted, the window budget of `reader_agent_ref`'s memory profile,
-    /// else 4,000.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_budget: Option<u64>,
-    /// An agent definition the caller reads whose memory profile sizes the
-    /// rendering when `token_budget` is omitted. It grants no read, and one
-    /// the caller cannot read adds no budget.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reader_agent_ref: Option<String>,
-    /// Unix seconds the query's time words resolve against: `yesterday` is
-    /// the day before it. Omitted, they resolve against now.
-    #[serde(default)]
-    pub as_of: Option<u64>,
-    /// A hard deadline, in milliseconds from when the request arrives,
-    /// 1 to 60000: at it, recall answers with the best results ready, marked
-    /// `partial`. Omitted, recall runs to the end, except call mode, which
-    /// takes the vault's call-mode deadline.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deadline_ms: Option<u64>,
-    /// A media query (OF-370): bytes the host embeds into one declared space
-    /// through the `ai.embed` rung that space's id names, searched as that
-    /// space's list beside the query's. A host that serves no such rung
-    /// refuses the recall with `MODEL_UNAVAILABLE`; it never recalls without
-    /// the media.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub media: Option<crate::code_run::vault_read::ContextPackMediaQuery>,
-    /// The affect the query is asked in (OF-423), as the context pack takes
-    /// it: emotion congruence ranks a candidate by how near its own valence,
-    /// arousal and dominance sit. Omitted, recall ranks as before.
-    #[serde(
-        default,
-        alias = "queryAffect",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub query_affect: Option<QueryAffect>,
-    /// Local diagnostics only. Capture stays opt-in at vault configuration;
-    /// the request can add stage detail and the host's exact turn identity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry: Option<RecallTelemetry>,
-}
+pub use crate::memory::RecallRequest;
 
-/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct QueryAffect {
-    pub valence: f32,
-    pub arousal: f32,
-    pub dominance: f32,
-}
-
-impl QueryAffect {
-    /// The affect as the engine takes it, refused out of range.
-    pub fn vad(self) -> MemoryResult<crate::affect::Vad> {
-        let vad = crate::affect::Vad {
-            valence: self.valence,
-            arousal: self.arousal,
-            dominance: self.dominance,
-        };
-        vad.validate()
-            .map_err(|error| MemoryError::bad_request(format!("query_affect: {error}")))?;
-        Ok(vad)
-    }
-}
+pub use crate::memory::affect::QueryAffect;
 
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
@@ -565,6 +431,7 @@ pub use self::agents::*;
 pub use self::anonymous_chat::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
+pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
@@ -591,6 +458,7 @@ pub use self::eval_cohort::*;
 pub use self::explain::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
+#[cfg(feature = "sync")]
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
@@ -612,6 +480,7 @@ pub use self::note_history::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
+pub use self::outbound_call_erase::*;
 pub use self::outbox_diverged::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
@@ -639,9 +508,12 @@ pub use self::shared_policy::*;
 pub use self::skill_attribution::*;
 pub use self::skill_defaults::*;
 pub use self::skill_execution::*;
+pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
 pub use self::support_grant::*;
+#[cfg(feature = "sync")]
+pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;
@@ -649,7 +521,11 @@ pub use self::web_connector::*;
 pub use self::wire_health::*;
 pub use self::workflows::*;
 pub use self::workspace::*;
-pub use crate::task_verb::fanout_batch::*;
+pub use crate::task_verb::fanout_batch::{
+    FanoutBatchInput, FanoutBatchView, FanoutChildInput, FanoutChildSlot, FanoutLeaseView,
+    FanoutSharedAccounting, FanoutSlotAttempt, FanoutSlotState, FanoutSlotTerminal,
+    fanout_batch_rows,
+};
 pub use crate::task_verb::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
@@ -1165,3 +1041,5 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
+
+pub mod voice_records;

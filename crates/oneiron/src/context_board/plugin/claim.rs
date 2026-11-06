@@ -12,10 +12,10 @@ use super::validate::validate_manifest_for_proposal;
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::skill_hub::{HubPin, HubRef};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::skill_source::{HubPin, HubRef};
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 use std::sync::atomic::Ordering;
@@ -23,10 +23,7 @@ use std::sync::atomic::Ordering;
 /// Pinned schema version of the install claim's typed payload.
 pub const PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION: u16 = 1;
 
-/// The one claim predicate an owner consents to for a plugin section install.
-/// One Proposed claim under this predicate covers install PLUS section
-/// admission; no second approval object and no new gate consent kind exist.
-pub const PREDICATE_PLUGIN_SECTION_INSTALL: &str = "plugin.section_install";
+pub use crate::store::plugin_section_predicate::PREDICATE_PLUGIN_SECTION_INSTALL;
 
 // ---------------------------------------------------------------------------
 // §3 — the claim payload

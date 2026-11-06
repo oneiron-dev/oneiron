@@ -130,15 +130,36 @@ pub(super) fn fold_as_install(
 
 /// A once fold as this install reads it: its stale-roster window, and the
 /// pin while the fold holds its root (the pinned anchor signed that id here).
-pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
+pub(super) fn install_view<E: super::stale_roster::LogRow>(
     entries: &[E],
     once: AuthorityFold,
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    first_seen_at_secs: &dyn super::stale_roster::FirstSeenMap,
     now_secs: Option<u64>,
     stale_roster_window_secs: u64,
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
-    let mut fold = apply_stale_roster_window(
+    install_view_expiring(
+        entries,
+        once,
+        first_seen_at_secs,
+        now_secs,
+        stale_roster_window_secs,
+        pin,
+    )
+    .0
+}
+
+/// [`install_view`], and the approvals its stale-roster window expired: the
+/// valid entries of `once` the view does not hold.
+pub(super) fn install_view_expiring<E: super::stale_roster::LogRow>(
+    entries: &[E],
+    once: AuthorityFold,
+    first_seen_at_secs: &dyn super::stale_roster::FirstSeenMap,
+    now_secs: Option<u64>,
+    stale_roster_window_secs: u64,
+    pin: Option<&PinnedRoot>,
+) -> (AuthorityFold, BTreeSet<AuthorityEntryHash>) {
+    let (mut fold, expired) = apply_stale_roster_window(
         entries,
         once,
         first_seen_at_secs,
@@ -150,7 +171,7 @@ pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
             .get(&pin.anchor_key)
             .is_some_and(|ids| ids.contains(&pin.id))
     });
-    fold
+    (fold, expired)
 }
 
 /// The machines whose roster chain is stale here, or left with no settled
@@ -498,6 +519,18 @@ impl NoVouch {
             &self.fold.grant_travel,
             &fresh_grants,
         );
+        // FIX 4633: report-only vouch-only owner-work hashes. Diagnostic
+        // only: this never touches `held_back`, counts, or execution.
+        if super::owner_work_diagnostics::OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY {
+            let mut vouch_only = BTreeSet::new();
+            for hash in fold.counted_owner_work_request_hashes() {
+                if self.fold.counted_owner_work_request(&hash).is_none() && !self.fresh(fold, &hash)
+                {
+                    vouch_only.insert(hash);
+                }
+            }
+            fold.install.vouch_only_owner_work = Some(vouch_only);
+        }
     }
 }
 
@@ -544,6 +577,14 @@ pub(super) fn held_back(
         &mut held_back,
     );
     super::owner_choice::held_owner_choices(state, &state.home_pick, pin, counted, &mut held_back);
+    super::owner_choice::held_owner_choices(state, &state.origin_cut, pin, counted, &mut held_back);
+    super::owner_choice::held_owner_choices(
+        state,
+        &state.device_succession,
+        pin,
+        counted,
+        &mut held_back,
+    );
     super::owner_choice::held_owner_choices(
         state,
         &state.conversation_training_vault,
@@ -569,5 +610,6 @@ pub(super) fn held_back(
     InstallBound {
         held_back,
         no_vouch_deadline: None,
+        vouch_only_owner_work: None,
     }
 }

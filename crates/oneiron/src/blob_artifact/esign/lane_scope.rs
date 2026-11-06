@@ -22,10 +22,12 @@ use super::ledger::{restrictive_state_in, state_in};
 use super::model::{EsignDocument, invalid};
 use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::federation::Scope;
-use crate::memory::{Memory, MemoryResult};
+use crate::claim::ScopedRead;
+use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::{EntityId, Result, Vault};
+use oneiron_authority::federation::Scope;
+use oneiron_contracts::memory::MemoryResult;
 
 /// Where one e-sign call is judged.
 pub(super) enum EsignScope<'a> {

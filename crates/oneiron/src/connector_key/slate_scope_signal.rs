@@ -22,11 +22,13 @@ use serde::{Deserialize, Serialize};
 use super::record::{ConnectorKeyStatus, invalid_body};
 use super::txn::read_connector_key_in_txn;
 use crate::consent::AuthenticatedOwner;
+use crate::consent::tool_scope::DataClass;
+use crate::consent::tool_scope::ScopedMcpCallContext;
+use crate::consent::tool_scope::ScopedMcpEscalationReason;
+use crate::consent::tool_scope::ToolGrantDataClass;
 use crate::consent_graduation::RampScope;
 use crate::error::{Error, Result};
 use crate::identity_topology::ProposalOutcome;
-use crate::outbound_consent::tool_call::ToolGrantDataClass;
-use crate::outbound_consent::{DataClass, ScopedMcpCallContext, ScopedMcpEscalationReason};
 use crate::outbound_grant::{StandingOutboundGrant, standing_outbound_grant_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -426,7 +428,8 @@ impl Vault {
     /// and ED-05 does not hold it, the writer drafts the proposed delta
     /// slate, or reuses its scope's standing one: nothing is stamped,
     /// granted or widened. A send, a minted grant or a notification answer
-    /// is never a ruling here.
+    /// is never a ruling here. The link holds one of the signal's asks: the
+    /// pinned digest of the held call's ask (FIX 9306, restricts security).
     pub fn record_connector_scope_outcome(
         &self,
         owner: &AuthenticatedOwner,

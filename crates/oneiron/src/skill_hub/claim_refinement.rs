@@ -8,7 +8,8 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{package_codec::invalid, shared_gate::checked_useful_decision};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::model_decision::{AnswerContract, DecisionClass, DecisionQuestion, Reversibility};
+use crate::store::claim_refinement_control::RESERVE;
 use crate::{
     Vault,
     batch::{BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -22,20 +23,12 @@ use crate::{
     edge::EdgeActorClass,
     entity_id::EntityId,
     error::{Error, Result},
-    llm::decision::{
-        AnswerContract, DecisionClass, DecisionQuestion, Reversibility, TypedDecision,
-    },
+    llm::decision::TypedDecision,
     skill_optimize::held_out_receipt_set_digest,
-    store::Store,
     temporal::TimeRange,
     write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance},
 };
 use serde::{Deserialize, Serialize};
-
-/// Owner-adjudicated held-out claim labels (sorted, unique hex ids) reserved
-/// for one claim base.
-const RESERVE: SideTable<EntityId, Vec<String>, LegacyJson> =
-    SideTable::new(&side_table::SKILL_HUB_CLAIM_REFINEMENT_RESERVE);
 
 /// The edit stays under its session tag until independently admitted. IDs in
 /// this row are canonical hex, not an alternate authority for the claim body.
@@ -109,28 +102,6 @@ struct Snapshot {
     /// The reserved labels' bodies, as bound.
     labels: Vec<(EntityId, ClaimBody)>,
     binding: String,
-}
-
-/// The control row survives as an identifier-only erased fence. The native
-/// Proposed CLAIM owns all branch payload bytes; ASSET custody owns rulings.
-pub(crate) fn claim_refinement_scope_exists_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(
-        super::refinement_admission::refinement_control_scope_exists(store, txn, id)?
-            || RESERVE.contains(store, txn, id)?,
-    )
-}
-pub(crate) fn erase_claim_refinement_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    let had_control = super::refinement_admission::retire_refinement_control(store, txn, id)?;
-    let had_reserve = RESERVE.delete(store, txn, id)?;
-    Ok(had_control || had_reserve)
 }
 
 impl Vault {
@@ -447,6 +418,7 @@ impl Vault {
                             end: snapshot.delta.occurred_end,
                         },
                         learned_at: snapshot.delta.learned_at,
+                        row_version: None,
                         data,
                         allow_maintenance: false,
                         allow_reserved_predicate: false,

@@ -1,4 +1,7 @@
-//! Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters.
+//! Core half of `origin::lfs::chunks`: its store-layer items live in `oneiron_store::origin::lfs::chunks` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::origin::lfs::chunks::*;
 
 use super::store::VAULT_LFS_ASSET_ID_DOMAIN;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -7,16 +10,6 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
-
-/// Minimum FastCDC chunk size (the final chunk may be shorter).
-pub const LFS_CHUNK_MIN: usize = 32 * 1024;
-/// Target FastCDC chunk size.
-pub const LFS_CHUNK_AVG: usize = 64 * 1024;
-/// Maximum FastCDC chunk size.
-pub const LFS_CHUNK_MAX: usize = 128 * 1024;
-
-const MANIFEST_MAGIC: &[u8; 8] = b"LFSCDC01";
-pub(super) const CHUNK_DOMAIN: &[u8] = b"oneiron:origin-lfs-chunk:v1";
 
 /// Per-vault random FastCDC boundary-randomization seed (u64 LE). Key: ().
 const CDC_SEED: SideTable<(), [u8; 8], Raw> = SideTable::new(&side_table::ORIGIN_LFS_CDC_SEED);
@@ -35,32 +28,6 @@ pub(super) const CHUNK_REFS: SideTable<([u8; 32], EntityId), (), Raw> =
 /// owner id + chunk hash.
 pub(super) const OWNER_REFS: SideTable<(EntityId, [u8; 32]), (), Raw> =
     SideTable::new(&side_table::ORIGIN_LFS_OWNER_REF);
-
-/// Generates the nonzero vault-private seed for the store's creation transaction.
-/// The typed table cannot write until the vault's database manifest exists.
-pub(crate) fn random_lfs_chunk_seed() -> [u8; 8] {
-    let mut seed = OsRng.next_u64();
-    while seed == 0 {
-        seed = OsRng.next_u64();
-    }
-    seed.to_le_bytes()
-}
-
-/// Persisted vault-specific boundary randomization, never sent to another vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LfsChunkParameters {
-    /// Random gear-table seed. Boundaries remain stable within this vault.
-    pub seed: u64,
-}
-
-/// One ordered reference in a manifest. The id hashes the raw chunk bytes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LfsChunkRef {
-    /// BLAKE3 of the chunk body.
-    pub hash: [u8; 32],
-    /// Exact body length, never larger than 128 KiB.
-    pub size: u32,
-}
 
 /// A canonical content-addressed object manifest.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -116,7 +83,10 @@ impl LfsManifest {
 
     /// The ordinary ASSET that stores this manifest.
     pub fn asset_id(&self) -> Result<EntityId> {
-        crate::codebase::entity_id_from_hash_material(VAULT_LFS_ASSET_ID_DOMAIN, &[&self.hash()?])
+        crate::store::code_snapshot::entity_id_from_hash_material(
+            VAULT_LFS_ASSET_ID_DOMAIN,
+            &[&self.hash()?],
+        )
     }
 
     fn validate(&self) -> Result<()> {
@@ -176,17 +146,12 @@ impl Vault {
     }
 }
 
-pub(super) fn invalid(why: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidLfsObject(why))
-}
-pub(super) fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
-}
 /// The LFS store's own read of a manifest or chunk, a chunk of an object not
 /// yet published included. Only an ASSET passes, so no custody row does.
 pub(super) fn asset_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     asset_body_in_txn(vault, &vault.store.env.read_txn()?, id)
 }
+
 /// [`asset_body`] in the caller's transaction.
 pub(super) fn asset_body_in_txn(
     vault: &Vault,
@@ -203,9 +168,11 @@ pub(super) fn asset_body_in_txn(
     }
     Ok(raw[ENTITY_METADATA_HEADER_LEN..].to_vec())
 }
+
 pub(super) fn read_chunk(vault: &Vault, chunk: &LfsChunkRef) -> Result<Vec<u8>> {
     checked_chunk(chunk, asset_body(vault, &chunk_id(&chunk.hash)?)?)
 }
+
 /// [`read_chunk`] in the caller's transaction.
 pub(super) fn read_chunk_in_txn(
     vault: &Vault,
@@ -216,12 +183,6 @@ pub(super) fn read_chunk_in_txn(
         chunk,
         asset_body_in_txn(vault, txn, &chunk_id(&chunk.hash)?)?,
     )
-}
-fn checked_chunk(chunk: &LfsChunkRef, bytes: Vec<u8>) -> Result<Vec<u8>> {
-    if bytes.len() != chunk.size as usize || blake3::hash(&bytes).as_bytes() != &chunk.hash {
-        return Err(Error::CorruptedIndex("lfs chunk digest"));
-    }
-    Ok(bytes)
 }
 
 #[cfg(feature = "sync")]

@@ -9,8 +9,9 @@ use super::kernel::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::store::ChannelIdentityLifecycleReceiptRecord;
+use crate::store::EngineScan;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
@@ -65,6 +66,21 @@ pub(super) fn identity_topology_receipts(
         )? {
             continue;
         }
+        // The seal binds the stored record; the receipt shows the decision
+        // read whole (FIX 10188). A part, or a manifest still waiting on
+        // one, projects nothing.
+        let actor = record.actor;
+        let Some(mut record) =
+            crate::identity_topology::logical_identity_topology_event_for_store_in_txn(
+                &vault.store,
+                rtxn,
+                &event_id,
+                record,
+            )?
+        else {
+            continue;
+        };
+        record.actor = actor;
         // Per-kind dispatch: a resolution row NAMED by the fold as a
         // duplicate (the proposal already retired by an EARLIER ruling)
         // projects nothing — an outcome receipt for it would read as a
@@ -90,13 +106,27 @@ pub(super) fn identity_topology_receipts(
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);
             if fold.rejections.iter().any(|(rejected, reason)| {
                 *rejected == event_id && matches!(reason,
-                    crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
+                    oneiron_contracts::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
             }) {
                 continue;
             }
         }
         let receipt = if action_is_resolution {
-            proposal_outcome_receipt(&event_id, &record)
+            // The proposer's name is display only, from its carrier; the
+            // scope keeps the opaque handle (FIX 10189).
+            let proposer_ref = match &record.action {
+                crate::identity_topology::StoredIdentityOpAction::ProposalResolution {
+                    proposal,
+                    ..
+                } => crate::identity_topology::effective_author_in_txn(
+                    &vault.store,
+                    rtxn,
+                    *proposal,
+                )?
+                .map(|actor| actor.entity_ref()),
+                _ => None,
+            };
+            proposal_outcome_receipt(&event_id, &record, proposer_ref)
         } else {
             identity_topology_receipt(&event_id, &record)
         };
@@ -107,6 +137,11 @@ pub(super) fn identity_topology_receipts(
     count.finish(vault);
     Ok(receipts)
 }
+
+/// The current name of a resolved proposal's proposer, display only (FIX
+/// 10189): absent once erased or when carriers disagree. The scope's `actor`
+/// keeps the opaque handle the ramp groups by.
+const FIELD_PROPOSER_REF: &str = "proposer_ref";
 
 /// Projects the ARCH-0055 r7 proposal-outcome receipt from a resolution
 /// ledger event (ONE-1747).
@@ -123,6 +158,7 @@ pub(super) fn identity_topology_receipts(
 fn proposal_outcome_receipt(
     event_id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
+    proposer_ref: Option<EntityId>,
 ) -> ReceiptRecord {
     use crate::identity_topology::StoredIdentityOpAction;
 
@@ -142,6 +178,9 @@ fn proposal_outcome_receipt(
     fields.insert(FIELD_OP_KIND.to_owned(), scope.op_kind.to_owned());
     fields.insert(FIELD_TARGET_CLASS.to_owned(), scope.target_class.clone());
     fields.insert(FIELD_SCOPE_ACTOR.to_owned(), scope.actor.clone());
+    if let Some(proposer_ref) = proposer_ref {
+        fields.insert(FIELD_PROPOSER_REF.to_owned(), proposer_ref.to_hex());
+    }
     // NOT `source`: that key is one of the six ARCH-0056 Δ field names this
     // receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
     // The claim-source axis is real and unrelated, so it keeps its own
@@ -279,8 +318,10 @@ fn identity_topology_receipt(
         }
         StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => {
-            unreachable!("sidecars do not project as topology receipts")
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => {
+            unreachable!("sidecars and operation parts do not project as topology receipts")
         }
     };
 
@@ -375,7 +416,7 @@ fn channel_identity_lifecycle_receipt(
     }
 
     ReceiptRecord {
-        receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),
+        receipt_id: crate::store::lifecycle_receipt_ref(record.receipt_id),
         receipt_kind: ReceiptKind::IdentityLifecycle,
         occurred_at: record.created_at,
         actor: record

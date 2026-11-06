@@ -67,8 +67,11 @@ fn init_with_env(
         ask_tagger(&mut args, &mut input, &mut output)?;
     }
     // Asked once: only when this init creates the vault, and only on a
-    // terminal. Anything but a yes writes nothing, which reads as off.
+    // terminal. Anything but a yes writes nothing, which reads as off. An
+    // unfinished sealed creation is removed before that choice, so its
+    // replacement is a first creation too.
     let vault_dir = env.vault_path().unwrap_or(args.path.as_path());
+    oneiron::world_keys::remove_unfinished_sealed_creation(vault_dir)?;
     let learning = !vault_dir.join("data.mdb").exists()
         && input.is_terminal()
         && ask_learning(&mut input, &mut output)?;
@@ -118,16 +121,104 @@ fn init_with_env(
     Ok(())
 }
 
+/// The answers first-run model setup accepts over the owner route. Paths to
+/// the vault and config, map size, sealing and secret files stay server-owned;
+/// enum answers stay plain strings so the HTTP schema needs no config derives.
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ModelSetupAnswers {
+    pub(crate) embedder: Option<String>,
+    pub(crate) embedder_endpoint: Option<String>,
+    pub(crate) embedder_locality: Option<String>,
+    pub(crate) embedder_fallback_endpoint: Option<String>,
+    #[serde(default)]
+    pub(crate) embedder_egress_allow_all: bool,
+    #[serde(default)]
+    pub(crate) embedder_egress_allow: Vec<String>,
+    pub(crate) embedder_model_key: Option<String>,
+    pub(crate) embedder_model_id: Option<String>,
+    /// Environment variable NAME holding the key, never the key itself.
+    pub(crate) embedder_api_key_env: Option<String>,
+    pub(crate) dimensions: Option<usize>,
+    pub(crate) dict_search_paths: Option<Vec<PathBuf>>,
+    pub(crate) oneironer: Option<String>,
+    pub(crate) oneironer_url: Option<String>,
+    pub(crate) oneironer_checkpoint_sha16: Option<String>,
+    pub(crate) oneironer_label_count: Option<u32>,
+    pub(crate) oneironer_mode: Option<String>,
+    pub(crate) oneironer_model_dir: Option<PathBuf>,
+    pub(crate) oneironer_device: Option<String>,
+    pub(crate) oneironer_tier: Option<String>,
+}
+
+impl ModelSetupAnswers {
+    fn to_init_args(
+        &self,
+        current: &ServeConfig,
+        config_path: &Path,
+    ) -> Result<InitArgs, crate::owner::OwnerError> {
+        Ok(InitArgs {
+            path: current.vault_path.clone(),
+            config: Some(config_path.to_path_buf()),
+            embedder: parse_model_answer(self.embedder.as_ref(), "embedder")?,
+            embedder_endpoint: self.embedder_endpoint.clone(),
+            embedder_locality: parse_model_answer(
+                self.embedder_locality.as_ref(),
+                "embedder_locality",
+            )?,
+            embedder_fallback_endpoint: self.embedder_fallback_endpoint.clone(),
+            embedder_egress_allow_all: self.embedder_egress_allow_all,
+            embedder_egress_allow: self.embedder_egress_allow.clone(),
+            embedder_model_key: self.embedder_model_key.clone(),
+            embedder_model_id: self.embedder_model_id.clone(),
+            embedder_api_key_env: self.embedder_api_key_env.clone(),
+            dimensions: self.dimensions,
+            map_size: current.map_size,
+            dict_search_paths: self.dict_search_paths.clone(),
+            oneironer: parse_model_answer(self.oneironer.as_ref(), "oneironer")?,
+            oneironer_url: self.oneironer_url.clone(),
+            oneironer_checkpoint_sha16: self.oneironer_checkpoint_sha16.clone(),
+            oneironer_label_count: self.oneironer_label_count,
+            oneironer_mode: parse_model_answer(self.oneironer_mode.as_ref(), "oneironer_mode")?,
+            oneironer_model_dir: self.oneironer_model_dir.clone(),
+            oneironer_device: parse_model_answer(
+                self.oneironer_device.as_ref(),
+                "oneironer_device",
+            )?,
+            oneironer_tier: self.oneironer_tier.clone(),
+            maximum_tier: false,
+            secret_file: None,
+        })
+    }
+}
+
+fn parse_model_answer<T>(
+    value: Option<&String>,
+    field: &str,
+) -> Result<Option<T>, crate::owner::OwnerError>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| crate::owner::OwnerError::Invalid(format!("{field}: {error}")))
+        })
+        .transpose()
+}
+
 /// What first-run model setup configured: the config file it wrote, the
 /// embedder and the active tagger as serve will run them.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ModelSetupOutcome {
     pub(crate) config: PathBuf,
     pub(crate) embedder: Option<EmbedderOutcome>,
     pub(crate) tagger: Option<TaggerOutcome>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct EmbedderOutcome {
     pub(crate) provider: &'static str,
     pub(crate) model_id: String,
@@ -136,7 +227,7 @@ pub(crate) struct EmbedderOutcome {
     pub(crate) device: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct TaggerOutcome {
     pub(crate) provider: &'static str,
     pub(crate) mode: &'static str,
@@ -144,35 +235,95 @@ pub(crate) struct TaggerOutcome {
     pub(crate) engine: Option<TaggerEngine>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct TaggerEngine {
     pub(crate) id: String,
     pub(crate) pick: &'static str,
 }
 
-/// First-run model setup (ARCH-0036): the one operation every first-run
-/// door shares. `init` asks its questions on a terminal and hands the
-/// answers here; a caller with no terminal states them directly. The answers
-/// are init's typed flags (an embedder left unset is none). It writes the one
-/// config serve reads (`[embedder]`, `[oneironer]`, the vault keys), after
-/// validating exactly what serve will read, building the tagger and embedder
-/// slots serve builds and preparing a local embedder's model; then it opens
-/// the vault, creating it on a first run, and returns it with what it
-/// configured. It reads no terminal and prints nothing.
-pub(crate) fn setup_models(
+struct PreparedModelSetup {
+    staged: PathBuf,
+    config: ServeConfig,
+    tagger_slot: Option<crate::oneironer::TaggerSlot>,
+    device: String,
+}
+
+impl PreparedModelSetup {
+    fn outcome(&self, path: &Path) -> ModelSetupOutcome {
+        ModelSetupOutcome {
+            config: path.to_path_buf(),
+            embedder: self
+                .config
+                .embedder
+                .as_ref()
+                .map(|embedder| EmbedderOutcome {
+                    provider: embedder.provider.as_str(),
+                    model_id: embedder.model_id.clone(),
+                    dimensions: embedder.dimensions,
+                    device: self.device.clone(),
+                }),
+            tagger: self
+                .config
+                .oneironer
+                .as_ref()
+                .filter(|tagger| tagger.is_active())
+                .map(|tagger| TaggerOutcome {
+                    provider: tagger.provider.as_str(),
+                    mode: tagger.mode.as_str(),
+                    engine: self
+                        .tagger_slot
+                        .as_ref()
+                        .and_then(|slot| slot.serving())
+                        .map(|serving| TaggerEngine {
+                            id: serving.engine.id(),
+                            pick: serving.pick.as_str(),
+                        }),
+                }),
+        }
+    }
+}
+
+impl Drop for PreparedModelSetup {
+    fn drop(&mut self) {
+        if self.staged.exists() {
+            let _ = std::fs::remove_file(&self.staged);
+        }
+    }
+}
+
+/// Stages and validates the one config, without opening a vault or renaming.
+fn prepare_model_setup(
     answers: &InitArgs,
     path: &Path,
     env: EnvConfig,
-) -> anyhow::Result<(oneiron::Vault, ModelSetupOutcome)> {
+    startup_args: Option<&ServeArgs>,
+) -> anyhow::Result<PreparedModelSetup> {
     let choice = answers.embedder.unwrap_or(EmbedderProvider::None);
     let config_text = config_text(answers, choice, path)?;
-    // Validate exactly what serve will read before downloading or creating a vault.
     let staged = stage_config(path, &config_text)?;
     let result = (|| {
-        let config = read_config(&staged, env)?;
-        // The slot serve builds, validated only: a local bundle loads on its
-        // engine, and a reachable tagger must be the configured one, without
-        // starting a worker thread or its warm-up call.
+        let config = match startup_args {
+            Some(startup_args) => read_config_with_args(&staged, env, startup_args)?,
+            None => read_config(&staged, env)?,
+        };
+        if startup_args.is_some() {
+            anyhow::ensure!(
+                config
+                    .embedder
+                    .as_ref()
+                    .map_or(EmbedderProvider::None, |embedder| embedder.provider)
+                    == choice,
+                "startup settings override the requested embedder provider; update those settings before setup"
+            );
+            anyhow::ensure!(
+                config
+                    .oneironer
+                    .as_ref()
+                    .map_or(OneironerProvider::None, |tagger| tagger.provider)
+                    == answers.oneironer.unwrap_or(OneironerProvider::None),
+                "startup settings override the requested tagger provider; update those settings before setup"
+            );
+        }
         // Checked first, so a refusal comes before the local model download.
         let tagger_slot = crate::oneironer::build_slot_for_validation(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
@@ -196,38 +347,151 @@ pub(crate) fn setup_models(
             }
             None => "none".to_owned(),
         };
-        let vault = open_vault(answers, &config)?;
-        std::fs::rename(&staged, path)?;
-        let outcome = ModelSetupOutcome {
-            config: path.to_path_buf(),
-            embedder: config.embedder.as_ref().map(|embedder| EmbedderOutcome {
-                provider: embedder.provider.as_str(),
-                model_id: embedder.model_id.clone(),
-                dimensions: embedder.dimensions,
-                device,
-            }),
-            tagger: config
-                .oneironer
-                .as_ref()
-                .filter(|tagger| tagger.is_active())
-                .map(|tagger| TaggerOutcome {
-                    provider: tagger.provider.as_str(),
-                    mode: tagger.mode.as_str(),
-                    engine: tagger_slot
-                        .as_ref()
-                        .and_then(|slot| slot.serving())
-                        .map(|serving| TaggerEngine {
-                            id: serving.engine.id(),
-                            pick: serving.pick.as_str(),
-                        }),
-                }),
-        };
-        Ok((vault, outcome))
+        Ok(PreparedModelSetup {
+            staged: staged.clone(),
+            config,
+            tagger_slot,
+            device,
+        })
     })();
-    if staged.exists() {
-        let _ = std::fs::remove_file(staged);
+    if result.is_err() && staged.exists() {
+        let _ = std::fs::remove_file(&staged);
     }
     result
+}
+
+/// First-run model setup (ARCH-0036): the one operation every first-run
+/// door shares. `init` asks its questions on a terminal and hands the
+/// answers here; a caller with no terminal states them directly. The answers
+/// are init's typed flags (an embedder left unset is none). It writes the one
+/// config serve reads (`[embedder]`, `[oneironer]`, the vault keys), after
+/// validating exactly what serve will read, building the tagger and embedder
+/// slots serve builds and preparing a local embedder's model; then it opens
+/// the vault, creating it on a first run, and returns it with what it
+/// configured. It reads no terminal and prints nothing.
+pub(crate) fn setup_models(
+    answers: &InitArgs,
+    path: &Path,
+    env: EnvConfig,
+) -> anyhow::Result<(oneiron::Vault, ModelSetupOutcome)> {
+    let prepared = prepare_model_setup(answers, path, env, None)?;
+    let vault = open_vault(answers, &prepared.config)?;
+    std::fs::rename(&prepared.staged, path)?;
+    let outcome = prepared.outcome(path);
+    Ok((vault, outcome))
+}
+
+/// First-run setup on the vault this server already opened. The owner route
+/// calls this inside `blocking()`: no vault reopen, terminal, managed settings
+/// rewrite, Some→Some replacement or reembed. Config is committed before the
+/// empty slot pair is filled and its existing-admission workers start.
+pub(crate) fn setup_models_on_open_vault(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    answers: ModelSetupAnswers,
+) -> Result<ModelSetupOutcome, crate::owner::OwnerError> {
+    let startup = server.model_setup_config().ok_or_else(|| {
+        crate::owner::OwnerError::Refused(
+            "this server has no first-run model setup state".to_owned(),
+        )
+    })?;
+    let path = startup.config_path.clone().ok_or_else(|| {
+        crate::owner::OwnerError::Refused(
+            "this server has no config file for first-run model setup".to_owned(),
+        )
+    })?;
+    let runtime = server.model_setup_runtime().ok_or_else(|| {
+        crate::owner::OwnerError::Refused(
+            "this server has no live model setup worker runtime".to_owned(),
+        )
+    })?;
+    let _setup = runtime.setup();
+    server.vault().recheck_owner(owner)?;
+    if !server.model_slots_unconfigured() {
+        return Err(crate::owner::OwnerError::Refused(
+            "model slots are already configured; live replacement is not first-run setup"
+                .to_owned(),
+        ));
+    }
+    let env = EnvConfig::from_process().map_err(crate::owner::OwnerError::Host)?;
+    // The startup layers replayed onto this file: a server started with a
+    // settings file or holder overrides compares its live source, not the
+    // bare file, so an unchanged server never reads as Changed.
+    let mut replay = startup.startup_args.clone();
+    replay.config = Some(path.clone());
+    let current = crate::config::resolve_serve_config_with_sources(
+        &replay,
+        env.clone(),
+        crate::config::default_config_path(),
+    )
+    .map_err(crate::owner::OwnerError::Host)?;
+    let absolute = |path: &std::path::Path| {
+        std::path::absolute(path).map_err(|error| crate::owner::OwnerError::Host(error.into()))
+    };
+    let vault_path = absolute(&current.vault_path)?;
+    if vault_path != absolute(&startup.vault_path)?
+        || current.dimensions != startup.dimensions
+        || current.map_size != startup.map_size
+        || current.gpu != startup.gpu
+    {
+        return Err(crate::owner::OwnerError::Changed(
+            "the serving vault or its sizing changed since startup; review the config again"
+                .to_owned(),
+        ));
+    }
+    let args = answers.to_init_args(&current, &path)?;
+    let prepared =
+        prepare_model_setup(&args, &path, env, Some(&startup.startup_args)).map_err(|error| {
+            crate::owner::OwnerError::Invalid(format!(
+                "model setup answers were not accepted: {error:#}"
+            ))
+        })?;
+    if absolute(&prepared.config.vault_path)? != vault_path
+        || prepared.config.dimensions != current.dimensions
+    {
+        return Err(crate::owner::OwnerError::Invalid(format!(
+            "model setup must keep the open vault at {} with dimensions {}",
+            current.vault_path.display(),
+            current.dimensions
+        )));
+    }
+
+    let broker = crate::models::BrokerContext::for_serve(server.vault(), &prepared.config);
+    let built = super::serve::build_embedder_on_thread(
+        server.vault(),
+        &prepared.config,
+        broker.as_ref(),
+        server.gpu_pool(),
+    )
+    .map_err(crate::owner::OwnerError::Host)?;
+    let tagger = crate::oneironer::build_slot_on_thread(prepared.config.oneironer.as_ref(), None)
+        .map_err(crate::owner::OwnerError::Host)?;
+    std::fs::rename(&prepared.staged, &path)
+        .map_err(|error| crate::owner::OwnerError::Host(error.into()))?;
+    // The tagger serves an open vault its open armed with no marker: arm it
+    // once here, before its slot publishes and its worker starts, so the
+    // first witness already owes the tag pass.
+    if tagger.is_some() {
+        let marker = prepared
+            .config
+            .oneironer
+            .as_ref()
+            .and_then(crate::config::OneironerConfig::marker_config)
+            .ok_or_else(|| {
+                crate::owner::OwnerError::Host(anyhow::anyhow!(
+                    "the staged tagger section arms no tagging marker"
+                ))
+            })?;
+        server
+            .vault()
+            .arm_tagging_once(marker)
+            .map_err(|error| crate::owner::OwnerError::Host(error.into()))?;
+    }
+    server
+        .attach_first_run_slots(built.slot, tagger, built.gpu_pool)
+        .map_err(crate::owner::OwnerError::Refused)?;
+    runtime.start_workers(server, built.poller);
+    Ok(prepared.outcome(&path))
 }
 
 /// Opens the configured vault, creating it on a first run: sealed when the
@@ -531,14 +795,17 @@ fn ask_remote_options(
 }
 
 fn read_config(path: &Path, env: EnvConfig) -> anyhow::Result<ServeConfig> {
-    crate::config::resolve_serve_config_with_sources(
-        &ServeArgs {
-            config: Some(path.to_path_buf()),
-            ..Default::default()
-        },
-        env,
-        None,
-    )
+    read_config_with_args(path, env, &ServeArgs::default())
+}
+
+fn read_config_with_args(
+    path: &Path,
+    env: EnvConfig,
+    startup_args: &ServeArgs,
+) -> anyhow::Result<ServeConfig> {
+    let mut replay = startup_args.clone();
+    replay.config = Some(path.to_path_buf());
+    crate::config::resolve_serve_config_with_sources(&replay, env, None)
 }
 
 #[cfg(test)]

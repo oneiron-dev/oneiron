@@ -407,6 +407,7 @@ fn read_turn_wake_in_txn(
     test: TurnWakeTest,
 ) -> Result<Option<TurnWakeReads>> {
     let scope = DreamerConsolidationScope::Micro;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     let watermark = read_watermark_in_txn(vault, txn, scope)?;
     let Some(ids) =
         collect_dirty_turn_ids_until(vault, txn, scope, watermark.last_learned_at, u64::MAX, stop)?
@@ -416,7 +417,12 @@ fn read_turn_wake_in_txn(
     let mut window = Vec::with_capacity(ids.len());
     let mut stepped = Vec::new();
     for turn in read_partition_turns_in_txn(vault, txn, scope, &ids)? {
-        if turn.conversation.is_none() || turn_imported_in_txn(vault, txn, &turn.turn_id)? {
+        if turn.conversation.is_none()
+            || turn
+                .conversation
+                .is_some_and(|conversation| excluded.contains(&conversation))
+            || turn_imported_in_txn(vault, txn, &turn.turn_id)?
+        {
             stepped.push(turn.learned_at);
         } else {
             window.push(turn);
@@ -577,6 +583,24 @@ impl Vault {
             self.store.notify_attempt_observers();
         }
         Ok(outcome)
+    }
+
+    /// One bounded sieve pass as a turn wake runs it, with nothing stopping
+    /// it: the follower wakes in its commit when spans queued. A host that
+    /// takes several landed turns in one wake round runs one such pass per
+    /// turn before the round's turn wakes, as each turn's own wake ran one,
+    /// and stops once nothing is left (FIX 14873). Returns whether work is
+    /// left for another pass.
+    pub fn sieve_pass_on_turn(&self, now: u64) -> Result<bool> {
+        match self.sieve_pass_until(now, WakeStop::NEVER, OnStale::OneWriter, true)? {
+            ReadWrite::Written(commit) => {
+                if commit.followed {
+                    self.store.notify_attempt_observers();
+                }
+                Ok(commit.pass.more)
+            }
+            ReadWrite::Stopped | ReadWrite::Deferred => Ok(false),
+        }
     }
 
     /// The turn producer with nothing stopping it: a stale read retries in

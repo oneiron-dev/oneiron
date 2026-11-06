@@ -7,7 +7,7 @@ use super::manifest::{
 };
 use super::validate::bounded_text;
 use crate::entity_id::EntityId;
-use crate::skill_hub::HubRef;
+use crate::write_envelope::skill_source::HubRef;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

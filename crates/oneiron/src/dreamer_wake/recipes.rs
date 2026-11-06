@@ -157,7 +157,13 @@ pub(crate) fn weave_in_txn(
     now: u64,
 ) -> Result<()> {
     let requester = vault.dreamer_authority_in_txn(txn, now)?;
+    // An excluded conversation gets no fresh scope summary while it is
+    // excluded; summaries it already has stand.
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     for conversation in sieve::retained_conversations_in_txn(vault, txn)? {
+        if excluded.contains(&conversation) {
+            continue;
+        }
         vault.request_scope_summary_in_txn(
             txn,
             &ScopeSummaryRequest {

@@ -12,7 +12,13 @@
 //! is its tree's as it stands, and one with a live author stays under the
 //! vault-wide seal until a restore derives its raw-derived refs again
 //! (`crate::note::checkpoint::CORE_RAW_REFS`); the join that puts an opened
-//! author back is NOTE's own. Nothing calls this until KS7-5, and only once
+//! author back is NOTE's own. A sync copy of a CLAIM or NOTE row, in a window
+//! or a thin cache, is placed by the same rule from its own bytes
+//! ([`entity_row_placement`], FIX 10279). An identity-topology author
+//! carrier names the actor it attributes: the whole row is that actor's
+//! actor-keyed row under its own tree, so an erase of the actor reaches it
+//! in an image (FIX 17143); every other identity op row stays under the
+//! vault-wide seal. Nothing calls this until KS7-5, and only once
 //! CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
@@ -22,10 +28,10 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{CORE_RAW_REFS, join_core_row, reads_core_row, split_core_row};
 use crate::origin::actor_erase::OriginClaimKind;
 use crate::registry::{
@@ -37,9 +43,10 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb,
     RowLocator, Unresolved,
 };
+use crate::write_envelope::claim_body::decode_claim_body;
 
-/// The carrier an identity op's row is: its body names the actors it
-/// stamps, and the live erase rewrites it in place (`IDENTITY_OPS`).
+/// An identity op's row other than an author carrier: its body may name
+/// the actors and machines behind the decision, with no split that reads.
 const IDENTITY_OP_ACTORS: &str = "identity op body names its actors";
 
 /// The carrier an origin claim is: its body names its actor, and the live
@@ -47,33 +54,40 @@ const IDENTITY_OP_ACTORS: &str = "identity op body names its actors";
 const ORIGIN_CLAIM_ACTORS: &str = "origin claim body names its actor";
 
 /// Where an entity row's bytes go.
-enum Placement {
+pub(crate) enum EntityRowPlacement {
     /// Its own entity tree's compartment.
     Owner,
     /// Another custody client's.
     Other(OtherClient),
+    /// Whole, as the named actor's actor-keyed row under its own entity
+    /// tree: an identity-topology author carrier (FIX 17143).
+    Actor(EntityId),
     /// None: it stays under the vault-wide seal.
     Unclassified(Unresolved),
 }
 
-/// Where an entity row's bytes go, by its kind.
-fn placement(value: &[u8]) -> Placement {
+/// Where an entity row's bytes go, by its kind and, for a CLAIM, a NOTE or
+/// an identity-topology event, by what its own bytes hold: the one rule for
+/// the row and, for a CLAIM or a NOTE, for every sync copy of it (FIX
+/// 10279). An author carrier's sync copies are placed apart.
+pub(crate) fn entity_row_placement(value: &[u8]) -> EntityRowPlacement {
     let Some(header) = EntityMetadataHeader::parse(value) else {
-        return Placement::Unclassified(Unresolved::Undecodable);
+        return EntityRowPlacement::Unclassified(Unresolved::Undecodable);
     };
     match header.entity_type {
         kind if entity_type_registry_entry(kind).is_none() => {
-            Placement::Unclassified(Unresolved::UnknownKind)
+            EntityRowPlacement::Unclassified(Unresolved::UnknownKind)
         }
-        ENTITY_TYPE_SECRET_CUSTODY => Placement::Other(OtherClient::Credential),
-        ENTITY_TYPE_WORLD_KEY_PAD => Placement::Other(OtherClient::WorldPad),
-        ENTITY_TYPE_ASSET => Placement::Other(OtherClient::Body),
-        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT => {
-            Placement::Unclassified(Unresolved::ActorSplit(IDENTITY_OP_ACTORS))
-        }
+        ENTITY_TYPE_SECRET_CUSTODY => EntityRowPlacement::Other(OtherClient::Credential),
+        ENTITY_TYPE_WORLD_KEY_PAD => EntityRowPlacement::Other(OtherClient::WorldPad),
+        ENTITY_TYPE_ASSET => EntityRowPlacement::Other(OtherClient::Body),
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT => match author_carrier_actor(value) {
+            Some(actor) => EntityRowPlacement::Actor(actor),
+            None => EntityRowPlacement::Unclassified(Unresolved::ActorSplit(IDENTITY_OP_ACTORS)),
+        },
         ENTITY_TYPE_CLAIM => claim_placement(&value[ENTITY_METADATA_HEADER_LEN..]),
         ENTITY_TYPE_NOTE => note_placement(value),
-        _ => Placement::Owner,
+        _ => EntityRowPlacement::Owner,
     }
 }
 
@@ -82,14 +96,14 @@ fn placement(value: &[u8]) -> Placement {
 /// live author's erase would change the raw bytes the revision refs, the
 /// short id and the citation views are derived from, which no restore
 /// derives again yet, so that core stays under the vault-wide seal.
-fn note_placement(value: &[u8]) -> Placement {
+fn note_placement(value: &[u8]) -> EntityRowPlacement {
     if value.len() == ENTITY_METADATA_HEADER_LEN {
-        return Placement::Owner;
+        return EntityRowPlacement::Owner;
     }
     match split_core_row(value) {
-        Ok(split) if split.actors.is_empty() => Placement::Owner,
-        Ok(_) => Placement::Unclassified(Unresolved::ActorSplit(CORE_RAW_REFS)),
-        Err(reason) => Placement::Unclassified(Unresolved::ActorSplit(reason)),
+        Ok(split) if split.actors.is_empty() => EntityRowPlacement::Owner,
+        Ok(_) => EntityRowPlacement::Unclassified(Unresolved::ActorSplit(CORE_RAW_REFS)),
+        Err(reason) => EntityRowPlacement::Unclassified(Unresolved::ActorSplit(reason)),
     }
 }
 
@@ -100,16 +114,16 @@ fn is_note(value: &[u8]) -> bool {
 
 /// A CLAIM's place, by its predicate: a dreamer step's holds a model
 /// response; an origin claim names its actor with no lossless split.
-fn claim_placement(body: &[u8]) -> Placement {
+fn claim_placement(body: &[u8]) -> EntityRowPlacement {
     match decode_claim_body(body, true) {
-        Ok(claim) if claim.predicate == crate::llm::DREAMER_STEP_PREDICATE => {
-            Placement::Other(OtherClient::Response)
+        Ok(claim) if claim.predicate == crate::model_step_record::DREAMER_STEP_PREDICATE => {
+            EntityRowPlacement::Other(OtherClient::Response)
         }
         Ok(claim) if OriginClaimKind::of(&claim.predicate).is_some() => {
-            Placement::Unclassified(Unresolved::ActorSplit(ORIGIN_CLAIM_ACTORS))
+            EntityRowPlacement::Unclassified(Unresolved::ActorSplit(ORIGIN_CLAIM_ACTORS))
         }
-        Ok(_) => Placement::Owner,
-        Err(_) => Placement::Unclassified(Unresolved::Undecodable),
+        Ok(_) => EntityRowPlacement::Owner,
+        Err(_) => EntityRowPlacement::Unclassified(Unresolved::Undecodable),
     }
 }
 
@@ -117,18 +131,23 @@ fn entity_key(key: &[u8]) -> Option<EntityId> {
     EntityId::from_bytes(key.try_into().ok()?).ok()
 }
 
-fn entity_row(out: &mut Captured, key: Vec<u8>, value: Vec<u8>) {
+fn entity_row(out: &mut Captured, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
     let at = RowLocator::row(RowDb::Entities, key);
     let Some(id) = entity_key(&at.key) else {
         out.unclassified(at, None, Unresolved::Undecodable);
-        return;
+        return Ok(());
     };
     let owner = OwnerRef::entity(&id);
-    match placement(&value) {
-        Placement::Owner => out.exact(owner, at, value),
-        Placement::Other(client) => out.dispatch(client, at, value),
-        Placement::Unclassified(reason) => out.unclassified(at, Some(owner), reason),
+    match entity_row_placement(&value) {
+        EntityRowPlacement::Owner => out.exact(owner, at, value),
+        EntityRowPlacement::Other(client) => out.dispatch(client, at, value),
+        // The placeholder keeps no key: the row is all in the actor part.
+        EntityRowPlacement::Actor(actor) => {
+            return rows::actor_keyed(out, owner, actor, &at, &[], &value);
+        }
+        EntityRowPlacement::Unclassified(reason) => out.unclassified(at, Some(owner), reason),
     }
+    Ok(())
 }
 
 fn edge_row(out: &mut Captured, db: RowDb, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
@@ -159,7 +178,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     let mut out = Captured::default();
     for row in dbs.entities().iter(txn)? {
         let (key, value) = row?;
-        entity_row(&mut out, key.to_vec(), value.to_vec());
+        entity_row(&mut out, key.to_vec(), value.to_vec())?;
     }
     for (db, table) in [
         (RowDb::EdgesOut, dbs.edges_out()),
@@ -183,12 +202,13 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
 }
 
 /// An entity row an entity tree holds (an ordinary kind, never another
-/// client's; a NOTE core the split reads, whichever author its join put
-/// back), or an `authored_by` edge.
+/// client's; an author carrier, out of its actor's part; a NOTE core the
+/// split reads, whichever author its join put back), or an `authored_by`
+/// edge.
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     match at.db {
-        RowDb::Entities if entity_key(&at.key).is_some() => match placement(value) {
-            Placement::Owner => Ok(()),
+        RowDb::Entities if entity_key(&at.key).is_some() => match entity_row_placement(value) {
+            EntityRowPlacement::Owner | EntityRowPlacement::Actor(_) => Ok(()),
             _ if is_note(value) && reads_core_row(value) => Ok(()),
             _ => Err(rows::bad_part()),
         },
@@ -218,8 +238,9 @@ fn join(
     rows::no_join(view, at, value, parts)
 }
 
-/// Puts `opened`'s entity rows back exactly, each `authored_by` edge whose
-/// actor opened, and each NOTE core split with its opened author back.
+/// Puts `opened`'s entity rows back exactly, each `authored_by` edge and
+/// author carrier whose actor opened, and each NOTE core split with its
+/// opened author back.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,

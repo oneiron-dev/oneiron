@@ -38,18 +38,22 @@
 //!
 //! A door reads the input its owner's surface sealed where it lies, a file
 //! or a buffer, never as one buffer (FIX 11140, `stream`): it computes the
-//! digest part by part and keeps the input row by row.
+//! digest part by part and keeps the input row by row. One it seals in
+//! numbered carrier parts it reads once, staging each row as it is sealed
+//! and digesting it as it is staged (FIX 12177, `door_rows`).
 //!
 //! A witness past one row's bound travels in signed numbered parts of its
 //! own, and each input row carries a signed reference to them (FIX 8088,
 //! `witness`).
 //!
 //! While the carrier wire is on, an input is sealed under its own erasable
-//! carrier key first, and the recorder retires that key once its request is
-//! answered (FIX 7402, `carrier_seal`).
+//! carrier key first, a surface's past one row in numbered parts (FIX
+//! 12148), and the recorder retires that key once its request is answered
+//! (FIX 7402, `carrier_seal`).
 
 mod attached;
 mod carrier_seal;
+mod door_rows;
 mod envelopes;
 mod stream;
 mod surface_seal;
@@ -82,9 +86,11 @@ pub(crate) use self::attached::{
     attach_published_manifests, attach_unread,
 };
 pub(crate) use self::carrier_seal::{
-    LeafSource, input_carrier_binds, input_carrier_in_txn, leaf_input_retries_in_txn,
-    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
+    LeafSource, SurfaceLeaf, SurfaceRetry, input_carrier_binds, input_carrier_in_txn,
+    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, seal_leaf_parts_in_txn,
+    surface_leaf_input, surface_retry_in_txn,
 };
+pub(crate) use self::door_rows::DoorInput;
 pub use self::stream::SealedInput;
 pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
@@ -285,10 +291,15 @@ fn splits(input: &[u8]) -> bool {
 
 /// One part's digest, over its bytes alone.
 fn part_digest(bytes: &[u8]) -> [u8; 32] {
+    *part_hasher().update(bytes).finalize().as_bytes()
+}
+
+/// A part's digest before its bytes, which [`part_digest`] takes whole and
+/// a reader may feed in runs (FIX 12177).
+fn part_hasher() -> blake3::Hasher {
     let mut hasher = blake3::Hasher::new();
     hasher.update(PART_DIGEST_DOMAIN);
-    hasher.update(bytes);
-    *hasher.finalize().as_bytes()
+    hasher
 }
 
 /// A split input's digest: over its part count and every part's digest, in
@@ -631,8 +642,17 @@ pub(crate) fn drop_inputs_for_in_txn(
     id: &EntityId,
 ) -> Result<usize> {
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    drop_inputs_with_fold_in_txn(&vault.store, wtxn, id, &fold)
+}
+
+pub(super) fn drop_inputs_with_fold_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    fold: &crate::authority::AuthorityFold,
+) -> Result<usize> {
     let doomed: Vec<([u8; 32], Vec<u8>)> = INPUTS
-        .scan(&vault.store, wtxn)?
+        .scan(store, wtxn)?
         .into_iter()
         .filter(|(_, bytes)| {
             RelayedInput::decode(bytes).is_some_and(|input| {
@@ -646,14 +666,14 @@ pub(crate) fn drop_inputs_for_in_txn(
         .iter()
         .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
         .collect();
-    retire_input_carriers_in_txn(vault, wtxn, &carriers);
+    retire_input_carriers_in_txn(store, wtxn, &carriers);
     for (key, _) in &doomed {
-        INPUTS.delete(&vault.store, wtxn, key)?;
+        INPUTS.delete(store, wtxn, key)?;
     }
     // Every witness part kept for such a request goes too (FIX 8088); a
     // fault finding them is warned, and they go with the settle.
-    let witnesses = witness::drop_witnesses_in_txn(vault, wtxn, |group| {
-        witness::witness_target(&fold, group) == Some(*id)
+    let witnesses = witness::drop_witnesses_for_store_in_txn(store, wtxn, |group| {
+        witness::witness_target(fold, group) == Some(*id)
     })
     .unwrap_or_else(|error| {
         tracing::warn!(kind = ?error.kind(), "a revoked secret's witness parts stay for its settle");
@@ -711,7 +731,7 @@ impl Vault {
             return Ok(0);
         }
         let forgot = self.with_write_txn(|txn| {
-            retire_input_carriers_in_txn(self, txn, &carriers);
+            retire_input_carriers_in_txn(&self.store, txn, &carriers);
             for (key, _) in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }

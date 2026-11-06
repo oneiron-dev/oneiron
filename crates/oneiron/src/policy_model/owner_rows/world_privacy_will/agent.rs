@@ -10,11 +10,9 @@ use crate::error::{Error, Result};
 use crate::inbox::NotificationKind;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
+use super::foreign::is_foreign;
 use super::record::{NewRequest, WorldPrivacyRequestKind as Kind};
-use super::{
-    NO_HOLDER, WorldPrivacyOutcome, direction_in_txn, refuse_foreign_world_for_agent, unanimity,
-    world_holders_in_txn,
-};
+use super::{NO_HOLDER, WorldPrivacyOutcome, direction_in_txn, unanimity, world_holders_in_txn};
 
 /// The notice every holder gets when an agent's tighten applied, directly or
 /// by a holder's yes: its one tap undoes it.
@@ -32,11 +30,13 @@ impl Vault {
     /// passed over on its lapsed pact membership alone leaves its typed code
     /// on that proposal or ask (FIX 7548). Every request it opens, a Grant's
     /// widen included, carries `opener_lineage` (FIX 4705): no answer from
-    /// that lineage or a fork of it settles it.
+    /// that lineage or a fork of it settles it. A world shared from a
+    /// connected vault is that vault's holders' to decide: the change is an
+    /// ask to them, carried over the Connect pact (FIX 4702).
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when `agent` is no agent, or the world is a
-    /// foreign one, or no holder could answer; as
+    /// foreign one no live Connect names, or no holder could answer; as
     /// [`Self::set_world_privacy_by`] otherwise.
     pub fn agent_world_privacy(
         &self,
@@ -51,7 +51,19 @@ impl Vault {
                 "the agent world-settings door takes an agent".to_owned(),
             ));
         }
-        refuse_foreign_world_for_agent(world)?;
+        if is_foreign(world) {
+            {
+                let txn = self.store.env.read_txn()?;
+                self.verify_write_actor_in_txn(&txn, agent)?;
+            }
+            return self.ask_owning_vault(
+                agent.entity_ref(),
+                opener_lineage,
+                world,
+                settings,
+                seen,
+            );
+        }
         let grant = {
             let txn = self.store.env.read_txn()?;
             self.verify_write_actor_in_txn(&txn, agent)?;
@@ -81,7 +93,8 @@ impl Vault {
     /// and tells every holder with the receipt and a one-tap undo; a widen
     /// opens an ask to the holders, carrying `opener_lineage`, the credential
     /// lineage that opened the agent's run (FIX 4705): neither it nor a fork
-    /// of it settles the ask (FIX 5064).
+    /// of it settles the ask (FIX 5064). A change of a world shared from a
+    /// connected vault asks that vault's holders instead (FIX 4702).
     pub(super) fn granted_world_privacy(
         &self,
         granted: &GrantedAct,
@@ -90,7 +103,10 @@ impl Vault {
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyOutcome> {
-        refuse_foreign_world_for_agent(world)?;
+        // No Grant here covers another vault's world: its holders decide.
+        if is_foreign(world) {
+            return self.ask_owning_vault(granted.agent(), opener_lineage, world, settings, seen);
+        }
         let outcome = self.with_world_settings_writer(|txn, secret| {
             let owner = self.granted_world_act_owner_in_txn(txn, granted, world)?;
             let (direction, current) = direction_in_txn(self, txn, world, &settings, seen)?;
@@ -216,6 +232,8 @@ impl Vault {
                 needs,
                 yes: Vec::new(),
                 grant_omitted,
+                owned_by: None,
+                asked_from: None,
             },
         )
     }

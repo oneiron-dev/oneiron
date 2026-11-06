@@ -10,7 +10,7 @@ use crate::{Failure, MAX_STREAM, Refusal, Shape};
 /// Request headers a call may not carry: the HTTP stack writes the framing and
 /// connection ones itself, the broker sets the encoding (so the reply stays
 /// strippable) and adds the auth.
-const RESERVED_HEADERS: [&str; 13] = [
+const RESERVED_HEADERS: [&str; 18] = [
     "accept-encoding",
     "connection",
     "content-encoding",
@@ -24,6 +24,11 @@ const RESERVED_HEADERS: [&str; 13] = [
     "transfer-encoding",
     "upgrade",
     "cookie",
+    "sec-websocket-accept",
+    "sec-websocket-extensions",
+    "sec-websocket-key",
+    "sec-websocket-protocol",
+    "sec-websocket-version",
 ];
 
 const MAX_HEADER_VALUE: usize = 1024;
@@ -53,6 +58,11 @@ pub struct CallHeader {
     /// A shape that names no model on the wire (a bodyless read of a job or a
     /// file) is bound to it here alone.
     pub wire_model: String,
+    /// Whether the daemon serves from a cloud node (ARCH-0081 §6): the
+    /// broker then sends plain, as gzip costs more on the link than it
+    /// saves. Transport context, not request identity: outside
+    /// [`request_digest`].
+    pub cloud: bool,
     /// [`request_digest`] of the method, path, headers and body.
     pub digest: String,
 }
@@ -67,10 +77,31 @@ impl CallHeader {
         path: String,
         headers: Vec<(String, String)>,
         wire_model: String,
+        cloud: bool,
         body: &[u8],
     ) -> Self {
+        Self::new_with_digest_body(
+            call, shape, origin, path, headers, wire_model, cloud, body, body,
+        )
+    }
+
+    /// A call whose admission digest covers `digest_body`, which may be the
+    /// whole turn while `body` is its planned delta. Responses uses this: the
+    /// daemon binds the whole turn before checkout, and [`Self::check_responses`]
+    /// checks that the delta belongs to that admitted turn.
+    pub fn new_with_digest_body(
+        call: String,
+        shape: Shape,
+        origin: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        wire_model: String,
+        cloud: bool,
+        body: &[u8],
+        digest_body: &[u8],
+    ) -> Self {
         let method = shape.method().to_owned();
-        let digest = request_digest(&method, &path, &headers, body);
+        let digest = request_digest(&method, &path, &headers, digest_body);
         Self {
             version: PROTOCOL_VERSION,
             call,
@@ -80,6 +111,7 @@ impl CallHeader {
             path,
             headers,
             wire_model,
+            cloud,
             digest,
         }
     }
@@ -110,6 +142,43 @@ impl CallHeader {
             return Err(Refusal::WireModel);
         }
         if request_digest(&self.method, &self.path, &self.headers, body) != self.digest {
+            return Err(Refusal::Digest);
+        }
+        Ok(url)
+    }
+
+    /// Checks a Responses whole turn against admission, then checks that the
+    /// planned create only adds a chain id and omits a prefix of its input.
+    pub fn check_responses(&self, body: &[u8], whole: &[u8]) -> Result<Url, Refusal> {
+        if self.shape != Shape::OpenAiResponses || body.len() > MAX_STREAM {
+            return Err(Refusal::Body);
+        }
+        let url = self.check(whole)?;
+        let mut planned: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(body).map_err(|_| Refusal::Body)?;
+        let mut full: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(whole).map_err(|_| Refusal::Body)?;
+        if full.contains_key("previous_response_id") {
+            return Err(Refusal::Digest);
+        }
+        let chained = match planned.remove("previous_response_id") {
+            None => false,
+            Some(serde_json::Value::String(id)) if !id.is_empty() => true,
+            Some(_) => return Err(Refusal::Body),
+        };
+        if planned.get("model") != full.get("model") {
+            return Err(Refusal::WireModel);
+        }
+        let Some(serde_json::Value::Array(input)) = planned.remove("input") else {
+            return Err(Refusal::Body);
+        };
+        let Some(serde_json::Value::Array(full_input)) = full.remove("input") else {
+            return Err(Refusal::Body);
+        };
+        if planned != full
+            || (!chained && input != full_input)
+            || (chained && !full_input.ends_with(&input))
+        {
             return Err(Refusal::Digest);
         }
         Ok(url)

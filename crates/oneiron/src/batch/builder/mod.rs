@@ -2,9 +2,11 @@
 
 mod apply;
 mod claims;
+mod comm_input;
+mod comm_projection;
 mod commit;
 mod edges;
-mod ops;
+use oneiron_store::batch::builder::ops;
 mod preflight;
 mod puts;
 mod reference_read;
@@ -39,13 +41,14 @@ pub struct BatchBuilder<'a> {
     commit_checks: Vec<CommitCheck>,
     /// Why this batch may touch the ids it touches (ARCH-0052 D2).
     origin: BaseWriteOrigin<'a>,
-    /// The FACET every NOTE and ASSET this batch births is stamped with.
-    /// `None` stamps the vault default.
+    /// The FACET every NOTE, ASSET, EVENT and TURN this batch births is
+    /// stamped with. `None` stamps the vault default. A CLAIM carries its
+    /// facet in its body and ignores the mask (FIX 7757).
     birth_mask: Option<EntityId>,
     /// Every source each ASSET_TEXT this batch births was written from.
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
-    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
     /// The rows `put_replicated` queued: replay's materialization provenance
@@ -55,8 +58,12 @@ pub struct BatchBuilder<'a> {
     /// is gated and applied under (FIX 8118); a put with none keeps the
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
+    /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
+    /// exact bytes: a marked carrier's content its writer already scanned
+    /// (FIX 9034), set by that door alone.
+    marked_carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
     #[cfg(feature = "sync")]
-    import_tier: crate::sync::client::ImportTier,
+    import_tier: crate::store::window_protocol::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
     /// bodies pass federation admission inside the transaction.
     #[cfg(feature = "sync")]
@@ -117,15 +124,17 @@ impl<'a> BatchBuilder<'a> {
             asset_files: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
+            marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
-            import_tier: crate::sync::client::ImportTier::OwnDevice,
+            import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
     }
 
-    /// Sets the active mask every NOTE and ASSET this batch births is
-    /// stamped with. It must be a stored FACET row.
+    /// Sets the active mask every NOTE, ASSET, EVENT and TURN this batch
+    /// births is stamped with. It must be a stored FACET row. A CLAIM carries
+    /// its facet in its body and ignores the mask (FIX 7757).
     pub(crate) fn mask(mut self, mask: Option<EntityId>) -> Self {
         self.birth_mask = mask;
         self
@@ -138,7 +147,7 @@ impl<'a> BatchBuilder<'a> {
     pub(crate) fn made_by(
         mut self,
         id: &EntityId,
-        birth: Option<crate::provenance::birth::RowBirth>,
+        birth: Option<crate::store::row_birth::RowBirth>,
     ) -> Self {
         if let Some(birth) = birth {
             self.births.push((*id, birth));
@@ -157,7 +166,10 @@ impl<'a> BatchBuilder<'a> {
     /// A federated tier sends each one through federation admission inside
     /// the transaction.
     #[cfg(feature = "sync")]
-    pub(crate) fn with_import_tier(mut self, tier: crate::sync::client::ImportTier) -> Self {
+    pub(crate) fn with_import_tier(
+        mut self,
+        tier: crate::store::window_protocol::ImportTier,
+    ) -> Self {
         self.import_tier = tier;
         self
     }

@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{DiaryReadOutcome, Memory, MemoryError, MemoryResult};
+use crate::memory::{DiaryReadOutcome, DiaryReadRecord, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
 /// `self.memory.diary.query`'s input: whose diary, and the one-line reason
@@ -120,4 +120,87 @@ pub fn diary_query_as(
     input.validate()?;
     let agent = input.agent_id()?;
     Ok(memory.read_agent_diary(proof, agent, &input.reason)?.into())
+}
+
+/// `self.memory.pads.read` on a handle (FIX 12143): reads an agent's sealed
+/// scratchpads as the handle's actor, stating a reason the agent sees in its
+/// read log, under the proof [`self_memory_diary_query_embedded`] takes.
+pub fn self_memory_pads_read_embedded(
+    memory: &Memory<'_>,
+    input: DiaryQueryRequest,
+) -> MemoryResult<DiaryQueryOutcome> {
+    let embedded = match memory.owner_authorship() {
+        None if memory.actor_class() == EdgeActorClass::Human => {
+            memory.embedded_owner("self.memory.pads.read").ok()
+        }
+        _ => None,
+    };
+    let proof = memory.owner_authorship().or(embedded.as_ref());
+    pads_read_as(memory, proof, input)
+}
+
+/// `self.memory.pads.read` under `proof` (FIX 12143): the server's host door
+/// passes the person proof the caller's credential carries, or none, and
+/// [`Memory::read_agent_sealed_pads`] decides which ruled reader the caller
+/// is: a vault owner, a work vault's Admin through the same logged step, or
+/// the Coach.
+pub fn pads_read_as(
+    memory: &Memory<'_>,
+    proof: Option<&AuthenticatedOwner>,
+    input: DiaryQueryRequest,
+) -> MemoryResult<DiaryQueryOutcome> {
+    input.validate()?;
+    let agent = input.agent_id()?;
+    Ok(memory
+        .read_agent_sealed_pads(proof, agent, &input.reason)?
+        .into())
+}
+
+/// `self.memory.pads.admin_reads`'s input: whose sealed pads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminPadReadsRequest {
+    /// The agent, as 32 hex.
+    pub agent: String,
+}
+
+/// `self.memory.pads.admin_reads`'s answer: each read a work vault's Admin
+/// made of the agent's sealed pads, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AdminPadReadsView {
+    pub reads: Vec<DiaryReadRecord>,
+}
+
+/// `self.memory.pads.admin_reads` on a handle (FIX 12143): the companion's
+/// owner reads the Admin reads of its agent's sealed pads, under the owner
+/// proof the host bound when the owner made this request in person, else
+/// the embedded owner's own proof.
+pub fn self_memory_pads_admin_reads_embedded(
+    memory: &Memory<'_>,
+    input: AdminPadReadsRequest,
+) -> MemoryResult<AdminPadReadsView> {
+    let embedded;
+    let proof = match memory.owner_authorship() {
+        Some(proof) => proof,
+        None => {
+            embedded = memory.embedded_owner("self.memory.pads.admin_reads")?;
+            &embedded
+        }
+    };
+    admin_pad_reads_as(memory, proof, input)
+}
+
+/// `self.memory.pads.admin_reads` under `proof` (FIX 12143): the server's
+/// host door passes the caller's own person proof, and
+/// [`Memory::admin_pad_reads`] admits the companion's owner alone.
+pub fn admin_pad_reads_as(
+    memory: &Memory<'_>,
+    proof: &AuthenticatedOwner,
+    input: AdminPadReadsRequest,
+) -> MemoryResult<AdminPadReadsView> {
+    let agent = EntityId::from_hex(&input.agent)
+        .map_err(|_| MemoryError::bad_request("agent is not an entity id"))?;
+    Ok(AdminPadReadsView {
+        reads: memory.admin_pad_reads(proof, agent)?,
+    })
 }

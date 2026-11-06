@@ -74,6 +74,41 @@ pub(in crate::sync) fn validate_window_update_with_staged_worlds(
     validate_window_update(doc, update, Some(key), Some(vault), staged)
 }
 
+/// [`validate_window_update_with_staged_worlds`] without its write: it
+/// refuses what that door refuses and stages none of the cutoffs `update`
+/// carries. A device runs it before a sealed envelope's capsule installs
+/// (FIX 10474); the import that follows runs the door itself.
+pub(in crate::sync) fn check_window_update_with_staged_worlds(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+) -> Result<()> {
+    check_window_update(doc, update, Some(key), Some(vault), staged).map(drop)
+}
+
+/// [`validate_window_update_residence_with_vault`] without its write, as
+/// [`check_window_update_with_staged_worlds`] is (FIX 10474).
+pub(in crate::sync) fn check_window_update_residence_with_vault(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+) -> Result<()> {
+    check_window_update(doc, update, Some(key), Some(vault), &HashMap::new()).map(drop)
+}
+
+/// [`validate_promotion_snapshot`] without its write, as
+/// [`check_window_update_with_staged_worlds`] is (FIX 10474).
+pub(in crate::sync) fn check_promotion_snapshot(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<()> {
+    check_window_update(doc, snapshot, None, Some(vault), &HashMap::new()).map(drop)
+}
+
 fn validate_window_update(
     doc: &LoroDoc,
     update: &[u8],
@@ -81,6 +116,26 @@ fn validate_window_update(
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
+    let cutoffs = check_window_update(doc, update, key, vault, staged)?;
+    // OF-013: a cutoff another machine of this vault carries is staged before
+    // the update reaches the live window, so its entity doors refuse the
+    // withdrawn body from the first import on.
+    if let Some(vault) = vault {
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
+    }
+    Ok(())
+}
+
+/// Every refusal of [`validate_window_update`]; returns the withdrawn
+/// cutoffs and epoch floors `update` carries, for the caller to stage.
+/// Nothing here writes.
+fn check_window_update(
+    doc: &LoroDoc,
+    update: &[u8],
+    key: Option<&crate::sync::WindowKey>,
+    vault: Option<&crate::Vault>,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "window locality admission",
@@ -219,6 +274,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
         )?;
+        // FIX 6870: and every repo manifest head.
+        crate::sync::repo_manifests::admit_repo_manifest_map(
+            key,
+            &candidate.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP),
+        )?;
         // OF-013: every withdrawn cutoff the snapshot holds names its
         // artifact, and every epoch floor its session (FIX 2867).
         cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
@@ -227,6 +287,10 @@ fn validate_window_update(
         // FIX 2902: and every peer origin is a digest filed under its row.
         crate::sync::ingest::admit_peer_origin_map(
             &candidate.get_map(crate::sync::ingest::PEER_ORIGIN_MAP),
+        )?;
+        // FIX 12113: and every MESSAGE writer proof is filed under its row.
+        crate::sync::ingest::admit_writer_proof_map(
+            &candidate.get_map(crate::sync::ingest::MESSAGE_WRITER_MAP),
         )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
@@ -285,11 +349,18 @@ fn validate_window_update(
                 key,
                 &root.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
             )?;
+            crate::sync::repo_manifests::admit_repo_manifest_map(
+                key,
+                &root.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP),
+            )?;
             cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
                 &root.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
             )?);
             crate::sync::ingest::admit_peer_origin_map(
                 &root.get_map(crate::sync::ingest::PEER_ORIGIN_MAP),
+            )?;
+            crate::sync::ingest::admit_writer_proof_map(
+                &root.get_map(crate::sync::ingest::MESSAGE_WRITER_MAP),
             )?;
         }
         if misplaced {
@@ -378,12 +449,18 @@ fn validate_window_update(
         crate::sync::message_docs::MESSAGE_DOCS_MAP,
         ContainerType::Map,
     );
+    let repo_manifests = ContainerID::new_root(
+        crate::sync::repo_manifests::REPO_MANIFESTS_MAP,
+        ContainerType::Map,
+    );
     let withdrawn_cutoffs = ContainerID::new_root(
         crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ContainerType::Map,
     );
     let peer_origins =
         ContainerID::new_root(crate::sync::ingest::PEER_ORIGIN_MAP, ContainerType::Map);
+    let writers =
+        ContainerID::new_root(crate::sync::ingest::MESSAGE_WRITER_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -407,12 +484,16 @@ fn validate_window_update(
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
         } else if op.container == message_docs {
             crate::sync::message_docs::admit_message_doc_carrier(key, &map_key, &value)?;
+        } else if op.container == repo_manifests {
+            crate::sync::repo_manifests::admit_repo_manifest_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {
             cutoffs.push(
                 crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_carrier(&map_key, &value)?,
             );
         } else if op.container == peer_origins {
             crate::sync::ingest::admit_peer_origin_carrier(&map_key, &value)?;
+        } else if op.container == writers {
+            crate::sync::ingest::admit_writer_proof_carrier(&map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
@@ -473,13 +554,7 @@ fn validate_window_update(
             }
         }
     }
-    // OF-013: a cutoff another machine of this vault carries is staged before
-    // the update reaches the live window, so its entity doors refuse the
-    // withdrawn body from the first import on.
-    if let Some(vault) = vault {
-        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
-    }
-    Ok(())
+    Ok(cutoffs)
 }
 
 fn check_edge_residence(

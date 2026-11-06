@@ -17,15 +17,22 @@
 //! Each round's resume state goes on the call's row beside it, and a server
 //! going away suspends the exchange rather than ending it, so a restart
 //! takes it up again (`super::resume`, FIX 9157).
+//!
+//! Before the session's kept header goes out again (an answer, a cancel, the
+//! session's end), the worker reads the call's durable issuer binding again.
+//! While an issuer change the owner has not accepted holds the row, it drops
+//! the header, ends the session here and settles the call with the hold
+//! (FIX 9303).
 
+use oneiron::connector_key::CONNECTOR_ISSUER_HOLD_REASON;
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
-    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json, zeroizing_json_body,
+    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
-use super::reply_read::EventStream;
+use super::reply_read::{EventStream, read_retry_reply, terminal};
 use super::stream_pump::{Pump, Waited};
 use super::*;
 
@@ -108,35 +115,6 @@ pub(super) fn hand_over(
         resume,
         ..Sent::acked(None, body)
     }
-}
-
-/// A POST of `body` to `endpoint`; `timeout` bounds the whole request, and
-/// `None` leaves each read to the client's own bound. The body's text goes
-/// in zeroizing storage the request takes without a copy, wiped once the
-/// request lets it go (FIX 8309, L10 09:30).
-pub(super) fn post_json(
-    client: &reqwest::blocking::Client,
-    endpoint: &str,
-    body: &Value,
-    auth: Option<&HeaderValue>,
-    session: Option<&HeaderValue>,
-    timeout: Option<Duration>,
-) -> reqwest::blocking::RequestBuilder {
-    let mut request = client
-        .post(endpoint)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, ACCEPT_BOTH)
-        .body(axum::body::Bytes::from_owner(zeroizing_json_body(body)));
-    if let Some(timeout) = timeout {
-        request = request.timeout(timeout);
-    }
-    if let Some(auth) = auth {
-        request = request.header(AUTHORIZATION, auth.clone());
-    }
-    if let Some(session) = session {
-        request = request.header(SESSION_HEADER, session.clone());
-    }
-    request
 }
 
 /// The MCP session one send opened, owned: what a live question's worker
@@ -276,6 +254,59 @@ impl LiveSession {
         let _ = self.respond(id, "error", refusal);
     }
 
+    /// Refuses one server request this client does not serve once the
+    /// call's issuer binding is read again (FIX 12166): while a hold stands
+    /// or the binding cannot be read the kept header does not go out and
+    /// the request goes unanswered. The request is wiped as it drops
+    /// either way (FIX 11861).
+    pub(super) fn refuse_unless_held(
+        &self,
+        request: Value,
+        vault: &Vault,
+        key_ref: &EntityId,
+        tool: &str,
+    ) {
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => self.refuse(request),
+            Ok(Some(_)) => zeroize_json(request),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                zeroize_json(request);
+            }
+        }
+    }
+
+    /// Refuses one server request this client does not serve once the
+    /// call's issuer binding is read again (FIX 9303): while a hold stands
+    /// the kept header does not go out and the request goes unanswered; the
+    /// worker's next answer, cancel or end settles the hold. The request is
+    /// wiped as it drops either way (FIX 11861).
+    pub(super) fn refuse_unheld(&self, request: Value, receipts: &AnswerReceipts) {
+        if self.issuer_hold(receipts).is_none() {
+            self.refuse(request);
+        } else {
+            zeroize_json(request);
+        }
+    }
+
+    /// The hold the call `receipts` names meets, its durable issuer binding
+    /// read again before the kept `Authorization` header would go out again
+    /// (FIX 9303): an issuer change the owner has not accepted, or a binding
+    /// that cannot be read. The hold binds whether the session keeps a
+    /// header or not: a credential-free exchange meets it the same way.
+    pub(super) fn issuer_hold(&self, receipts: &AnswerReceipts) -> Option<&'static str> {
+        let Some(vault) = receipts.vault.upgrade() else {
+            return Some(ISSUER_BINDING_UNREAD);
+        };
+        let binding = &receipts.binding;
+        vault
+            .connector_issuer_hold(&binding.key_ref, &binding.tool)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "connector issuer binding not read");
+                Some(ISSUER_BINDING_UNREAD)
+            })
+    }
+
     /// Ends the session: a courtesy, whose outcome changes nothing.
     pub(super) fn end(&self) {
         let Some(session) = self.session.as_ref() else {
@@ -292,34 +323,13 @@ impl LiveSession {
         }
         drop(end.send());
     }
-}
 
-/// A foreign value the exchange hands back exactly as the connector sent it:
-/// a stream request's id, a retried call's request state. A connector may
-/// put the presented value in it, so while it waits for the next answer it
-/// is kept serialized in zeroizing storage, scrubbed once replaced or
-/// dropped, and never cleared or rewritten (FIX 8054).
-pub(super) struct KeptWire(Zeroizing<String>);
-
-impl KeptWire {
-    pub(super) fn keep(value: &Value) -> Self {
-        Self(Zeroizing::new(value.to_string()))
-    }
-
-    /// The kept value, for one message: its own serialization parses back
-    /// to the same value, key order included.
-    pub(super) fn value(&self) -> Value {
-        serde_json::from_str(&self.0).unwrap_or(Value::Null)
-    }
-
-    /// The kept serialization, for a round's resume state (FIX 9157).
-    pub(super) fn text(&self) -> &str {
-        self.0.as_str()
-    }
-
-    /// A value a round's resume state kept, as its serialization.
-    pub(super) const fn of_text(text: Zeroizing<String>) -> Self {
-        Self(text)
+    /// Drops the kept credential, and the session with it, here (FIX 9303):
+    /// an issuer change holds the call's row, so the header never goes out
+    /// again, and the session ends without a word to the connector.
+    pub(super) fn forget_credential(&mut self) {
+        self.auth = None;
+        self.session = None;
     }
 }
 
@@ -327,6 +337,11 @@ impl KeptWire {
 /// admits the re-send it would make (FIX 8226): the ledger's own word for a
 /// frozen binding its grant no longer admits.
 const RETRY_NOT_ADMITTED: &str = "binding_invalid";
+
+/// The reason an answer gets when the call's issuer binding could not be
+/// read again before the kept header would go out (FIX 9303): it does not
+/// go unread.
+const ISSUER_BINDING_UNREAD: &str = "connector_issuer_binding_unread";
 
 /// Whether the original call's grant still admits `original`, checked as
 /// the first send and a ledger recovery check it; a vault gone or a check
@@ -425,7 +440,7 @@ impl Worker {
             // lapses (FIX 3837).
             let waited = match &mut self.inbox {
                 Inbox::Commands(commands) => commands.recv().map_or(Waited::Closed, Waited::Answer),
-                Inbox::Pumped(pump) => pump.wait_answer(&self.session),
+                Inbox::Pumped(pump) => pump.wait_answer(&self.session, &self.receipts),
             };
             let command = match waited {
                 Waited::Answer(command) => command,
@@ -498,7 +513,10 @@ impl Worker {
                         delivered = true;
                     } else if let WorkerEvent::Failed {
                         sent: false,
-                        reason: reason @ RETRY_NOT_ADMITTED,
+                        reason:
+                            reason @ (RETRY_NOT_ADMITTED
+                            | CONNECTOR_ISSUER_HOLD_REASON
+                            | ISSUER_BINDING_UNREAD),
                     } = event
                     {
                         // Definitely never re-sent, and never will be.
@@ -520,10 +538,20 @@ impl Worker {
                 vault.mark_connector_input_uncertain(call_ref, handle)
             });
         }
+        // The courtesy end carries the kept header too (FIX 9303).
+        if self.issuer_hold().is_some() {
+            self.session.forget_credential();
+        }
         self.session.end();
         if let Some(registry) = self.registry.upgrade() {
             registry.finish(self.receipts.vault.upgrade().as_deref(), &self.handle);
         }
+    }
+
+    /// The hold the call's row meets before the kept header goes out again
+    /// (FIX 9303).
+    fn issuer_hold(&self) -> Option<&'static str> {
+        self.session.issuer_hold(&self.receipts)
     }
 
     /// The call whose row keeps this exchange's questions, once bound.
@@ -553,6 +581,17 @@ impl Worker {
     /// its POST (FIX 3840).
     fn answer(&mut self, responses: &BTreeMap<String, Value>) -> Next {
         let (generation, answered) = (self.generation, dispositions(responses));
+        // The kept header goes out again only while the call's row meets no
+        // issuer change the owner has not accepted (FIX 9303).
+        if let Some(reason) = self.issuer_hold() {
+            self.session.forget_credential();
+            self.receipts
+                .record(generation, &answered, responses, ElicitationEgress::NotSent);
+            return Next::Over(WorkerEvent::Failed {
+                sent: false,
+                reason,
+            });
+        }
         match &mut self.continuation {
             Continuation::Stream {
                 request_id,
@@ -592,9 +631,13 @@ impl Worker {
                     }
                 }
                 match &mut self.inbox {
-                    Inbox::Pumped(pump) => {
-                        pump.read_round(&self.session, request_id, last_event_id, CALL_TIMEOUT)
-                    }
+                    Inbox::Pumped(pump) => pump.read_round(
+                        &self.session,
+                        &self.receipts,
+                        request_id,
+                        last_event_id,
+                        CALL_TIMEOUT,
+                    ),
                     Inbox::Commands(_) => Next::Over(WorkerEvent::Failed {
                         sent: true,
                         reason: "connector_reply_unreadable",
@@ -664,7 +707,7 @@ impl Worker {
                 self.receipts
                     .record(generation, &answered, responses, egress);
                 let message = match posted {
-                    Ok(response) => read_retry_reply(&self.session, response, id),
+                    Ok(response) => read_retry_reply(&self.session, &self.receipts, response, id),
                     Err(error) if error.is_connect() || error.is_builder() => {
                         Err(WorkerEvent::Failed {
                             sent: false,
@@ -696,19 +739,24 @@ impl Worker {
     }
 
     /// Cancels the current round: a stream request is answered `cancel`; a
-    /// result that asked for input takes no reply. Each of its questions is
+    /// result that asked for input takes no reply, nor does a round whose
+    /// row an issuer change holds (FIX 9303). Each of its questions is
     /// receipted `disposition` (FIX 3840).
-    fn cancel(&self, disposition: ElicitationDisposition) {
+    fn cancel(&mut self, disposition: ElicitationDisposition) {
+        let held = self.issuer_hold().is_some();
+        if held {
+            self.session.forget_credential();
+        }
         let mut sent = BTreeMap::new();
         let egress = match &self.continuation {
-            Continuation::Stream { request_id, .. } => {
+            Continuation::Stream { request_id, .. } if !held => {
                 let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
                 sent.insert(wire::STREAM_KEY.to_owned(), cancel.clone());
                 self.session
                     .respond(request_id.value(), "result", cancel)
                     .egress()
             }
-            Continuation::Retry { .. } => ElicitationEgress::NotSent,
+            Continuation::Stream { .. } | Continuation::Retry { .. } => ElicitationEgress::NotSent,
         };
         self.receipts.record(
             self.generation,
@@ -716,59 +764,5 @@ impl Worker {
             &sent,
             egress,
         );
-    }
-}
-
-/// The tool's terminal reply in `message`, or the failure an unreadable one
-/// is.
-pub(super) fn terminal(message: &Value) -> WorkerEvent {
-    match tool_result(message) {
-        Some(result) => WorkerEvent::Result(result),
-        None => WorkerEvent::Failed {
-            sent: true,
-            reason: "connector_reply_unreadable",
-        },
-    }
-}
-
-/// Reads the reply to a retried `tools/call` (`id`), refusing any server
-/// request on its stream.
-#[allow(
-    clippy::result_large_err,
-    reason = "the error is the worker's terminal event, handed on as is"
-)]
-pub(super) fn read_retry_reply(
-    session: &LiveSession,
-    response: reqwest::blocking::Response,
-    id: u64,
-) -> Result<Value, WorkerEvent> {
-    let unreadable = WorkerEvent::Failed {
-        sent: true,
-        reason: "connector_reply_unreadable",
-    };
-    let status = response.status();
-    if status.is_server_error() {
-        return Err(WorkerEvent::Failed {
-            sent: true,
-            reason: "connector_server_error",
-        });
-    }
-    if !status.is_success() {
-        return Err(WorkerEvent::Failed {
-            sent: false,
-            reason: "connector_answer_not_taken",
-        });
-    }
-    let mut stream = match open_reply(response, id, None) {
-        Ok(Reply::Json(Some((message, _)))) => return Ok(message),
-        Ok(Reply::Json(None)) | Err(()) => return Err(unreadable),
-        Ok(Reply::Stream(stream)) => stream,
-    };
-    loop {
-        match stream.next(id) {
-            Ok(StreamEvent::Answer(message, _)) => return Ok(message),
-            Ok(StreamEvent::Request(request)) => session.refuse(request),
-            Ok(StreamEvent::End) | Err(()) => return Err(unreadable),
-        }
     }
 }

@@ -255,8 +255,10 @@ impl Vault {
         max_items: usize,
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<usize> {
+        let destination = author.endpoint();
         let mut work = Vec::new();
         {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
             let mut pending: Vec<[u8; 16]> = pending_in(&self.store, &rtxn, usize::MAX)?
@@ -318,7 +320,7 @@ impl Vault {
             let input = document.input();
             if let Some(egress) = egress
                 && (egress.decide_media(&input) != EgressDecision::Allow
-                    || !self.media_rows_may_leave(None, &[document.id])?)
+                    || !self.media_rows_may_leave(None, input.source_rows(), &destination)?)
             {
                 continue;
             }

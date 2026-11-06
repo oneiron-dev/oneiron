@@ -1,56 +1,14 @@
+//! Engine-settled TASK terminal states and the durable terminal record.
+//! Entry [`TaskTerminalRecord`]; written only by engine lapse, never any party.
+//! Owned by `task_verb`; consulted by `follow_up` and the board fold for closure.
 use crate::consult_ladder::{LadderTerminalDisposition, LadderTerminalState};
 use crate::context_board::TaskBoardStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
 
 use super::consult_payload::ConsultPayloadRef;
 use super::wire_encode::{canonical_bytes, task_terminal_record_value};
-use crate::error::RecordError;
 
-/// Terminal outcomes for ANY executor. `Expired` (deadline passed) and
-/// `Abandoned` (lease reclaimed / executor gone) stay distinct causes even
-/// though both project onto the failed board lane.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskTerminalDisposition {
-    Completed,
-    Rejected,
-    Failed,
-    Expired,
-    Abandoned,
-    Cancelled,
-}
-
-impl TaskTerminalDisposition {
-    /// Stable wire/render token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Rejected => "rejected",
-            Self::Failed => "failed",
-            Self::Expired => "expired",
-            Self::Abandoned => "abandoned",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    pub(super) fn from_token(token: &str) -> Result<Self> {
-        match token {
-            "completed" => Ok(Self::Completed),
-            "rejected" => Ok(Self::Rejected),
-            "failed" => Ok(Self::Failed),
-            "expired" => Ok(Self::Expired),
-            "abandoned" => Ok(Self::Abandoned),
-            "cancelled" => Ok(Self::Cancelled),
-            _ => Err(Error::Record(RecordError::InvalidTaskBody(
-                "tasks.terminal.disposition",
-            ))),
-        }
-    }
-}
+pub use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 
 /// Why the ENGINE, not any party, settled a TASK. A lapse is the asker's own
 /// will enacted by the clock: no actor is verified or stamped for it, and the
@@ -114,18 +72,7 @@ pub enum ConsultResultSummary {
     },
 }
 
-/// Board-projected consult outcome: canonical short refs, never result bodies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsultResultPresence {
-    Answer {
-        result_ref: String,
-        evidence_ref_count: usize,
-    },
-    Abstained {
-        result_ref: String,
-        reason_ref: String,
-    },
-}
+pub use crate::context_board::consult_result::ConsultResultPresence;
 
 /// The ONE terminal register value. Disposition, `result_ref`, summary, and
 /// `finished_at` merge atomically as this single value — never as independently

@@ -19,6 +19,29 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
+    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+        Err(ProtocolError::WaitedOut) => {
+            let waited = transport::DocumentWaitedOut::try_from(kind)
+                .map_err(|_| ProtocolError::WaitedOut)?;
+            let frame = transport::encode_document_waited_out(entity, waited)
+                .into_result()
+                .map_err(|_| ProtocolError::InvalidPayload("invalid document wait reply"))?;
+            let _ = direct.send(frame);
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+fn handle_document_inner(
+    server: &SyncServer,
+    conn_id: u32,
+    entity: EntityId,
+    kind: u8,
+    payload: &[u8],
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    state: &mut ConnState,
+) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
         && !transport::is_residence_version(state.protocol_version)
@@ -144,10 +167,12 @@ pub(super) fn handle_document(
             let _ = direct.send(notice);
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -177,7 +202,7 @@ pub(super) fn handle_document(
             // FIX 10829: one under a whole-text copy's or a re-released copy
             // id's own row id that builds on its copy lineage edits it too.
             let source = source.or_else(|| lineage_edit(server, &document, entity, payload));
-            match source {
+            let held = match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
                     selector_grant_scope(),
@@ -185,22 +210,33 @@ pub(super) fn handle_document(
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
                 ),
-                None => document.import_from_peer(
-                    kind,
-                    payload,
-                    selector_grant_scope(),
-                    &request.selector,
-                    peer,
-                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
-                ),
+                None => document
+                    .import_from_peer(
+                        kind,
+                        payload,
+                        selector_grant_scope(),
+                        &request.selector,
+                        peer,
+                        |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    )
+                    .map(|()| None),
             }
             .map_err(storage_error)?;
-            let vv = ack_vector(server, &document, source)?;
+            // FIX 10598: a held copy edit is acknowledged with the vector its
+            // held operations are in, so the device stops sending it, and is
+            // never relayed: nothing of it landed.
+            let vv = match &held {
+                Some(vector) => vector.clone(),
+                None => ack_vector(server, &document, source)?,
+            };
             drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document ack"))?;
             let _ = direct.send(ack);
+            if held.is_some() {
+                return Ok(());
+            }
             let frame = transport::encode_document(entity, kind, payload)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document frame"))?;
@@ -254,8 +290,9 @@ fn owner_request(
 /// where it was made. The gate runs for every part, and the vault rechecks
 /// the credential inside every writer that keeps a part or applies the
 /// publication. It applies the publication once every part is there and
-/// window sync has delivered every row it names; only a complete
-/// publication is answered, its receipt on this socket alone.
+/// window sync has delivered every row it names. An owner-gate denial echoes
+/// only the supplied digest in a Refused receipt without keeping any part;
+/// admitted parts are answered once complete, on this socket alone.
 fn artifact_publication(
     server: &SyncServer,
     state: &mut ConnState,
@@ -263,13 +300,18 @@ fn artifact_publication(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
-    let auth = owner_auth(server, state, true)?;
-    let receipt = server
-        .vault
-        .import_artifact_publication(entity, payload, |txn| {
-            auth.credential_is_live_in_write_txn(&server.vault, txn)
-        })
-        .map_err(storage_error)?;
+    let receipt = match owner_auth_checked(server, state, true) {
+        Ok(auth) => server
+            .vault
+            .import_artifact_publication(entity, payload, |txn| {
+                auth.credential_is_live_in_write_txn(&server.vault, txn)
+            }),
+        Err(OwnerAuthFailure::Refused(_)) => {
+            oneiron::Vault::refused_artifact_publication_receipt(entity, payload)
+        }
+        Err(OwnerAuthFailure::Other(error)) => return Err(error),
+    }
+    .map_err(storage_error)?;
     if let Some(receipt) = receipt {
         let _ = direct.send(receipt);
     }
@@ -324,10 +366,12 @@ fn owner_document(
             // sends the current state, then the receipt (FIX 9491).
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -344,16 +388,39 @@ fn owner_auth<'a>(
     state: &'a ConnState,
     write: bool,
 ) -> Result<&'a crate::auth::CoreAuth, ProtocolError> {
+    owner_auth_checked(server, state, write).map_err(|failure| match failure {
+        OwnerAuthFailure::Refused(error) | OwnerAuthFailure::Other(error) => error,
+    })
+}
+
+/// A known admission denial can settle a publication. An unavailable or
+/// unproven credential/owner check must keep its existing socket error so
+/// the device's durable outbox is not cleared by a transient store failure.
+enum OwnerAuthFailure {
+    Refused(ProtocolError),
+    Other(ProtocolError),
+}
+
+impl From<ProtocolError> for OwnerAuthFailure {
+    fn from(error: ProtocolError) -> Self {
+        Self::Refused(error)
+    }
+}
+
+fn owner_auth_checked<'a>(
+    server: &SyncServer,
+    state: &'a ConnState,
+    write: bool,
+) -> Result<&'a crate::auth::CoreAuth, OwnerAuthFailure> {
     if (!transport::is_owner_window_version(state.protocol_version)
         && !transport::is_residence_version(state.protocol_version))
         || state.window_sync_mode == super::conn_state::WindowSyncMode::Selector
         || !state.documents.is_empty()
     {
-        return Err(ProtocolError::InvalidPayload(
-            "owner lane needs an owner connection",
-        ));
+        return Err(ProtocolError::InvalidPayload("owner lane needs an owner connection").into());
     }
-    let auth = super::app_tier::require_bound_app_auth(server, state)?;
+    let auth =
+        super::app_tier::require_bound_app_auth(server, state).map_err(OwnerAuthFailure::Other)?;
     auth.require(CoreScope::Read)
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
     if write {
@@ -361,7 +428,7 @@ fn owner_auth<'a>(
             .map_err(|_| ProtocolError::RpcNoPrincipal)?;
     }
     if auth.jti().is_none() || auth.actor_class() != Some("human") {
-        return Err(ProtocolError::RpcNoPrincipal);
+        return Err(ProtocolError::RpcNoPrincipal.into());
     }
     let actor = EntityId::from_hex(
         auth.require_registered_principal()
@@ -372,7 +439,13 @@ fn owner_auth<'a>(
         .vault
         .memory(actor, oneiron::EdgeActorClass::Human)
         .verify_owner()
-        .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+        .map_err(|error| {
+            if error.code == oneiron::memory::MEMORY_CODE_FORBIDDEN {
+                OwnerAuthFailure::Refused(ProtocolError::RpcNoPrincipal)
+            } else {
+                OwnerAuthFailure::Other(ProtocolError::RpcNoPrincipal)
+            }
+        })?;
     Ok(auth)
 }
 
@@ -397,7 +470,7 @@ pub(super) fn document_delivery_retrying(
     retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let mut docs = match data.first() {
-        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
+        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_unsplit_document(&data[1..])],
         Some(&transport::TAG_BATCH) => transport::decode_document_batch(&data[1..])
             .map_err(|_| ProtocolError::InvalidPayload("invalid document batch"))?
             .into_iter()
@@ -408,16 +481,27 @@ pub(super) fn document_delivery_retrying(
     // A receipt is only ever queued on the socket whose own request it
     // answers (no client frame is fanned out as one), so an artifact
     // publication's receipt goes to that owner lane whether or not it holds
-    // a text subscription (FIX 9492); the last door still checks it.
+    // a text subscription (FIX 9492). An early Refused reply echoes only the
+    // caller's digest and also reaches a socket whose owner gate denied it.
     let mut out = Vec::new();
     docs.retain(|doc| {
         let Ok(doc) = doc else {
             return true;
         };
+        if doc.kind == document_sub_tags::WAITED_OUT
+            && transport::decode_document_waited_out(doc.payload).is_ok()
+        {
+            out.extend(notice(doc));
+            return false;
+        }
         if doc.kind != document_sub_tags::ARTIFACT_RECEIPT {
             return true;
         }
-        if owner_auth(server, state, false).is_ok() {
+        let refused = matches!(
+            oneiron::artifact_hosting::ArtifactPublicationOutcome::from_receipt(doc.payload),
+            Some(oneiron::artifact_hosting::ArtifactPublicationOutcome::Refused)
+        );
+        if refused || owner_auth(server, state, false).is_ok() {
             out.extend(notice(doc));
         }
         false
@@ -449,6 +533,10 @@ pub(super) fn document_delivery_retrying(
             }
             continue;
         }
+        // FIX 10730: a marked source's notice reaches its copy-id subscribers as the copy.
+        out.extend(super::document_copy::copy_notice_frame(
+            server, state, &doc, &principal, peer, retry,
+        ));
         if let Some(request) = state.documents.get(&doc.entity)
             && request.selector.member_ref == principal
         {
@@ -487,8 +575,7 @@ pub(super) fn document_delivery_retrying(
                         continue;
                     }
                     out.push(
-                        transport::encode_document(doc.entity, doc.kind, doc.payload)
-                            .into_result()
+                        transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload)
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
@@ -521,7 +608,7 @@ pub(super) fn document_delivery_retrying(
 
 /// Whether a document's open ended at its turn's deadline: a notice is tried
 /// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
-fn waited_out(error: &oneiron::Error) -> bool {
+pub(super) fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
 }
 
@@ -623,10 +710,15 @@ pub(super) fn retry_later(
 }
 
 /// The notice of one document, to queue again.
-fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
-    transport::encode_document(doc.entity, doc.kind, doc.payload)
-        .into_result()
-        .ok()
+pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
+    match doc.kind {
+        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+            transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
+        }
+        _ => transport::encode_document(doc.entity, doc.kind, doc.payload)
+            .into_result()
+            .ok(),
+    }
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {

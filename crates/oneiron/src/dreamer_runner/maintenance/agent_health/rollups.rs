@@ -28,19 +28,20 @@ use super::trend_policy::{SECONDS_PER_DAY, TrendPeriods};
 use super::{
     COACH_AGENT_HEALTH_FACET, Dispatched, WAIT_PERSON, covered, entity, read_dials, settled,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::learning::{TeamEvent, team_events_from_attempts};
 use crate::limit_ask::EngineLimit;
-use crate::llm::run_admission::LeaseUnit;
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
-use crate::self_heal::{
-    AgentHealthSignal, DiagnosticEventClass, ENTITY_TYPE_DIAGNOSTIC, decode_diagnostic_event_body,
-};
+use crate::run_budget::LeaseUnit;
+use crate::self_heal::ENTITY_TYPE_DIAGNOSTIC;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::diagnostic_record::{
+    AgentHealthSignal, DiagnosticEventClass, decode_diagnostic_event_body,
+};
 use crate::{EntityId, Result, Vault};
 
 mod spend;
@@ -315,7 +316,9 @@ fn read_ledger(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Ledger> {
             {
                 match review_input(&payload.input) {
                     Some(HealthReviewInput::Nightly) => {
-                        ledger.nightly_reviews.push(record.updated_at);
+                        if let Some(settled_at) = record.settled_at {
+                            ledger.nightly_reviews.push(settled_at);
+                        }
                     }
                     Some(HealthReviewInput::Terminal { attempt, .. }) => {
                         ledger.terminal_reviews.insert(*attempt.as_bytes());
@@ -380,7 +383,10 @@ fn cohort(
         if !settled(record.state) {
             continue;
         }
-        let day = record.updated_at / SECONDS_PER_DAY;
+        let Some(settled_at) = record.settled_at else {
+            continue;
+        };
+        let day = settled_at / SECONDS_PER_DAY;
         let within = |days: u64| day < today && day >= today.saturating_sub(days.saturating_mul(2));
         let actor_span = within(periods.vault);
         let project_span = within(periods.of_project(dispatch.project));
@@ -418,7 +424,7 @@ struct Facts {
 /// An attempt's observed waits not on a person, as the nightly review reads
 /// them: queue, backoff and pause spans, their union over its life.
 fn wait_of(record: &AttemptRecord) -> Option<(u64, u64, BTreeMap<String, u64>)> {
-    let life = record.updated_at.saturating_sub(record.created_at);
+    let life = record.settled_at?.saturating_sub(record.created_at);
     if life == 0 {
         return None;
     }
@@ -580,7 +586,10 @@ fn read_checked(
                 scope
             }
         };
-        let end = record.updated_at;
+        let Some(end) = record.settled_at else {
+            checked.push(false);
+            continue;
+        };
         let next = ledger.nightly_reviews.partition_point(|at| *at < end);
         let nightly = ledger
             .nightly_reviews

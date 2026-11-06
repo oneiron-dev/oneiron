@@ -2,10 +2,10 @@
 
 use super::room::{RoomPresence, room_clearance, room_worlds};
 use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
-use crate::federation::Scope;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 mod ceiling;
 mod live_audience;
@@ -161,7 +161,7 @@ impl Memory<'_> {
     pub(crate) fn reading_defaults(
         &self,
         actors: &[EntityId],
-    ) -> MemoryResult<Vec<crate::pipeline::WorldAuthoritySet>> {
+    ) -> MemoryResult<Vec<crate::claim::world_access::WorldAuthoritySet>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         Ok(reading_defaults_in(vault, &txn, actors)?)
@@ -334,7 +334,7 @@ impl Vault {
     pub fn room_world_set(
         &self,
         members: &[EntityId],
-    ) -> crate::Result<Option<crate::pipeline::WorldAuthoritySet>> {
+    ) -> crate::Result<Option<crate::claim::world_access::WorldAuthoritySet>> {
         let txn = self.store.env.read_txn()?;
         let defaults = reading_defaults_in(self, &txn, members)?;
         super::scope_worlds(&room_worlds(&defaults)?)
@@ -366,7 +366,7 @@ fn room_members_in(
         .port_entity_record(txn, &room)?
         .filter(|record| record.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
         .is_some_and(|record| {
-            crate::conversation::ConversationBody::from_bytes(&record.body).is_ok()
+            crate::store::conversation_body::ConversationBody::from_bytes(&record.body).is_ok()
         });
     if !conversation {
         return Ok(None);
@@ -381,7 +381,7 @@ fn reading_defaults_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actors: &[EntityId],
-) -> crate::Result<Vec<crate::pipeline::WorldAuthoritySet>> {
+) -> crate::Result<Vec<crate::claim::world_access::WorldAuthoritySet>> {
     let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, txn)?;
     // Folded once, and only when some member is under world-access law.
     let fold = std::cell::OnceCell::new();
@@ -429,9 +429,11 @@ pub(crate) fn room_clearance_in(
 }
 
 /// One read key per member other than `caller`. A member positively known
-/// as the vault owner reads with the owner's key. Any other member names no
-/// class, so only class-agnostic grants admit it, and its access grants
-/// apply.
+/// as the vault owner reads with the owner's key; a live co-Owner (FIX
+/// 6558) with the census owner's key, which a census the read cannot take
+/// never mints: that peer keeps its access-grant key. Any other member
+/// names no class, so only class-agnostic grants admit it, and its access
+/// grants apply.
 fn peer_read_keys_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -440,12 +442,18 @@ fn peer_read_keys_in(
 ) -> crate::Result<Vec<crate::claim::ScopedReadActorKey>> {
     let embedded_owner = crate::vault::embedded_owner_actor_id()?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
     members
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
             if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
+            }
+            if owners.contains(member) {
+                return Ok(crate::claim::ScopedReadActorKey::vault_owner_by_census(
+                    *member,
+                ));
             }
             // The same positive and private-access gates the member's own
             // reads pass.

@@ -22,7 +22,7 @@ use super::upload::LFS_WHOLE_SCAN_MAX;
 use crate::Vault;
 use crate::batch::secret_scan::write_payload_hit;
 use crate::error::{Error, GateError, Result};
-use crate::secret_custody::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
+use crate::secret_record::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 use crate::side_table;
 
 impl Vault {

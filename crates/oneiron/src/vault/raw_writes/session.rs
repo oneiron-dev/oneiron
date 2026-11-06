@@ -32,23 +32,25 @@ use heed::RoTxn;
 
 use super::RawEntityPut;
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
-use crate::claim::ClaimSource;
 use crate::core_write::CoreWriteLane;
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, OffRecordError};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
 use crate::off_record::OffRecordSession;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
 use crate::store::SessionStoreView;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use oneiron_contracts::affect::Vad;
+use oneiron_contracts::claim::ClaimSource;
+use oneiron_contracts::memory::MemoryResult;
 
 mod composed_reads;
+mod credential_read;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {
@@ -154,6 +156,7 @@ impl Memory<'_> {
                         entity_type: put.entity_type,
                         occurred: put.occurred,
                         learned_at: put.learned_at,
+                        row_version: None,
                         data: put.data.to_vec(),
                         allow_maintenance: false,
                         allow_reserved_predicate: false,
@@ -380,7 +383,7 @@ impl Memory<'_> {
     /// for an actor no session binds: no verified caller, so the put keeps
     /// the local write's gate, as an unbound host write does.
     fn raw_claim_envelope(&self, data: &[u8]) -> crate::Result<Option<WriteEnvelope>> {
-        let Ok(body) = crate::claim::decode_claim_body(data, false) else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(data, false) else {
             return Ok(None);
         };
         if let Some(envelope) = self.host_envelope(body.approval)? {
@@ -559,7 +562,9 @@ fn read_on_base<R>(error: Error) -> MemoryResult<Option<R>> {
 }
 
 /// The CLAIM bodies `ops` put, in op order, as their room stages them.
-fn staged_claims(ops: &[RawOp<'_>]) -> crate::Result<Vec<crate::claim::ClaimBody>> {
+fn staged_claims(
+    ops: &[RawOp<'_>],
+) -> crate::Result<Vec<crate::write_envelope::claim_body::ClaimBody>> {
     let mut claims = Vec::new();
     for op in ops {
         if let RawOp::Put(put) = op
@@ -578,7 +583,9 @@ fn staged_claims(ops: &[RawOp<'_>]) -> crate::Result<Vec<crate::claim::ClaimBody
 fn unresolved_reference() -> Error {
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
-        reason_codes: vec![crate::gate::GateReasonCode::DenyUnresolvedRecordReference.as_str()],
+        reason_codes: vec![
+            crate::store::gate_reason::GateReasonCode::DenyUnresolvedRecordReference.as_str(),
+        ],
     })
 }
 

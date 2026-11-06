@@ -2,6 +2,7 @@
 //! session hints the Dreamer's triggers read, the `ai.*` verbs past text
 //! (options, image, video, speech, transcribe, embed), `ask_image`, and the
 //! voice bank's provisioning door.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -12,8 +13,13 @@ use axum::{Json, Router};
 use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
+use oneiron::llm::VaultRef;
+use oneiron::llm::manifest::ModelRole;
+
 use crate::auth::{CoreAuth, CoreScope};
-use crate::models::QuotaChoice;
+use crate::config::models::role_key;
+use crate::models::{QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
+use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
 pub(crate) mod chat;
@@ -97,12 +103,88 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     if let Err(error) = auth.require(CoreScope::Read) {
         return error.into_response();
     }
+    let mut models = server.ai.models_live_status();
+    models.session_allocations = crate::models::session_allocations_for_vault(&VaultRef(
+        server.vault().vault_key_vault_id(),
+    ));
+    models.tagger = server.tagger_slot().as_deref().map(tagger_status);
+    point_tagger_seat(&mut models);
     Json(serde_json::json!({
         "ai": server.ai.status(),
-        "models": server.ai.models_live_status(),
+        "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
     }))
     .into_response()
+}
+
+/// An `extraction_encoder` seat no generating rung serves keeps its
+/// state, and says who serves the encoder instead (FIX 6914): every rung
+/// a oneironer provider and a tagger slot standing. The seat state still
+/// says no models rung serves it, which is true. Historical card/serving
+/// metadata is not a current successful probe.
+fn point_tagger_seat(models: &mut crate::models::ModelsStatus) {
+    if models.tagger.is_none() {
+        return;
+    }
+    let taggers: BTreeSet<&str> = models
+        .providers
+        .iter()
+        .filter(|provider| provider.kind == "oneironer")
+        .map(|provider| provider.name.as_str())
+        .collect();
+    for seat in &mut models.seats {
+        if seat.role == role_key(ModelRole::ExtractionEncoder)
+            && seat.state == SeatState::Unavailable
+            && !seat.rungs.is_empty()
+            && seat
+                .rungs
+                .iter()
+                .all(|rung| taggers.contains(rung.provider.as_str()))
+        {
+            seat.reason = Some(
+                "no generating rung serves this seat; the host tagger serves the encoder (see tagger)"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
+/// The host tagger's row (FIX 6914), read from the server's slot as it
+/// stands: what the `[oneironer]` section names, and what serves it now.
+fn tagger_status(slot: &TaggerSlot) -> TaggerStatus {
+    let serving = slot.serving();
+    let card = slot.card();
+    TaggerStatus {
+        provider: slot.config().provider.as_str(),
+        state: if serving.is_some() || card.is_some() {
+            "served"
+        } else {
+            "never_ready"
+        },
+        runtimes: slot
+            .runtime_status()
+            .into_iter()
+            .map(|runtime| {
+                let (reason, detail) = match runtime.why {
+                    Some(why) => match why.strip_prefix("its load failed: ") {
+                        Some(detail) => (Some("load_failed".to_owned()), Some(detail.to_owned())),
+                        None => (Some(why), None),
+                    },
+                    None => (None, None),
+                };
+                TaggerRuntimeStatus {
+                    runtime: runtime.runtime.as_str(),
+                    state: runtime.state.map(|state| state.as_str()),
+                    reason,
+                    detail,
+                }
+            })
+            .collect(),
+        checkpoint_sha16: slot.config().checkpoint_sha16.clone(),
+        card_checkpoint_sha16: card.map(|card| card.checkpoint_sha16),
+        engine: serving.map(|serving| serving.engine.id()),
+        pick: serving.map(|serving| serving.pick.as_str()),
+    }
 }
 
 #[derive(Deserialize)]

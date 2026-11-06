@@ -31,12 +31,32 @@ use super::{
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::lens::{RecordRefPreview, ResolveRecordRefRequest};
+use crate::limit_ask::EngineLimit;
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
-use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
-use crate::task_verb::sdk::{EntityRequest, HydrateRequest, QueryBm25Request};
+use oneiron_retrieval::pipeline::ScoredEntity;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HydrateRequest {
+    pub refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityRequest {
+    pub entity_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryBm25Request {
+    pub query: String,
+    pub limit: usize,
+}
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
@@ -320,7 +340,7 @@ impl<'s> SessionReadContext<'s> {
     /// no indexed revision is read live.
     fn indexed_revisions(
         &self,
-        hits: &[crate::pipeline::ScoredEntity],
+        hits: &[oneiron_retrieval::pipeline::ScoredEntity],
     ) -> MemoryResult<std::collections::HashMap<EntityId, crate::vault::RevisionRef>> {
         let txn = self
             .vault
@@ -490,17 +510,27 @@ pub(crate) fn scoped_session_text(
     admit: impl FnOnce(&heed::RoTxn<'_>) -> crate::Result<()>,
 ) -> crate::Result<(Vec<ScoredEntity>, (u64, Instant))> {
     let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-    let (filter, policy) = lane.recall_plan()?;
+    let crate::claim::SearchPlan {
+        filter,
+        candidates,
+        policy,
+    } = lane.recall_plan()?;
     let started = (vault.store.clock.now_recorded_at(), Instant::now());
-    if filter.deny_all {
+    // A key that reads nothing by itself still searches the rows its own
+    // live Grants read (FIX 7528).
+    if candidates.deny_all {
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
+    // The count this room search serves, asked after the denial check and
+    // before any clock or index work. Best effort: the search serves its
+    // rows either way.
+    let _ = vault.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
     lane.persist_grant_clock()?;
     let scores = {
         let txn = vault.store.env.read_txn()?;
         admit(&txn)?;
-        let admit = lane.recall_candidates_in(&txn, &policy, &filter);
+        let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
         let mut admits = |id: &EntityId| admit(id);
         vault.text_scoped_in_txn(
             view,
@@ -512,6 +542,7 @@ pub(crate) fn scoped_session_text(
                 filter_all: true,
                 matches_scope: &mut admits,
                 private_note_ids: None,
+                recency: None,
             },
         )
     };
@@ -564,4 +595,11 @@ fn decode<T: serde::de::DeserializeOwned>(value: &serde_json::Value) -> MemoryRe
 
 fn encode(value: &impl serde::Serialize) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateNoteRequest {
+    pub kind: String,
+    pub markdown: String,
 }

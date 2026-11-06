@@ -15,16 +15,7 @@ const MAX_EVENT_DIAGNOSTIC_BYTES: usize = 1024;
 /// Served rows one session keeps a why for; past it, the oldest key leaves.
 const MAX_SERVED_WHY: usize = 4096;
 
-/// Lifecycle version served to a caller. The claim lifecycle chain is the
-/// version; this rider does not introduce a second revision counter.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ServedLifecycle {
-    Active,
-    Superseded(String),
-    Retracted,
-    Installed(String),
-}
+pub use crate::claim::served_lifecycle::ServedLifecycle;
 
 /// Session-owned state. Serialize with the session checkpoint, not the epoch
 /// keyframe, so loaded bodies survive a compaction/epoch rollover.

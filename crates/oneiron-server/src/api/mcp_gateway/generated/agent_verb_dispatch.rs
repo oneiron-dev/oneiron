@@ -14,6 +14,7 @@ pub(super) async fn execute_mcp_agent_verb(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -52,6 +53,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.commitments.fulfill" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.release" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.supersede" => a.spec.clone().ok_or_else(invalid),
+        "vault.commitments.reminder_route.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.commitments.reminder_route.set" => a.spec.clone().ok_or_else(invalid),
         "fetch" => a.spec.clone().ok_or_else(invalid),
         "crawl" => a.spec.clone().ok_or_else(invalid),
         "report" => a.spec.clone().ok_or_else(invalid),
@@ -87,6 +90,12 @@ pub(crate) fn mcp_agent_verb_input(
         "self.focus.scratchpad.recall" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.append" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.seal" => a.spec.clone().ok_or_else(invalid),
+        "self.board.layout" => a.spec.clone().ok_or_else(invalid),
+        "self.board.fold" => a.spec.clone().ok_or_else(invalid),
+        "self.board.unfold" => a.spec.clone().ok_or_else(invalid),
+        "self.board.size" => a.spec.clone().ok_or_else(invalid),
+        "self.board.filter" => a.spec.clone().ok_or_else(invalid),
+        "self.board.replace" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
@@ -124,6 +133,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.personas.export" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.edit" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.query" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.pads.read" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.pads.admin_reads" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -356,12 +367,16 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.digest_feedback.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.proactivity.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.corrections" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.lens" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.get" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.done" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.later" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.bootstrap" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.default.get" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.restoreDefaults" => a.spec.clone().ok_or_else(invalid),
@@ -385,6 +400,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.rules.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.code_auto_install.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.skills.fit.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.skills.advisory_ask.set" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.permissions.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.start" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.optimize.result" => a.spec.clone().ok_or_else(invalid),
@@ -502,6 +519,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.federation.burst.baseline" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.policy" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.policy.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.quarantine.held_edits" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.retained_work.wait.set" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.ingress" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.disposition" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.review" => Ok(Value::Object(serde_json::Map::new())),
@@ -518,6 +537,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.federation.connect.disconnect" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.export" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.rejoin" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.world_privacy.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.world_privacy.receive" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.name" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.list" => a.spec.clone().ok_or_else(invalid),
         "vault.trusted_contacts.consent" => a.spec.clone().ok_or_else(invalid),
@@ -552,6 +573,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.off_record.discard" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.notes.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.artifacts.save" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.results.list" => a.spec.clone().ok_or_else(invalid),
@@ -570,6 +592,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_sweep" => a.spec.clone().ok_or_else(invalid),
+        "vault.outbound_calls.request.erase" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive.install" => a.spec.clone().ok_or_else(invalid),
@@ -604,6 +627,12 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.coach.training_offers.pilots.complete" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.get" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.sources" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.list_as" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.policy.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.revert" => a.spec.clone().ok_or_else(invalid),
+        "vault.drafters.revert_as" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
@@ -642,6 +671,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.legal_holds.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.log" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.lift_and_erase" => a.spec.clone().ok_or_else(invalid),
+        "vault.legal_holds.withdraw_erase" => a.spec.clone().ok_or_else(invalid),
         "vault.courtesy_delete.send" => a.spec.clone().ok_or_else(invalid),
         "vault.courtesy_delete.sent" => Ok(Value::Object(serde_json::Map::new())),
         "vault.courtesy_delete.incoming" => Ok(Value::Object(serde_json::Map::new())),
@@ -668,6 +698,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.connectors.calls.approve_once" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.deny" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.create_auto_weave_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.registry" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.failure_signals_held" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.revoke" => a.spec.clone().ok_or_else(invalid),
@@ -702,6 +733,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.settings.learning" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.learning.put" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.learning.clear" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.code_run_lifts" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.lift_history" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.register" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.rotate" => a.spec.clone().ok_or_else(invalid),
@@ -1113,6 +1145,7 @@ pub(crate) fn mcp_agent_verb_input(
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
         "self.skills.fork" => a.spec.clone().ok_or_else(invalid),
         "self.skills.callables" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.skills.callable.amend" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.pack_receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.project" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
@@ -1274,6 +1307,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
         "vault.productivity.create" => a.spec.clone().ok_or_else(invalid),
         "vault.productivity.tree" => a.spec.clone().ok_or_else(invalid),
+        "vault.ingest.ag_ui.import" => a.spec.clone().ok_or_else(invalid),
+        "vault.ingest.ag_ui.read" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.create" => a.spec.clone().ok_or_else(invalid),
@@ -1436,6 +1471,21 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.custody.members.drain.commit" => a.spec.clone().ok_or_else(invalid),
         "vault.custody.members.drain.folder" => a.spec.clone().ok_or_else(invalid),
         "vault.custody.members.reenrol" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.pack.install" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.connect" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.settings.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.members.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.audience_events" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.threads.share" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.threads.unshare" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.compliance.setting" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.compliance.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.compliance.log" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.sync_status" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.inbox" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.threads.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.compliance.search" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -1510,6 +1560,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.commitments.supersede" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.commitments.reminder_route.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.commitments.reminder_route.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "fetch" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1559,6 +1615,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.focus.scratchpad.seal" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.layout" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.fold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.unfold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.size" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.filter" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.replace" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary" => {
@@ -1670,6 +1744,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.query" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.pads.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.pads.admin_reads" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "cancel" => {
@@ -2182,6 +2262,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.inbox.concerns.review" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.proactivity.digest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.inbox.lens" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2198,6 +2281,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.lens" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.done" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.later" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.bootstrap" => {
@@ -2267,6 +2359,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.code_auto_install.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skills.fit.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skills.advisory_ask.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.permissions.approve" => {
@@ -2616,6 +2714,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.federation.burst.policy.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.sync.quarantine.held_edits" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.sync.retained_work.wait.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.federation.burst.ingress" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2658,6 +2762,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.federation.connect.rejoin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.world_privacy.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.world_privacy.receive" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.trusted_contacts.name" => {
@@ -2762,6 +2872,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.off_record.notes.create" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.off_record.artifacts.save" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.off_record.claims.upsert" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2814,6 +2927,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_sweep" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.outbound_calls.request.erase" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.create_child" => {
@@ -2916,6 +3032,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.coach.training_offers.sources" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.list_as" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.policy.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.revert" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.drafters.revert_as" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.bind" => {
@@ -3026,6 +3160,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.legal_holds.lift_and_erase" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.legal_holds.withdraw_erase" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.courtesy_delete.send" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3094,6 +3231,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.create_standing_grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.create_auto_weave_grant" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.registry" => {
@@ -3196,6 +3336,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.settings.learning.clear" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.code_run_lifts" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.secrets.lift_history" => {
@@ -4135,6 +4278,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.skills.callables" => {}
+        "vault.skills.callable.amend" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.skills.pack_receipt" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -4614,6 +4760,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.productivity.tree" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.ingest.ag_ui.import" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.ingest.ag_ui.read" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.admit" => {
@@ -5102,6 +5254,51 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.custody.members.reenrol" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.mail.pack.install" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.connect" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.settings.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.members.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.audience_events" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.threads.share" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.threads.unshare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.compliance.setting" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.compliance.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.compliance.log" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.sync_status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.inbox" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.threads.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.compliance.search" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "connector.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5234,6 +5431,7 @@ pub(crate) async fn execute_agent_verb_input(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5285,6 +5483,7 @@ async fn execute_agent_verb_listing(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5375,6 +5574,7 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
     let ran = execute_agent_verb_row(
         server,
         tool,
@@ -5384,6 +5584,7 @@ async fn execute_agent_verb_listing(
         surface,
         served,
         board_hooks,
+        pre_hooked_fold,
     )
     .await;
     // A row that fails after its pre chain ran keeps a session-only call's
@@ -5395,12 +5596,13 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
-        .map_err(mcp_facade_error)?;
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
 }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
@@ -5417,6 +5619,7 @@ async fn execute_agent_verb_row(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -5429,7 +5632,7 @@ async fn execute_agent_verb_row(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     crate::api::facade::run_write_polls::scoped(
         run_writes,
         execute_agent_verb_row_on(
@@ -5441,6 +5644,7 @@ async fn execute_agent_verb_row(
             surface,
             served,
             board_hooks,
+            pre_hooked_fold,
         ),
     )
     .await
@@ -5457,6 +5661,7 @@ async fn execute_agent_verb_row_on(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -5590,6 +5795,46 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_commitments_supersede(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.commitments.reminder_route.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.commitments.reminder_route.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_reminder_route_get(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.commitments.reminder_route.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.commitments.reminder_route.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::commitment_doors::CommitmentReminderRouteSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_reminder_route_set(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -5838,6 +6083,54 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "self.board.layout" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_layout(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.fold" => {
+            let input: oneiron::task_verb::sdk::BoardFoldRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_fold(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.unfold" => {
+            let input: oneiron::task_verb::sdk::BoardSectionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_unfold(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.size" => {
+            let input: oneiron::task_verb::sdk::BoardSizeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_size(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.filter" => {
+            let input: oneiron::task_verb::sdk::BoardFilterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_filter(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.replace" => {
+            let input: oneiron::task_verb::sdk::BoardReplaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_replace(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "self.memory.diary" => {
             let input: oneiron::task_verb::sdk::DiaryEntryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -5970,9 +6263,12 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
                 .map_err(mcp_facade_error)?;
-            server
-                .ai
-                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied { receipt, .. } if matches!(receipt.link, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. }))
+            {
+                server
+                    .ai
+                    .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            }
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -6328,6 +6624,42 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::self_memory_diary_query(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.pads.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.memory.pads.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::DiaryQueryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_memory_pads_read(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.pads.admin_reads" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.memory.pads.admin_reads", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AdminPadReadsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_memory_pads_admin_reads(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -8810,6 +9142,32 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.proactivity.digest" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.proactivity.digest", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ProactivityDigestRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_proactivity_digest(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.proactivity.digest",
+                    ),
+                    input,
+                ))
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.inbox.lens" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.inbox.lens", &input)
@@ -8913,6 +9271,30 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::agent_inbox_lens::InboxLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_lens(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.get" => {
+            let input: oneiron::agent_inbox_lens::InboxItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.done" => {
+            let input: oneiron::agent_inbox_lens::InboxItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_done(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.later" => {
+            let input: oneiron::agent_inbox_lens::InboxItemLaterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_later(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9327,6 +9709,42 @@ async fn execute_agent_verb_row_on(
                 crate::api::facade::host_doors::vault_skills_code_auto_install_set(
                     server, auth, input,
                 ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.fit.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.skills.fit.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SkillFitSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_fit_set(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.advisory_ask.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.skills.advisory_ask.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SkillAdvisoryAskRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_advisory_ask_set(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11585,6 +12003,46 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.sync.quarantine.held_edits" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.sync.quarantine.held_edits", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sync_quarantine_held_edits(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.sync.retained_work.wait.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.sync.retained_work.wait.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sync_retained_work_wait_set(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.federation.burst.ingress" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.federation.burst.ingress", &input)
@@ -11894,6 +12352,52 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_rejoin(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.world_privacy.export" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.world_privacy.export",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_model::ForeignWorldPrivacyExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_world_privacy_export(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.world_privacy.receive",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_model::ForeignWorldPrivacyDelivery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_world_privacy_receive(
                     server, auth, input,
                 ),
             )
@@ -12553,6 +13057,26 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.off_record.artifacts.save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.artifacts.save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_artifacts_save(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.off_record.claims.upsert" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.off_record.claims.upsert", &input)
@@ -12842,6 +13366,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_records_erase_sweep(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.outbound_calls.request.erase" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.outbound_calls.request.erase", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OutboundCallRequestEraseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_outbound_calls_request_erase(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -13431,6 +13975,114 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.drafters.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_drafters_list(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.drafters.list_as" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.list_as", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_drafters_list_as(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.drafters.status" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.status", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_drafters_status(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.drafters.policy.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.policy.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterPolicySetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_drafters_policy_set(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.drafters.revert" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.revert", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterRevertRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_drafters_revert(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.drafters.revert_as" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.drafters.revert_as", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::drafter::DrafterRevertRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_drafters_revert_as(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.research.bind" => {
             let input: oneiron::task_verb::sdk::ResearchBindWire =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -13950,6 +14602,26 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.legal_holds.withdraw_erase" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.withdraw_erase", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_legal_holds_withdraw_erase(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.courtesy_delete.send" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.courtesy_delete.send", &input)
@@ -14455,6 +15127,29 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_create_standing_grant(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.create_auto_weave_grant" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.consent.create_auto_weave_grant",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_create_auto_weave_grant(
                     server, auth, input,
                 ),
             )
@@ -15086,6 +15781,24 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_settings_learning_clear(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.code_run_lifts" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.code_run_lifts", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::CodeRunSecretLiftRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_secrets_code_run_lifts(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -16325,6 +17038,14 @@ async fn execute_agent_verb_row_on(
         "vault.artifacts.view" => {
             let input: oneiron::blob_artifact::ArtifactRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let owner = actor
+                .auth
+                .as_ref()
+                .and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());
+            let memory = match owner {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            };
             let output = oneiron::task_verb::sdk::vault_artifacts_view(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -18036,6 +18757,14 @@ async fn execute_agent_verb_row_on(
         "vault.artifacts.export" => {
             let input: oneiron::blob_artifact::ArtifactExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let owner = actor
+                .auth
+                .as_ref()
+                .and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());
+            let memory = match owner {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            };
             let output = oneiron::task_verb::sdk::vault_artifacts_export(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -18227,7 +18956,10 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_grant(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 ),
             )
             .await;
@@ -18247,7 +18979,10 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_revoke(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 ),
             )
             .await;
@@ -20024,6 +20759,14 @@ async fn execute_agent_verb_row_on(
             let output = oneiron::task_verb::sdk::self_skills_callables(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skills.callable.amend" => {
+            let input: oneiron::skill::helper::CallableAmendRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_skills_callable_amend(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.skills.pack_receipt" => {
@@ -22558,6 +23301,32 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.ingest.ag_ui.import" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.ingest.ag_ui.import", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::ingest::AgUiFileImport =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_ingest_ag_ui_import(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.ingest.ag_ui.read" => {
+            let input: oneiron::ingest::AgUiFileReadInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_ingest_ag_ui_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.claims.admit" => {
             let input: oneiron::memory::AdmitImportedClaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -22633,8 +23402,17 @@ async fn execute_agent_verb_row_on(
         "vault.esign.signing.act" => {
             let input: oneiron::blob_artifact::esign::EsignSigningRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_esign_signing_act(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_off_runtime_row(
+                server,
+                tool,
+                actor,
+                surface,
+                move |memory| oneiron::task_verb::sdk::vault_esign_signing_act(memory, input),
+            ))
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -25101,6 +25879,127 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.mail.pack.install" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_pack_install(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.connect" => {
+            let input: oneiron::mail_pack::MailSourceConnectRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_connect(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.list" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.settings.set" => {
+            let input: oneiron::mail_pack::MailSourceSettingsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_settings_set(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.members.set" => {
+            let input: oneiron::mail_pack::MailSourceMembersRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_members_set(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.audience_events" => {
+            let input: oneiron::mail_pack::MailSourceRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_mail_sources_audience_events(&memory, input)
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.threads.share" => {
+            let input: oneiron::mail_pack::MailThreadShareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_threads_share(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.threads.unshare" => {
+            let input: oneiron::mail_pack::MailThreadShareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_threads_unshare(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.compliance.setting" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_compliance_setting(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.compliance.set" => {
+            let input: oneiron::mail_pack::MailComplianceSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_compliance_set(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.compliance.log" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_compliance_log(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.sync_status" => {
+            let input: oneiron::mail_pack::MailSourceRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_sync_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.inbox" => {
+            let input: oneiron::mail_pack::MailInboxRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_inbox(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.threads.read" => {
+            let input: oneiron::mail_pack::MailThreadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_threads_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.compliance.search" => {
+            let input: oneiron::mail_pack::MailComplianceSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_compliance_search(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "connector.answer" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("connector.answer", &input)
@@ -25948,6 +26847,7 @@ async fn execute_agent_verb_row_on(
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
+                pre_hooked_fold,
             ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

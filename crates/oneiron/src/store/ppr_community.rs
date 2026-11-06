@@ -7,19 +7,20 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::config::community_graph::{
+    CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
+    CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
+};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
-use crate::ppr::read_graph_version;
-use crate::ppr_community::{
-    CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
-    CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
-};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::EngineScan;
+use crate::store::graph_version::read_graph_version;
+use crate::store::scan_count::ScanCount;
 
 use super::Store;
 
@@ -37,7 +38,7 @@ pub(super) const COMMUNITY_META_SUFFIX: &str = "meta";
 pub(super) const CACHE: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::PPR_COMMUNITY_CACHE);
 
-fn cache_error(_: crate::ppr_community::CommunityError) -> Error {
+fn cache_error(_: crate::config::community_graph::CommunityError) -> Error {
     Error::CorruptedIndex("ppr community cache")
 }
 
@@ -171,18 +172,21 @@ impl Store {
             return Ok(false);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let body = crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?;
             if !crate::claim::claim_surfaceable(&body)
-                || body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
+                || body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
             {
                 return Ok(false);
             }
             // A claim still awaiting its owner's answer connects no community.
-            if !crate::gate::claim_consolidation_eligible_in_txn(
+            if !self.gate_hooks.claim_consolidation_eligible_in_txn(
                 self,
                 txn,
                 id,
-                crate::gate::ConsolidationReader::PprCommunity,
+                oneiron_store::consolidation_reader::ConsolidationReader::PprCommunity,
             )? {
                 return Ok(false);
             }

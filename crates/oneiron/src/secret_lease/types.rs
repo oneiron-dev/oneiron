@@ -1,15 +1,20 @@
-//! Lease/registration/receipt row types, VaultInstant clock, key prefixes.
+//! Core half of `secret_lease::types`: its store-layer items live in `oneiron_store::secret_lease::types` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::path::PathBuf;
-
-use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+pub use oneiron_store::secret_lease::types::*;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::CustodyTier;
-
+use crate::secret_record::CustodyTier;
 use crate::vault::Vault;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use zeroize::Zeroizing;
+// ---------------------------------------------------------------------------
+// Lease status & rows
+// ---------------------------------------------------------------------------
+
+pub use oneiron_contracts::secret_lease::SecretLeaseStatus;
 
 /// The `vault_meta` key prefix for secret-lease rows
 /// (`secret_lease:v1:<lease_id_hex>`).
@@ -110,12 +115,6 @@ impl Vault {
         .map(VaultInstant)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Lease status & rows
-// ---------------------------------------------------------------------------
-
-pub use oneiron_contracts::secret_lease::SecretLeaseStatus;
 
 /// A T1/T2 lease row (`vault_meta` under [`SECRET_LEASE_KEY_PREFIX`]).
 ///
@@ -225,16 +224,6 @@ pub(crate) struct StoredLocalRegistration {
     pub(crate) file_identity: FileIdentity,
     pub(crate) removal_error: Option<String>,
     pub(crate) removal_attempted_at: Option<u64>,
-}
-
-/// A taint reference for SECRET-04 (ONE-1922): declared here (layer 2)
-/// because door/lease returns carry it; SECRET-04 consumes and invalidates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretTaintRef {
-    /// The secret name.
-    pub secret_ref: String,
-    /// The record's rotation generation the value was read at.
-    pub generation: u32,
 }
 
 /// The T0 door-injection receipt — the ONLY thing the workspace receives

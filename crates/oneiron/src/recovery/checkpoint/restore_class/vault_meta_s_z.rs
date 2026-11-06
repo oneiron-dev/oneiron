@@ -25,6 +25,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_SUMMARY_RESULT, CONTENT),
     // An erased credential's fence stands with the custody it closes (KS-6 part 2).
     (&t::SECRET_CUSTODY_ERASE, LIVE),
+    // An export secret supplement's sealed copy stands as a custody input does (FIX 11843).
+    (&t::SECRET_CUSTODY_EXPORT_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
@@ -38,12 +40,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
+    (&t::SECRET_HANDLE_LABEL, LIVE),
+    (&t::SECRET_HANDLE_PURPOSE, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_LEASE_GRANT, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
+    (&t::SECRET_LIFT_CONTRIBUTION, LIVE),
     (&t::SECRET_LIFT_MARK, CONTENT),
     (&t::SECRET_LIFT_NOTICE, LIVE),
     (&t::SECRET_LIFT_PROPOSAL, CONTENT),
@@ -67,6 +72,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SESSION_TURN_MEMBERSHIP, CONTENT),
     (&t::SESSION_TURNS, CONTENT),
     (&t::BACKUP_POLICY, LIVE),
+    (&t::BOARD_LAYOUT_SETTINGS, LIVE),
     (&t::CUSTOMIZATION_EVENT, LIVE),
     (&t::CUSTOMIZATION_EVENT_SEQUENCE, LIVE),
     (&t::CUSTOMIZATION_SETTINGS, LIVE),
@@ -86,6 +92,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::POLICY_SETTING_ACT, LIVE),
+    (&t::ACCESS_GRANT_OWNER_ACT, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::ROOM_THREADS_ADMIN_DELETE, LIVE),
@@ -102,6 +109,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_ERASE_ASK, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_MATURED, SHARED_VAULT_MEMBERSHIP),
+    // A membership record still owed stands as the live vault owes it: a
+    // restore neither drops one nor revives one already signed (FIX 12335).
+    (&t::SHARED_ACT_MEMBERSHIP_PENDING, LIVE),
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     // A proposed policy change binds the digest of the rows it was proposed
     // against, so a restore that moves the policy manifest leaves it stale:
@@ -128,6 +138,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SHORT_ID_KIND_COUNTER, CONTENT),
     (&t::SKILL_CALLABLE_CASE, CONTENT),
     (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
@@ -233,6 +244,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE, CONTENT),
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
+    // A change to a source's readers is history, restored with the rows it
+    // admitted; the policy itself is live authority: a restore never gives
+    // back a reader removed since, or takes away one added (FIX 12559).
+    (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
+    (&t::SOURCE_AUDIENCE_POLICY, LIVE),
+    // A row's birth binding stands with the row as the image holds it.
+    (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
+    (&t::SOURCE_AUDIENCE_THREAD, CONTENT),
     (&t::SPAWN_PLANNED_INTENT, LIVE),
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
@@ -354,17 +373,22 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VOICE_IDENTITY_SAMPLE, LIVE),
     (&t::TASK_WAVE_PLAN_INDEX, CONTENT),
     (&t::WEAVE_DIGEST, CONTENT),
+    (&t::WEAVE_DIGEST_RERENDER, CONTENT),
     // The owner's digest settings and their change history are his content,
     // as the digest schedule is (FIX 5495).
     (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
+    (&t::WEAVE_DIGEST_CHANNEL_OVERRIDE, CONTENT),
     (&t::WEAVE_DIGEST_SETTING_CHANGE, CONTENT),
     (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),
     (&t::WEAVE_DIGEST_SCHEDULE, CONTENT),
+    (&t::WEAVE_LIVE, CONTENT),
     (&t::WEAVE_WRONG_ITEM_LABEL, CONTENT),
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WEB_CONNECTOR_SETTING, CONTENT),
     (&t::WEB_CONNECTOR_USAGE, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT_FENCE, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),

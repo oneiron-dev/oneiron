@@ -34,12 +34,22 @@ const OUTBOUND_GATE_BINDING: SideTable<[u8; 16], Vec<u8>, Raw> =
 // `rmp_serde::to_vec_named`.
 const SEND_RECEIPT: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SEND_RECEIPT_SUMMARY);
+/// Whether a masked copy of a `SEND_RECEIPT_SUMMARY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn send_receipt_summary_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Vec<u8>, Raw>(bytes)
+}
 
 /// All outcomes append here. Compact fixed-width keys contain TASK + receipt-id
 /// hash, so caller-supplied receipt ids cannot exceed LMDB's key-size limit.
 /// See [`SEND_RECEIPT`] for why the value is opaque bytes.
 pub(super) const SEND_RECEIPT_AUDIT: SideTable<(EntityId, [u8; 32]), Vec<u8>, Raw> =
     SideTable::new(&side_table::SEND_RECEIPT_ATTEMPT_AUDIT);
+
+/// The store relays the caller's encoded audit bytes without re-encoding them.
+pub(crate) fn send_receipt_attempt_audit_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Vec<u8>, Raw>(bytes)
+}
 
 const SEND_IDEMPOTENCY: SideTable<[u8; 32], SendIdempotencyValue, Raw> =
     SideTable::new(&side_table::SEND_IDEMPOTENCY_INDEX);

@@ -5,17 +5,19 @@
 //! A receipt is written with the binding of the result it describes, in the
 //! checkpoint's one transaction, so neither exists without the other. It is
 //! computed by the host from the jobs it names; the guest only names them.
-
-use serde::{Deserialize, Serialize};
+//! The step's replay context joins the same transaction beside its capsule
+//! (FIX 6351, `replay_capsule::context`).
 
 use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
 use super::records::REPLAY_RECORDS;
+use super::replay_capsule::{join_step_context_in_txn, stage_step_context};
 use super::routing::SessionBinding;
 use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, ResultOccurrence,
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, StepContextCommit,
     seal_parked_code_consent_in_txn,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::result_manifest::ResultOccurrence;
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 /// One receipt per folded occurrence, keyed by its run and its occurrence.
@@ -26,179 +28,14 @@ const FOLDS: SideTable<(EntityId, EntityId), ReaderFoldReceipt, Raw> =
 pub(super) const MEMOS: SideTable<[u8; 32], SummaryMemo, Raw> =
     SideTable::new(&side_table::CODE_RUN_SUMMARY_MEMO);
 
-/// One result occurrence as a receipt names it: its id, the run that holds
-/// it, its path in that run's record and its body's handle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OccurrenceRef {
-    pub(crate) occurrence: EntityId,
-    pub(crate) owner: EntityId,
-    pub(crate) path: String,
-    pub(crate) handle: String,
+pub(crate) fn code_run_summary_memo_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<SummaryMemo, Raw>(bytes)
 }
 
-impl OccurrenceRef {
-    pub(crate) fn new(owner: EntityId, path: &str, handle: &str) -> Result<Self> {
-        Ok(Self {
-            occurrence: ResultOccurrence::owned(owner, path)?.id(),
-            owner,
-            path: path.to_owned(),
-            handle: handle.to_owned(),
-        })
-    }
-}
-
-/// The source a fold read: its occurrence and the range of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReceiptSource {
-    pub(crate) occurrence: OccurrenceRef,
-    pub(crate) range: (u64, u64),
-}
-
-/// One reader job a fold named: its task, its finding (none for a job that
-/// left none), its state, why it settled short, and the range it read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReceiptFinding {
-    pub(crate) task: EntityId,
-    pub(crate) occurrence: Option<OccurrenceRef>,
-    pub(crate) state: String,
-    pub(crate) reason: Option<String>,
-    pub(crate) range: (u64, u64),
-}
-
-/// A child that settled short, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReceiptPartial {
-    pub(crate) task: EntityId,
-    pub(crate) reason: String,
-}
-
-/// One summary of a fold's tree and the results it summarized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReceiptTree {
-    pub(crate) summary: OccurrenceRef,
-    pub(crate) inputs: Vec<OccurrenceRef>,
-}
-
-/// What a folded result rests on: the source it was read from and the
-/// findings it was folded from. It is not
-/// `EdgeProvenanceClaimBody.substrate_ref` (provenance/codec.rs), which
-/// names the MODEL that produced a write; nothing here reaches that field or
-/// its gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReaderSubstrateRef {
-    pub(crate) source: OccurrenceRef,
-    pub(crate) findings: Vec<OccurrenceRef>,
-}
-
-/// A fold's receipt: the folded result, the source and range it read, each
-/// job it named, the byte ranges read, unread and read short, the children's
-/// cutoff, the recipe it folded by, its summary tree, every occurrence whose
-/// taint the folded body inherits, what it rests on, and, once a document
-/// import restored it, which occurrences it names did not come back.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReaderFoldReceipt {
-    pub(crate) folded: OccurrenceRef,
-    pub(crate) source: ReceiptSource,
-    pub(crate) findings: Vec<ReceiptFinding>,
-    pub(crate) read: Vec<(u64, u64)>,
-    pub(crate) unread: Vec<(u64, u64)>,
-    pub(crate) partial: Vec<ReceiptPartial>,
-    pub(crate) cutoff_unix_ms: u64,
-    pub(crate) recipe: Option<serde_json::Value>,
-    pub(crate) tree: Vec<ReceiptTree>,
-    pub(crate) taint: Vec<OccurrenceRef>,
-    pub(crate) substrate_ref: ReaderSubstrateRef,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) unresolved: Vec<OccurrenceRef>,
-}
-
-impl ReaderFoldReceipt {
-    /// What the folded result's card says of it: the ranges read, unread
-    /// and read short, how many jobs it named, and, for an imported receipt
-    /// some of whose occurrences did not come back, how many.
-    pub(crate) fn card(&self) -> serde_json::Value {
-        let mut card = serde_json::json!({
-            "read": self.read,
-            "unread": self.unread,
-            "partial": self.partial,
-            "children": self.findings.len(),
-        });
-        if !self.unresolved.is_empty() {
-            card["unresolved"] = self.unresolved.len().into();
-        }
-        card
-    }
-
-    /// An imported receipt: it keeps every occurrence it names, and names
-    /// as `unresolved` each one `resolves` finds nothing for (its source,
-    /// findings, summary tree, taint and what it rests on), once each.
-    pub(crate) fn mark_unresolved(
-        &mut self,
-        mut resolves: impl FnMut(&OccurrenceRef) -> Result<bool>,
-    ) -> Result<()> {
-        let named = std::iter::once(&self.source.occurrence)
-            .chain(self.findings.iter().filter_map(|f| f.occurrence.as_ref()))
-            .chain(
-                self.tree
-                    .iter()
-                    .flat_map(|t| std::iter::once(&t.summary).chain(&t.inputs)),
-            )
-            .chain(&self.taint)
-            .chain(std::iter::once(&self.substrate_ref.source))
-            .chain(&self.substrate_ref.findings);
-        let mut seen = std::collections::BTreeSet::new();
-        let mut unresolved = Vec::new();
-        for item in named {
-            if seen.insert((item.owner, item.occurrence)) && !resolves(item)? {
-                unresolved.push(item.clone());
-            }
-        }
-        self.unresolved = unresolved;
-        Ok(())
-    }
-
-    /// The receipt of a withheld folded occurrence as an export carries it:
-    /// its marker and its refs, no range, reason or recipe.
-    pub(crate) fn refs_only(&self) -> serde_json::Value {
-        let refs = |items: &mut dyn Iterator<Item = &OccurrenceRef>| {
-            items
-                .map(|item| item.occurrence.to_hex())
-                .collect::<Vec<_>>()
-        };
-        serde_json::json!({
-            "folded": self.folded.occurrence.to_hex(),
-            "source": self.source.occurrence.occurrence.to_hex(),
-            "findings": refs(&mut self.findings.iter().filter_map(|f| f.occurrence.as_ref())),
-            "taint": refs(&mut self.taint.iter()),
-        })
-    }
-}
-
-/// A summary made: its task, and its text's occurrence in the job's run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SummaryMemo {
-    pub(crate) task: EntityId,
-    pub(crate) owner: EntityId,
-    pub(crate) path: String,
-    pub(crate) handle: String,
-}
-
-macro_rules! json_row {
-    ($row:ty, $what:literal) => {
-        impl RawValue for $row {
-            fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-                serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex($what).into())
-            }
-
-            fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-                serde_json::from_slice(bytes).map_err(|_| Error::CorruptedIndex($what).into())
-            }
-        }
-    };
-}
-
-json_row!(ReaderFoldReceipt, "code-run reader fold receipt");
-json_row!(SummaryMemo, "code-run summary memo");
+pub(crate) use crate::store::reader_fold_receipt::{
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree, SummaryMemo,
+};
 
 impl Vault {
     /// Every fold receipt run `run` holds in the base vault, by its folded
@@ -261,6 +98,8 @@ impl ExecutorStorage<'_> {
     /// names in the same transaction (DOOR-079 1b), when one is bound to it,
     /// so the binding is sealed exactly when its parked step commits. A
     /// room's run binds no code consent wait, so its commit seals nothing.
+    /// The step's replay `context` joins its capsule in the same
+    /// transaction (FIX 6351); a room's run captures no capsule.
     pub(crate) fn put_code_run_replay_record_with_receipts_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -268,6 +107,7 @@ impl ExecutorStorage<'_> {
         healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         self.put_replay_record_with_receipts_and_resume(
             record,
@@ -276,6 +116,7 @@ impl ExecutorStorage<'_> {
             receipts,
             parked,
             None,
+            context,
         )
     }
 
@@ -290,6 +131,7 @@ impl ExecutorStorage<'_> {
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         resume: &ProgramResumeCommit,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         self.put_replay_record_with_receipts_and_resume(
             record,
@@ -298,9 +140,14 @@ impl ExecutorStorage<'_> {
             receipts,
             parked,
             Some(resume),
+            context,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a checkpoint's commit writes every row its step staged in one transaction"
+    )]
     fn put_replay_record_with_receipts_and_resume(
         &self,
         record: &CodeRunReplayRecord,
@@ -309,31 +156,42 @@ impl ExecutorStorage<'_> {
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         resume: Option<&ProgramResumeCommit>,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         match self {
-            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
-                record,
-                expected,
-                healed_model,
-                |wtxn| {
-                    for receipt in receipts {
-                        let key = (receipt.folded.owner, receipt.folded.occurrence);
-                        FOLDS.put(&vault.store, wtxn, &key, receipt)?;
-                    }
-                    if let Some(parked) = parked {
-                        seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
-                    }
-                    // A turn program's frontier joins its checkpoint's own
-                    // commit (DOOR-141 PR2); it never fails it.
-                    crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
-                    // So does a pinned entry's resume checkpoint (DOOR-141
-                    // PR3b), in a savepoint of its own.
-                    if let Some(resume) = resume {
-                        join_program_resume_in_txn(vault, wtxn, record, resume);
-                    }
-                    Ok(())
-                },
-            ),
+            Self::Canonical(vault) => {
+                // Its body instances are minted before the writer opens.
+                let context = stage_step_context(vault, context);
+                vault.put_code_run_replay_record_if_generation_with_heal_and(
+                    record,
+                    expected,
+                    healed_model,
+                    |wtxn| {
+                        for receipt in receipts {
+                            let key = (receipt.folded.owner, receipt.folded.occurrence);
+                            FOLDS.put(&vault.store, wtxn, &key, receipt)?;
+                        }
+                        if let Some(parked) = parked {
+                            seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
+                        }
+                        // The step's replay context joins its capsule (FIX
+                        // 6351), in a savepoint of its own; it never fails
+                        // the commit.
+                        if let Some(context) = &context {
+                            join_step_context_in_txn(vault, wtxn, context);
+                        }
+                        // A turn program's frontier joins its checkpoint's own
+                        // commit (DOOR-141 PR2); it never fails it.
+                        crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
+                        // So does a pinned entry's resume checkpoint (DOOR-141
+                        // PR3b), in a savepoint of its own.
+                        if let Some(resume) = resume {
+                            join_program_resume_in_txn(vault, wtxn, record, resume);
+                        }
+                        Ok(())
+                    },
+                )
+            }
             Self::Session(_) if receipts.is_empty() => self
                 .put_code_run_replay_record_if_generation_with_heal(record, expected, healed_model),
             Self::Session(binding) => {

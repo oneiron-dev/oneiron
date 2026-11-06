@@ -10,11 +10,14 @@
 //! rows) answers the stored copy as it did before projection existed
 //! (`ISOLATION_NEW_CHECK_ERROR_MODE`); bounds that were judged still bound.
 //! A one-shot transfer is served once (FIX-LIST 10773): the row keeps each
-//! slip an archive door spent so, on every archive of its removed Owner. A
-//! pact-bound transfer is served only while its pact holds, and the row logs
-//! each serve under that pact (FIX 11860).
+//! slip an archive door spent so, on every archive of its removed Owner, and
+//! the door signs the spend into the authority log, so a replica that does
+//! not share these rows refuses the slip once it folds that entry (FIX
+//! 11862). A pact-bound transfer is served only while its pact holds, and
+//! the row logs each serve under that pact (FIX 11860).
 //! An erase reaches these copies in its own commit (FIX-LIST 2241): an
-//! archive that froze an erased record is rewritten without it.
+//! archive that froze an erased record is rewritten without it. A person's
+//! erase drops the archives kept for them (FIX 11723).
 
 use std::collections::BTreeSet;
 
@@ -22,7 +25,16 @@ use super::{REMOVAL_EXPORT, RemovalExportCopy, removal_export_key};
 use crate::authority::{ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode};
 use crate::error::{Error, Result};
 use crate::federation::Scope;
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::{EntityId, Vault};
+
+/// Key-only views of the delivery ledger and of the record ids a removal's
+/// export counted; their own modules keep the values. A person's erase
+/// deletes their rows by key and reads no value (FIX 11723).
+const REMOVAL_DELIVERY_KEYS: SideTable<String, (), Named> =
+    SideTable::new(&side_table::SHARED_ACT_REMOVAL_DELIVERY);
+const EXPORT_RECORD_KEYS: SideTable<HexId, (), Named> =
+    SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT_RECORDS);
 
 /// How a transferred holder takes a removal archive (CALLS
 /// "REMOVAL_ARCHIVE_TRANSFER_MODE", accepted by the Engine 10-22 05:3x).
@@ -254,9 +266,11 @@ impl Vault {
         Ok(copies)
     }
 
-    /// Whether an archive door already served the one-shot transferred slip
-    /// `slip_id`: any of `member`'s archives keeps its spend (FIX-LIST
-    /// 10773).
+    /// Whether an archive door of this store already served the one-shot
+    /// transferred slip `slip_id`: any of `member`'s archives keeps its spend
+    /// (FIX-LIST 10773). The authority fold's consumed set carries a signed
+    /// spend to the replicas that do not share these rows (FIX 11862); the
+    /// door reads both.
     pub(crate) fn removal_archive_slip_spent_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -271,7 +285,9 @@ impl Vault {
     }
 
     /// Spends the one-shot transferred slip `slip_id` on every archive of
-    /// `member`, in the writer whose answer served it (FIX-LIST 10773).
+    /// `member`, in the writer whose answer served it (FIX-LIST 10773). The
+    /// door signs the same spend into the authority log in that writer when
+    /// it holds a signer (FIX 11862).
     pub(crate) fn spend_removal_archive_slip_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -312,6 +328,46 @@ impl Vault {
                     REMOVAL_EXPORT.delete(&self.store, txn, &row_key)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// A person's erase, in its own writer (FIX 11723): the removal archives
+    /// kept for them go, each with the record ids its export counted, and
+    /// every holder's delivery of an archive of theirs goes too, one whose
+    /// archive is already gone included. Only rows keyed by the erased
+    /// person go. It is the declared actor scrub of the archive table and of
+    /// the delivery ledger both; whichever runs second finds nothing left.
+    pub(crate) fn erase_removal_archive_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::deletion::names_no_actor(self, wtxn, actor)? {
+            return Ok(());
+        }
+        let prefix = removal_export_key(&actor.to_hex(), "");
+        let archives = REMOVAL_EXPORT.scan_keys(&self.store, wtxn, prefix.as_bytes())?;
+        let mut records = 0_usize;
+        for row_key in &archives {
+            let receipt = row_key
+                .split_once(':')
+                .and_then(|(_, receipt)| EntityId::from_hex(receipt).ok());
+            if let Some(receipt) = receipt
+                && EXPORT_RECORD_KEYS.delete(&self.store, wtxn, &HexId(receipt))?
+            {
+                records += 1;
+            }
+            REMOVAL_EXPORT.delete(&self.store, wtxn, row_key)?;
+        }
+        let deliveries = REMOVAL_DELIVERY_KEYS.delete_from(&self.store, wtxn, prefix.as_bytes())?;
+        if !archives.is_empty() || deliveries > 0 {
+            tracing::info!(
+                archives = archives.len(),
+                records,
+                deliveries,
+                "a person's erase dropped the removal archives kept for them (FIX 11723)"
+            );
         }
         Ok(())
     }

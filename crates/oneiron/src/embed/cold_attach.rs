@@ -4,8 +4,7 @@ use super::eligibility::is_embeddable_in_txn;
 use crate::ports::{EntityStoreRead, IndexMetaKey, RetrievalIndexInventory};
 use crate::{Error, Result};
 
-/// Marker set atomically with the first model identity, consumed by cold attach.
-pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
+pub(crate) use crate::store::embedding::COLD_ATTACH_PENDING_KEY;
 
 impl crate::Vault {
     /// Requeues pre-embedder records at priority 3 after the first model is
@@ -82,7 +81,7 @@ fn remark_pending_in_txn(
                 Some(text) => embeddable.push((id, text.into_bytes())),
                 None => retired.push(id),
             }
-        } else if is_embeddable_in_txn(vault, wtxn, row.entity_type, &row.body)? {
+        } else if is_embeddable_in_txn(vault, wtxn, &id, row.entity_type, &row.body)? {
             embeddable.push((id, row.body));
         } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY

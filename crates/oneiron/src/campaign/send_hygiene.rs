@@ -30,8 +30,6 @@
 //! one. `comm.rs` is SPINE-COMM's projector hot zone and is never edited — the
 //! states-only/restrictive claim-write shape is mirrored, not moved.
 
-use std::collections::BTreeMap;
-
 use rmpv::Value;
 
 use crate::Vault;
@@ -53,55 +51,9 @@ use crate::temporal::TimeRange;
 // Suppression
 // ---------------------------------------------------------------------------
 
-/// Why a suppression is being written.
-///
-/// Closed on purpose: these are the two facts that permanently stop contact. A
-/// soft bounce, a complaint, and a delivery are health signals and have no
-/// variant here, because giving them one would make "does this suppress?" a
-/// property of the call site rather than of the cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuppressionCause {
-    /// A permanent delivery failure observed by the sending identity.
-    HardBounce,
-    /// The counterparty asked to stop.
-    Unsubscribe,
-}
-
-/// Everything one suppression write turn needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SuppressionInput {
-    /// PERSON being suppressed.
-    pub person_ref: EntityId,
-    /// Campaign whose membership is superseded.
-    ///
-    /// Absent for an inbound signal that names no campaign. The enforcement
-    /// claim still lands: `comm.do_not_contact` carries no campaign field by
-    /// construction, so a suppression can never be scoped away by moving the
-    /// person to another campaign.
-    pub campaign_ref: Option<EntityId>,
-    /// Channel the suppression is scoped to; normalized here.
-    pub channel: String,
-    /// Sending identity that observed the failure. Required for
-    /// [`SuppressionCause::HardBounce`], which is a fact ABOUT a sender.
-    pub sender_ref: Option<EntityId>,
-    /// The persisted inbound evidence this suppression derives from.
-    pub evidence_ref: EntityId,
-    /// When the suppressing event occurred.
-    pub occurred_at: u64,
-}
-
-/// What one suppression write turn landed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SuppressionReceipt {
-    /// The `comm.bounce` head, for [`SuppressionCause::HardBounce`] only.
-    pub bounce_claim_ref: Option<EntityId>,
-    /// The `comm.do_not_contact` head. Always present — this is the claim the
-    /// external-effect gate reads.
-    pub do_not_contact_claim_ref: EntityId,
-    /// The suppressed `campaign.member` heads, one per live head the campaign
-    /// had, in their own claim-id order; empty when none matched.
-    pub member_claim_refs: Vec<EntityId>,
-}
+pub use crate::write_envelope::cohort_claims::suppression::{
+    SuppressionCause, SuppressionInput, SuppressionReceipt,
+};
 
 /// Suppresses one person on one channel, atomically.
 ///
@@ -332,154 +284,15 @@ fn put_hygiene_claim_in_txn(
 // List-Unsubscribe (RFC 2369 + RFC 8058)
 // ---------------------------------------------------------------------------
 
-/// RFC 2369 unsubscribe header name.
-pub const LIST_UNSUBSCRIBE: &str = "List-Unsubscribe";
-/// RFC 8058 one-click header name.
-pub const LIST_UNSUBSCRIBE_POST: &str = "List-Unsubscribe-Post";
-/// The one RFC 8058 one-click header value.
-pub const LIST_UNSUBSCRIBE_POST_ONE_CLICK: &str = "List-Unsubscribe=One-Click";
-
-/// The only channel these headers exist for.
-pub const EMAIL_CHANNEL: &str = "email";
-
-/// Field the frozen outbound payload carries hygiene headers under.
-///
-/// Public because it is wire shape: the frozen bytes are the retry contract, and
-/// a connector adapter reading them back needs the same name the writer used.
-pub const HYGIENE_HEADERS_PAYLOAD_FIELD: &str = "hygiene_headers";
-
-/// Upper bound for one unsubscribe URI.
-const MAX_UNSUBSCRIBE_URI_BYTES: usize = 998;
-
-/// Where an unsubscribe lands, frozen with the send it belongs to.
-///
-/// The HTTPS one-click target is mandatory and the mailto is optional, which is
-/// exactly RFC 8058's shape: one-click needs an HTTPS endpoint, and a mailto
-/// alone cannot satisfy it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListUnsubscribeTarget {
-    /// Optional RFC 2369 mailto target.
-    pub mailto_uri: Option<String>,
-    /// Mandatory RFC 8058 one-click HTTPS target.
-    pub https_one_click_uri: String,
-}
-
-/// Builds the deterministic unsubscribe headers for one frozen target.
-///
-/// Determinism is the contract, not a nicety: the same frozen intent must
-/// produce byte-identical header names, values, and ordering on every retry, or
-/// a mailbox provider sees two different unsubscribe surfaces for one message.
-/// Two things pin it — a [`BTreeMap`] fixes header ordering, and the URI list
-/// order is fixed as HTTPS-then-mailto rather than following the input.
-///
-/// # Errors
-///
-/// [`Error::InvalidConfig`] when a URI carries the wrong scheme, is empty past
-/// its scheme, exceeds `MAX_UNSUBSCRIBE_URI_BYTES`, or contains a character
-/// that would break header framing.
-pub fn list_unsubscribe_headers(
-    target: &ListUnsubscribeTarget,
-) -> Result<BTreeMap<String, String>> {
-    validate_unsubscribe_uri(&target.https_one_click_uri, "https://")?;
-    let mut value = format!("<{}>", target.https_one_click_uri);
-    if let Some(mailto_uri) = &target.mailto_uri {
-        validate_unsubscribe_uri(mailto_uri, "mailto:")?;
-        value.push_str(", <");
-        value.push_str(mailto_uri);
-        value.push('>');
-    }
-    Ok(BTreeMap::from([
-        (LIST_UNSUBSCRIBE.to_owned(), value),
-        (
-            LIST_UNSUBSCRIBE_POST.to_owned(),
-            LIST_UNSUBSCRIBE_POST_ONE_CLICK.to_owned(),
-        ),
-    ]))
-}
-
-/// Folds the unsubscribe headers into an email payload's header map.
-///
-/// A small pre-send transformation, deliberately: it is not a transport layer,
-/// it never invents a target, and a non-email channel or a send with no frozen
-/// target passes through untouched.
-///
-/// `channel` is expected already normalized; the caller owns normalization
-/// because it already holds the connector-class spelling.
-///
-/// # Errors
-///
-/// Propagates [`list_unsubscribe_headers`].
-pub(crate) fn inject_campaign_email_hygiene_headers(
-    channel: &str,
-    headers: &mut BTreeMap<String, String>,
-    unsubscribe: Option<&ListUnsubscribeTarget>,
-) -> Result<()> {
-    if channel != EMAIL_CHANNEL {
-        return Ok(());
-    }
-    let Some(target) = unsubscribe else {
-        return Ok(());
-    };
-    headers.extend(list_unsubscribe_headers(target)?);
-    Ok(())
-}
-
-/// Reads hygiene headers back out of a frozen outbound payload.
-///
-/// Tolerant by construction: most frozen payloads are opaque connector bytes
-/// that were never JSON and carry no hygiene headers at all. Only a payload that
-/// DOES carry the field and carries it malformed is an error — a send whose
-/// unsubscribe header cannot be reproduced from the frozen bytes must not reach
-/// the wire under a header the ledger cannot vouch for.
-///
-/// # Errors
-///
-/// [`Error::InvalidConfig`] when the field is present but is not a flat map of
-/// strings.
-pub(crate) fn frozen_payload_hygiene_headers(payload: &[u8]) -> Result<BTreeMap<String, String>> {
-    let Ok(serde_json::Value::Object(fields)) =
-        serde_json::from_slice::<serde_json::Value>(payload)
-    else {
-        return Ok(BTreeMap::new());
-    };
-    let Some(headers) = fields.get(HYGIENE_HEADERS_PAYLOAD_FIELD) else {
-        return Ok(BTreeMap::new());
-    };
-    let serde_json::Value::Object(headers) = headers else {
-        return Err(invalid_payload("outbound hygiene headers must be a map"));
-    };
-    headers
-        .iter()
-        .map(|(name, value)| {
-            value
-                .as_str()
-                .map(|value| (name.clone(), value.to_owned()))
-                .ok_or_else(|| invalid_payload("outbound hygiene header value must be a string"))
-        })
-        .collect()
-}
-
-/// Rejects a URI that carries the wrong scheme, is empty past it, is too long,
-/// or would break header framing.
-fn validate_unsubscribe_uri(uri: &str, scheme: &str) -> Result<()> {
-    if !uri.starts_with(scheme) || uri.len() == scheme.len() {
-        return Err(invalid_payload("unsubscribe URI scheme is invalid"));
-    }
-    if uri.len() > MAX_UNSUBSCRIBE_URI_BYTES {
-        return Err(invalid_payload("unsubscribe URI is too long"));
-    }
-    // `<`, `>`, and `,` frame the RFC 2369 list; whitespace and controls fold
-    // the header. Any of them would let a target rewrite the header around it.
-    if uri
-        .chars()
-        .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>' | ','))
-    {
-        return Err(invalid_payload(
-            "unsubscribe URI contains a framing character",
-        ));
-    }
-    Ok(())
-}
+pub use crate::outbound_intent_ledger::email_headers::EMAIL_CHANNEL;
+pub use crate::outbound_intent_ledger::email_headers::HYGIENE_HEADERS_PAYLOAD_FIELD;
+pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE;
+pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE_POST;
+pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE_POST_ONE_CLICK;
+pub use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
+pub(crate) use crate::outbound_intent_ledger::email_headers::frozen_payload_hygiene_headers;
+pub(crate) use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
+pub use crate::outbound_intent_ledger::email_headers::list_unsubscribe_headers;
 
 // ---------------------------------------------------------------------------
 // Sticky sender
@@ -647,6 +460,4 @@ fn occurred_at(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-fn invalid_payload(reason: &str) -> Error {
-    Error::InvalidConfig(reason.to_owned())
-}
+use crate::outbound_intent_ledger::email_headers::invalid_payload;

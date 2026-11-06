@@ -6,18 +6,23 @@ image, or run as a host child on the operator's explicit opt-in. It speaks
 the engine's framed protocol on stdin/stdout
 (crates/oneiron-server/src/server/merge_queue_checker/tree.rs):
 
-  in:  H header (JSON), F file frames, E end
-  out: per command R result (JSON), O stdout, X stderr; then I digests, D done
+  in:  H header (JSON), G Git objects, F file frames, E end
+  out: per command R result (JSON), O stdout, X stderr, U declared outputs;
+       then I digests, D done
 
 A frame is a 4-byte big-endian length, a kind byte and its payload; the
 length counts the kind byte. The helper materializes the pinned tree into a
 private scratch copy, runs each phase command with exactly its argv and
 environment (nothing inherited), stops the phase at the first nonzero exit,
 then runs every contract-output command, and reports each child's actual
-exit status or signal with its output on frames of their own. A child's
-stdout is data, never protocol. Input digests are taken over the materialized
-files before and after the commands. It installs nothing, fetches nothing
-and adds no command. Its stdin closing ends it and its running child.
+exit status or signal with its output on frames of their own, and each
+output file the command declared that it left (FIX 7235). A child's stdout
+is data, never protocol. Input digests are taken over the materialized
+files before and after the commands. When the engine sends the pinned
+commit's commit and tree objects, the files sit in a fresh local-only Git
+object store whose HEAD is that commit, a shallow boundary with no remote,
+hooks or index (FIX 7228). It installs nothing, fetches nothing and adds no
+command. Its stdin closing ends it and its running child.
 """
 
 import hashlib
@@ -30,6 +35,7 @@ import struct
 import subprocess
 import sys
 import threading
+import zlib
 
 # The image's dependency store, preseeded from the baseline lockfile; copied
 # into a command's scratch CARGO_HOME before it runs (README.md).
@@ -43,6 +49,8 @@ FRAME_STDOUT = b"O"
 FRAME_STDERR = b"X"
 FRAME_INPUTS = b"I"
 FRAME_DONE = b"D"
+FRAME_GIT = b"G"
+FRAME_OUTPUT = b"U"
 
 MODE_SYMLINK = 0o120000
 MODE_EXECUTABLE = 0o100755
@@ -95,7 +103,7 @@ def safe_join(root, path):
     return os.path.join(root, *parts)
 
 
-def materialize(root, frame):
+def materialize(root, frame, git_dir):
     (path_length,) = struct.unpack(">I", frame[:4])
     path = frame[4 : 4 + path_length]
     (mode,) = struct.unpack(">I", frame[4 + path_length : 8 + path_length])
@@ -108,7 +116,57 @@ def materialize(root, frame):
         with open(target, "wb") as handle:
             handle.write(content)
         os.chmod(target, 0o755 if mode & 0o111 else 0o644)
+    if git_dir is not None:
+        write_object(git_dir, b"blob", content)
     return path
+
+
+def write_object(git_dir, kind, content):
+    """One loose object of the local-only store, named by its own id."""
+    raw = kind + b" " + str(len(content)).encode() + b"\0" + content
+    oid = hashlib.sha1(raw).hexdigest()
+    folder = os.path.join(git_dir, "objects", oid[:2])
+    os.makedirs(folder, exist_ok=True)
+    target = os.path.join(folder, oid[2:])
+    if not os.path.exists(target):
+        with open(target, "wb") as handle:
+            handle.write(zlib.compress(raw))
+    return oid
+
+
+def init_object_store(root, commit):
+    """A fresh local-only object store beside the pinned files (FIX 7228):
+    HEAD names the pinned commit on a branch of its own, behind a shallow
+    boundary; no remote, hook or index."""
+    git_dir = os.path.join(root, ".git")
+    for folder in ("objects", os.path.join("refs", "heads"), os.path.join("refs", "tags")):
+        os.makedirs(os.path.join(git_dir, folder), exist_ok=True)
+    with open(os.path.join(git_dir, "HEAD"), "w") as handle:
+        handle.write("ref: refs/heads/queue-check\n")
+    with open(os.path.join(git_dir, "refs", "heads", "queue-check"), "w") as handle:
+        handle.write(commit + "\n")
+    with open(os.path.join(git_dir, "shallow"), "w") as handle:
+        handle.write(commit + "\n")
+    with open(os.path.join(git_dir, "config"), "w") as handle:
+        handle.write("[core]\n\trepositoryformatversion = 0\n\tbare = false\n")
+    return git_dir
+
+
+def report_outputs(root, command):
+    """Each declared output file the command left, its path and bytes; a
+    declared path it did not leave as a regular file is not reported."""
+    for declared in command.get("declared_outputs", []):
+        path = os.fsencode(declared)
+        try:
+            target = safe_join(root, path)
+            info = os.lstat(target)
+        except (ValueError, OSError):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            continue
+        with open(target, "rb") as handle:
+            content = handle.read()
+        write_frame(FRAME_OUTPUT, struct.pack(">I", len(path)) + path + content)
 
 
 def observe(root, paths):
@@ -216,6 +274,8 @@ def main():
     shutil.rmtree(scratch, ignore_errors=True)
     source = os.path.join(scratch, "src")
     os.makedirs(source)
+    commit = header.get("commit")
+    git_dir = None
     paths = []
     while True:
         frame = read_frame()
@@ -224,20 +284,30 @@ def main():
         kind, payload = frame
         if kind == FRAME_END:
             break
+        if kind == FRAME_GIT and commit:
+            if git_dir is None:
+                git_dir = init_object_store(source, commit)
+            object_kind, _, content = payload.partition(b" ")
+            if object_kind not in (b"commit", b"tree"):
+                return 2
+            write_object(git_dir, object_kind, content)
+            continue
         if kind != FRAME_FILE:
             return 2
-        paths.append(materialize(source, payload))
+        paths.append(materialize(source, payload, git_dir))
     threading.Thread(target=watch_input, daemon=True).start()
     before = observe(source, paths)
     red = False
     for index, command in enumerate(header["commands"]):
         result = run(command, source, scratch)
         report("phase", index, None, result)
+        report_outputs(source, command)
         if result[0] != 0:
             red = True
             break
     for command in header["contract_outputs"]:
         report("contract", None, command["name"], run(command, source, scratch))
+        report_outputs(source, command)
     after = observe(source, paths)
     write_frame(FRAME_INPUTS, json.dumps({"before": before, "after": after}).encode())
     write_frame(FRAME_DONE, json.dumps({"red": red}).encode())

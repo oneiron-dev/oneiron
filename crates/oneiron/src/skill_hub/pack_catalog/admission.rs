@@ -87,7 +87,7 @@ impl Vault {
         if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter {
             let shape_recipe = PackRuntimeRecipe {
                 adapter: adapter.clone(),
-                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_id: crate::store::sandbox_contract::SANDBOX_JS_COMPONENT_NAME.to_owned(),
                 runtime_hash: String::new(),
             };
             super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
@@ -398,6 +398,16 @@ impl Vault {
         } else {
             None
         };
+        // The replaced receipt's source, independent of whether its catalog
+        // bytes still parse (FIX 10865): retention reads the receipt identity.
+        let prior_source = if model_catalog {
+            prior
+                .as_ref()
+                .map(|old| EntityId::from_hex(&old.source_id))
+                .transpose()?
+        } else {
+            None
+        };
         if let Some(old) = &prior {
             for predicate in &old.predicates {
                 PACK_PREDICATE.delete(&self.store, txn, predicate)?;
@@ -409,7 +419,11 @@ impl Vault {
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
-            self.activate_installed_model_catalog_in_txn(txn, prior_catalog.as_ref())?;
+            self.activate_installed_model_catalog_in_txn(
+                txn,
+                prior_catalog.as_ref(),
+                prior_source,
+            )?;
         }
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash
@@ -430,23 +444,33 @@ impl Vault {
                 .map(|old_source| old_source.manifest.version)
                 .unwrap_or_default();
             let from_predicates = old.predicates.into_iter().collect();
-            crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
-                self,
-                txn,
-                &crate::saved_query::PackMove {
-                    pack: &source.manifest.name,
-                    from_version: &from_version,
-                    to_version: &source.manifest.version,
-                    from_source: &old.content_hash,
-                    to_source: &receipt.content_hash,
-                    from_predicates: &from_predicates,
-                    to_predicates: &source.manifest.predicates,
-                    shipped: source
-                        .manifest
-                        .migration_from(&from_version, &old.content_hash),
-                },
-                self.now_recorded_at(),
-            )?;
+            let moved = crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
+                pack: &source.manifest.name,
+                from_version: &from_version,
+                to_version: &source.manifest.version,
+                from_source: &old.content_hash,
+                to_source: &receipt.content_hash,
+                from_predicates: &from_predicates,
+                to_predicates: &source.manifest.predicates,
+                shipped: source
+                    .manifest
+                    .migration_from(&from_version, &old.content_hash),
+            };
+            self.store
+                .record_hooks
+                .repair_saved_queries_after_pack_move_in_txn(
+                    self,
+                    txn,
+                    moved.pack,
+                    moved.from_version,
+                    moved.to_version,
+                    moved.from_source,
+                    moved.to_source,
+                    moved.from_predicates,
+                    moved.to_predicates,
+                    moved.shipped,
+                    self.now_recorded_at(),
+                )?;
         }
         Ok(PackInstallDisposition::Installed(Box::new(receipt)))
     }
@@ -655,7 +679,7 @@ impl Vault {
                     .adapter
                     .clone()
                     .ok_or_else(|| invalid("missing adapter"))?,
-                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_id: crate::store::sandbox_contract::SANDBOX_JS_COMPONENT_NAME.to_owned(),
                 runtime_hash: String::new(),
             };
             super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?

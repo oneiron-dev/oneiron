@@ -20,7 +20,7 @@ use super::support::utf8_trimmed;
 use super::types::{RepoCommitProvenance, RepoMutationOperation, RepoMutationRequest};
 use crate::error::CodeError;
 
-pub const REPO_PROVENANCE_TRAILER_KEY: &str = "Oneiron-Claim";
+pub use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_KEY;
 pub const REPO_PROVENANCE_NOTES_REF: &str = "refs/notes/oneiron-provenance";
 
 pub const REPO_PROVENANCE_PREDICATE: &str = "repo.provenance";
@@ -34,7 +34,7 @@ pub const REPO_PROVENANCE_VALUE_KEYS: [&str; 5] = [
 pub const REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS: [&str; 4] =
     ["content_hash", "model_id", "version", "params_hash"];
 
-pub(super) const REPO_PROVENANCE_TRAILER_PREFIX: &str = "Oneiron-Claim:";
+pub(super) use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_PREFIX;
 const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
 const REPO_PROVENANCE_GIT_AUTHOR_EMAIL: &str = "oneiron@example.invalid";
 const REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR: u8 = 0x00;
@@ -195,69 +195,8 @@ fn require_unique_msgpack_key<'a>(entries: &'a [(Value, Value)], key: &str) -> R
     )))
 }
 
-fn final_trailer_block(message: &str) -> Option<Vec<&str>> {
-    let trimmed = message.trim_end_matches(['\r', '\n']);
-    if trimmed.is_empty() {
-        return None;
-    }
-    let lines = trimmed.lines().collect::<Vec<_>>();
-    let mut start = lines.len();
-    while start > 0 && !lines[start - 1].trim().is_empty() {
-        start -= 1;
-    }
-    if start == 0 {
-        return None;
-    }
-    let block = lines[start..].to_vec();
-    if block.is_empty() || !block.iter().all(|line| is_git_trailer_line(line)) {
-        return None;
-    }
-    Some(block)
-}
-
-fn has_final_trailer_block(message: &str) -> bool {
-    final_trailer_block(message).is_some()
-}
-
-fn is_git_trailer_line(line: &str) -> bool {
-    let Some((key, value)) = line.split_once(':') else {
-        return false;
-    };
-    !key.is_empty()
-        && !value.trim().is_empty()
-        && key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-}
-
-pub fn parse_repo_provenance_trailer(message: &str) -> Result<Option<EntityId>> {
-    let mut found = None;
-    let Some(block) = final_trailer_block(message) else {
-        return Ok(None);
-    };
-    for line in block {
-        let Some(raw_claim_id) = line.strip_prefix(REPO_PROVENANCE_TRAILER_PREFIX) else {
-            continue;
-        };
-        let claim_id = raw_claim_id.trim();
-        if claim_id.is_empty() || claim_id.bytes().any(|byte| byte.is_ascii_whitespace()) {
-            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo provenance trailer claim id must be one token",
-            )));
-        }
-        let claim_id = EntityId::from_hex(claim_id).map_err(|_| {
-            Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo provenance trailer claim id must be a 32-hex entity id",
-            ))
-        })?;
-        if found.replace(claim_id).is_some() {
-            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "commit message must not contain multiple repo provenance trailers",
-            )));
-        }
-    }
-    Ok(found)
-}
+use crate::store::repo_provenance_trailer::has_final_trailer_block;
+pub use crate::store::repo_provenance_trailer::parse_repo_provenance_trailer;
 
 pub fn repo_commit_provenance(
     repo_root: &Path,

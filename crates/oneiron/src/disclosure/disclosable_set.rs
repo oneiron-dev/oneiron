@@ -4,16 +4,16 @@
 //! itself is `room_scope` (R17: one function, one implementation).
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
-use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scope_summary::WordSources;
+use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::context_board::room_scope as disclosable_set;
@@ -221,6 +221,18 @@ impl WordClosure<'_> {
             store, self.txn, id, raw, &held,
         )?
         .is_some_and(|record| admits(self.scope, &record))
+        {
+            return Ok(None);
+        }
+        if let Some(header) = EntityMetadataHeader::parse(raw)
+            && !super::retained_copy_admits(
+                store,
+                self.txn,
+                &id,
+                header.entity_type,
+                None,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?
         {
             return Ok(None);
         }

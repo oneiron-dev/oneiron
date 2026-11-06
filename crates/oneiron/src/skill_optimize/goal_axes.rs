@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::honesty::HONESTY_AXIS;
 use crate::skill::SkillRecord;
+use crate::skill::learning_judge::HONESTY_AXIS;
 
 use super::gate::{
     HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts, skill_body_binding_digest,
@@ -59,6 +59,18 @@ pub struct OnlineAxisSample {
 /// implementing a Beta bound should use `Posterior::lower_bound`, not a copy of
 /// its formula. Each `pull` consumes one unit of the supplied slice budget.
 pub trait GoalAxisBandit {
+    /// The goal revision this source froze, when its samples use that goal's
+    /// criteria. A goal-agnostic source leaves its revision unknown.
+    fn goal_revision(&self) -> Option<&str> {
+        None
+    }
+
+    /// The frozen record an arm's questions read, when the host binds one.
+    /// `None` leaves a custom bandit's unknown or record-independent basis unchanged.
+    fn arm_record(&self, _arm: AxisArm) -> Option<(EntityId, &SkillRecord)> {
+        None
+    }
+
     fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample>;
     fn confidence_interval(
         &self,

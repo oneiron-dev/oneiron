@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::thread_passport::{
+use crate::write_envelope::thread_claim::{
     StickyMaskDecision, ThreadMask, ThreadPassport, canonical_message_id,
 };
 

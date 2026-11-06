@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use oneiron::llm::BrokerIsolation;
+use oneiron::llm::DispatchRelease;
 use oneiron::llm::media::MediaPart;
 use oneiron::llm::media::{
     MediaBackend, MediaFuture, MediaJobState, MediaProgressFuture, MediaRequest, MediaResponse,
@@ -49,6 +50,21 @@ impl MediaBackend for BookedReplies {
     ) -> MediaProgressFuture<'a> {
         Box::pin(holding_replies(&self.1, async move {
             let answer = self.0.run_progress(request, lease).await;
+            if let Ok(response) = &answer {
+                charge_decoded(response);
+            }
+            answer
+        }))
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(holding_replies(&self.1, async move {
+            let answer = self.0.run_progress_released(request, lease, release).await;
             if let Ok(response) = &answer {
                 charge_decoded(response);
             }

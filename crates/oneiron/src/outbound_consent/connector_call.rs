@@ -106,6 +106,8 @@ pub(super) struct PendingConnectorCall {
     pub(super) attempt_id: AttemptId,
     pub(super) call_seq: u64,
     pub(super) principal_ref: String,
+    /// Scope resolved from the real caller, never the tool's arguments.
+    pub(super) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     /// When the call was first held. Its expiry deadline counts from here,
     /// and no retry moves it.
     pub(super) held_at_ms: u64,
@@ -134,6 +136,12 @@ pub(super) struct PendingConnectorCall {
     /// that sends the call writes its own use records, linked to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) secret_use: Option<SecretUseContext>,
+    /// A recovery sweep minted this row without live presentation context.
+    /// The next matching live pass adopts it and clears the marker.
+    pub(super) sweep_minted: bool,
+    /// The frozen producer forced `dry_run` from the mutation intent, so the
+    /// sweep-minted comparison ignores that one argument before live adoption.
+    pub(super) sweep_dry_run_forced: bool,
     /// This pass runs inside a live `self.use` of the call, whose own
     /// records keep its send (FIX 2822). Never stored.
     #[serde(skip)]
@@ -179,8 +187,9 @@ pub(super) struct PendingConnectorCall {
     #[serde(skip)]
     pub(super) off_record: bool,
     /// A full count-bound budget window paces this call until this engine
-    /// instant, Unix seconds (FIX 8686): it asks no one, does not expire, and
-    /// the settler drives it again from then.
+    /// instant, Unix seconds (FIX 8686): it asks no one, and the settler
+    /// drives it again from then. It still expires at its first hold's
+    /// deadline (FIX 8753).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) paced_until: Option<u64>,
 }

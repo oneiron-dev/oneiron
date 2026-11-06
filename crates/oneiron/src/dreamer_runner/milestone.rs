@@ -209,7 +209,7 @@ fn stamp_agent_dispatch_milestone(
         // later in status decoding; the milestone stamp is not the door.
         return Ok(milestone);
     };
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return Ok(milestone);
     }
     let Some(agent_id) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
@@ -336,7 +336,7 @@ fn dreamer_milestone_attribution_is_bound(
         );
         return false;
     };
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return true;
     }
     let Some(expected) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {

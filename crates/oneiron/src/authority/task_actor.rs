@@ -102,7 +102,7 @@ impl Vault {
     /// grant for `person`, or one that no longer holds, is refused.
     pub fn admit_ask_guest_grant(
         &self,
-        ask: crate::task_verb::TaskAskHandle,
+        ask: crate::authority::task_ask_handle::TaskAskHandle,
         person: EntityId,
         member: EntityId,
     ) -> Result<AdmittedTaskGrant> {

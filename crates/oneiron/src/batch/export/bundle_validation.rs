@@ -1,7 +1,7 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::archive_index::{self, IndexedArchive, Loc, Section, Tag, edge_key};
 use super::*;
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
@@ -30,11 +30,13 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             if let Some(tree) = &bundle.source_tree {
                 tree.validate_in(&self.files)?;
                 if let Some(hash) = &tree.content_hash {
-                    let body = crate::skill::decode_skill_record(&bundle.entity.body.to_bytes()?)?;
+                    let body = crate::write_envelope::skill_record::decode_skill_record(
+                        &bundle.entity.body.to_bytes()?,
+                    )?;
                     if body.content_hash.map(|h| h.to_hex()).as_ref() != Some(hash) {
                         return Err(invalid("skill source hash disagrees with its native row"));
                     }
-                    crate::skill_hub::package_from_source(
+                    crate::store::skill_package::package_from_source(
                         &body,
                         tree.import_files_in(&self.files)?,
                         bundle
@@ -55,7 +57,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 return Err(invalid("duplicate agent source bundle"));
             }
             if let Some(hash) = &bundle.fork_hash {
-                crate::skill::SkillContentHash::parse_hex(hash)?;
+                crate::write_envelope::skill_record::SkillContentHash::parse_hex(hash)?;
             }
             if let Some(tree) = &bundle.source_tree {
                 tree.validate_in(&self.files)?;
@@ -117,12 +119,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     ) -> Result<ExportAgentBundle> {
         let mut skills = Vec::new();
         let mut claims = Vec::new();
-        if let Some(definition) = row
-            .body
-            .to_bytes()
-            .ok()
-            .and_then(|bytes| crate::agent_def::decode_agent_definition(&bytes).ok())
-        {
+        if let Some(definition) = row.body.to_bytes().ok().and_then(|bytes| {
+            crate::store::agent_definition_codec::decode_agent_definition(&bytes).ok()
+        }) {
             let mut named = BTreeSet::new();
             for dependency in &definition.skills {
                 if named.insert(dependency.skill_id.as_str()) {
@@ -147,7 +146,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     fn skills_named(
         &self,
         skill_id: &str,
-        skills: &mut Vec<(EntityId, crate::skill::SkillRecord)>,
+        skills: &mut Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     ) -> Result<()> {
         let name = skill_name_key(skill_id);
         let mut after: Option<Vec<u8>> = None;
@@ -156,7 +155,8 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             let (_, row) = self
                 .entity(&id)?
                 .ok_or(Error::InvariantViolation("archive index lost a skill"))?;
-            if let Ok(record) = crate::skill::decode_skill_record(&row.body.to_bytes()?)
+            if let Ok(record) =
+                crate::write_envelope::skill_record::decode_skill_record(&row.body.to_bytes()?)
                 && record.skill_id == skill_id
             {
                 skills.push((id, record));
@@ -351,10 +351,10 @@ fn provenance_subject(row: &ExportEntity) -> Option<(EntityId, u8, EntityId)> {
         .body
         .to_bytes()
         .ok()
-        .and_then(|bytes| crate::claim::decode_claim_body(&bytes, true).ok())
+        .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, true).ok())
         .map(|claim| claim.subject)
     {
-        Some(crate::claim::ClaimSubject::Edge {
+        Some(crate::write_envelope::claim_body::ClaimSubject::Edge {
             source,
             kind,
             target,
@@ -390,13 +390,14 @@ pub(super) fn entity_omission(row: &ExportEntity) -> Result<Option<EntityOmissio
     } else if super::expression_import::is_expression(row) {
         Some(ImportRefusalReason::LocalExpressionWriterRequired)
     } else if row.entity_type == ENTITY_TYPE_CLAIM
-        && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()
-        && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true).is_ok_and(|body| {
-            crate::subject_model::imported_subject_body(&body).is_ok()
-                || crate::actor_claims::imported_actor_body(&body).is_ok()
-                || crate::skill_reliability::imported_reliability_body(&body).is_ok()
-                || crate::edit_distance::attribution::imported_skill_cost_body(&body).is_ok()
-        })
+        && crate::write_envelope::claim_body::decode_claim_body(&row.body.to_bytes()?, false)
+            .is_err()
+        && !crate::write_envelope::claim_body::decode_claim_body(&row.body.to_bytes()?, true)
+            .is_ok_and(|body| {
+                crate::write_envelope::subject_record::imported_subject_body(&body).is_ok()
+                    || crate::actor_claims::imported_actor_body(&body).is_ok()
+                    || crate::skill_reliability::imported_reliability_body(&body).is_ok()
+            })
     {
         Some(ImportRefusalReason::OwningClaimAdapterRequired)
     } else {
@@ -428,7 +429,7 @@ fn agent_omissions(
         let available = document_import::parse_id(entity_id)
             .ok()
             .is_some_and(|child| {
-                crate::agent_def::birth_source_id(&child)
+                crate::store::agent_birth_identity::birth_source_id(&child)
                     .ok()
                     .and_then(|carrier| birth(&carrier))
                     .is_some_and(|bytes| {
@@ -617,9 +618,6 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
             Some(ImportOmissionReason::LocalProjectionNotRestored)
         }
-        crate::registry::ENTITY_TYPE_MESSAGE => {
-            Some(ImportOmissionReason::WitnessAuthorizationNotRestored)
-        }
         crate::registry::ENTITY_TYPE_NOTE => Some(ImportOmissionReason::NoteAuthorshipNotRestored),
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
@@ -638,8 +636,8 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
             if matches!(
                 predicate,
                 Some(
-                    crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT
+                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
@@ -650,7 +648,9 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
                 Some("actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token")
             ) {
                 Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
-            } else if predicate.is_some_and(crate::learning::is_learning_predicate) {
+            } else if predicate
+                .is_some_and(crate::write_envelope::learning_predicate::is_learning_predicate)
+            {
                 Some(ImportOmissionReason::LearningCellsRebuiltFromReceipts)
             } else {
                 None

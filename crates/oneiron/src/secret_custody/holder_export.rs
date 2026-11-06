@@ -19,13 +19,40 @@
 //! entry ([`Vault::export_secret_supplement`]) from whichever install keeps
 //! it: the bytes stay sealed through any server. The recipient machine opens
 //! it ([`Vault::open_export_secret_supplement`]) into the archive row the
-//! owner imports (`crate::batch::export`'s secret supplement).
+//! owner imports (`crate::batch::export`'s secret supplement). The copy is
+//! kept with the second it was sealed at, and rides the window plane to the
+//! owner's other installs, each of which keeps it once a signed result names
+//! it (`relay`, FIX 11843): the result it carries as its witness, checked as
+//! the fold checks one, before the receiver folds the result (FIX 12312); a
+//! copy past one row rides in numbered parts the receiver joins first (FIX
+//! 12063), each signed in the result's commit by the key that signed the
+//! result, so each part proves itself alone (`part_signature`, FIX 12373).
+//! A kept copy whose secret an admitted revoke ended or an erase
+//! here fenced is forgotten (`settle`, FIX 12064). Once the owner's import
+//! of a copy commits, the recipient marks its request imported, and no
+//! install relays the copy any more (`import_mark`, FIX 12062).
 
+mod import_mark;
+mod part_signature;
+mod relay;
 mod sealed;
+mod settle;
 
 use base64::Engine as _;
+use ed25519_dalek::SigningKey;
 use zeroize::Zeroizing;
 
+pub(crate) use self::part_signature::OutputPartBinding;
+use self::part_signature::sign_parts;
+pub(crate) use self::relay::KeptExportOutput;
+use self::relay::kept_output_in_txn;
+pub(crate) use self::relay::witnessed_output;
+#[cfg(feature = "sync")]
+pub(crate) use self::relay::{
+    MAX_EXPORT_OUTPUT_WITNESS_BYTES, MAX_RELAYED_OUTPUT_BYTES, WitnessedResult,
+    held_export_outputs, keep_relayed_export_output_in_txn, kept_export_output_sealed_at_in_txn,
+    relayed_export_output_due_in_txn, witnessed_result,
+};
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
 use super::storage_seal::{read_opened_in_txn, read_secret_custody_meta_in_txn};
@@ -42,8 +69,10 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::world_keys::{OwnerWorkReceipt, OwnerWorkStatus};
 use crate::{EntityId, Vault};
 
-/// Each export secret request's sealed copy, by the request's entry hash:
-/// written once, in the commit of the result that names its digest.
+/// Each export secret request's sealed copy, by the request's entry hash, as
+/// [`KeptExportOutput`]: its holder writes it once, in the commit of the
+/// result that names its digest, and each other install keeps the one a
+/// window relays to it.
 const OUTPUTS: SideTable<[u8; 32], Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_EXPORT_OUTPUT);
 
@@ -77,9 +106,9 @@ impl Vault {
         request: &OwnerWorkRequest,
         work: &ExportSecretWork,
     ) -> Result<Option<OwnerWorkOutcome>> {
-        if let Some(kept) = OUTPUTS.get(&self.store, txn, &hash)? {
+        if let Some(kept) = kept_output_in_txn(self, txn, &hash)? {
             return Ok(Some(OwnerWorkOutcome::Sealed {
-                output: output_of(&kept)?,
+                output: output_of(&kept.sealed)?,
             }));
         }
         let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &work.secret)? else {
@@ -121,8 +150,63 @@ impl Vault {
                 .map_err(|_| Error::InvariantViolation("sealed export secret length"))?,
             envelopes,
         };
-        OUTPUTS.put(&self.store, txn, &hash, &sealed)?;
+        // Its witness, the result that names it, is signed after this in the
+        // same commit; its relay reads it from the log (FIX 12312). The key
+        // that signs it signs the copy's parts then
+        // (`sign_export_output_parts_in_txn`, FIX 12373).
+        let kept = KeptExportOutput {
+            sealed_at: self.instant_in_txn(txn)?.secs(),
+            request: hash,
+            witness: Vec::new(),
+            part_signatures: Vec::new(),
+            sealed,
+        };
+        OUTPUTS.put(&self.store, txn, &hash, &kept.encode())?;
         Ok(Some(OwnerWorkOutcome::Sealed { output }))
+    }
+
+    /// Signs each numbered part the sealed copy kept under `request` rides
+    /// in, with `signing`, the key that signed its result, entry `result`
+    /// naming `output`, in the caller's writer, and keeps the signatures with
+    /// the copy, so they commit with the result (FIX 12373): each part a
+    /// window relays then proves itself by that result's signer, without any
+    /// sibling. The copy is kept as the holder's, with no witness: its relay
+    /// reads the result from the log. A copy that rides whole is left as it
+    /// is.
+    ///
+    /// # Errors
+    /// No copy kept under `request`, or no vault genesis: no sealed result
+    /// is appended without both.
+    pub(crate) fn sign_export_output_parts_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        request: AuthorityEntryHash,
+        result: AuthorityEntryHash,
+        output: &SealedWorkOutput,
+        signing: &SigningKey,
+    ) -> Result<()> {
+        let Some(mut kept) = kept_output_in_txn(self, txn, &request)? else {
+            return Err(Error::InvariantViolation(
+                "an export secret result names no kept copy",
+            ));
+        };
+        if !KeptExportOutput::rides_in_parts(kept.sealed.len() as u64) {
+            return Ok(());
+        }
+        let vault_id = fold.vault_id.ok_or(Error::InvariantViolation(
+            "an export secret result with no vault genesis",
+        ))?;
+        let binding = OutputPartBinding {
+            vault_id,
+            request,
+            result,
+            output: *output,
+            sealed_at: kept.sealed_at,
+        };
+        kept.witness = Vec::new();
+        kept.part_signatures = sign_parts(&binding, &kept.copy_frame(), signing)?;
+        OUTPUTS.put(&self.store, txn, &request, &kept.encode())
     }
 
     /// The first recheck an export secret request fails in this writer:
@@ -188,13 +272,20 @@ impl Vault {
             .map_or(OwnerWorkStatus::RecordedAwaitingHolder, |receipt| {
                 receipt.status
             });
+        let kept = kept_output_in_txn(self, &txn, &request)?;
         let output = fold
             .owner_work_result(&request)
-            .and_then(|answer| answer.outcome.sealed_output().copied());
+            .and_then(|answer| answer.outcome.sealed_output().copied())
+            .or_else(|| {
+                // No folded result names it yet: a settled copy kept under a
+                // signed witness still reads, judged as the fold judges one.
+                kept.as_ref()
+                    .and_then(|kept| witnessed_output(&fold, &request, &kept.witness))
+            });
         let sealed = match output {
-            Some(output) => OUTPUTS
-                .get(&self.store, &txn, &request)?
-                .filter(|kept| *blake3::hash(kept).as_bytes() == output.digest),
+            Some(output) => kept
+                .map(|kept| kept.sealed)
+                .filter(|sealed| *blake3::hash(sealed).as_bytes() == output.digest),
             None => None,
         };
         Ok(Some(ExportSecretSupplement {
@@ -266,7 +357,7 @@ impl Vault {
         let row: ArchiveSecretCustody = serde_json::from_slice(&plain).map_err(|_| {
             Error::InvalidConfig("this export secret supplement holds no archive row".to_owned())
         })?;
-        let opened = OpenedSecretSupplement { row };
+        let opened = OpenedSecretSupplement { request, row };
         if opened.row.id != work.secret.to_hex() {
             return Err(Error::InvalidConfig(
                 "this export secret supplement names another secret".to_owned(),

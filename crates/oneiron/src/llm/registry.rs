@@ -3,12 +3,15 @@ mod backend;
 mod description;
 pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
 mod installed_pack;
+pub use crate::store::model_description_rows::ModelWireFormat;
+pub use crate::store::model_score_diff::ModelScoreDiff;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 mod source_erase;
 pub(crate) use source_erase::erase_registry_source_in_txn;
 mod stale_mark;
 mod stored_rows;
 use stored_rows::StoredRows;
+pub(crate) use stored_rows::llm_registry_row_accepts_masked;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;
@@ -43,15 +46,6 @@ const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
 fn score_diffs_key(model: &ModelId) -> String {
     format!("{}\0", model.as_str())
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ModelWireFormat {
-    OpenaiCompat,
-    AnthropicMessages,
-    Gemini,
-    OwnServer,
-    Local,
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelRegistryRow {
@@ -85,15 +79,6 @@ pub struct ModelRegistryRow {
 pub struct CatalogSeed {
     pub version: u8,
     pub rows: Vec<ModelRegistryRow>,
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelScoreDiff {
-    pub model: ModelId,
-    pub source: String,
-    pub benchmark: String,
-    pub previous: Option<f64>,
-    pub score: f64,
-    pub fetched_at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoreObservation {
@@ -279,10 +264,8 @@ impl Vault {
         txn.commit()?;
         Ok(true)
     }
-    /// The installed model catalog pack's source row, when one is installed:
-    /// the record [`Self::model_registry_row`] reads a model's row from when
-    /// the registry holds none for it. A host lists it beside an answer
-    /// priced from the catalog (DEC-0005).
+    /// The installed model catalog pack's source row, when one is installed.
+    /// A host lists it beside an answer priced from the catalog (DEC-0005).
     ///
     /// # Errors
     ///
@@ -297,23 +280,8 @@ impl Vault {
     }
 
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
-        let stored = {
-            let txn = self.store.env.read_txn()?;
-            read_model_registry_row(&self.store, &txn, model)?
-        };
-        if stored.is_some() {
-            return Ok(stored);
-        }
-        if self
-            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
-            .is_some()
-        {
-            return Ok(CatalogSeed::from_installed_pack(self)?
-                .rows
-                .into_iter()
-                .find(|row| &row.catalog.model == model));
-        }
-        Ok(None)
+        let txn = self.store.env.read_txn()?;
+        read_model_registry_row(&self.store, &txn, model)
     }
     /// [`Self::model_registry_row`] in the caller's snapshot, for a reader
     /// that already holds a transaction (a launch statement's USD quote).
@@ -322,19 +290,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         model: &ModelId,
     ) -> Result<Option<ModelRegistryRow>> {
-        if let Some(row) = read_model_registry_row(&self.store, txn, model)? {
-            return Ok(Some(row));
-        }
-        if self
-            .installed_pack_in_txn(txn, crate::skill_hub::MODEL_PACK_NAME)?
-            .is_some()
-        {
-            return Ok(CatalogSeed::from_installed_pack_in_txn(self, txn)?
-                .rows
-                .into_iter()
-                .find(|row| &row.catalog.model == model));
-        }
-        Ok(None)
+        read_model_registry_row(&self.store, txn, model)
     }
     /// Removes the stored row for `row`'s model while it still holds `row`,
     /// for the source that wrote it and has withdrawn it (a mesh node that
@@ -407,23 +363,8 @@ impl Vault {
         Ok((rows, skipped))
     }
     pub fn model_catalog_entries(&self, wire: ModelWireFormat) -> Result<Vec<LlmCatalogEntry>> {
-        let mut rows = self.model_registry_rows()?;
-        if self
-            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
-            .is_some()
-        {
-            // Installed pack data is visible to adapters even before it is copied
-            // into the priced registry. Local overrides and scores keep precedence.
-            let existing: std::collections::BTreeSet<_> =
-                rows.iter().map(|row| row.catalog.model.clone()).collect();
-            let additional = CatalogSeed::from_installed_pack(self)?
-                .rows
-                .into_iter()
-                .filter(|row| !existing.contains(&row.catalog.model))
-                .collect::<Vec<_>>();
-            rows.extend(additional);
-        }
-        Ok(rows
+        Ok(self
+            .model_registry_rows()?
             .into_iter()
             .filter(|row| row.wire == wire)
             .map(|row| row.catalog)

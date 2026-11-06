@@ -19,6 +19,90 @@ pub(super) fn facade_invoke(
     facade_invoke_in_turn(server, call, actor, class, verb, value, producers, None)
 }
 
+/// [`facade_invoke`] for `self.inbox.concern.move` that also reports whether
+/// the committed engine result links a Note (P1 REVIEW-4395, L13 08:49 YES):
+/// the row runs through `row_tapped` so the wake reads the COMMITTED
+/// `/receipt/link/kind` BEFORE post-hook redaction, with the same memory,
+/// authorship, room-turn and drain setup as [`facade_invoke_in_turn`]. A
+/// valid post-hook Redact of `/receipt` can no longer suppress the wake, and
+/// a hook variant rewrite (raw Note to Steer/AskCoach or back) can neither
+/// fabricate nor lose it, because the tap observes what the engine committed,
+/// not what the request asked or what the output view kept. Idempotent Note
+/// retries keep today's wake: the retry answers the stored Note receipt.
+/// No other verb uses this path.
+pub(super) fn facade_invoke_concern_move(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+) -> Result<(serde_json::Value, bool), FacadeApiError> {
+    crate::server::blocking(
+        move || -> Result<(serde_json::Value, bool), FacadeApiError> {
+            const VERB: &str = "self.inbox.concern.move";
+            let auth = call.auth();
+            let memory = facade_invocation(
+                credential_memory(&server.vault, Some(auth), actor, class)
+                    .at(auth.locality())
+                    .listing_producers(producers),
+                call,
+            )?;
+            let memory = facade_task_decisions(server, VERB, memory)?;
+            let memory = facade_rewrites_admitted(server, auth, &value, memory);
+            // Settlement's run of the call enters its boundary here as the drain's.
+            let _drain = call.drain().map(VerbAskDrainPermit::enter);
+            // Room turns serve only report/rooms verbs, so concern.move is
+            // refused here exactly as in [`facade_invoke_in_turn`]; the wake
+            // reports false on a path that never commits.
+            let (output, wake) = match call.room_turn()? {
+                Some(room) => (memory.for_room_turn(room)?.invoke(VERB, value)?, false),
+                None => {
+                    // Same authorship as [`facade_invoke_in_turn`]; this verb
+                    // never takes the guest-revoking host-issuer path.
+                    let memory = match direct_authorship(auth, server, VERB)? {
+                        Some(owner) => memory
+                            .with_owner_authorship(&owner)
+                            .with_owner_surface(call.surface()),
+                        None => memory,
+                    };
+                    let mut wake = false;
+                    let output = oneiron::task_verb::verb_hook_boundary::row_tapped(
+                        &memory,
+                        VERB,
+                        value,
+                        |value| {
+                            let input = serde_json::from_value(value).map_err(|error| {
+                                oneiron::memory::MemoryError::bad_request(format!(
+                                    "invalid SDK request: {error}"
+                                ))
+                            })?;
+                            let outcome =
+                                oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)?;
+                            serde_json::to_value(outcome).map_err(|_| {
+                                oneiron::memory::MemoryError::bad_request(
+                                    "SDK result encoding failed",
+                                )
+                            })
+                        },
+                        |result| {
+                            if result
+                                .pointer("/receipt/link/kind")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("note")
+                            {
+                                wake = true;
+                            }
+                        },
+                    )?;
+                    (output, wake)
+                }
+            };
+            Ok((output, wake))
+        },
+    )
+}
+
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
 /// (Rule 5), bound on the surface the verb runs on: the engine's task work,
 /// a verb hook's ask among it, runs on that turn and waits for no other.
@@ -55,6 +139,14 @@ pub(super) fn facade_invoke_in_turn(
         };
         let memory = facade_task_decisions(server, verb, memory)?;
         let memory = facade_rewrites_admitted(server, auth, &value, memory);
+        let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
+            match super::owner_binding::facade_owner(server, auth, verb).ok() {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            }
+        } else {
+            memory
+        };
         // Settlement's run of the call enters its boundary here as the drain's.
         let _drain = call.drain().map(VerbAskDrainPermit::enter);
         Ok(match call.room_turn()? {

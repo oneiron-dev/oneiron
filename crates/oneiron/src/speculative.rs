@@ -39,23 +39,21 @@
 //! warm pack verbatim.
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId};
 use crate::work_line::{LinePermit, TASK_WORK_WAIT, WaitTimedOut, WorkLine};
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 pub(crate) mod scoped;
 
-/// Max speculative fires per utterance (E7: cap ~4 fires/utterance).
-pub const SPECULATIVE_FIRE_CAP_DEFAULT: u8 = 4;
-/// Reduced per-fire result limit (E7 "fast lane, reduced limit").
-pub const SPECULATIVE_FIRE_LIMIT_DEFAULT: usize = 8;
+pub use crate::memory::speculative_limits::SPECULATIVE_FIRE_CAP_DEFAULT;
+pub use crate::memory::speculative_limits::SPECULATIVE_FIRE_LIMIT_DEFAULT;
 
 pub struct SpeculativeSessionConfig {
     /// Max speculative fires per utterance (host-tunable, E7).
@@ -230,15 +228,15 @@ impl SpeculativeSession {
         &mut self,
         partial: SpeculativePartial<'_>,
     ) -> Result<SpeculativeFireDecision> {
+        if self.fires_used >= self.config.max_fires {
+            return Ok(SpeculativeFireDecision::SkippedCapExhausted);
+        }
         let signature = partial_signature(&partial);
         if signature.is_empty() {
             return Ok(SpeculativeFireDecision::SkippedEmptySignature);
         }
         if signature == self.last_signature {
             return Ok(SpeculativeFireDecision::SkippedUnchanged);
-        }
-        if self.fires_used >= self.config.max_fires {
-            return Ok(SpeculativeFireDecision::SkippedCapExhausted);
         }
 
         if self.config.fire_limit == 0 {
@@ -416,15 +414,7 @@ struct FinalizedCandidates {
 /// at once: one in this many.
 const READER_SLOT_SHARE: u32 = 4;
 
-/// The speculative passes running on threads of their own in one vault. A
-/// pass past its deadline keeps its read snapshot, and with it a reader
-/// slot, until its next checkpoint, so fires that keep missing a stalled
-/// stage would otherwise take every slot the vault has.
-#[derive(Default)]
-pub(crate) struct SpeculativePasses {
-    line: OnceLock<WorkLine<[u8; 32]>>,
-    last_cap: AtomicUsize,
-}
+pub(crate) use crate::vault::speculative_passes::SpeculativePasses;
 
 /// One admitted pass; the fair permit releases when its thread lets it go.
 struct RunningPass(LinePermit);

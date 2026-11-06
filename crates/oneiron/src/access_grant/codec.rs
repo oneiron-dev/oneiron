@@ -12,28 +12,12 @@ use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, Access
 use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
-pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 4;
+pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 5;
 
-/// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 10] = [
-    "schema_version",
-    "principal_ref",
-    "scope",
-    "capability",
-    "status",
-    "created_at",
-    "revoked_at",
-    "expires_at",
-    "authority_scope",
-    "companion_bounds",
-];
-
-pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
-
-pub(crate) const ACCESS_GRANT_FIELDS_STANDARD: &[&str] =
-    &["principal_ref", "scope", "capability", "status"];
-
-pub(crate) const ACCESS_GRANT_FIELDS_FULL: &[&str] = &ACCESS_GRANT_BODY_KEYS;
+pub use crate::serialize::access_grant_fields::ACCESS_GRANT_BODY_KEYS;
+pub(crate) use crate::serialize::access_grant_fields::{
+    ACCESS_GRANT_FIELDS_FULL, ACCESS_GRANT_FIELDS_MINIMAL, ACCESS_GRANT_FIELDS_STANDARD,
+};
 
 pub(super) const KEY_SCHEMA_VERSION: &str = ACCESS_GRANT_BODY_KEYS[0];
 
@@ -51,6 +35,8 @@ pub(super) const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
 
 const KEY_COMPANION_BOUNDS: &str = ACCESS_GRANT_BODY_KEYS[9];
 
+pub(super) const KEY_WITNESS_HISTORY: &str = ACCESS_GRANT_BODY_KEYS[10];
+
 const BOUNDS_KEYS: [&str; 2] = ["issuer_slip", "ceiling"];
 
 pub(super) const SCOPE_KEY_KIND: &str = "kind";
@@ -64,8 +50,9 @@ pub(super) const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
 
 pub(super) const SCOPE_KIND_CALENDAR: &str = "calendar";
 
-/// The principal a brief share's inert history names once its recipient was
-/// erased (FIX 4231): no one. No live decoder reads it as an id.
+/// The principal a grant's inert history names once its principal was erased
+/// (FIX 4231, generalized to every scope by FIX 4980): no one. No live
+/// decoder reads it as an id.
 const ERASED_PRINCIPAL: &str = crate::receipt::ERASED_CALL_IDENTITY;
 
 /// Encodes an AccessGrant body in canonical MessagePack field order.
@@ -73,12 +60,10 @@ pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
     encode_body(grant, Value::from(grant.principal_ref.to_hex()))
 }
 
-/// `grant`'s body as a brief share's inert history once its recipient was
-/// erased (FIX 4231): its live body, its principal naming no one.
-pub(crate) fn encode_erased_share_body(grant: &AccessGrant) -> Result<Vec<u8>> {
-    if !matches!(grant.scope, AccessGrantScope::SharedBrief { .. }) {
-        return Err(invalid_grant());
-    }
+/// `grant`'s body as inert history once its principal was erased (FIX 4231,
+/// generalized to every scope by FIX 4980): its live body, its principal
+/// naming no one.
+pub(crate) fn encode_erased_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
     encode_body(grant, Value::from(ERASED_PRINCIPAL))
 }
 
@@ -93,7 +78,7 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
             "authority_scope".into(),
-            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
+            oneiron_authority::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
         ),
         (
             Value::from(KEY_CAPABILITY),
@@ -113,6 +98,7 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
             Value::from(KEY_COMPANION_BOUNDS),
             encode_companion_bounds(grant.companion_bounds.as_ref())?,
         ),
+        (Value::from(KEY_WITNESS_HISTORY), Value::Nil),
     ]);
 
     let mut out = Vec::new();
@@ -130,23 +116,22 @@ pub fn decode_access_grant_body(bytes: &[u8]) -> Result<AccessGrant> {
     Ok(grant)
 }
 
-/// [`decode_access_grant_body`] for a walk over every stored grant: a brief
-/// share's inert history (FIX 4231) grants nothing, so it reads as none.
+/// [`decode_access_grant_body`] for a walk over every stored grant: a grant's
+/// inert history (FIX 4231, FIX 4980) grants nothing, so it reads as none.
 pub(crate) fn decode_live_access_grant_body(bytes: &[u8]) -> Result<Option<AccessGrant>> {
     match decode_access_grant_body(bytes) {
         Ok(grant) => Ok(Some(grant)),
-        Err(_) if decode_erased_share_body(bytes).is_ok() => Ok(None),
+        Err(_) if decode_erased_grant_body(bytes).is_ok() => Ok(None),
         Err(error) => Err(error),
     }
 }
 
-/// A brief share's inert history body (FIX 4231): the terms its live body
-/// held, its principal naming no one.
-pub(crate) fn decode_erased_share_body(bytes: &[u8]) -> Result<GrantTerms> {
+/// A grant's inert history body (FIX 4231, generalized to every scope by FIX
+/// 4980): the terms its live body held, its principal naming no one.
+pub(crate) fn decode_erased_grant_body(bytes: &[u8]) -> Result<GrantTerms> {
     let value = read_body(bytes)?;
     let (principal, terms) = decode_body(&value)?;
     if principal.as_str() != Some(ERASED_PRINCIPAL)
-        || !matches!(terms.scope, AccessGrantScope::SharedBrief { .. })
         || terms.capability != terms.scope.required_capability()
     {
         return Err(invalid_grant());
@@ -154,7 +139,7 @@ pub(crate) fn decode_erased_share_body(bytes: &[u8]) -> Result<GrantTerms> {
     Ok(terms)
 }
 
-/// A live body, or a brief share's inert history (FIX 4231).
+/// A live body, or a grant's inert history (FIX 4231, FIX 4980).
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn validate_access_grant_body_bytes(bytes: &[u8]) -> Result<()> {
     decode_live_access_grant_body(bytes).map(|_| ())
@@ -162,7 +147,7 @@ pub(crate) fn validate_access_grant_body_bytes(bytes: &[u8]) -> Result<()> {
 
 /// An AccessGrant body's terms but its principal.
 pub(crate) struct GrantTerms {
-    pub(crate) authority_scope: crate::federation::Scope,
+    pub(crate) authority_scope: oneiron_authority::federation::Scope,
     pub(crate) scope: AccessGrantScope,
     pub(crate) capability: AccessGrantCapability,
     pub(crate) status: AccessGrantStatus,
@@ -188,7 +173,7 @@ impl GrantTerms {
     }
 }
 
-fn read_body(bytes: &[u8]) -> Result<Value> {
+pub(super) fn read_body(bytes: &[u8]) -> Result<Value> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_grant())?;
     if cursor.position() != bytes.len() as u64 {
@@ -234,10 +219,9 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     };
     let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: crate::federation::scope_codec::decode_scope_value(required_value(
-            entries,
-            "authority_scope",
-        )?)
+        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(
+            required_value(entries, "authority_scope")?,
+        )
         .map_err(|_| invalid_grant())?,
         scope,
         capability,
@@ -263,7 +247,7 @@ fn encode_companion_bounds(bounds: Option<&super::CompanionGrantBounds>) -> Resu
         ),
         (
             Value::from(BOUNDS_KEYS[1]),
-            crate::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
+            oneiron_authority::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
         ),
     ]))
 }
@@ -281,7 +265,7 @@ fn decode_companion_bounds(value: &Value) -> Result<Option<super::CompanionGrant
             .as_str()
             .ok_or_else(invalid_grant)?
             .to_owned(),
-        ceiling: crate::federation::scope_codec::decode_scope_value(required_value(
+        ceiling: oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
             entries,
             BOUNDS_KEYS[1],
         )?)
@@ -471,5 +455,14 @@ pub(crate) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
 pub(crate) fn invalid_grant() -> Error {
     Error::Record(RecordError::InvalidAccessGrantBody(
         "body failed validation",
+    ))
+}
+
+/// A body whose principal FIX 4980 scrubbed: inert history, not a corrupt
+/// grant (FIX 4981). Strict by-id readers name this instead of answering
+/// the strict decode's raw error.
+pub(crate) fn erased_grant() -> Error {
+    Error::Record(RecordError::InvalidAccessGrantBody(
+        "access grant principal was erased",
     ))
 }

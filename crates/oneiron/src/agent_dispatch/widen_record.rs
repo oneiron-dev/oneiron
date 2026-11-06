@@ -28,6 +28,17 @@ pub(super) const PROPOSAL_INDEX: SideTable<String, Vec<u8>, Raw> =
 /// attempt. Key: the parent attempt id.
 pub(super) const SLICE: SideTable<AttemptId, SliceOverride, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_WIDEN_SLICE);
+/// Whether a masked copy of a `AGENT_DISPATCH_WIDEN_SLICE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn agent_dispatch_widen_slice_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<SliceOverride, LegacyJson>(bytes)
+}
+
+/// Whether a masked copy of a `AGENT_DISPATCH_WIDEN_INTENT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn agent_dispatch_widen_intent_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<WidenRecord, LegacyJson>(bytes)
+}
 
 /// A parked dispatch. This is a proposal, never a read or dispatch grant.
 #[derive(Debug, Clone, PartialEq)]
@@ -384,9 +395,7 @@ pub(super) fn json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid("widen record does not encode"))
 }
 
-pub(super) fn invalid(message: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(message))
-}
+pub(super) use crate::claim::dispatch_input::invalid;
 
 /// Add only the refused explicit axes. Defaults keep their inherited meaning.
 pub(super) fn widened_parent(parent: &ContextSpec, child: &ContextSpec) -> ContextSpec {

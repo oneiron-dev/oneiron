@@ -7,6 +7,7 @@
 //! that receipt. All records still enter the log; only the local fold decides
 //! whether a newly observed old sequence can authorize.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, Result};
@@ -180,12 +181,32 @@ pub(super) fn authority_local_observations_of_rows_in_txn(
     txn: &heed::RoTxn<'_>,
     rows: &[super::fold_resume::RowMeta<'_>],
 ) -> Result<AuthorityLocalObservations> {
+    Ok(authority_local_observations_receipted_in_txn(store, txn, rows)?.0)
+}
+
+/// [`authority_local_observations_of_rows_in_txn`], and the rows whose
+/// floor a present receipt sets (FIX 1854). A receipt is write-once, so a
+/// later read of such a row answers the same floor; the floor of a row with
+/// none is the live mark, which still moves.
+pub(super) fn authority_local_observations_receipted_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    rows: &[super::fold_resume::RowMeta<'_>],
+) -> Result<(AuthorityLocalObservations, BTreeSet<AuthorityEntryHash>)> {
     let mut sequence_floors = BTreeMap::new();
+    let mut receipted = BTreeSet::new();
+    // One read per signer and world: the snapshot holds each mark still.
+    let mut marks: BTreeMap<_, Option<u64>> = BTreeMap::new();
     for row in rows {
         let hash = row
             .hash
             .ok_or(Error::CorruptedIndex("authority entry hash"))?;
-        let current = SEQ_HWM.get(store, txn, &sequence_key_of(row.signer, row.world))?;
+        let current = match marks.entry((row.signer, row.world)) {
+            Entry::Occupied(mark) => *mark.get(),
+            Entry::Vacant(mark) => {
+                *mark.insert(SEQ_HWM.get(store, txn, &sequence_key_of(row.signer, row.world))?)
+            }
+        };
         let receipt = SEQ_OBSERVATION.get(store, txn, &receipt_key(&hash))?;
         let floor = match receipt {
             Some(SequenceReceipt(observed)) => {
@@ -194,6 +215,7 @@ pub(super) fn authority_local_observations_of_rows_in_txn(
                 {
                     return Err(Error::CorruptedIndex("authority sequence high-water mark"));
                 }
+                receipted.insert(hash);
                 observed
             }
             // A missing receipt is never an exemption from an existing mark.
@@ -203,10 +225,11 @@ pub(super) fn authority_local_observations_of_rows_in_txn(
             sequence_floors.insert(hash, floor);
         }
     }
-    Ok(AuthorityLocalObservations {
+    let observations = AuthorityLocalObservations {
         sequence_floors,
         vouched: BTreeSet::new(),
         unvouched: false,
         policy: authority_observation_policy_in_txn(store, txn)?,
-    })
+    };
+    Ok((observations, receipted))
 }

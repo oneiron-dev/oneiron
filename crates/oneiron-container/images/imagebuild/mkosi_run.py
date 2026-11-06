@@ -127,6 +127,7 @@ def write_plan(model: Model, plan: Plan, *, engine: Path, mirror: Mirror, work: 
     _tsv(root / "sources.tsv", sources)
     _tsv(root / "links.tsv", [(link["path"], link["target"]) for link in plan.links])
     _tsv(root / "dirs.tsv", [(d["path"], d.get("mode", "0755")) for d in plan.dirs])
+    _tsv(root / "empty-files.tsv", [(e["path"], e.get("mode", "0644")) for e in plan.empty_files])
     user = plan.user
     _tsv(root / "user.tsv", [(user["name"], user["uid"], user["gid"], user["home"], user["shell"])] if user else [])
     return root
@@ -180,6 +181,7 @@ def write_config(
     tools_tree: Path,
     phase: str,
     sources: dict[str, Path] | None = None,
+    pkgcache: Path | None = None,
 ) -> tuple[Path, Path]:
     """Writes cfg/<phase>-<name>/mkosi.conf; returns (config dir, output dir)."""
     is_tools = plan.name == "tools"
@@ -218,7 +220,7 @@ def write_config(
         f"ToolsTree={tools_tree}",
         f"CacheOnly={'never' if phase == 'fetch' else 'always'}",
         f"CacheDirectory={mirror.mkosi_cache}",
-        f"PackageCacheDirectory={mirror.pkgcache}",
+        f"PackageCacheDirectory={pkgcache or mirror.pkgcache}",
         f"WorkspaceDirectory={work / 'workspace'}",
         f"SandboxTrees={work / 'sandbox'}",
         "Incremental=no",

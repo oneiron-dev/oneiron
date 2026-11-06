@@ -19,7 +19,7 @@ pub(crate) struct DeletionGateContext {
     actor_class: EdgeActorClass,
     policy_manifest_version: String,
     read_frontier_hash: [u8; 32],
-    room_role: Option<crate::conversation::RoomRole>,
+    room_role: Option<crate::store::conversation_body::RoomRole>,
     room: Option<EntityId>,
     /// The role and Grant an archive delete was admitted under (OF-449 L4),
     /// in place of the owner binding; `None` on every other delete.
@@ -54,8 +54,26 @@ type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
 /// tombstone publication, or with nothing published its purge), given its
 /// request id: the claim on what authorized it, refused when that is already
 /// spent. The purge transaction calls it again with the delete's receipt.
-pub(crate) type DeletionClaim<'a> =
+type DeletionClaimWrite<'a> =
     &'a dyn Fn(&mut heed::RwTxn<'_>, &[u8; 16], Option<&EntityId>) -> Result<()>;
+
+/// The original authority act beside its ordinary in-transaction claim. The
+/// staged deletion sidecar keeps that identity if publication rolls back after
+/// the shared document changed; recovery never infers it from a request id.
+#[derive(Clone, Copy)]
+pub(crate) struct DeletionClaim<'a> {
+    authority_act: EntityId,
+    apply: DeletionClaimWrite<'a>,
+}
+
+impl<'a> DeletionClaim<'a> {
+    pub(crate) fn new(authority_act: EntityId, apply: DeletionClaimWrite<'a>) -> Self {
+        Self {
+            authority_act,
+            apply,
+        }
+    }
+}
 
 /// The owner's proof and the host's own signing key a delete withdraws a
 /// Connect guest's grants under (FIX 3875): deleting the guest's PERSON
@@ -90,7 +108,9 @@ impl<'a> GatedDeletion<'a> {
         self.owner_act
     }
 
-    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::conversation::RoomRole)> {
+    pub(super) fn room_authority(
+        &self,
+    ) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
         Some((self.context.room?, self.context.room_role?))
     }
 
@@ -99,7 +119,7 @@ impl<'a> GatedDeletion<'a> {
     /// with no room passed the owner binding this gate carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
         use crate::deletion::LegalHoldActorKind as Kind;
-        use crate::federation::ArchiveDeleteRole as Role;
+        use crate::deletion::archive_role::ArchiveDeleteRole as Role;
         let kind = match (self.context.actor_class, self.context.room_role) {
             (EdgeActorClass::Agent, _) => Kind::Agent,
             (EdgeActorClass::System, _) => Kind::Unattributed,
@@ -147,6 +167,10 @@ impl<'a> GatedDeletion<'a> {
         }
     }
 
+    pub(super) fn claimed_authority_act(&self) -> Option<EntityId> {
+        self.claim.map(|claim| claim.authority_act)
+    }
+
     /// See [`DeletionClaim`] for the one reason that carries a claim.
     pub(crate) fn with_claim(mut self, claim: Option<DeletionClaim<'a>>) -> Self {
         self.claim = claim;
@@ -183,7 +207,7 @@ pub(super) fn claim_in_txn(
     receipt: Option<&EntityId>,
 ) -> Result<()> {
     match gate.and_then(|gate| gate.claim) {
-        Some(claim) => claim(txn, &tombstone.request_id, receipt),
+        Some(claim) => (claim.apply)(txn, &tombstone.request_id, receipt),
         None => Ok(()),
     }
 }
@@ -351,7 +375,7 @@ impl DeletionGateContext {
         policy_manifest_version: String,
         read_frontier_hash: [u8; 32],
         room: EntityId,
-        role: crate::conversation::RoomRole,
+        role: crate::store::conversation_body::RoomRole,
     ) -> Self {
         Self {
             actor,

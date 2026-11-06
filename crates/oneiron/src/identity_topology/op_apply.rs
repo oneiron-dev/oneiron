@@ -14,7 +14,6 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
-use super::MAX_IDENTITY_TOPOLOGY_EVENT_FACETS;
 use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
 use super::distinct_claim::distinct_pair_key;
 use super::encode_identity_topology_event_body;
@@ -313,7 +312,7 @@ impl Vault {
                             tgt: merge.survivor,
                             weight,
                             created_at: now,
-                            vad: crate::affect::Vad::NEUTRAL,
+                            vad: oneiron_contracts::affect::Vad::NEUTRAL,
                             provenance: None,
                         });
                     }
@@ -342,7 +341,7 @@ impl Vault {
                             tgt: *head,
                             weight,
                             created_at: now,
-                            vad: crate::affect::Vad::NEUTRAL,
+                            vad: oneiron_contracts::affect::Vad::NEUTRAL,
                             provenance: None,
                         });
                     }
@@ -386,11 +385,6 @@ impl Vault {
                 if !write.is_effective() {
                     return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
                         "facet proposal",
-                    )));
-                }
-                if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
-                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                        "identity topology event mints too many facets",
                     )));
                 }
                 let (minted, effects) = self.mint_facets_in_txn(facet, now)?;
@@ -494,6 +488,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: {
                     let body = rmpv::Value::Map(vec![
                         ("label".into(), spec.label.clone().into()),
@@ -514,7 +509,7 @@ impl Vault {
                 tgt: id,
                 weight,
                 created_at: now,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 provenance: None,
             });
         }
@@ -557,19 +552,31 @@ impl Vault {
             evidence,
             action,
         };
-        let mut ops = vec![BatchOp::Put {
-            id: event_id,
-            entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-            occurred: TimeRange {
-                start: now,
-                end: now,
-            },
-            learned_at: now,
-            data: encode_identity_topology_event_body(&record)?,
-            allow_maintenance: true,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }];
+        // FIX 10188: a decision one record cannot hold is stored as its
+        // manifest under `event_id` plus bounded parts, all in this batch, so
+        // the decision lands whole or not at all. The manifest is the record
+        // the admission signs; local effects below still read the whole
+        // `record`.
+        let stored = super::operation_parts::operation_records(&event_id, record.clone())?;
+        let mut ops = Vec::with_capacity(stored.parts.len() + 2);
+        for (id, body) in std::iter::once((event_id, &stored.root))
+            .chain(stored.parts.iter().map(|(id, part)| (*id, part)))
+        {
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_identity_topology_event_body(body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
         // A facet op's minted FACET rows land here; its forks follow this
         // batch, because ONE-1645's write-time table fails closed on a
         // `facet_of` birth stamp whose endpoint has no row.
@@ -579,13 +586,27 @@ impl Vault {
         // Its one signature covers the carrier and who decided: the owner act
         // of a decision, or the engine's cause (mesh PR2-topology).
         let disposition_id = self.store.clock.entity_id()?;
+        // FIX 9870: a merge or split proposal's seal signs its proposer's
+        // opaque handle, the ramp scope its resolution stamps.
+        let proposer_scope = match (&write.approval, &record.action) {
+            (
+                crate::claim::ClaimApprovalStatus::Proposed,
+                StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. },
+            ) => Some(super::proposer_scope::proposal_seal_scope_actor_in_txn(
+                &self.store,
+                wtxn,
+                write.actor.map(|actor| actor.entity_ref()),
+            )?),
+            _ => None,
+        };
         let disposition = super::AdmissionDisposition::signed(
             seal,
             event_id,
-            &record,
+            &stored.root,
             super::AdmissionVerdict::Validated,
             None,
             seal.authority_for_fresh(event_id),
+            proposer_scope.as_deref(),
         )?;
         disposition.record_sealed_here(self, wtxn, disposition_id)?;
         let disposition_record = StoredIdentityOpEvent {
@@ -608,6 +629,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_identity_topology_event_body(&disposition_record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -629,7 +651,7 @@ impl Vault {
                 self,
                 wtxn,
                 event_id,
-                super::core_digest(&record)?,
+                super::core_digest(&stored.root)?,
                 actor,
                 write.source,
                 now,
@@ -637,7 +659,10 @@ impl Vault {
         }
         if write.is_effective() {
             if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action {
-                let input = encode_identity_topology_event_body(&record)?;
+                // The stored record: a manifest binds the whole decision in
+                // bounded bytes, where the full body would be copied once per
+                // source.
+                let input = encode_identity_topology_event_body(&stored.root)?;
                 for entity in sources.iter().chain(std::iter::once(survivor)) {
                     crate::ports::audit_mutation_in_txn(
                         &self.store,

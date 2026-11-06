@@ -48,98 +48,121 @@ pub(super) struct HostedSpeech {
 
 impl HostedSpeech {
     async fn speak(&self, mut request: MediaRequest) -> LlmResult<MediaResponse> {
-        let wire_model = self
-            .models
-            .get(&request.model)
-            .ok_or(FatalLlmError::InvalidRequest)?
-            .clone();
-        let text = request.text();
-        if request.operation != AiOperation::Speech
-            || text.trim().is_empty()
-            || !request.references.is_empty()
-            || !request
-                .parts
-                .iter()
-                .all(|part| matches!(part, MediaPart::Text { .. }))
-        {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        // A typed voice, or a raw provider voice id as the `voice` param;
-        // never both, and these wires speak in no default voice.
-        let raw = request.params.remove("voice");
-        let voice = match (request.voice.as_ref().map(MediaVoice::wire_id), raw) {
-            (Some(Some(id)), None) => id.to_owned(),
-            (None, Some(JsonValue::String(id))) => id,
-            _ => return Err(FatalLlmError::InvalidRequest.into()),
-        };
-        // The id may be interpolated into a URL path: no separators,
-        // whitespace or credentials.
-        if voice.is_empty()
-            || !voice
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let (path, mut body) = match self.wire {
-            HostedWire::Cartesia => (
-                "/tts/bytes".to_owned(),
-                json!({
-                    "model_id": wire_model,
-                    "transcript": text,
-                    "voice": {"mode": "id", "id": voice},
-                    "output_format": {
-                        "container": "raw",
-                        "encoding": "pcm_s16le",
-                        "sample_rate": PCM_RATE,
-                    },
-                }),
-            ),
-            HostedWire::ElevenLabs => (
-                format!("/v1/text-to-speech/{voice}?output_format=pcm_{PCM_RATE}"),
-                json!({"model_id": wire_model, "text": text}),
-            ),
-        };
-        // The caller's other params ride beside the fixed fields; one that
-        // names a fixed field is refused.
-        let fields = body.as_object_mut().ok_or(FatalLlmError::InvalidRequest)?;
-        for (key, value) in std::mem::take(&mut request.params) {
-            if key.is_empty() || fields.contains_key(&key) {
-                return Err(FatalLlmError::InvalidRequest.into());
-            }
-            fields.insert(key, value);
-        }
+        let (text, path, body) = build(self.wire, &self.models, &mut request)?;
         let reply = self
             .http
             .send_media(&path, MediaSend::Json(body))
             .await
             .map_err(transport)?;
-        if !(200..300).contains(&reply.status) {
-            let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-            return Err(oneiron_llm_openai::classify_openai_status(
-                reply.status,
-                &reply.headers,
-                &body,
-            ));
-        }
-        let whole = reply.body.len() - reply.body.len() % 2;
-        if whole == 0 {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let wav =
-            pcm16_wav(PCM_RATE, 1, &reply.body[..whole]).ok_or(FatalLlmError::EmptyResponse)?;
-        Ok(MediaResponse {
-            parts: vec![MediaPart::Audio {
-                media_type: "audio/wav".into(),
-                bytes: wav,
-            }],
-            usage: MediaUsage {
-                characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
-                ..MediaUsage::default()
-            },
-            model: request.model,
-        })
+        parse(
+            reply.status,
+            &reply.headers,
+            &reply.body,
+            request.model,
+            &text,
+        )
     }
+}
+
+/// The existing hosted speech request, shared by direct and broker transports.
+pub(super) fn build(
+    wire: HostedWire,
+    models: &BTreeMap<ModelId, String>,
+    request: &mut MediaRequest,
+) -> LlmResult<(String, String, JsonValue)> {
+    let wire_model = models
+        .get(&request.model)
+        .ok_or(FatalLlmError::InvalidRequest)?
+        .clone();
+    let text = request.text();
+    if request.operation != AiOperation::Speech
+        || text.trim().is_empty()
+        || !request.references.is_empty()
+        || !request
+            .parts
+            .iter()
+            .all(|part| matches!(part, MediaPart::Text { .. }))
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
+    // A typed voice, or a raw provider voice id as the `voice` param;
+    // never both, and these wires speak in no default voice.
+    let raw = request.params.remove("voice");
+    let voice = match (request.voice.as_ref().map(MediaVoice::wire_id), raw) {
+        (Some(Some(id)), None) => id.to_owned(),
+        (None, Some(JsonValue::String(id))) => id,
+        _ => return Err(FatalLlmError::InvalidRequest.into()),
+    };
+    // The id may be interpolated into a URL path: no separators,
+    // whitespace or credentials.
+    if voice.is_empty()
+        || !voice
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
+    let (path, mut body) = match wire {
+        HostedWire::Cartesia => (
+            "/tts/bytes".to_owned(),
+            json!({
+                "model_id": wire_model,
+                "transcript": text,
+                "voice": {"mode": "id", "id": voice},
+                "output_format": {
+                    "container": "raw",
+                    "encoding": "pcm_s16le",
+                    "sample_rate": PCM_RATE,
+                },
+            }),
+        ),
+        HostedWire::ElevenLabs => (
+            format!("/v1/text-to-speech/{voice}?output_format=pcm_{PCM_RATE}"),
+            json!({"model_id": wire_model, "text": text}),
+        ),
+    };
+    // The caller's other params ride beside the fixed fields; one that
+    // names a fixed field is refused.
+    let fields = body.as_object_mut().ok_or(FatalLlmError::InvalidRequest)?;
+    for (key, value) in std::mem::take(&mut request.params) {
+        if key.is_empty() || fields.contains_key(&key) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        fields.insert(key, value);
+    }
+    Ok((text, path, body))
+}
+
+/// The existing hosted speech response, parsed while its sender holds the reply.
+pub(super) fn parse(
+    status: u16,
+    headers: &BTreeMap<String, String>,
+    body: &[u8],
+    model: ModelId,
+    text: &str,
+) -> LlmResult<MediaResponse> {
+    if !(200..300).contains(&status) {
+        let body = serde_json::from_slice(body).unwrap_or(JsonValue::Null);
+        return Err(oneiron_llm_openai::classify_openai_status(
+            status, headers, &body,
+        ));
+    }
+    let whole = body.len() - body.len() % 2;
+    if whole == 0 {
+        return Err(FatalLlmError::EmptyResponse.into());
+    }
+    let wav = pcm16_wav(PCM_RATE, 1, &body[..whole]).ok_or(FatalLlmError::EmptyResponse)?;
+    Ok(MediaResponse {
+        parts: vec![MediaPart::Audio {
+            media_type: "audio/wav".into(),
+            bytes: wav,
+        }],
+        usage: MediaUsage {
+            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+            ..MediaUsage::default()
+        },
+        model,
+    })
 }
 
 impl MediaBackend for HostedSpeech {
@@ -340,7 +363,7 @@ impl HostedCloner {
         let sent = holding_replies(&self.budgets, send).await;
         // The request went out: a failed one keeps its reservation as spend.
         let outcome = match &sent {
-            Ok(_) => CallOutcome::Used(1),
+            Ok(_) => CallOutcome::UsedCounted(1),
             Err(_) => CallOutcome::Failed,
         };
         if let Err(denied) = permit.settle(outcome) {

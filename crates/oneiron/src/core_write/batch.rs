@@ -5,65 +5,12 @@
 //! is refused in the write transaction
 //! ([`crate::BatchBuilder::commit_below_owner`]).
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use super::shape::{
-    AnnouncementAuthority, CoreWriteTextField, core_write_times, entity_id, stage_core_put,
-    text_pairs, write_id,
-};
+use super::shape::{AnnouncementAuthority, core_write_times, stage_core_put, text_pairs, write_id};
+use super::{CoreBatchCommit, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt};
 use crate::Vault;
 use crate::batch::BatchBuilder;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::memory::{Memory, MemoryError, MemoryResult};
-
-/// One entity put in a batch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchEntityInput {
-    /// The entity's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// The entity type byte.
-    #[serde(alias = "entityType")]
-    pub entity_type: u8,
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    pub body: Value,
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// The puts to commit atomically, as many as the caller names (Rule 5).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchWriteInput {
-    pub entities: Vec<CoreBatchEntityInput>,
-}
-
-/// One put a batch committed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchEntityReceipt {
-    pub id: String,
-    pub entity_type: u8,
-}
-
-/// The puts a batch committed, in input order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchWriteReceipt {
-    pub count: usize,
-    pub entities: Vec<CoreBatchEntityReceipt>,
-}
-
-/// The grade a batch commits at, which its host selects from the
-/// credential that sent it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoreBatchCommit {
-    Owner,
-    BelowOwner,
-}
+use crate::claim::ScopedRead;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The lane a core write's caller is held to (OF-063; FIX 1223, 6068,
 /// 10781), which its host selects from the credential that sent it.
@@ -151,31 +98,7 @@ impl Vault {
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let (batch, entities) = self.stage_core_batch(input, announcement)?;
-        match (lane, commit) {
-            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => batch.commit_read_by(reader),
-            (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
-                batch.commit_below_owner_read_by(reader, |_| Ok(()))
-            }
-            (CoreWriteLane::Target(_), commit) => {
-                let ids = entities
-                    .iter()
-                    .map(|entity| entity_id(&entity.id, "id"))
-                    .collect::<MemoryResult<Vec<_>>>()?;
-                let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-                    if lane.admits_puts_in(txn, &ids)? {
-                        return Ok(());
-                    }
-                    // As missing: the row's kind, body and scope stay unsaid.
-                    Err(crate::Error::EntityNotFound)
-                };
-                match commit {
-                    CoreBatchCommit::Owner => batch.commit_with_target_guard(guard),
-                    CoreBatchCommit::BelowOwner => batch.commit_below_owner_with_guard(guard),
-                }
-            }
-            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => batch.commit(),
-            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => batch.commit_below_owner(),
-        }?;
+        batch.commit_in_core_lane(lane, commit)?;
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
             entities,
@@ -195,8 +118,8 @@ impl Vault {
             // an audience edit its thread's audience door's (FIX 5545).
             if entity.entity_type == crate::registry::ENTITY_TYPE_TURN
                 && [
-                    crate::workspace_roster::ROOM_THREAD_KEY,
-                    crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+                    crate::store::conversation_body::ROOM_THREAD_KEY,
+                    crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY,
                 ]
                 .iter()
                 .any(|key| entity.body.get(*key).is_some())
@@ -226,60 +149,5 @@ impl Vault {
             });
         }
         Ok((batch, entities))
-    }
-}
-
-impl Memory<'_> {
-    /// `vault.batch` on an embedded handle, which carries no credential
-    /// grade: it commits below owner grade, never above it. Its TURNs are
-    /// platform announcements only while the bound actor is a live owner.
-    /// It is held to this handle's write lane ([`Self::core_write_lane`],
-    /// FIX 1223, 6068).
-    /// # Errors
-    /// As [`Self::core_write_lane`] and [`Vault::write_core_batch_in_lane`].
-    pub fn core_batch_write(
-        &self,
-        input: &CoreBatchWriteInput,
-    ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
-        let lane = self.core_write_lane()?;
-        self.vault().write_core_batch_in_lane(
-            input,
-            CoreBatchCommit::BelowOwner,
-            announcement,
-            &lane,
-        )
-    }
-
-    /// The lane this handle's core writes are held to (OF-063; FIX 1223,
-    /// 6068, 10781): its read lane; for a credential that grants no read,
-    /// the lane of that credential's target key, which judges what it may
-    /// write to without asking the read verb, built for the caller where it
-    /// sits and inside a bound room turn as the read lane is. A credential
-    /// with no target key leaves no bounds to judge: it writes unbound, as
-    /// before.
-    /// # Errors
-    /// The read lane's refusal other than a credential that grants no read,
-    /// or the target key's.
-    pub(crate) fn core_write_lane(&self) -> MemoryResult<CoreWriteLane<'_>> {
-        if let Some(read) = self.read_lane_if_granted(ClaimReadStatus::Recorded)? {
-            return Ok(CoreWriteLane::Read(read));
-        }
-        let target = match self.presented_credential() {
-            Some(proof) => self
-                .vault()
-                .credential_target_key(proof)
-                .map_err(MemoryError::from)?,
-            None => None,
-        };
-        let Some(key) = target else {
-            return Ok(CoreWriteLane::Unbound);
-        };
-        let key = self.in_room_turn(key.for_destination(self.destination()))?;
-        Ok(CoreWriteLane::Target(
-            self.vault()
-                .scoped_read(key)
-                .with_claim_status(ClaimReadStatus::Recorded),
-        ))
     }
 }

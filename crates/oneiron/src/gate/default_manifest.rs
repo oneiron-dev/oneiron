@@ -11,21 +11,20 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
-use super::class_policy::ActPosture;
 use super::constants::{
     ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
-    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_REASON_MAX_BYTES_KEY,
-    ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
-    GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
-    POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
-    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
-    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
-    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
-    POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+    AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACT_POLICY_KEY,
+    POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+    POLICY_CONSULT_FANOUT_CONTROLS_KEY, POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
+    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
     POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
@@ -42,12 +41,9 @@ use super::operational_policy::{
     LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
 };
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
-use super::resolution::{
-    DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
-};
+use super::resolution::DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS;
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
-const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 /// Seeded policy data, not a project-constructor or dispatch constant. Both
 /// are fallbacks: a holder-authored vault row replaces them (C1).
 pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u64 = 10;
@@ -56,7 +52,7 @@ pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u64 = 16;
 pub(crate) const fn seeded_project_depth_default() -> u64 {
     SEEDED_PROJECT_DEPTH_DEFAULT
 }
-pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
+pub(crate) use crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
 
 /// Shipped policy data; organ users resolve this row or supply their own
 /// positive budgets. No fallback numbers live in the XML/ZIP implementation.
@@ -74,10 +70,7 @@ pub(in crate::gate) fn default_docedit_resource_row() -> Value {
     ])
 }
 
-pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
-    EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
-        .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
-}
+pub(crate) use crate::store::policy_record::default_policy_manifest_id;
 
 /// The shipped notification rules are manifest data, also used to complete
 /// owner-authenticated manifests that omit this optional rule table.
@@ -120,7 +113,7 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
         default_owner_policy_change_notifications(),
     ));
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+    super::value_encoding::write_value(&mut encoded, &Value::Map(fields))
         .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
     Ok(encoded)
 }
@@ -137,7 +130,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     // The conversation-mirror MACHINE attests connector-observed reactions
     // (OF-372). Derived the same way, so a moved domain fails closed too.
-    let conversation_mirror_actor_ref = crate::reaction::conversation_mirror_actor_id()?.to_hex();
+    let conversation_mirror_actor_ref =
+        crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -147,8 +141,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
-            Value::from(crate::failure_signals::policy::POLICY_KEY),
-            crate::failure_signals::policy::default_row(),
+            Value::from(crate::gate::failure_signal_policy::POLICY_KEY),
+            crate::gate::failure_signal_policy::default_row(),
         ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -185,7 +179,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),
@@ -285,7 +279,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from("goal_limits"),
-            crate::workspace_roster::GoalLimits::default().encode(),
+            crate::policy_model::goal_limits::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -353,7 +347,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION),
+                        Value::from(crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -367,7 +361,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION_ECHO),
+                        Value::from(
+                            crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -384,7 +380,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
+                        Value::from(
+                            crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -401,6 +399,16 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 // and ref CAS, so an owner review is not its barrier.
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("repo.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("self.code.")),
                     (
                         Value::from(RULE_AXES_KEY),
                         Value::Map(vec![
@@ -468,7 +476,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                        Value::from(crate::write_envelope::voice_segment::PREDICATE_VOICE_SEGMENT),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -846,7 +854,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from(POLICY_SLIDE_REVIEW_KEY),
-            crate::llm::decision::SlideReviewPolicy::default_rows(),
+            crate::model_decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
         (
@@ -1139,7 +1147,7 @@ fn skill_tradeoff_limits_entry() -> (Value, Value) {
     )
 }
 
-/// The shipped attribution limits: precedence and the two byte/count caps.
+/// The shipped attribution limits: precedence and the receipts cap.
 fn attribution_limits_default_entry() -> (Value, Value) {
     (
         Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -1147,10 +1155,6 @@ fn attribution_limits_default_entry() -> (Value, Value) {
             (
                 Value::from(ATTRIBUTION_PRECEDENCE_KEY),
                 Value::from("nested_narrowing"),
-            ),
-            (
-                Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
-                Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
             ),
             (
                 Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
@@ -1167,7 +1171,7 @@ fn teacher_probe_default_entry() -> (Value, Value) {
         Value::Map(vec![
             (
                 Value::from("probe_id"),
-                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+                Value::from(crate::teacher_probe_policy::TEACHER_PROBE_ID),
             ),
             (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
             (Value::from("holders"), Value::Array(Vec::new())),
@@ -1214,7 +1218,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
         // A self-held row is an account the product minted, so the
@@ -1231,7 +1235,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
     ]);
@@ -1266,8 +1270,9 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
 }
 
 fn federation_grant_default_rows() -> Value {
+    use crate::federation::FederationGrantRole as Role;
     use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
-    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    use oneiron_authority::federation::{Scope, ScopeAxis};
     let scope = |verbs: &[&str]| {
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
@@ -1308,8 +1313,8 @@ fn federation_grant_default_rows() -> Value {
             // content. The mint names its worlds; this row names none.
             Row::ConnectGuestCeiling {
                 scope: Scope {
-                    sensitivity: crate::federation::SensitivityCeiling::AtMost(
-                        crate::federation::Sensitivity::Private,
+                    sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
+                        oneiron_authority::federation::Sensitivity::Private,
                     ),
                     ..scope(&["read", "propose"])
                 },
@@ -1360,7 +1365,7 @@ fn compilation_route(
 /// The vault-wide search policy ships as data, not a Rust threshold or
 /// hard-coded stagnation branch. The manifest resolver composes edits by scope.
 fn default_experiment_selection_rows() -> Value {
-    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+    let rows: Vec<crate::gate::experiment_selection_policy::SelectionPolicyRow> =
         serde_json::from_str(include_str!(
             "../autoreason_campaign/selection_defaults.json"
         ))
@@ -1401,9 +1406,10 @@ pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
-pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
+pub(crate) fn default_consult_fanout_policy()
+-> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
     let shipped = shipped_consult_fanout_rows();
-    crate::task_verb::ConsultFanOutPolicy {
+    crate::gate::consult_fanout_values::ConsultFanOutPolicy {
         approval_threshold: shipped.threshold,
         mode: shipped.controls.mode,
         peer_rate: shipped.controls.peer_rate.clone(),

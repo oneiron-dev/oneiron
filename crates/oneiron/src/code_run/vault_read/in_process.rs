@@ -1,12 +1,14 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
+mod frames;
+mod media_query;
+
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
 use crate::memory::repo_secret_reads::masked_asset_body;
-use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::vault::Vault;
@@ -43,6 +45,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
     producers: Option<&'v crate::memory::ProducerRows>,
     media: Option<&'v [EmbeddedMediaSeed]>,
+    media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
 }
 
@@ -55,6 +58,7 @@ pub const MEDIA_UNAVAILABLE_ENGINE_CODE: &str = "EMBEDDER_UNAVAILABLE";
 fn media_unavailable(method: VaultReadMethod) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
         message: "this host serves no ai.embed rung for media; retry without media".to_owned(),
@@ -83,6 +87,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             scoped_read: vault.scoped_read(actor_key),
             producers: None,
             media: None,
+            media_memory: None,
             image_pick: None,
         }
     }
@@ -179,54 +184,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         self
     }
 
-    /// Host media seeds, the one-space preset's text-slot seed among them,
-    /// are each one more ranked list beside the text and vector seeds, as on
-    /// the accepted route's `run_core_query`. A query asked in an affect
-    /// rides the seeded search, the one that takes it.
-    fn run_query(
-        &self,
-        query: Option<&str>,
-        vector: Option<&[f32]>,
-        media: &[EmbeddedMediaSeed],
-        limit: usize,
-        affect: Option<crate::affect::Vad>,
-    ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
-        let results = if media.is_empty() && affect.is_none() {
-            match (query, vector) {
-                (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
-                (Some(query), None) => self.scoped_read.search_text(query, limit, None),
-                (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
-                (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
-                    crate::claim::ScopedReadResult {
-                        value: Vec::new(),
-                        receipt,
-                    }
-                }),
-            }
-        } else {
-            let media: Vec<_> = media
-                .iter()
-                .map(|seed| {
-                    (
-                        seed.space.as_str(),
-                        seed.kind,
-                        seed.vector.as_slice(),
-                        seed.kinds.as_slice(),
-                    )
-                })
-                .collect();
-            self.scoped_read
-                .search_seeded(query, vector, &media, limit, None, affect)
-        };
-        results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
-    }
-
     fn query_op(&self, request: &CoreQueryRequest) -> VaultReadResult<CoreQueryResponse> {
         const METHOD: VaultReadMethod = VaultReadMethod::Query;
 
         let view = request.view.unwrap_or(View::Summary);
         let count_mode = request.count_mode.for_search_response();
-        let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
+        let limit = request.limit;
+        let limit_clamped = false;
         let fetch_limit = search_fetch_limit(count_mode, limit);
         if self.media.is_none() && request.media.is_some() {
             return Err(media_unavailable(METHOD));
@@ -306,7 +270,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let depth = request.resolved_depth();
         let edge_hop = depth.edge_hop.unwrap_or(0);
         let max_neighbors = depth.max_neighbors.unwrap_or(DEFAULT_MAX_NEIGHBORS);
-        let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
+        let limit = request.limit;
+        let limit_clamped = false;
         let candidate_limit = self
             .scoped_read
             .search_candidate_limit(limit)
@@ -323,10 +288,19 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .max_neighbors(max_neighbors)
             .field_profile(FieldProfile::Standard)
             .for_destination(self.scoped_read.actor_key().destination());
+        if let Some(memory) = self.media_memory {
+            builder = builder.media_query_memory(memory);
+        }
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)
                 .map_err(|error| engine_failure(METHOD, &error))?;
+            if let Ok(model_id) = model.parse::<crate::llm::ModelId>()
+                && let Ok(Some(row)) = self.scoped_read.vault().model_registry_row(&model_id)
+                && row.catalog.context_window_tokens > 0
+            {
+                builder = builder.model_window_tokens(row.catalog.context_window_tokens);
+            }
         }
         if let Some(query) = Self::context_pack_skill_query(self.scoped_read.vault(), request)? {
             builder = builder
@@ -425,7 +399,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .read_named(&[PointRead::short(&short_id, content_hash)], None)
             .map_err(|error| engine_failure(method, &error))?;
         let mut narrowing = hydrated.receipt;
-        let row = named_row(method, hydrated.value)?;
+        let row = named_row(method, hydrated.value)
+            .map_err(|error| error.with_read_receipt(narrowing.clone()))?;
         self.project_hydrate(
             method,
             short_id,
@@ -569,9 +544,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .flatten()
             .map(|(id, hash)| PointRead::short(id, *hash))
             .collect();
-        let hydrated = self
-            .scoped_read
-            .read_named(&refs, None)
+        let hydrated = frames::read_named_frames(&self.scoped_read, &refs)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();
@@ -596,8 +569,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 });
                 continue;
             };
-            // The batch receipt covers every item in the same authority txn,
-            // and each text an item's asset is served.
+            // The batch receipt intersects every read frame's authority,
+            // then includes each text an item's asset is served.
             let result = self
                 .project_hydrate(
                     METHOD,
@@ -715,10 +688,8 @@ fn resolve_retrieval_budget(
         selected_edges,
     );
     if let Some(retrieval) = retrieval {
-        // Each per-kind budget is served at the ceiling, as `limit` is.
-        let rows = |bucket: Option<usize>, default: usize| {
-            crate::memory::caps::clamp_search_limit(bucket.unwrap_or(default)).0
-        };
+        // Each per-kind budget is served whole, as `limit` is.
+        let rows = |bucket: Option<usize>, default: usize| bucket.unwrap_or(default);
         budget.claims = rows(retrieval.claims, budget.claims);
         budget.turns = rows(retrieval.turns, budget.turns);
         budget.summaries = rows(retrieval.summaries, budget.summaries);
@@ -763,6 +734,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         );
         reader.producers = self.producers;
         reader.media = self.media;
+        reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
         match request.into_inner() {
             VaultReadRequest::Query(request) => {

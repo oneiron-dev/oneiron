@@ -11,23 +11,23 @@ use crate::config::VaultConfig;
 use crate::config::validate_ppr_vad_alpha;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::retrieval_quality::PprCacheOutcome;
 use crate::store::ManifestDbs;
 #[cfg(test)]
 use crate::store::Store;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::VAD_PROPAGATION_EVIDENCE;
 #[cfg(test)]
 use super::cache_store::flush_deferred_ppr_cache_writes;
 use super::cache_store::{
-    CACHE_HEADER_LEN, PPR_FORMULA_VERSION, SEED_HASH_LEN, decode_cache_payload, parse_cache_header,
-    read_graph_version, recency_tiered_cache_ttl_secs,
+    CACHE_HEADER_LEN, PPR_FORMULA_VERSION, SEED_HASH_LEN, decode_cache_state,
+    is_legacy_cache_payload, parse_cache_header, read_graph_version, recency_tiered_cache_ttl_secs,
 };
 use super::community::hash_community_seeds;
 use super::policy::{PprAlphas, SeedWeighting, canonical_vad_alpha};
 use super::walk::{
-    CachedPprRow, PprCacheState, PprNodeVisibility, ppr_compute_state_weighted_with_deadline,
+    PprCacheState, PprNodeVisibility, ppr_compute_state_weighted_with_deadline,
     ppr_resume_state_weighted, sort_scores,
 };
 
@@ -307,7 +307,7 @@ pub(super) fn ppr_query_in_txn_with_identity(
     };
 
     if let Some(row) = read_exact_cache_row(&cache_context, &seed_hash, depth)? {
-        let mut scores = row.into_scores();
+        let mut scores = row.scores;
         sort_scores(&mut scores);
         return Ok(PprQueryResult {
             scores,
@@ -367,10 +367,7 @@ fn read_deepest_resume_state(
             ),
             context.community_identity,
         );
-        let Some(row) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
-            continue;
-        };
-        let Some(state) = row.into_state() else {
+        let Some(state) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
             continue;
         };
         return Ok(Some(state));
@@ -381,14 +378,14 @@ fn read_exact_cache_row(
     context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
-) -> Result<Option<CachedPprRow>> {
+) -> Result<Option<PprCacheState>> {
     read_servable_cache_row(context, seed_hash, expected_depth, true)
 }
 fn read_resume_cache_row(
     context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
-) -> Result<Option<CachedPprRow>> {
+) -> Result<Option<PprCacheState>> {
     read_servable_cache_row(context, seed_hash, expected_depth, false)
 }
 fn read_servable_cache_row(
@@ -396,7 +393,7 @@ fn read_servable_cache_row(
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
     enforce_ttl: bool,
-) -> Result<Option<CachedPprRow>> {
+) -> Result<Option<PprCacheState>> {
     let Some(raw) = context.store.ppr_cache().get(context.txn, seed_hash)? else {
         return Ok(None);
     };
@@ -418,14 +415,18 @@ fn read_servable_cache_row(
         }
     }
 
-    let row = decode_cache_payload(&raw[CACHE_HEADER_LEN..])?;
-    if let CachedPprRow::State(state) = &row
-        && state.completed_depth != expected_depth
-    {
+    let payload = &raw[CACHE_HEADER_LEN..];
+    if is_legacy_cache_payload(payload) {
+        // No old-format readers: a pre-FPRS score-only row is an ordinary
+        // cold miss. Its bytes are never parsed or served.
+        return Ok(None);
+    }
+    let state = decode_cache_state(payload)?;
+    if state.completed_depth != expected_depth {
         return Err(Error::CorruptedIndex("ppr cache state"));
     }
 
-    Ok(Some(row))
+    Ok(Some(state))
 }
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
 ///

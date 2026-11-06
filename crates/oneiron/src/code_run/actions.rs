@@ -26,7 +26,9 @@ use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
-use crate::task_verb::sdk::{AgentVerb, CUSTODY_VALUE_ROWS, RunVerb};
+use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::RunVerb;
+use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -164,9 +166,9 @@ impl ActionDispatch {
 /// What the host binds onto one action call, never the call's own body: the
 /// door its credential opens onto the SDK verb table, when the host
 /// authenticated the owner on its own that proof, and when the call acts for
-/// a live agent run that run's lease. Unbound, a verb-table or run-row action
-/// is refused, a live-run row asks for the lease and an owner action asks
-/// for the proof.
+/// a live agent run that run's lease, planner and slip issuer. Unbound, a
+/// verb-table or run-row action is refused, a live-run row asks for the lease
+/// and an owner action asks for the proof.
 #[derive(Clone, Default)]
 pub struct ActionHostBinding<'a> {
     pub verb_door: Option<Arc<dyn AgentVerbDoor>>,
@@ -183,6 +185,10 @@ pub struct ActionHostBinding<'a> {
     /// leader's rows (`self.leader.advice`, `self.leader.pattern`) ask it.
     /// Unset, they answer `planner_unbound`.
     pub planner: Option<super::HostPlannerBinding<'a>>,
+    /// The host's slip issuer lent beside the live run's lease. The leader's
+    /// `self.leader.split` uses it to sign its subproject spawn; unset, that
+    /// call answers `slip_issuer_unbound`.
+    pub slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
@@ -299,7 +305,8 @@ impl ActionRegistry {
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
     /// `self.team.record`, `self.team.submit`, the leader's
     /// `self.leader.advice` and `self.leader.pattern` on the planner the host
-    /// lends beside it, and the fold rows on the run's own log) under
+    /// lends beside it, `self.leader.split` with the host's slip issuer, and
+    /// the fold rows on the run's own log) under
     /// their own names, as the memory rows are offered. Each runs only when the host binds the run's lease
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
     /// own: its parent, actor and lease are the run's, never the body's.
@@ -430,6 +437,8 @@ mod ceiling_wire {
 }
 mod build;
 mod execution;
+mod fold_hooks;
+pub use fold_hooks::PreHookedFold;
 mod replay_read;
 #[cfg(test)]
 mod tests;

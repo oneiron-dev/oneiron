@@ -176,6 +176,22 @@ impl BudgetGuard {
         Ok(())
     }
 
+    /// The immutable request digest admitted for this guard's lease. Reading
+    /// it grants no dispatch: `begin_dispatch` still checks the complete
+    /// binding, provenance, open state and one-use rule.
+    #[must_use]
+    pub fn admitted_request_digest(&self, lease: &BudgetLease) -> Option<String> {
+        let state = self.lock_state();
+        state.check_lease_provenance(lease).ok()?;
+        state
+            .leases
+            .get(lease.id())?
+            .binding
+            .as_ref()?
+            .request_digest
+            .clone()
+    }
+
     /// Whether [`Self::begin_dispatch`] started this lease; `None` for a
     /// lease another meter issued or this one never did.
     #[must_use]
@@ -183,6 +199,23 @@ impl BudgetGuard {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
         state.leases.get(lease.id()).map(|record| record.dispatched)
+    }
+
+    /// Clears a premature dispatch mark when the caller proves no physical
+    /// attempt was sent. Subsequent unsent settlement releases the reservation
+    /// and records no dispatched receipt.
+    pub fn mark_unsent(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
+        let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
+        let record = state
+            .leases
+            .get_mut(lease.id())
+            .ok_or(BudgetDenied::LeaseInvalid)?;
+        if record.state != LeaseState::Open {
+            return Err(BudgetDenied::LeaseInvalid);
+        }
+        record.dispatched = false;
+        Ok(())
     }
 
     /// Whether this lease is still open, neither settled nor aborted; `None`

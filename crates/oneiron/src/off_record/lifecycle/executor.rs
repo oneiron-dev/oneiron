@@ -205,6 +205,7 @@ impl OffRecordSession<'_> {
                 author: crate::memory::WitnessAuthor::Companion,
                 message_type: kind.as_message_type().to_owned(),
                 content: text.to_owned(),
+                parts: None,
                 metadata: result.map(|result| result.metadata()).transpose()?,
                 is_visible: kind.is_visible(),
                 order,
@@ -233,22 +234,30 @@ impl OffRecordSession<'_> {
                 })
         };
         memory
-            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit, |wtxn| {
-                // A MESSAGE in base holds its body there, in the transaction
-                // that lands it. One in the overlay holds nothing: its body
-                // is the room's, and a save carries both (FIX 365).
-                if let (Some(result), Some(message_id), RouteTarget::Base) =
-                    (result, message_id, route.target())
-                {
-                    self.vault.retain_message_result_in_txn(
-                        wtxn,
-                        message_id,
-                        result.attachment,
-                        result.served_rows.map(<[EntityId]>::to_vec),
-                    )?;
-                }
-                Ok(())
-            })
+            .witness_into_session_for_run(
+                self,
+                &turn,
+                None,
+                host_turn_ref,
+                admit,
+                |wtxn| {
+                    // A MESSAGE in base holds its body there, in the transaction
+                    // that lands it. One in the overlay holds nothing: its body
+                    // is the room's, and a save carries both (FIX 365).
+                    if let (Some(result), Some(message_id), RouteTarget::Base) =
+                        (result, message_id, route.target())
+                    {
+                        self.vault.retain_message_result_in_txn(
+                            wtxn,
+                            message_id,
+                            result.attachment,
+                            result.served_rows.map(<[EntityId]>::to_vec),
+                        )?;
+                    }
+                    Ok(())
+                },
+                None,
+            )
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —
@@ -386,14 +395,14 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         occurred: crate::TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         if route.target() == RouteTarget::Overlay {
             return self
                 .stage_session_claim(route, *id, candidate, envelope, occurred, learned_at)
-                .map(drop);
+                .map(|_| *id);
         }
         let (vault, landing) = self.base_write_vault(route)?;
-        vault.put_claim_candidate_with_landing(
+        vault.put_claim_candidate_with_landing_returning_actual(
             id,
             candidate,
             envelope,

@@ -18,12 +18,16 @@ use oneiron_docedit::pptx_comments::PptxInspection;
 use oneiron_docedit::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 
+use crate::blob_artifact::deck_inspection::DeckRejectionInspection;
+use crate::blob_artifact::office_address::OfficeFormat;
+use crate::edit_roundtrip::DeckEditRejection;
 use crate::edit_roundtrip::pptx::inspect_pptx_with_limits;
-use crate::edit_roundtrip::{DeckEditRejection, DeckRejectionInspection, OfficeFormat};
+use crate::entity_doc::document_resources::{document_refused, document_resources};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, resolve_entity_ref};
-use crate::office_body::{document_refused, document_resources};
+use crate::memory::Memory;
+use crate::vault::entity_refs::resolve_entity_ref;
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 /// One PPTX version to inspect: `version`, or the head when absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

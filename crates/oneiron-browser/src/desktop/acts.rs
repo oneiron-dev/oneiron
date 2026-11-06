@@ -32,6 +32,21 @@ pub(super) fn desktop_scroll_proof_policy(snapshot: &Snapshot) -> Option<[u8; 32
     Some(*hasher.finalize().as_bytes())
 }
 
+/// Whether an act's input whose call failed, after the guest took
+/// `delivered` of its calls, has an unknown outcome (FIX 12257, the
+/// desktop twin of the browser's `unknown_outcome_policy`, FIX 10426): a
+/// later input call failed after earlier delivery, so the input may have
+/// taken effect, wholly or in part — a `type` with clear makes three
+/// input calls, and its select-all may stand while its text never went.
+/// The act's closure performs input calls only, so every failure past
+/// delivery lands one, a refusal included: a cleared field stays cleared
+/// when its text call answers stale. With none delivered, this partial-input
+/// row keeps today's answer and lands no receipt; a single sent but
+/// unacknowledged call is outside its scope.
+fn unknown_outcome_policy(_error: &BrowserError, delivered: u64) -> bool {
+    delivered > 0
+}
+
 impl DesktopSession {
     /// A new effect verb keeps no earlier verb's unread receipt (FIX
     /// 12134), as a browser session's verb entry clears it: a stale one is
@@ -39,6 +54,8 @@ impl DesktopSession {
     pub(super) fn begin_verb(&mut self) {
         self.unread = None;
         self.input_sent = false;
+        self.input_unknown = false;
+        self.input_delivered.set(0);
     }
 
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
@@ -61,12 +78,17 @@ impl DesktopSession {
         // Sent: a failure from here on leaves the effect standing (FIX
         // 12134).
         self.input_sent = acted.is_ok();
+        // A call of the input failed after the guest took part of it: the
+        // effect may stand, its outcome unknown (FIX 12257).
+        self.input_unknown = acted
+            .as_ref()
+            .is_err_and(|error| unknown_outcome_policy(error, self.input_delivered.get()));
         acted?;
         self.settle(before, start)?;
         let listed = self.listed()?;
         if let Some(opened) = front(&listed, |window| !windows.contains(&window.key)) {
             self.switch(read.key, opened, &listed, WindowSwitchCause::Opened);
-            let before = self.fingerprint()?;
+            let before = self.fingerprint(None)?;
             self.settle(before, Instant::now())?;
         }
         self.observation(base)
@@ -93,6 +115,7 @@ impl DesktopSession {
             &observation.url,
             &observation.title,
             None,
+            None,
             started,
         );
         observation.receipt = Some(receipt);
@@ -103,8 +126,10 @@ impl DesktopSession {
     /// even when settling or reading the window after it failed. Its
     /// receipt lands then, naming the window as the act's read `read` saw
     /// it and the failure's code, kept for the host to take once through
-    /// `sent_receipt`; the input is never sent again. A failure before
-    /// the send lands none.
+    /// `sent_receipt`; the input is never sent again. An input whose own
+    /// call failed after the guest took one of its calls lands the same
+    /// receipt, its outcome `unknown` (FIX 12257). A failure before the
+    /// send lands none.
     pub(super) fn sent(
         &mut self,
         verb: &str,
@@ -121,7 +146,7 @@ impl DesktopSession {
                 Ok(observation)
             }
             Err(error) => {
-                if self.input_sent {
+                if self.input_sent || self.input_unknown {
                     let title = self
                         .secrets
                         .mask_known(&read.title)
@@ -134,6 +159,7 @@ impl DesktopSession {
                         &url_of(&read.app, read.key),
                         &title,
                         Some(error.code().to_owned()),
+                        self.input_unknown.then_some(ReceiptOutcome::Unknown),
                         started,
                     );
                     self.unread = Some(receipt);
@@ -146,7 +172,9 @@ impl DesktopSession {
     /// Lands `verb`'s receipt, as the window it left at `url`/`title`
     /// (shown, so a secret rides it by its handle alone), in the session's
     /// receipts and the host's evidence; `result_unread` names the failure
-    /// of the read after a sent input (FIX 12134), where there was one.
+    /// of the read after a sent input (FIX 12134), where there was one,
+    /// and `outcome` what the receipt knows of the act's outcome where
+    /// its input was not sent whole (FIX 12257).
     #[expect(
         clippy::too_many_arguments,
         reason = "each argument is one fact a receipt keeps"
@@ -160,6 +188,7 @@ impl DesktopSession {
         url: &str,
         title: &str,
         result_unread: Option<String>,
+        outcome: Option<ReceiptOutcome>,
         started: Instant,
     ) -> EffectReceipt {
         self.receipt_seq += 1;
@@ -200,7 +229,7 @@ impl DesktopSession {
             tab: None,
             result_tab: None,
             result_unread,
-            outcome: None,
+            outcome,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };

@@ -21,8 +21,7 @@ use super::{
 };
 use crate::error::{ArtifactError, RegistryError};
 
-/// Attempt-queue kind owning inbound surface-event dispatch.
-pub const SURFACE_EVENT_ATTEMPT_KIND: &str = "surface_event.dispatch.v1";
+pub use crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND;
 
 /// Route prefix the ack's status path is built on.
 const SURFACE_EVENT_STATUS_PATH_PREFIX: &str = "/v1/core/surface-events/";
@@ -537,17 +536,7 @@ pub(super) fn admit_surface_event_once_in_txn(
     )?;
     Ok(match outcome {
         EnqueueOutcome::Enqueued(attempt) => {
-            // A counterparty's message is a touch on its channel: the comm
-            // projector makes it their `comm.last_touch`.
-            if matches!(event.action, super::SurfaceEventAction::Message) {
-                crate::comm::record_comm_inbound_reply_in_txn(
-                    vault,
-                    wtxn,
-                    &event.counterparty.reference_key(),
-                    &event.channel,
-                    event.received_at,
-                )?;
-            }
+            super::comm_intake::record_comm_inbound_in_txn(vault, wtxn, event)?;
             AdmittedSurfaceEvent {
                 attempt,
                 replayed: false,
@@ -638,8 +627,12 @@ pub(super) fn attempts_for_run_in_write_txn(
         let record = queue
             .get_in_write_txn(wtxn, id)?
             .ok_or(Error::CorruptedIndex("attempt run index"))?;
-        if record.run_id.as_deref() != Some(run_id) {
-            return Err(Error::CorruptedIndex("attempt run index"));
+        if !crate::store::hashed_string_index_matches(
+            record.run_id.as_deref(),
+            run_id,
+            "attempt run index",
+        )? {
+            continue;
         }
         records.push(record);
     }
@@ -796,3 +789,5 @@ pub fn surface_event_run_id(correlation_id: &str) -> String {
 }
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+mod phone_line;

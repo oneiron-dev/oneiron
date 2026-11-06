@@ -5,17 +5,17 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
-use crate::llm::CallPurpose;
+use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::skill_attribution::{
     AttributionVerdict, SkillEditProposal, attribution_judgment_row_ids, attribution_judgments,
     edit_proposal_row_ids, pending_edit_proposals,
 };
 use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior_rows};
+use oneiron_model::llm::CallPurpose;
 
 use super::gate::{
     SkillEditDisposition, dev_receipts, receipt_is_held_out, skill_body_binding_digest,
@@ -380,15 +380,6 @@ pub(crate) fn optimize_brief_bound_at(
         .map(|proposal| proposal.proposal_id)
         .collect();
     let prior_rows = skill_reliability_prior_rows(vault, &candidate.skill)?;
-    let source_rows = union_source_rows([
-        dev_rows,
-        defect_rows,
-        discovery_rows,
-        Some(substitution_rows),
-        Some(rejection_rows),
-        Some(prior_rows),
-        claim.map(|claim| vec![claim]),
-    ]);
     // The brief carries every list whole; the longest is measured.
     let items = [
         cited_receipts.len(),
@@ -401,7 +392,18 @@ pub(crate) fn optimize_brief_bound_at(
     .max()
     .unwrap_or(0);
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
-    let policy_dials = policy_dials(vault, &candidate.skill, &record);
+    let (policy_dials, policy_rows) = policy_dials(vault, &candidate.skill, &record);
+    let source_rows = union_source_rows([
+        Some(vec![candidate.skill]),
+        policy_rows,
+        dev_rows,
+        defect_rows,
+        discovery_rows,
+        Some(substitution_rows),
+        Some(rejection_rows),
+        Some(prior_rows),
+        claim.map(|claim| vec![claim]),
+    ]);
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
@@ -426,28 +428,45 @@ pub(crate) fn optimize_brief_bound_at(
 /// The top-level entries of `skill`'s `policy.json`, when its package
 /// carries one that reads as one JSON object (FIX 12071): the dials the
 /// improved revision's re-derive moves. A package that does not read shows
-/// none, and the brief goes on.
+/// none, and the brief goes on. Source rows name the package read on the
+/// same snapshot; an unknown witness never changes the dial values.
 fn policy_dials(
     vault: &Vault,
     skill: &EntityId,
     record: &crate::skill::SkillRecord,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let rtxn = vault.store.env.read_txn().ok()?;
+) -> (
+    Option<serde_json::Map<String, serde_json::Value>>,
+    Option<Vec<EntityId>>,
+) {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return (None, None);
+    };
     let package = match vault.runtime_skill_package_in_txn(&rtxn, skill, record) {
-        Ok(package) => package?,
+        Ok(package) => package,
         Err(error) => {
             tracing::debug!(kind = ?error.kind(), "a skill's package is unreadable for its brief");
-            return None;
+            return (None, None);
         }
     };
-    let policy = package
-        .files
-        .into_iter()
-        .find(|file| file.path == REVIEWER_POLICY_FILE)?;
-    match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
-        serde_json::Value::Object(entries) => Some(entries),
-        _ => None,
-    }
+    let source_rows = if package.is_some() {
+        vault
+            .runtime_package_carrier_in_txn(&rtxn, skill, record)
+            .map(|carrier| carrier.into_iter().collect())
+            .ok()
+    } else {
+        Some(Vec::new())
+    };
+    let dials = (|| {
+        let policy = package?
+            .files
+            .into_iter()
+            .find(|file| file.path == REVIEWER_POLICY_FILE)?;
+        match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
+            serde_json::Value::Object(entries) => Some(entries),
+            _ => None,
+        }
+    })();
+    (dials, source_rows)
 }
 
 /// Whether every receipt a proposal rests on falls on the DEV side of this
@@ -529,9 +548,8 @@ fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>
         Ok(receipts
             .into_iter()
             .filter(|receipt| {
-                receipt.starts_with(
-                    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW_RECEIPT_PREFIX,
-                ) && dev.contains(receipt)
+                receipt.starts_with(crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX)
+                    && dev.contains(receipt)
             })
             .collect())
     })();

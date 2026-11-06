@@ -6,13 +6,13 @@ use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedRead, ScopedReadResult,
 };
-use crate::cluster::{ClusterClaim, ClusterOptions, cluster_claims};
 use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::{
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyOp,
     ProposalOutcome, ProposalRuling, TopologySeal, fold_identity_topology_log,
 };
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, caps};
+use crate::memory::claim_cluster::{ClusterClaim, ClusterOptions, cluster_claims};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
 fn outcome(value: ProposalOutcome) -> ClusterTopologyOutcome {
@@ -54,7 +54,9 @@ impl Memory<'_> {
         &self,
         input: &ClusterRequest,
     ) -> MemoryResult<ScopedReadResult<ClusterProposal>> {
-        caps::check_batch_len("cluster claims", input.claims.len())?;
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().cluster(input);
+        }
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let ids = input
             .claims
@@ -62,58 +64,65 @@ impl Memory<'_> {
             .map(|claim| self.resolve_ref_in_lane(&lane, &claim.claim_ref))
             .collect::<MemoryResult<Vec<_>>>()?;
         let reads = ids.iter().map(|id| PointRead::id(*id)).collect::<Vec<_>>();
-        let result = lane.read_projected(&reads, None, |txn, rows| {
-            let mut claims = Vec::with_capacity(rows.len());
-            for (row, input) in rows.into_iter().zip(&input.claims) {
-                let row = row
-                    .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-                    .ok_or_else(|| {
-                        MemoryError::not_found("cluster member is not a readable claim")
+        let result = lane.read_projected_frames(
+            &reads,
+            None,
+            Vec::with_capacity(reads.len()),
+            |txn, offset, rows, claims| {
+                for (row, input) in rows.into_iter().zip(&input.claims[offset..]) {
+                    let row = row
+                        .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+                        .ok_or_else(|| {
+                            MemoryError::not_found("cluster member is not a readable claim")
+                        })?;
+                    let bytes = row.body.ok_or_else(|| {
+                        MemoryError::not_found("cluster member has no readable body")
                     })?;
-                let bytes = row
-                    .body
-                    .ok_or_else(|| MemoryError::not_found("cluster member has no readable body"))?;
-                let body = crate::claim::decode_claim_body(&bytes, true)?;
-                let facets = lane.claim_facet_refs_in(txn, &row.id)?;
-                if facets.len() > 1 {
-                    return Err(MemoryError::bad_request(
-                        "cluster member has more than one facet",
-                    ));
+                    let body = crate::claim::decode_claim_body(&bytes, true)?;
+                    let facets = lane.claim_facet_refs_in(txn, &row.id)?;
+                    if facets.len() > 1 {
+                        return Err(MemoryError::bad_request(
+                            "cluster member has more than one facet",
+                        ));
+                    }
+                    claims.push(ClusterClaim {
+                        claim_id: row.id,
+                        subject: body.subject,
+                        predicate: body.predicate,
+                        world: body.world,
+                        facet: facets.first().copied(),
+                        embedding: input.embedding.clone(),
+                    });
                 }
-                claims.push(ClusterClaim {
-                    claim_id: row.id,
-                    subject: body.subject,
-                    predicate: body.predicate,
-                    world: body.world,
-                    facet: facets.first().copied(),
-                    embedding: input.embedding.clone(),
-                });
-            }
-            let options = ClusterOptions {
-                cohesion_threshold: input
-                    .cohesion_threshold
-                    .unwrap_or(ClusterOptions::default().cohesion_threshold),
-            };
-            let assignments = cluster_claims(&claims, options)?;
-            // FIX 9937: every ref goes out short where the vault keeps one,
-            // in this read's snapshot.
-            let project = |id: &EntityId| self.cluster_ref_in_txn(txn, id);
-            let mut cohorts = Vec::with_capacity(assignments.cohorts.len());
-            for cohort in assignments.cohorts {
-                cohorts.push(ClusterCohort {
-                    cohort_id: *cohort.cohort_id.as_bytes(),
-                    partition: ClusterPartition {
-                        subject_ref: subject_ref(&cohort.partition.subject, &project),
-                        predicate_root: cohort.partition.predicate_root,
-                        world_ref: cohort.partition.world.as_ref().map(project),
-                        facet_ref: cohort.partition.facet.as_ref().map(project),
-                    },
-                    member_refs: cohort.member_ids.iter().map(project).collect(),
-                    cohesion: cohort.cohesion,
-                });
-            }
-            Ok::<_, MemoryError>(ClusterProposal { cohorts })
-        })?;
+                Ok::<_, MemoryError>(())
+            },
+            |txn, claims| {
+                let options = ClusterOptions {
+                    cohesion_threshold: input
+                        .cohesion_threshold
+                        .unwrap_or(ClusterOptions::default().cohesion_threshold),
+                };
+                let assignments = cluster_claims(&claims, options)?;
+                // FIX 9937: every ref goes out short where the vault keeps one,
+                // in this read's snapshot.
+                let project = |id: &EntityId| self.cluster_ref_in_txn(txn, id);
+                let mut cohorts = Vec::with_capacity(assignments.cohorts.len());
+                for cohort in assignments.cohorts {
+                    cohorts.push(ClusterCohort {
+                        cohort_id: *cohort.cohort_id.as_bytes(),
+                        partition: ClusterPartition {
+                            subject_ref: subject_ref(&cohort.partition.subject, &project),
+                            predicate_root: cohort.partition.predicate_root,
+                            world_ref: cohort.partition.world.as_ref().map(project),
+                            facet_ref: cohort.partition.facet.as_ref().map(project),
+                        },
+                        member_refs: cohort.member_ids.iter().map(project).collect(),
+                        cohesion: cohort.cohesion,
+                    });
+                }
+                Ok::<_, MemoryError>(ClusterProposal { cohorts })
+            },
+        )?;
         self.produced_from(ids);
         Ok(result)
     }
@@ -335,9 +344,10 @@ impl Memory<'_> {
         if lane.entities_readable_in_txn(txn, &[proposal])? != [true] {
             return Err(MemoryError::not_found("no readable topology proposal"));
         }
+        // The proposal read whole (FIX 10188).
         let record = self
             .vault()
-            .identity_topology_event_in_txn(txn, &proposal)?
+            .identity_topology_decision_in_txn(txn, &proposal)?
             .filter(|record| record.approval == ClaimApprovalStatus::Proposed)
             .ok_or_else(|| MemoryError::not_found("no such topology proposal"))?;
         let IdentityTopologyAction::Apply(mut op) = record.action.to_fold_action() else {

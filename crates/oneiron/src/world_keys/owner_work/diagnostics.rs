@@ -36,6 +36,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
+use super::DeviceSyncStart;
+
 mod key_plan;
 
 /// How many keys one page of a re-assertion's diagnostics lists. A page
@@ -336,6 +338,12 @@ pub struct PublishObserved {
     pub home: Option<EntityId>,
     pub reach: PublishReach,
     pub latest: LatestRead,
+    /// Each world whose capsule this pass's upload did not seal fresh because
+    /// its merged authority history was incomplete (FIX 4497): owners warn
+    /// members of exactly these worlds, not only of an empty capsule (FIX
+    /// 12417). Empty when the pass assembled no upload or sealed every world.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_authority: Vec<EntityId>,
 }
 
 /// The exact attempt an executor persisted before its commit and has not
@@ -371,6 +379,11 @@ pub struct PublicationDiagnostics {
     /// What this install's relay observed of the home and the newest
     /// generation, or that it is unknown.
     pub relay: RelayObservation,
+    /// The last device-sync start outcome observed on this open vault session,
+    /// shared by its clones. `None` means no outcome was recorded, not that
+    /// sync is unconfigured. This is historical, never current worker health.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_sync_start: Option<DeviceSyncStart>,
     /// The exact attempt this install persisted and has not resolved; `None`
     /// with none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -452,7 +465,8 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let Some(asked) = fold.owner_work_request(&request).cloned() else {
+            // The fold's shared body, never a copy of its permits (FIX 12138).
+            let Some(asked) = fold.shared_owner_work_request(&request) else {
                 return Ok(None);
             };
             let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
@@ -529,6 +543,11 @@ impl Vault {
         } else {
             RelayObservation::Observed { passes }
         };
+        let device_sync_start = *self
+            .world_keys
+            .device_sync_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         #[cfg(feature = "sync")]
         let attempt = self
             .unresolved_bundle_attempt(request)?
@@ -542,6 +561,7 @@ impl Vault {
             home,
             home_warning,
             relay,
+            device_sync_start,
             attempt,
         })
     }

@@ -63,11 +63,19 @@ impl PromptBoard {
     /// is not read, keeps the board here.
     fn may_go(&self, vault: &Vault, reach: ModelLocality, stage: &'static str) -> bool {
         let destination = crate::device_local::prompt_destination(self.caller.clone(), reach);
+        // A board in two parts goes as both (I1 = C): the hold reads them
+        // as one text.
+        let text = match &self.board.query {
+            Some(query) => {
+                std::borrow::Cow::Owned(format!("{}\n{}", self.board.block, query.block))
+            }
+            None => std::borrow::Cow::Borrowed(self.board.block.as_str()),
+        };
         match crate::device_local::retained_hold(
             vault,
             &destination,
             &self.board.rows,
-            self.board.block.as_bytes(),
+            text.as_bytes(),
         ) {
             Ok(None) => true,
             Ok(Some(hold)) => {

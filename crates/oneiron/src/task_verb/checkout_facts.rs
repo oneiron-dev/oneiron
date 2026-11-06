@@ -13,14 +13,7 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 
-#[derive(Clone, Copy)]
-pub(crate) enum CheckoutTaskAccess {
-    Claim,
-    Holder,
-    Reclaim,
-    Takeover,
-    Read,
-}
+pub(crate) use crate::memory::checkout_access::CheckoutTaskAccess;
 
 impl Memory<'_> {
     pub(crate) fn checkout_task_in(

@@ -20,7 +20,7 @@ pub struct MessageBirth {
     #[serde(default)]
     pub assertions: WitnessAssertions,
     #[serde(default)]
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]

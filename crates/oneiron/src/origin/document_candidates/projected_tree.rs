@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 
 use super::super::tree::OriginTreeFile;
-use crate::code_document::CodeFilePresence;
-use crate::code_revision::CodeTreeBlob;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo};
+use crate::store::code_document_values::CodeFilePresence;
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 /// A tree's Git mode.
 const MODE_TREE: u32 = 0o040_000;

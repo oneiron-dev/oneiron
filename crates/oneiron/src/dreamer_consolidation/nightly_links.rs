@@ -45,12 +45,15 @@ use crate::dreamer_runner::{
     DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::decision::{AskTo, DecisionRung, EvidenceVersion, HumanAskReason};
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, DurableStepContext, DurableStepError, LlmRequest,
-    ModelTierRef, ResponseFormat, Scope, TierPrecedence,
-};
+use crate::llm::decision::AskTo;
+use crate::model_decision::{DecisionRung, EvidenceVersion, HumanAskReason};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
 use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, LlmRequest, ModelTierRef, ResponseFormat, Scope,
+    TierPrecedence,
+};
 
 use pairs::AppliedSameAs;
 use pairs::{Anchored, NightlyLinkQuestion, NightlyLinkVerdict, anchored, link_calls};
@@ -232,6 +235,7 @@ impl ConsolidationExecutor<'_> {
             now: ctx.now_ms / 1_000,
         };
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly links");
             recheck_in_txn(&read, txn, &read_back)?;
             let outputs = writer.claims_in_txn(txn, drafts)?;
             // Each same-as names the proposal claim it wrote, in order.
@@ -349,7 +353,7 @@ impl ConsolidationExecutor<'_> {
                 scope,
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::Durable {
-                    fallback: crate::llm::DeterministicFallback {
+                    fallback: oneiron_model::llm::DeterministicFallback {
                         name: "json_rules_v1".into(),
                         config: None,
                     },
@@ -418,8 +422,13 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the call's
         // outcome.
-        for (hash, usage) in &spent {
+        for (index, (hash, usage, _)) in spent.iter().enumerate() {
             if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
+                for (_, usage, memoized) in &spent[index..] {
+                    if !*memoized {
+                        charges.record_usage(usage);
+                    }
+                }
                 return super::residency::spent_or_deferred(error, ctx, charges)
                     .map(ControlFlow::Break);
             }

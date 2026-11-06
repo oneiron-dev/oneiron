@@ -58,16 +58,7 @@ pub(super) const WORLD_KIND_WORLD: &str = "world";
 
 const SELECTOR_VV_PREFIX_LEN: usize = 4;
 
-/// World component of a closed-subgraph selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyncSelectorWorld {
-    /// Include base and all world-scoped claims.
-    All,
-    /// Include only base-reality claims.
-    Base,
-    /// Include base-reality claims and claims scoped to this world.
-    World(LocalWorldId),
-}
+pub use crate::claim::selector_world::SyncSelectorWorld;
 
 /// Per-window closed-subgraph selector.
 #[derive(Debug, Clone, PartialEq, Eq)]

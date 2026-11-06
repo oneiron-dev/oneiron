@@ -5,125 +5,41 @@
 #[cfg(doc)]
 use crate::attempt_queue::AttemptQueue;
 
-/// Generic [`AttemptQueue`] kind used by Dreamer runner attempts.
-pub const DREAMER_RUNNER_ATTEMPT_KIND: &str = "dreamer";
-/// Current pinned Dreamer attempt payload schema version.
-pub const DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION: u64 = 1;
-/// Pinned on-disk MessagePack key set for Dreamer attempt payloads.
-pub const DREAMER_ATTEMPT_PAYLOAD_KEYS: [&str; 4] =
-    ["schema_version", "job_type", "input", "parent_job"];
-/// Claim predicate used for durable Dreamer attempt milestones.
-pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
-/// Current pinned Dreamer milestone claim value schema version.
-pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
-/// Pinned on-disk MessagePack key set for Dreamer milestone claim values.
-pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
+pub use crate::store::dreamer_attempt_kind::DREAMER_ATTEMPT_PAYLOAD_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION;
+pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_PREDICATE;
+pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_VALUE_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_VALUE_SCHEMA_VERSION;
+pub use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
-/// Default fan-out reservation for one Dreamer child, in token-like units.
-pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
-/// Default OF-366 tournament candidate fan-out.
-pub const DEFAULT_DREAMER_TOURNAMENT_FANOUT_M: u16 = 2;
-/// Default OF-366 tournament refinement depth.
-pub const DEFAULT_DREAMER_TOURNAMENT_DEPTH_K: u16 = 2;
-/// MICRO consolidation queue kind. Private per-device attempt rows only.
-pub const DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND: &str = "dreamer.consolidation.micro";
-/// MESO consolidation queue kind. Private per-device attempt rows only.
-pub const DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND: &str = "dreamer.consolidation.meso";
-/// MACRO consolidation queue kind. Admission is restricted to the elected home node.
-pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidation.macro";
-/// A per-vault, owner-admitted workflow skill executed under the Dreamer stamp.
-pub const DREAMER_WEAVE_RECIPE_ATTEMPT_KIND: &str = "dreamer.weave_recipe";
-/// The wake policy's recipe lane (ARCH-0026 #wake): one attempt per policy
-/// decision, naming the recipe whose input row the policy outbox holds.
-/// Vault-local, like maintenance: it is never a partition and needs no home
-/// election, though a recipe body may queue Macro work that does. Doubles as
-/// the payload `job_type`.
-pub const DREAMER_RECIPE_WAKE_ATTEMPT_KIND: &str = "dreamer.recipe_wake";
-/// SKILL-OPT maintenance queue kind (ONE-1448). Private per-device attempt
-/// rows, like MICRO/MESO: the job only DRAFTS gated proposals, so a second
-/// device drafting one is a second question for a human, never a second edit.
-///
-/// Doubles as the payload `job_type` this attempt carries — the dotted-name
-/// convention `dreamer.reflection.gap_scan` and
-/// `dreamer.edit_distance.substitution_mine` already use — so the kind gate
-/// and the payload discriminator can never drift apart.
-pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
-/// ARCH-0073 vault auto-cleanup queue kind (ONE-1931). Private per-device
-/// attempt rows, like MICRO/MESO and SKILL-OPT: the pass reads one vault's own
-/// rows and, in the default propose-first posture, only DRAFTS a proposal, so
-/// a second device running it is a second question for a human, never a
-/// second archive.
-///
-/// Doubles as the payload `job_type` this attempt carries, following the same
-/// dotted-name convention as [`DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND`], so the
-/// kind gate and the payload discriminator cannot drift apart. Registered on
-/// the TIMER wake (Macro scope) alone — see
-/// [`crate::dreamer_runner::EnqueueDreamerVaultCleanupAttempt`].
-pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
-/// ARCH-0032 stage 2 NOTE review queue kind (OF-073): the Dreamer reads the
-/// NOTEs whose kind allows extraction and promotes the beliefs each one
-/// grounds. A Nightly child, admitted on the Timer wake (Macro scope) like the
-/// cleanup pass; private per-device rows, since every write goes through the
-/// promotion gate.
-///
-/// Doubles as the payload `job_type`, so the kind gate and the payload
-/// discriminator cannot drift apart.
-pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
-/// A resident's own dreaming (OF-490): one Nightly child per resident whose
-/// definition is on and whose dreaming is not off. It runs under the
-/// resident's own stamp, not the Dreamer's, and writes the resident's diary.
-/// Admitted on the Timer wake (Macro scope) after the NOTE review.
-///
-/// Doubles as the payload `job_type`.
-pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
-/// An agent's free time for its human (FIX 4453): one item per owner-set
-/// cycle, run under the resident's own stamp on the model its host lends it.
-/// What it suggests lands as a proposal. The cycle's own-time item is the
-/// resident's dreaming ([`DREAMER_RESIDENT_DREAM_ATTEMPT_KIND`]) bound to the
-/// cycle. Admitted on the Timer wake (Macro scope) before the residents'
-/// dreaming.
-///
-/// Doubles as the payload `job_type`.
-pub const DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND: &str = "dreamer.free_time.for_human";
+pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
+pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_DEPTH_K;
+pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_FANOUT_M;
+pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_NOTE_REVIEW_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_RECIPE_WAKE_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND;
 /// A Dreamer-lane TASK's realization: the one row `tasks.create` queues for
 /// a TASK routed to the Dreamer, carrying the TASK's bare spec rather than
 /// the runner envelope. Admitted on any wake after the wake recipes; its one
 /// model step writes the research NOTE the TASK's result names.
 pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
     crate::task_verb::highway_runner::REALIZE_ATTEMPT_KIND;
-/// The weave lens's generate step (OF-499): one saved digest period
-/// rendered through the shipped `weave-report` skill on a lent model, queued
-/// in the period's publication. Its render lands on the period's row.
-///
-/// Doubles as the payload `job_type`.
-pub const DREAMER_WEAVE_LENS_ATTEMPT_KIND: &str = "dreamer.weave_lens";
-/// A turn-woken program (DOOR-141): one attempt per armed program per landed
-/// turn of its actor, admitted under that actor's own authority and stamped
-/// as that actor, never as a base agent. Vault-local: it is no partition.
-/// Only its own admission leases it.
-///
-/// Doubles as the payload `job_type`.
-pub const DREAMER_TURN_PROGRAM_ATTEMPT_KIND: &str = "dreamer.turn_program";
-/// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
-/// failure-ladder case the escalation hands to the Coach. Host-run, like agent
-/// dispatch: the wake driver never admits it; a host Coach leases it with
-/// [`crate::dreamer_runner::DreamerRunnerStore::admit_next_coach_heal`].
-/// Doubles as the payload `job_type`.
-pub const COACH_HEAL_ATTEMPT_KIND: &str = "coach.heal";
-/// The Coach's nightly retrieval-tuning facet on the maintenance lane,
-/// registered beside the cleanup pass on the Timer wake.
-pub const COACH_RETRIEVAL_TUNE_FACET: &str = "coach.retrieval_tune";
-/// Current pinned home-node designation schema version.
-pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
-/// Pinned on-disk MessagePack key set for the private home-node designation.
-pub const DREAMER_HOME_NODE_DESIGNATION_KEYS: [&str; 4] =
-    ["schema_version", "node_id", "class", "elected_at"];
+pub use crate::store::dreamer_attempt_kind::COACH_HEAL_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::COACH_RETRIEVAL_TUNE_FACET;
+pub use crate::store::dreamer_attempt_kind::DREAMER_HOME_NODE_DESIGNATION_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION;
+pub use crate::store::dreamer_attempt_kind::DREAMER_TURN_PROGRAM_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND;
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
-pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
-pub(super) const KEY_ATTEMPT_TYPE: &str = "job_type";
-pub(super) const KEY_INPUT: &str = "input";
-pub(super) const KEY_PARENT_ATTEMPT: &str = "parent_job";
+pub(super) use crate::store::dreamer_attempt_payload::{KEY_PARENT_ATTEMPT, KEY_SCHEMA_VERSION};
 pub(super) const KEY_ATTEMPT_ID: &str = "job_id";
 pub(super) const KEY_MILESTONE: &str = "milestone";
 pub(super) const KEY_AT: &str = "at";

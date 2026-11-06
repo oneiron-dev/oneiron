@@ -24,7 +24,7 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let facet = crate::claim::substrate_facet_id(person)?;
+    let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
@@ -55,6 +55,7 @@ pub(crate) fn ensure_person_substrate(
             ENTITY_TYPE_FACET,
             occurred,
             learned_at,
+            0,
             &bytes,
         )?;
         super::put_apply::stage_entity_index_rows(
@@ -69,13 +70,13 @@ pub(crate) fn ensure_person_substrate(
         let plan =
             super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
         super::apply_short_id_plan(store, txn, &facet, plan)?;
-        crate::federation::record_scope::stamp_put(
+        store.scope_stamps.stamp_put(
             store,
             txn,
             facet,
             ENTITY_TYPE_FACET,
             &bytes,
-            crate::federation::record_scope::RowPut::Birth,
+            crate::batch::row_put::RowPut::Birth,
         )?;
     }
     super::edge_apply::apply_edge_with_created_at(
@@ -86,7 +87,7 @@ pub(crate) fn ensure_person_substrate(
         facet,
         1.0,
         learned_at,
-        crate::affect::Vad::NEUTRAL,
+        oneiron_contracts::affect::Vad::NEUTRAL,
         None,
     )?;
     Ok(())
@@ -105,7 +106,9 @@ fn is_substrate(data: &[u8], person: EntityId) -> bool {
 }
 /// Caller-selected ids cannot mint base reality or the default project as records.
 pub(super) fn validate_scope_identity(id: EntityId) -> Result<()> {
-    if id == crate::claim::base_world_id() || id == crate::claim::default_project_id() {
+    if id == oneiron_contracts::claim::base_world_id()
+        || id == crate::write_envelope::claim_body::default_project_id()
+    {
         return Err(Error::InvalidClaimBody(
             "reserved scope member cannot be minted",
         ));
@@ -134,20 +137,21 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         };
         if !policy_done
             && header.entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-            && let Some(bytes) =
-                crate::gate::normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
+            && let Some(bytes) = store
+                .gate_hooks
+                .normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
         {
             // A locally authored manifest keeps its origin across the upgrade;
             // replayed bytes gain no trust stamp from it.
-            if crate::gate::manifest_authenticity::manifest_is_trusted(
+            if store.gate_hooks.manifest_is_trusted(
                 store,
                 &txn,
                 &id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? {
-                crate::gate::manifest_authenticity::stamp_manifest_origin(
-                    store, &mut txn, &id, &bytes, false,
-                )?;
+                store
+                    .gate_hooks
+                    .stamp_manifest_origin(store, &mut txn, &id, &bytes, false)?;
             }
             super::put_apply::stage_entity_body_row(
                 store,
@@ -156,6 +160,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -170,17 +175,17 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 )?;
                 super::apply_short_id_plan(store, &mut txn, &id, plan)?;
             }
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,
                 header.entity_type,
                 &bytes,
-                crate::federation::record_scope::RowPut::Birth,
+                crate::batch::row_put::RowPut::Birth,
             )?;
         }
         if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
-            crate::federation::record_scope::backfill_task_base(
+            store.scope_stamps.backfill_task_base(
                 store,
                 &mut txn,
                 id,
@@ -204,9 +209,8 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             let old = &raw[ENTITY_METADATA_HEADER_LEN..];
             let bytes = match header.entity_type {
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
-                    crate::access_grant::encode_access_grant_body(
-                        &crate::access_grant::decode_access_grant_body(old)?,
-                    )?
+                    crate::access_grant::decode_access_grant_body(old)?;
+                    old.to_vec()
                 }
                 crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
                     crate::outbound_grant::encode_standing_outbound_grant_body(
@@ -224,6 +228,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -240,6 +245,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             }
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            crate::ports::claim_order::observe_in_txn(store, &mut txn, header.row_version)?;
             let bytes = crate::claim::upgrade_pre_scope_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let prefix = store.short_id_prefix(header.entity_type)?;
             let plan =
@@ -251,16 +257,17 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,
                 header.entity_type,
                 &bytes,
-                crate::federation::record_scope::RowPut::Birth,
+                crate::batch::row_put::RowPut::Birth,
             )?;
         }
     }

@@ -21,6 +21,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::task_verb::{TaskActor, TaskCallReceipt};
 
 use super::model::{LinearFieldConflict, LinearIssueRef, LinearMirrorReceipt, LinearWriteActor};
 use super::webhook::LinearExternalActor;
@@ -488,7 +489,8 @@ pub(crate) fn record_outbound(
 }
 
 /// Forgets `actor` as the writer every event row names, in its erase's
-/// transaction (FIX 3520).
+/// transaction (FIX 3520). A title edit's receipt names its writer in its
+/// lifecycle record too, and is forgotten there as well (FIX 4696).
 pub(crate) fn erase_mirror_event_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -497,12 +499,30 @@ pub(crate) fn erase_mirror_event_actor_in_txn(
     let hex = actor.to_hex();
     let rows = EVENTS.scan(vault, txn)?;
     for (key, mut row) in rows {
-        if row.writer_actor.as_deref() != Some(hex.as_str()) {
-            continue;
+        let mut dirty = false;
+        if row.writer_actor.as_deref() == Some(hex.as_str()) {
+            row.writer_actor = None;
+            row.writer_class = None;
+            dirty = true;
         }
-        row.writer_actor = None;
-        row.writer_class = None;
-        EVENTS.put(vault, txn, &key, &row)?;
+        // A title edit's receipt is a `TaskCallReceipt` whose lifecycle
+        // names the writer (facade `edit_receipt`); a receipt that does not
+        // read as one is left alone.
+        if row.direction == EventDirection::TaskEdit.token()
+            && let Some(receipt) = row.receipt.as_deref()
+            && let Ok(mut typed) = serde_json::from_str::<TaskCallReceipt>(receipt)
+            && let Some(lifecycle) = typed.lifecycle.as_mut()
+            && lifecycle.actor.is(*actor)
+        {
+            lifecycle.actor = TaskActor::Erased;
+            if let Ok(json) = serde_json::to_string(&typed) {
+                row.receipt = Some(json);
+                dirty = true;
+            }
+        }
+        if dirty {
+            EVENTS.put(vault, txn, &key, &row)?;
+        }
     }
     Ok(())
 }

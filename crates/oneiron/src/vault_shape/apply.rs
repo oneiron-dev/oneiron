@@ -31,9 +31,9 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::write_envelope::skill_record::SkillLifecycle;
 use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -733,11 +733,12 @@ impl Vault {
                 sources.list(facet);
                 Ok(facet.to_hex())
             }
+            (ShapeChange::Retire, ShapeTarget::World { .. }, _) => {
+                self.retire_shape_world(owner, entity.ok_or_else(stale)?)
+            }
             (
                 ShapeChange::Retire,
-                ShapeTarget::World { .. }
-                | ShapeTarget::Facet { .. }
-                | ShapeTarget::WorldFacet { .. },
+                ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
                 _,
             ) => self.delete_shape_entity(owner, entity.ok_or_else(stale)?),
             (

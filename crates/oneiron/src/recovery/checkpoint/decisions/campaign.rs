@@ -1,11 +1,11 @@
 //! What a campaign send reads about its recipient: the compliance rules the
 //! campaign gate binds a send to an address to, and which of them it fails.
 use super::Decision;
-use crate::campaign::compliance::{
-    ComplianceBinding, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS, campaign_compliance_binding,
-    load_active_compliance_pack,
-};
+use crate::campaign::compliance::{campaign_compliance_binding, load_active_compliance_pack};
 use crate::edge::EdgeKind;
+use crate::gate::dispatch_compliance::{
+    ComplianceBinding, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+};
 use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
 };
@@ -46,7 +46,7 @@ impl Decision for CampaignCompliance {
             }
             let txn = vault.store.env.read_txn()?;
             let store = &vault.store;
-            addresses.extend(crate::comm::comm_party_keys_in_txn(store, &txn)?);
+            addresses.extend(store.record_hooks.comm_party_keys_in_txn(store, &txn)?);
             vault.for_each_claim_with_predicate_in_txn(
                 &txn,
                 PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,

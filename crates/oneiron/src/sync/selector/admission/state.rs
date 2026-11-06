@@ -13,6 +13,7 @@ use crate::sync::types::WindowKey;
 #[cfg(feature = "sync")]
 use super::super::edge::{
     EarlyStamps, HeldStamp, ReleasedStamps, hold_stamps, pending_births, release_born_stamps,
+    stamps_on,
 };
 use super::staged_lane;
 
@@ -29,7 +30,7 @@ pub(crate) struct AdmittedUpdate {
     pub(super) rows: u64,
     pub(super) early: EarlyStamps,
     pub(super) births: Vec<(EntityId, Vec<u8>)>,
-    pub(super) peer_rows: Vec<(EntityId, [u8; 32])>,
+    pub(super) peer_rows: Vec<(EntityId, Vec<u8>)>,
     pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
     pub(super) born_with: Vec<super::super::born_with::CarriedText>,
     pub(super) lane: Option<String>,
@@ -58,6 +59,11 @@ impl AdmittedUpdate {
 
     pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.bytes
+    }
+
+    /// The text admission allowed beside the rows, outside their Loro bytes.
+    pub(crate) fn born_with(&self) -> &[super::super::born_with::CarriedText] {
+        &self.born_with
     }
 
     /// The writes the update asks of this vault: its rows and edges, and the
@@ -96,6 +102,39 @@ impl AdmittedUpdate {
         hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
     }
 
+    /// Takes from every part what the rows the owner's discard marks own,
+    /// before any of it persists (FIX 14534 part E, E4 = A): its bytes
+    /// projected history-free, and those rows' born-with text, stamps and
+    /// births dropped. A staged artifact so projected has its own digest and
+    /// needs its own confirmation.
+    ///
+    /// # Errors
+    ///
+    /// A part that does not open, or that the projection cannot place: the
+    /// staging is refused retryably and writes no receipt.
+    pub(crate) fn project_for_discard(&mut self, discarded: &BTreeSet<EntityId>) -> Result<()> {
+        if discarded.is_empty() {
+            return Ok(());
+        }
+        if let Some(bytes) =
+            crate::sync::window::project_unsent_update(&self.key, &self.bytes, discarded)?
+        {
+            self.bytes = bytes;
+        }
+        self.born_with.retain(|(id, _, _)| !discarded.contains(id));
+        self.early.held.retain(|stamp| !stamp.names_any(discarded));
+        self.early
+            .with_birth
+            .retain(|stamp| !stamp.names_any(discarded));
+        self.births.retain(|(id, _)| !discarded.contains(id));
+        self.peer_rows.retain(|(id, _)| !discarded.contains(id));
+        self.delivered.retain(|id, _| !discarded.contains(id));
+        for part in &mut self.routed {
+            part.project_for_discard(discarded)?;
+        }
+        Ok(())
+    }
+
     /// The record of every stamp [`Self::hold_staged`] holds, which the
     /// receipt keeps while it is Pending.
     pub(crate) fn staged_stamps(&self) -> Vec<u8> {
@@ -109,8 +148,8 @@ impl AdmittedUpdate {
     }
 
     /// The rows whose door judges a peer's row apart from this vault's own,
-    /// each with the digest of the bytes the update brings.
-    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+    /// each with its wire digest and any ASSET logical-body identity.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
         &self.peer_rows
     }
 
@@ -124,6 +163,31 @@ impl AdmittedUpdate {
     /// travel beside each row that landed (OF-491).
     pub(crate) fn keep_born_with(&self, vault: &Vault) -> Result<()> {
         super::super::born_with::keep_carried(vault, &self.born_with)
+    }
+
+    /// After the update's import, holds under the peer that sent it, and
+    /// the `grant` it sent them under, the update's own stamps on each of
+    /// `waiting`: rows it brought whose births wait on their bodies, carriers
+    /// their window binds by reference (FIX 12118). They wait as stamps sent
+    /// ahead of their rows wait, and `release_landed_stamps` releases them
+    /// once a body's landing births the row.
+    pub(crate) fn hold_waiting_births(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        grant: EntityId,
+        waiting: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        match &self.lane {
+            Some(lane) if !waiting.is_empty() => hold_stamps(
+                vault,
+                key,
+                (lane, Some(grant)),
+                &stamps_on(&self.early.with_birth, waiting),
+                true,
+            ),
+            _ => Ok(()),
+        }
     }
 
     /// After the update's import, the stamps on the rows that import birthed
@@ -143,6 +207,28 @@ impl AdmittedUpdate {
     }
 }
 
+/// The stamps the held lane of the federation peer `peer` keeps on `row` of
+/// `key`, a row its update brought whose body a transfer landed after that
+/// update's import, once the landing birthed it from `carrier`, the bytes the
+/// update brought (FIX 12118). `None` when none is held.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn release_landed_stamps(
+    vault: &Vault,
+    key: &WindowKey,
+    peer: EntityId,
+    (row, carrier): (EntityId, Vec<u8>),
+) -> Result<Option<ReleasedStamps>> {
+    let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
+    release_born_stamps(
+        vault,
+        key,
+        &lane,
+        &[(row, carrier)],
+        &BTreeSet::from([row]),
+        &[],
+    )
+}
+
 /// The rows a staged artifact's admitted bytes bring that this vault lacks
 /// and that its receipt holds stamps on, read before the confirmation imports
 /// them.
@@ -150,10 +236,16 @@ impl AdmittedUpdate {
 pub(crate) struct StagedBirths {
     lane: String,
     births: Vec<(EntityId, Vec<u8>)>,
+    peer_rows: Vec<(EntityId, Vec<u8>)>,
 }
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
+    /// The peer-origin records recomputed from receipt-bound admitted bytes.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
+        &self.peer_rows
+    }
+
     /// The rows the confirmation's import must watch, each with the bytes
     /// the artifact brings.
     pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
@@ -176,25 +268,47 @@ impl StagedBirths {
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn staged_births(
     vault: &Vault,
-    key: &WindowKey,
     (receipt_id, stamps_digest): (&[u8; 32], Option<[u8; 32]>),
-    admitted_update: &[u8],
-) -> Result<StagedBirths> {
-    let admitted = create_window_doc("federation-staged", key);
-    admitted.import(admitted_update).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "import admitted update",
-            source,
-        })
-    })?;
+    parts: &[crate::batch::export::StagedWindowPart],
+) -> Result<Vec<StagedBirths>> {
     let lane = staged_lane(receipt_id);
-    // The held table restores live and maintenance sweeps it, so a hold can
-    // be gone while its receipt is Pending. The receipt's own record holds
-    // every staged stamp again before its birth is judged: an owner's import
-    // never lands a row without the facets it staged (Astra-c F1 on #1432).
-    let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?;
-    let stamps = HeldStamp::from_receipt_record(&record.unwrap_or_default(), stamps_digest)?;
-    hold_stamps(vault, key, (&lane, None), &stamps, false)?;
-    let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
-    Ok(StagedBirths { lane, births })
+    // A receipt binds all per-window records before any is selected or held.
+    let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?
+        .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
+    if stamps_digest != Some(*blake3::hash(&record).as_bytes()) {
+        return Err(Error::CorruptedIndex("staged facet stamps"));
+    }
+    let mut records = crate::batch::export::decode_staged_window_parts(&record)?
+        .into_iter()
+        .map(|(key, record)| (key.as_str().to_owned(), record))
+        .collect::<BTreeMap<_, _>>();
+    if records.len() != parts.len() {
+        return Err(Error::CorruptedIndex("staged facet stamps"));
+    }
+    let mut staged = Vec::with_capacity(parts.len());
+    for part in parts {
+        let (key, update) = (&part.key, &part.update);
+        let record = records
+            .remove(key.as_str())
+            .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
+        let stamps =
+            HeldStamp::from_receipt_record(&record, Some(*blake3::hash(&record).as_bytes()))?;
+        let admitted = create_window_doc("federation-staged", key);
+        admitted.import(update).map_err(|source| {
+            Error::Sync(SyncError::CrdtDecodeError {
+                context: "import admitted update",
+                source,
+            })
+        })?;
+        // Maintenance may have cleared a Pending receipt's holds. Restore
+        // each record only under the actual window whose rows it precedes.
+        hold_stamps(vault, key, (&lane, None), &stamps, false)?;
+        let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
+        staged.push(StagedBirths {
+            lane: lane.clone(),
+            births,
+            peer_rows: crate::sync::ingest::admitted_peer_rows(&admitted),
+        });
+    }
+    Ok(staged)
 }

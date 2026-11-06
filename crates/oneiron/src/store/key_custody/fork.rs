@@ -14,7 +14,8 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
 
 use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
@@ -251,7 +252,8 @@ impl LocalCustody<'_> {
     /// source's retirement facts here, and the KS-4 custody head reads every
     /// live entry and retirement fact the same way. A credential's directory
     /// that does not list is left out, warned (KS-6): its keys stay where
-    /// they are for that pass.
+    /// they are for that pass. An erasable key's tombstone counts as its
+    /// marker (FIX 16230).
     pub(crate) fn census(&self) -> Result<Vec<(CustodyId, EntryState)>> {
         let subjects = match fs::read_dir(self.compartment()?) {
             Ok(subjects) => subjects,
@@ -283,6 +285,11 @@ impl LocalCustody<'_> {
                     *slot = state;
                 }
             }
+        }
+        // FIX 16230: a tombstoned erasable key has no directory; its
+        // tombstone retires its one generation.
+        for subject in self.erasable_tombstones()? {
+            census.insert(subject.at(0), EntryState::Retired);
         }
         Ok(census.into_iter().collect())
     }

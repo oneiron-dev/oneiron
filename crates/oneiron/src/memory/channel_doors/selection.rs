@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::channel_identity::ChannelIdentityState;
+use crate::channel_identity_selection::ThreadMaskSelectionExt;
 use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
     ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery,
@@ -13,7 +14,7 @@ use crate::channel_identity_selection::{
     RelationshipContext, SelectionRuleScope, SelectionRuleWriterKind,
     resolve_channel_identity_selection,
 };
-use crate::thread_passport::ThreadMask;
+use crate::write_envelope::thread_claim::ThreadMask;
 
 /// Authorship fields are deliberately absent. The authenticated writer and
 /// engine clock stamp the persisted row.
@@ -47,14 +48,14 @@ pub struct ChannelSelectionUpdateRequest {
 
 /// Semantic face classification for a selection question, never send
 /// authority. Shape and active state are read from live engine records.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSelectionCandidateInput {
     pub identity_ref: EntityId,
     pub face: ChannelIdentityFace,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSelectionRequest {
     pub relationship: RelationshipContext,
@@ -64,6 +65,31 @@ pub struct ChannelSelectionRequest {
     /// The server reads the passport pin; a caller cannot supply its mask.
     #[serde(default)]
     pub thread_ref: Option<String>,
+}
+
+impl ChannelSelectionRequest {
+    /// The send context this selection question hands to the send it
+    /// answers ([`crate::outbound::OutboundDispatchRequest::send_autonomy_context`]):
+    /// its relationship and scope keys, each candidate's face, and the
+    /// counterparty class the host passed explicitly. The send's dispatch
+    /// then selects its sender by the same rules this question asked.
+    #[must_use]
+    pub fn send_autonomy(
+        &self,
+        explicit_class: Option<&str>,
+    ) -> crate::channel_identity_autonomy::SendAutonomyContext {
+        crate::channel_identity_autonomy::SendAutonomyContext::from_host(
+            self.relationship,
+            explicit_class,
+        )
+        .with_selection(
+            self.applicable_scopes.clone(),
+            self.candidates
+                .iter()
+                .map(|candidate| (candidate.identity_ref, candidate.face))
+                .collect(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

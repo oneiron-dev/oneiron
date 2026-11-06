@@ -8,7 +8,7 @@
 //! use's task host: a secret its run found is the step's to use (FIX 8334).
 //! It crosses the row's verb-hook boundary ([`verb_hook_boundary::row`]) as
 //! a pumped run's `self.use` does, so the owner's verb hooks fire once
-//! around it: a pre-hook's skip (or any other stop) goes back to the model
+//! around it: Pending durably parks this same leaf; a skip goes back to the model
 //! as the tool's error result,
 //! its reason with it, never as the step's failure. Every round the model is asked
 //! again is admitted and metered on the step's one funded run, so the
@@ -28,26 +28,46 @@
 //! and a step that ran before must still run.
 
 use oneiron::actor_claims::craft_message_entries;
+use oneiron::agent_dispatch::{WorkflowToolCursor, WorkflowToolWait};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
-use oneiron::runtime_hooks::InvocationId;
+use oneiron::runtime_hooks::{InvocationId, VerbHookStop};
 use oneiron::secret_custody::SECRET_USE_OPERATIONS;
 use oneiron::task_verb::sdk::{self, AgentVerb, SecretUseRequest};
 use oneiron::task_verb::{HostBinding, verb_hook_boundary};
 use oneiron::{
-    ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
-    LlmToolSpec, ModelId, Vault, WriteActor,
+    ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmToolSpec,
+    Vault, WriteActor,
 };
 use serde_json::{Value, json};
 
+use super::super::CHAT_ROLE;
 use super::StepHost;
 use super::live_lease::LiveLease;
-use crate::models::OfferLadder;
+use crate::models::{ModelCallBinding, OfferLadder};
 
 /// The `self.use` verb as the step's tool: providers take letters, digits,
 /// `_` and `-` in a tool's name, so the dot becomes `_`.
 const SELF_USE_TOOL: &str = "self_use";
+
+/// Finalizes a workflow step's staged capture, when one was staged, with
+/// the binding its call returned. A workflow's step call is admitted on the
+/// chat role (FIX 6359), so its replays are admitted on that role too.
+pub(super) fn finalize_capture(
+    staged: Option<oneiron::code_run::WorkflowCaptureHandle>,
+    vault: &Vault,
+    binding: &ModelCallBinding,
+) {
+    if let Some(staged) = staged {
+        staged.finalize(
+            vault,
+            binding.rung.clone(),
+            CHAT_ROLE,
+            binding.route.clone(),
+        );
+    }
+}
 
 /// Puts `self.use` on `request` when every rung of `ladder` takes tool
 /// calls and their results; whether it did.
@@ -99,6 +119,39 @@ fn tool_spec() -> LlmToolSpec {
     }
 }
 
+/// A pending pre-hook is control flow, never an error result for the model.
+pub(super) enum StepToolOutcome {
+    Answered(Value, bool),
+    HookPending(WorkflowToolWait),
+}
+
+pub(super) enum StepConversation {
+    Answered {
+        response: LlmResponse,
+        binding: ModelCallBinding,
+        tool_rounds: bool,
+        request: LlmRequest,
+    },
+    HookPending(WorkflowToolWait),
+}
+
+pub(super) enum StepConversationFault {
+    Model(oneiron::llm::LlmError),
+    Checkpoint(oneiron::Error),
+}
+
+impl From<oneiron::llm::LlmError> for StepConversationFault {
+    fn from(error: oneiron::llm::LlmError) -> Self {
+        Self::Model(error)
+    }
+}
+
+impl From<oneiron::Error> for StepConversationFault {
+    fn from(error: oneiron::Error) -> Self {
+        Self::Checkpoint(error)
+    }
+}
+
 /// One step's `self.use`: its vault, the leased try it runs as, its agent,
 /// the run its invocations derive from, and the server it sends through
 /// once one is bound.
@@ -128,10 +181,13 @@ impl<'a> StepSecretUse<'a> {
     }
 
     /// Asks `ladder` on `run` until an answer calls no tool, answering each
-    /// tool call in between; that answer, the rung that gave it and whether
-    /// any tool round ran. Each round is the step's model call again: its
+    /// tool call in between; that answer, the binding of the rung that gave
+    /// the final answer (FIX 12743) and whether any tool round ran. Each
+    /// round is the step's model call again: its
     /// permit, its gate, its meter bounded by `lease`'s live room, and the
-    /// same errors end it.
+    /// same errors end it. The returned request is the final round's: craft
+    /// refreshed and tool calls and results appended, the bytes the last
+    /// answer goes with.
     pub(super) fn converse(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -139,28 +195,120 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-    ) -> LlmResult<(LlmResponse, ModelId, bool)> {
-        // A rung that cannot read reasoning back is never sent it.
+        capture: impl FnOnce(&LlmRequest) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
+        continuation: Option<(WorkflowToolCursor, Option<WorkflowToolWait>)>,
+        mut save: impl FnMut(
+            &LlmRequest,
+            &WorkflowToolCursor,
+            Option<WorkflowToolWait>,
+            Option<(&LlmResponse, &ModelCallBinding)>,
+            &[oneiron::EntityId],
+        ) -> oneiron::Result<()>,
+    ) -> Result<StepConversation, StepConversationFault> {
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
         let may_send = || {
             lease.book_and_revise();
             true
         };
-        let mut uses = 0_u64;
-        let mut rounds = false;
+        let mut retained = continuation.is_some();
+        let (mut cursor, mut waiting) = continuation.unwrap_or((
+            WorkflowToolCursor {
+                assistant_message: 0,
+                tool_index: 0,
+                use_ordinal: 0,
+                round: 0,
+                capture_completed: false,
+            },
+            None,
+        ));
+        let mut rounds = retained;
+        let mut capture = Some(capture);
+        let mut refreshed_sources = Vec::new();
         loop {
-            // The step's requester craft is read again before each round
-            // (FIX 11395): a note erased between rounds is not sent again.
-            // The planner craft stays as built at the start.
-            self.refresh_requester_craft(&mut request);
-            let (response, served) = runtime.block_on(ladder.generate_served_while(
-                run,
-                request.clone(),
-                None,
-                &may_send,
-            ))?;
-            let calls: Vec<(String, String, Value)> = response
-                .message
+            if !retained {
+                for source in self.refresh_requester_craft(
+                    &mut request,
+                    rounds.then_some(&mut cursor.assistant_message),
+                ) {
+                    if !refreshed_sources.contains(&source) {
+                        refreshed_sources.push(source);
+                    }
+                }
+                let staged = if cursor.capture_completed {
+                    None
+                } else {
+                    capture.take().and_then(|capture| capture(&request))
+                };
+                let generated = runtime.block_on(ladder.generate_recorded_while(
+                    run,
+                    request.clone(),
+                    None,
+                    &may_send,
+                ));
+                let (response, binding) = match generated {
+                    Ok(answer) => answer,
+                    Err(error) => {
+                        if rounds {
+                            save(&request, &cursor, None, None, &refreshed_sources)?;
+                        }
+                        return Err(error.into());
+                    }
+                };
+                if !cursor.capture_completed {
+                    finalize_capture(staged, self.vault, &binding);
+                    cursor.capture_completed = true;
+                }
+                if !response
+                    .message
+                    .content
+                    .iter()
+                    .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+                {
+                    if rounds {
+                        save(
+                            &request,
+                            &cursor,
+                            None,
+                            Some((&response, &binding)),
+                            &refreshed_sources,
+                        )?;
+                    }
+                    return Ok(StepConversation::Answered {
+                        response,
+                        binding,
+                        tool_rounds: rounds,
+                        request,
+                    });
+                }
+                rounds = true;
+                lease.book_and_revise();
+                let content = response
+                    .message
+                    .content
+                    .into_iter()
+                    .filter(|part| reasoning || !matches!(part, ContentPart::Reasoning { .. }))
+                    .collect();
+                cursor.assistant_message = request.messages.len();
+                cursor.tool_index = 0;
+                cursor.round = cursor
+                    .round
+                    .checked_add(1)
+                    .ok_or(oneiron::Error::ArithmeticOverflow("workflow tool round"))?;
+                request.messages.push(LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content,
+                });
+                // Keep the paid assistant tail before the first tool can run.
+                save(&request, &cursor, None, None, &refreshed_sources)?;
+            }
+            let assistant = request
+                .messages
+                .get(cursor.assistant_message)
+                .filter(|message| message.role == LlmMessageRole::Assistant)
+                .ok_or_else(|| {
+                    oneiron::Error::InvalidConfig("workflow tool message is missing".to_owned())
+                })?;
+            let calls: Vec<(String, String, Value)> = assistant
                 .content
                 .iter()
                 .filter_map(|part| match part {
@@ -172,42 +320,61 @@ impl<'a> StepSecretUse<'a> {
                     _ => None,
                 })
                 .collect();
-            if calls.is_empty() {
-                return Ok((response, served, rounds));
+            if cursor.tool_index > calls.len() {
+                return Err(oneiron::Error::InvalidConfig(
+                    "workflow tool cursor is past its calls".to_owned(),
+                )
+                .into());
             }
-            rounds = true;
-            // The round's spend goes on the lease before its tools run, so
-            // siblings see it meanwhile (FIX 1819).
-            lease.book_and_revise();
-            let content = response
-                .message
-                .content
-                .into_iter()
-                .filter(|part| reasoning || !matches!(part, ContentPart::Reasoning { .. }))
-                .collect();
-            request.messages.push(LlmMessage {
-                role: LlmMessageRole::Assistant,
-                content,
-            });
-            for (call_id, name, input) in calls {
-                let (output, is_error) = if name == SELF_USE_TOOL {
-                    uses += 1;
-                    self.use_once(input, uses)
+            for (index, (call_id, name, input)) in
+                calls.into_iter().enumerate().skip(cursor.tool_index)
+            {
+                let prior_wait = waiting.take();
+                let outcome = if name == SELF_USE_TOOL {
+                    let invocation = if let Some(wait) = prior_wait {
+                        Some(wait.invocation)
+                    } else {
+                        cursor.use_ordinal = cursor
+                            .use_ordinal
+                            .checked_add(1)
+                            .ok_or(oneiron::Error::ArithmeticOverflow("workflow tool ordinal"))?;
+                        None
+                    };
+                    self.use_once(input, cursor.use_ordinal, invocation)
                 } else {
-                    refusal(&MemoryError::bad_request_with(
+                    let (output, is_error) = refusal(&MemoryError::bad_request_with(
                         format!("{name} is not a tool of this step"),
                         &["Call self_use, the one tool this step has."],
-                    ))
+                    ));
+                    StepToolOutcome::Answered(output, is_error)
                 };
-                request.messages.push(LlmMessage {
-                    role: LlmMessageRole::Tool,
-                    content: vec![ContentPart::ToolResult {
-                        call_id,
-                        output,
-                        is_error,
-                    }],
-                });
+                match outcome {
+                    StepToolOutcome::HookPending(wait) => {
+                        save(
+                            &request,
+                            &cursor,
+                            Some(wait.clone()),
+                            None,
+                            &refreshed_sources,
+                        )?;
+                        return Ok(StepConversation::HookPending(wait));
+                    }
+                    StepToolOutcome::Answered(output, is_error) => {
+                        request.messages.push(LlmMessage {
+                            role: LlmMessageRole::Tool,
+                            content: vec![ContentPart::ToolResult {
+                                call_id,
+                                output,
+                                is_error,
+                            }],
+                        });
+                        cursor.tool_index = index + 1;
+                        // Cursor==calls is a durable point before the next model call.
+                        save(&request, &cursor, None, None, &refreshed_sources)?;
+                    }
+                }
             }
+            retained = false;
         }
     }
 
@@ -216,7 +383,11 @@ impl<'a> StepSecretUse<'a> {
     /// round that now has craft the start did not gains it after the
     /// instructions, and one that now has none loses it. The planner craft
     /// is the start's, untouched.
-    fn refresh_requester_craft(&self, request: &mut LlmRequest) {
+    fn refresh_requester_craft(
+        &self,
+        request: &mut LlmRequest,
+        assistant: Option<&mut usize>,
+    ) -> Vec<oneiron::EntityId> {
         let at = super::super::unix_now();
         let fresh = super::super::resident_craft::queue_craft(
             self.vault,
@@ -230,23 +401,47 @@ impl<'a> StepSecretUse<'a> {
                     .is_some()
         });
         match (fresh, slot) {
-            (Some((craft, _)), Some(slot)) => request.messages[slot] = craft,
-            (Some((craft, _)), None) => {
+            (Some((craft, rows)), Some(slot)) => {
+                request.messages[slot] = craft;
+                rows
+            }
+            (Some((craft, rows)), None) => {
+                let at = request
+                    .messages
+                    .iter()
+                    .take_while(|message| message.role == LlmMessageRole::System)
+                    .count();
                 super::super::resident_craft::join_craft(&mut request.messages, craft);
+                if let Some(assistant) = assistant
+                    && at <= *assistant
+                {
+                    *assistant += 1;
+                }
+                rows
             }
             (None, Some(slot)) => {
                 request.messages.remove(slot);
+                if let Some(assistant) = assistant
+                    && slot < *assistant
+                {
+                    *assistant -= 1;
+                }
+                Vec::new()
             }
-            (None, None) => {}
+            (None, None) => Vec::new(),
         }
     }
 
-    /// One `self.use` call's result: the door's answer, or a refusal marked
-    /// as an error, a verb hook's stop among them. `ordinal` numbers the
+    /// One `self.use` call's answer or refusal, or a typed pre-hook wait.
+    /// A Pending is never sent to the model as a tool error. `ordinal` numbers the
     /// step's uses, so its invocation is the same on every replay of the try.
-    fn use_once(&self, input: Value, ordinal: u64) -> (Value, bool) {
+    fn use_once(&self, input: Value, ordinal: u64, retained: Option<[u8; 16]>) -> StepToolOutcome {
+        let answered_refusal = |error: &MemoryError| {
+            let (output, is_error) = refusal(error);
+            StepToolOutcome::Answered(output, is_error)
+        };
         if <SecretUseRequest as serde::Deserialize>::deserialize(&input).is_err() {
-            return refusal(&MemoryError::bad_request_with(
+            return answered_refusal(&MemoryError::bad_request_with(
                 "self_use takes a handle, an operation and the operation's arguments",
                 &[
                     "Name the handle as the text holds it, such as sc12, one of the listed \
@@ -255,28 +450,37 @@ impl<'a> StepSecretUse<'a> {
             ));
         };
         if !self.lease_live() {
-            return refusal(&MemoryError::new(
+            return answered_refusal(&MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
                 "this step no longer holds its lease, so nothing was used",
                 &["The step's next try may use the secret again."],
             ));
         }
+        let invocation = InvocationId::of_run_step(&self.run, ordinal);
+        if retained.is_some_and(|saved| saved != invocation.0) {
+            return answered_refusal(&MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "workflow hook invocation changed",
+                &["Read this workflow leaf's retained invocation."],
+            ));
+        }
         let memory = self
             .vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
-            .with_invocation(InvocationId::of_run_step(&self.run, ordinal));
+            .with_invocation(invocation);
         // The step's leased try is the use's task host, so a secret its run
         // found is the step's to use (FIX 8334). The invocation stays: a
         // held connector call is found again by it.
         let memory = match HostBinding::from_leased(self.attempt, None) {
             Ok(binding) => memory.with_task_host(binding),
+            Err(error) if retained.is_some() => return answered_refusal(&error),
             Err(_) => memory,
         };
         // The row's one verb-hook boundary, as a pumped run's `self.use`
         // crosses it: the pre chain may rewrite the args, which pass the
         // row's own input check again, and the post chain reads the answer.
         let verb = AgentVerb::SelfUse.as_str();
-        let answered = verb_hook_boundary::row(&memory, verb, input, |args| {
+        let run = |args| {
             sdk::validate_input(verb, &args)?;
             let request = serde_json::from_value::<SecretUseRequest>(args).map_err(|_| {
                 MemoryError::bad_request("self_use's arguments did not read after its hooks")
@@ -295,10 +499,29 @@ impl<'a> StepSecretUse<'a> {
                     &["Its receipt is on the vault's Gate record."],
                 )
             })
-        });
+        };
+        let answered = if retained.is_some() {
+            verb_hook_boundary::row_retained(&memory, verb, input, run)
+        } else {
+            verb_hook_boundary::row(&memory, verb, input, run)
+        };
         match answered {
-            Ok(output) => (output, false),
-            Err(error) => refusal(&error),
+            Ok(output) => StepToolOutcome::Answered(output, false),
+            Err(error) => {
+                if let Some(VerbHookStop::Pending {
+                    invocation: saved,
+                    ask,
+                }) = error.hook.as_deref()
+                    && saved == &invocation.to_hex()
+                    && let Ok(ask) = oneiron::EntityId::from_hex(ask)
+                {
+                    return StepToolOutcome::HookPending(WorkflowToolWait {
+                        invocation: invocation.0,
+                        ask,
+                    });
+                }
+                answered_refusal(&error)
+            }
         }
     }
 

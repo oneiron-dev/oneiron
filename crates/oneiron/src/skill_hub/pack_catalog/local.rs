@@ -3,6 +3,7 @@
 //! the folder and binds its hooks in one transaction. A resident agent puts
 //! the `local` pack too, and binds the hooks it wrote as its own (§7).
 use super::admission::{PACK_INSTALL, PackCommit, pack_permissions, refuse_engine_namespace};
+use super::advisories::PackAdvisories;
 use super::hooks::HookBinder;
 use super::{
     PackAdapter, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackInstallStatus,
@@ -32,6 +33,15 @@ fn put_ref(source: &PackSource) -> Result<HubRef> {
     })
 }
 
+/// A pack tree and its advisory evidence, prepared before a writer opens.
+/// It carries no owner authorization or installed state.
+pub(crate) struct PreparedPackPut {
+    tree: PackTree,
+    hub: HubRef,
+    advisories: PackAdvisories,
+    qualification: Option<PackQualification>,
+}
+
 impl Vault {
     /// `vault.packs.put`: the owner installs a pack folder, or replaces the
     /// one installed under its name. The put is the consent for its hooks.
@@ -50,9 +60,11 @@ impl Vault {
     /// `vault.packs.put` by a resident agent (ARCH-0080 §7, §8 local pack):
     /// the agent replaces the `local` pack, and each hook whose body it
     /// wrote binds as its own, in a claim stamped with the agent, reading and
-    /// acting at the agent's own ceiling. A binding another author stands on
-    /// is left as it is; the owner sees every binding and turns any off. A
-    /// put of any other pack is refused.
+    /// acting at the agent's own ceiling. A hook that asks wider (Skip, Ask
+    /// or Rewrite on another actor's verbs, or blocking) also becomes the
+    /// owner's proposal, in the same write (§10). A binding another author
+    /// stands on is left as it is; the owner sees every binding and turns any
+    /// off. A put of any other pack is refused.
     pub fn put_local_pack_as_agent(
         &self,
         agent: &WriteActor,
@@ -83,68 +95,107 @@ impl Vault {
         self.put_pack_source(HookBinder::Owner(owner), tree, Some(qualification))
     }
 
-    fn put_pack_source(
+    /// Prepares the ordinary owner's put without opening its install writer.
+    pub(crate) fn prepare_owner_pack_put(&self, files: Vec<HubFile>) -> Result<PreparedPackPut> {
+        self.prepare_pack_put_source(PackSource::from_tree(files)?, None)
+    }
+
+    /// The ordinary owner's put in a caller-owned writer. The caller sends
+    /// the bindings-changed notification only after that writer commits.
+    pub(crate) fn put_owner_pack_prepared_in_txn(
         &self,
-        binder: HookBinder<'_>,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        prepared: &PreparedPackPut,
+    ) -> Result<PackInstallDisposition> {
+        self.put_pack_prepared_in_txn(txn, HookBinder::Owner(owner), prepared)
+    }
+
+    fn prepare_pack_put_source(
+        &self,
         tree: PackTree,
         qualification: Option<PackQualification>,
-    ) -> Result<PackInstallDisposition> {
+    ) -> Result<PreparedPackPut> {
         let source = &tree.source;
         refuse_engine_namespace(source)?;
         let hub = put_ref(source)?;
         // The put is the owner's consent, advisories included: the tree's OSV
         // row is evidence on its hash, and holds nothing here.
         let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
-        let disposition = self.with_write_txn_grouped(|txn| {
-            let holder = match binder {
-                HookBinder::Owner(owner) => owner.revalidate_in_txn(self, txn)?,
-                HookBinder::Agent(agent) => {
-                    self.verify_write_actor_in_txn(txn, &agent)?;
-                    agent.entity_ref()
-                }
-            }
-            .to_hex();
-            let at = crate::unix_seconds_now();
-            let occurred = TimeRange { start: at, end: at };
-            let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
-            self.hold_organ_builds_in_txn(txn, &source_id, &tree, occurred, at)?;
-            self.hold_lens_components_in_txn(txn, &source_id, &tree, occurred, at)?;
-            self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, at)?;
-            self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
-            if let Some(reason) = self.screen_pack_in_txn(txn, source, &[], &holder)? {
-                return Ok(PackInstallDisposition::Blocked { reason });
-            }
-            let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-            let permissions = pack_permissions(source, prior.as_ref())?;
-            let verdict = PackFitVerdict {
-                fits: true,
-                rules_hit: false,
-                code_auto_install: qualification.is_some()
-                    || !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
-            };
-            let disposition = self.commit_pack_install_in_txn(
-                txn,
-                source,
-                &PackCommit {
-                    source_id,
-                    hub: &hub,
-                    publisher: &holder,
-                    foreign: None,
-                    verdict,
-                    permissions: &permissions,
-                    qualification: qualification.as_ref(),
-                    world: None,
-                    owner_activated: &[],
-                },
-            )?;
-            if matches!(disposition, PackInstallDisposition::Installed(_)) {
-                self.bind_hooks_in_txn(txn, binder, source_id, source)?;
-            }
-            Ok(disposition)
-        })?;
+        Ok(PreparedPackPut {
+            tree,
+            hub,
+            advisories,
+            qualification,
+        })
+    }
+
+    fn put_pack_source(
+        &self,
+        binder: HookBinder<'_>,
+        tree: PackTree,
+        qualification: Option<PackQualification>,
+    ) -> Result<PackInstallDisposition> {
+        let prepared = self.prepare_pack_put_source(tree, qualification)?;
+        let disposition = self
+            .with_write_txn_grouped(|txn| self.put_pack_prepared_in_txn(txn, binder, &prepared))?;
         // The bindings changed once the put committed.
         if matches!(disposition, PackInstallDisposition::Installed(_)) {
             self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
+    }
+
+    fn put_pack_prepared_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        binder: HookBinder<'_>,
+        prepared: &PreparedPackPut,
+    ) -> Result<PackInstallDisposition> {
+        let source = &prepared.tree.source;
+        let holder = match binder {
+            HookBinder::Owner(owner) => owner.revalidate_in_txn(self, txn)?,
+            HookBinder::Agent(agent) => {
+                self.verify_write_actor_in_txn(txn, &agent)?;
+                agent.entity_ref()
+            }
+        }
+        .to_hex();
+        let at = crate::unix_seconds_now();
+        let occurred = TimeRange { start: at, end: at };
+        let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
+        self.hold_organ_builds_in_txn(txn, &source_id, &prepared.tree, occurred, at)?;
+        self.hold_lens_components_in_txn(txn, &source_id, &prepared.tree, occurred, at)?;
+        self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, at)?;
+        self.ingest_pack_advisories_in_txn(txn, &prepared.advisories, occurred, at)?;
+        if let Some(reason) = self.screen_pack_in_txn(txn, source, &[], &holder)? {
+            return Ok(PackInstallDisposition::Blocked { reason });
+        }
+        let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
+        let permissions = pack_permissions(source, prior.as_ref())?;
+        let verdict = PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: prepared.qualification.is_some()
+                || !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
+        };
+        let disposition = self.commit_pack_install_in_txn(
+            txn,
+            source,
+            &PackCommit {
+                source_id,
+                hub: &prepared.hub,
+                publisher: &holder,
+                foreign: None,
+                verdict,
+                permissions: &permissions,
+                qualification: prepared.qualification.as_ref(),
+                world: None,
+                owner_activated: &[],
+            },
+        )?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.bind_hooks_in_txn(txn, binder, source_id, source)?;
         }
         Ok(disposition)
     }

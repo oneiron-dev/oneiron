@@ -8,8 +8,8 @@ use crate::disclosure::DisclosureContext;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::RetrievalWithTelemetry;
 use crate::serialize::SerializeConfig;
+use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::store::{RetrievalRunFinalize, RetrievalRunId, Store};
 
 use super::super::empty_pack::{
@@ -105,7 +105,7 @@ impl ContextPackTelemetry<'_> {
 
 pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) embedding_matches:
-        HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     pub(in crate::context_pack) vector_completed: bool,
     pub(in crate::context_pack) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
     pub(in crate::context_pack) cited_messages:
@@ -261,7 +261,10 @@ impl UnfinalizedContextPack<'_> {
         // flattening it cannot hide a room's failure.
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
-            value["projection"] = super::replay::projection_config(config);
+            value["projection"] = super::replay::projection_config(
+                config,
+                crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER,
+            );
             value["terminal_kind"] = "projected_json".into();
         }
         let telemetry_run_id = finalize_context_pack_telemetry(

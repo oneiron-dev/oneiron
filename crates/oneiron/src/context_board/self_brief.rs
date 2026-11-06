@@ -2,10 +2,10 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::Scope;
-use crate::llm::BudgetRead;
-use crate::skill_reliability::{skill_reliability_posterior, skill_reliability_prior};
-use crate::{Vault, skill::SkillContentHash};
+use crate::skill_reliability::skill_reliability_with_sources;
+use crate::{Vault, write_envelope::skill_record::SkillContentHash};
+use oneiron_authority::federation::Scope;
+use oneiron_model::llm::BudgetRead;
 
 use super::SessionReadSet;
 use super::people::{People, PeoplePrefix};
@@ -54,6 +54,10 @@ pub struct SelfBriefInput<'a> {
     /// The vault's people as the reader's read admits them, when the host
     /// read them; the prefix holds a budgeted roster of them.
     pub people: Option<&'a People>,
+    /// The roster's token budget when the agent's board layout gives
+    /// `people` a share (BOARD-LAYOUT); `None` keeps
+    /// [`super::PEOPLE_PREFIX_BUDGET_TOK`].
+    pub people_budget_tok: Option<usize>,
 }
 
 /// A skill index row is resolved from the skill record and reliability claim;
@@ -79,6 +83,8 @@ pub struct SelfBrief {
     pub budget: BudgetRead,
     pub clock_ms: u64,
     pub skills: Vec<BriefSkillRow>,
+    #[serde(skip)]
+    skill_sources: Vec<EntityId>,
     pub working_set: Vec<EntityId>,
     /// PEOPLE (ARCH-0067): the vault's `people` roster, chosen at this
     /// epoch boundary. Rendered as its own block, never inside identity.
@@ -91,14 +97,13 @@ impl SelfBrief {
     /// and malformed claims fail closed instead of inventing a reliability.
     pub fn describe(vault: &Vault, input: SelfBriefInput<'_>) -> Result<Self> {
         let mut skills = Vec::with_capacity(input.skill_index.len());
+        let mut skill_sources = Vec::new();
         for id in input.skill_index {
             let record = vault
                 .get_skill_record(id)?
                 .ok_or(crate::Error::EntityNotFound)?;
-            let posterior = match skill_reliability_posterior(vault, id)? {
-                Some(posterior) => posterior,
-                None => skill_reliability_prior(vault, id)?,
-            };
+            let (posterior, sources) = skill_reliability_with_sources(vault, id)?;
+            skill_sources.extend(sources);
             let hash = record.content_hash.map(|h: SkillContentHash| h.to_hex());
             let loaded_hash = input
                 .read_set
@@ -118,7 +123,12 @@ impl SelfBrief {
         let people = input.people.map(|people| {
             let mut pinned = vec![input.self_ref, input.principal];
             pinned.extend(input.cast.iter().copied());
-            people.residence(&pinned)
+            people.residence_within(
+                &pinned,
+                input
+                    .people_budget_tok
+                    .unwrap_or(super::PEOPLE_PREFIX_BUDGET_TOK),
+            )
         });
         Ok(Self {
             self_ref: input.self_ref,
@@ -132,6 +142,7 @@ impl SelfBrief {
             budget: input.budget.clone(),
             clock_ms: input.clock_ms,
             skills,
+            skill_sources,
             working_set: input.working_set.to_vec(),
             people,
         })
@@ -183,28 +194,26 @@ impl SelfBrief {
     /// recipient and working-set row it names, each indexed skill with the
     /// rows its reliability stands on, and every person on `people`, the
     /// roster it was described with, shown or counted, with each actor that
-    /// speaks as one and, under an `about` line, every CLAIM about them. The
+    /// speaks as one and the exact contributors of its selected `about` line. The
     /// run's host-held scope, classes, budget and clock are no rows.
     ///
     /// # Errors
     ///
     /// A read failure.
-    pub fn sources(&self, vault: &Vault, people: Option<&People>) -> Result<Vec<EntityId>> {
+    pub fn sources(&self, _vault: &Vault, people: Option<&People>) -> Result<Vec<EntityId>> {
         let mut rows = vec![self.self_ref, self.principal];
         rows.extend(self.cast.iter().copied());
         rows.extend(self.communication.recipients.iter().copied());
         rows.extend(self.working_set.iter().copied());
-        for skill in &self.skills {
-            rows.push(skill.id);
-            rows.extend(crate::skill_reliability::skill_reliability_sources(
-                vault, &skill.id,
-            )?);
-        }
-        for person in people.map(People::rows).unwrap_or_default() {
-            rows.push(person.person);
-            rows.extend(person.actors.iter().copied());
-            if person.about.is_some() {
-                rows.extend(vault.claims_for_subject(&person.person)?);
+        rows.extend(self.skills.iter().map(|skill| skill.id));
+        rows.extend(self.skill_sources.iter().copied());
+        if let Some(people) = people {
+            for person in people.rows() {
+                rows.push(person.person);
+                rows.extend(person.actors.iter().copied());
+                if person.about.is_some() {
+                    rows.extend_from_slice(people.about_sources(person.person));
+                }
             }
         }
         rows.sort_unstable_by_key(|id| *id.as_bytes());
@@ -274,6 +283,18 @@ impl SelfBriefState {
         read_set: &SessionReadSet,
         people: Option<&People>,
     ) -> Result<SelfBrief> {
+        self.describe_within(vault, read_set, people, None)
+    }
+
+    /// [`Self::describe`] with the prefix roster's token budget, when the
+    /// agent's layout gives `people` a share.
+    pub fn describe_within(
+        &self,
+        vault: &Vault,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+        people_budget_tok: Option<usize>,
+    ) -> Result<SelfBrief> {
         SelfBrief::describe(
             vault,
             SelfBriefInput {
@@ -291,6 +312,7 @@ impl SelfBriefState {
                 read_set,
                 working_set: &self.working_set,
                 people,
+                people_budget_tok,
             },
         )
     }
@@ -304,9 +326,20 @@ pub struct SelfBriefSession {
     /// The persons the cached prefix's `people` roster holds; the live board
     /// names them by bare handle.
     resident_people: BTreeSet<EntityId>,
+    /// The prefix roster's token budget the next epoch boundary lays out
+    /// (BOARD-LAYOUT): a layout change reaches the cached prefix only at
+    /// turn one or a fold, never in between.
+    people_budget_tok: Option<usize>,
 }
 
 impl SelfBriefSession {
+    /// Sets the prefix roster's token budget the next turn one or fold
+    /// renders under: the `people` share of the agent's board layout, or
+    /// `None` for [`super::PEOPLE_PREFIX_BUDGET_TOK`].
+    pub fn set_people_budget_tok(&mut self, budget_tok: Option<usize>) {
+        self.people_budget_tok = budget_tok;
+    }
+
     pub fn turn_one(
         &mut self,
         vault: &Vault,
@@ -314,7 +347,7 @@ impl SelfBriefSession {
         read_set: &SessionReadSet,
         people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
-        let brief = state.describe(vault, read_set, people)?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
         self.resident_people = brief.resident_people();
         self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {
@@ -335,7 +368,7 @@ impl SelfBriefSession {
                 "self brief fold before turn one",
             ));
         }
-        let brief = state.describe(vault, read_set, people)?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
         self.resident_people = brief.resident_people();
         self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {

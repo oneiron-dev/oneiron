@@ -16,6 +16,8 @@
 //! A home that may not read a target's world is not asked for it (FIX 922
 //! item 11).
 
+mod freshness;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ use serde_json::json;
 use super::super::base::home_reads_window;
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::MachineHistoryFreshnessResponse;
 use crate::sync::client::{ImportTier, SyncClientConfig};
 use crate::sync::machine_history::{
     OwedHistory, OwedStatus, is_history_of, keep_cursor, note_home, note_home_whole, owed_targets,
@@ -82,6 +85,7 @@ pub(crate) async fn fetch_owed_machine_history(
     let vault = manager.vault();
     let owed = owed_targets(vault).map_err(storage)?;
     if owed.is_empty() {
+        freshness::refresh_unproven_pins(manager, config).await;
         return Ok(0);
     }
     let local = owed.iter().map(|(target, _)| (*target, false)).collect();
@@ -91,6 +95,7 @@ pub(crate) async fn fetch_owed_machine_history(
         .filter(|(target, _)| still.contains(target))
         .collect();
     if asked.is_empty() {
+        freshness::refresh_unproven_pins(manager, config).await;
         return Ok(0);
     }
     let selector = config.residence_selector.as_ref().ok_or_else(refused)?;
@@ -121,8 +126,60 @@ pub(crate) async fn fetch_owed_machine_history(
             }
         }
     }
-    release_targets(manager, fetched).await?;
+    let owed: BTreeSet<EntityId> = release_targets(manager, fetched.clone())
+        .await?
+        .into_iter()
+        .collect();
+    // FIX 4294: each history this round settled asks the home to prove its
+    // pin here the latest, unless no row landed for it and its pin is
+    // already proven the latest (L03 07:0x): a quiet round costs no call.
+    if failed.is_none() {
+        for (target, moved) in fetched.iter().filter(|(target, _)| !owed.contains(target)) {
+            let proven = matches!(
+                vault.machine_history_pin_freshness(*target),
+                Ok(crate::claim::MachineHistoryPinFreshness::Latest { .. })
+            );
+            if *moved || !proven {
+                prove_freshness(vault, &mut rpc, &selector, *target).await;
+            }
+        }
+    }
     failed.map_or(Ok(landed), Err)
+}
+
+/// Asks the home to prove `target`'s pin here the latest (FIX 4294): this
+/// machine's fresh challenge out (`residence.machine-history.freshness`), the
+/// home's signed answer in. A home that cannot answer, or an answer that
+/// does not verify, leaves the pin's freshness unproven; the round goes on.
+async fn prove_freshness(vault: &Vault, rpc: &mut ResidenceRpc, selector: &str, target: EntityId) {
+    let Ok(Some(challenge)) = vault.issue_machine_history_freshness_challenge(target) else {
+        return;
+    };
+    let params = json!({
+        "selector": selector,
+        "challenge": base64::engine::general_purpose::STANDARD.encode(challenge.encode()),
+    });
+    let Ok(Ok(reply)) = rpc
+        .call("residence.machine-history.freshness", params)
+        .await
+    else {
+        return;
+    };
+    let Some(response) = reply
+        .get("response")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|encoded| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()
+        })
+        .and_then(|bytes| MachineHistoryFreshnessResponse::decode(&bytes))
+    else {
+        return;
+    };
+    if let Err(error) = vault.accept_machine_history_freshness(&response) {
+        tracing::debug!(%error, target = %target.to_hex(), "machine history freshness not kept");
+    }
 }
 
 /// [`release`] off the async worker: its drain rematerializes whole windows.
@@ -231,6 +288,7 @@ fn land_row(
                 end: header.occurred_end,
             },
             learned_at: header.learned_at,
+            row_version: header.row_version,
             body: &raw[ENTITY_METADATA_HEADER_LEN..],
         },
         ImportTier::OwnDevice,

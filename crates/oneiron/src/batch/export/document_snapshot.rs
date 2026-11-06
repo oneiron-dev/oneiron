@@ -11,17 +11,18 @@ use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
     WholeVaultExport, WholeVaultExportReceipt, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
-use crate::authority::{HolderExportNeed, HolderExportRequest};
+use crate::authority::HolderExportRequest;
+use crate::batch::export::secret_supplement_record::HolderExportNeed;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
 use crate::write_envelope::WriteActor;
 
@@ -29,10 +30,19 @@ use crate::write_envelope::WriteActor;
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
+    pub(crate) outputs: Vec<(
+        crate::store::result_manifest::CodeRunRawOutput,
+        Option<&'static str>,
+    )>,
+    /// Live result names that resolve to one of `outputs`, judged with it.
+    pub(crate) bindings: Vec<(crate::code_run::CodeRunResultBinding, Option<&'static str>)>,
+    pub(crate) determinism: Option<crate::code_run::CodeRunDeterminism>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
-    pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
+    pub(crate) receipts: Vec<(
+        crate::store::reader_fold_receipt::ReaderFoldReceipt,
+        Option<&'static str>,
+    )>,
 }
 
 /// One result body a clean occurrence names: its bytes as they stream, read
@@ -40,8 +50,10 @@ pub(crate) struct ExportSnapshotRun {
 /// not exported.
 pub(crate) struct ExportSnapshotBody<'t> {
     pub(crate) bytes: u64,
-    pub(crate) body:
-        std::result::Result<crate::code_run::CodeRunResultBodyReader<'t>, &'static str>,
+    pub(crate) body: std::result::Result<
+        crate::store::result_body_reader::CodeRunResultBodyReader<'t>,
+        &'static str,
+    >,
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.
@@ -52,13 +64,16 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
-    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
+    /// The row's birth envelope, read in this snapshot (FIX 1178); `None`
+    /// outside an archive cut, and for a row no door stamped.
+    pub(crate) birth: Option<crate::provenance::birth::RowBirth>,
 }
 
 impl Vault {
@@ -97,7 +112,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -158,7 +173,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_OKF;
+        let format = crate::serialize::EXPORT_TARGET_OKF;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -304,7 +319,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity(self, &id)?
+                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
             {
                 continue;
             }
@@ -361,6 +376,25 @@ impl Vault {
             {
                 continue;
             }
+            // FIX 1496 S5: an epoch summary stays home when any transitive
+            // source is excluded (use-limited or off-record), same as the
+            // JSON bundle door. Non-epoch rows answer None and pass through.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                |source, _| {
+                    Ok(!whole_vault_export_excludes_entity_in_txn(
+                        &self.store,
+                        &rtxn,
+                        source,
+                    )?)
+                },
+            )? == Some(false)
+            {
+                continue;
+            }
             sources.insert(id);
             // A file-plane ASSET goes out as its body, never the manifest its
             // row keeps, and any other row as the snapshot holds it, never
@@ -387,7 +421,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
@@ -429,7 +463,7 @@ impl Vault {
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Some(claim) = body.bytes()
-                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
@@ -465,6 +499,14 @@ impl Vault {
             if let ExportSnapshotEntityBody::Bytes(body) = &body {
                 thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, body));
             }
+            // FIX 1178: the row's birth, read in this snapshot. The writer
+            // holds it until the carried set is final and masks it then; the
+            // lossy OKF cut carries no birth.
+            let birth = if cut == ExportCut::Archive {
+                crate::provenance::birth::row_birth_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                None
+            };
             writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
@@ -475,6 +517,7 @@ impl Vault {
                 pack_source,
                 task_receipts,
                 archived_receipts,
+                birth,
             })?;
         }
         for entry in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.store, &rtxn)? {
@@ -551,6 +594,16 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // FIX 11844: a custody secret only the fold knows here is named for
+        // its holder too, as a held row's unopened value is above.
+        // The manifest names each by id, so the import shows it owed (FIX
+        // 12066).
+        let mut fold_only_secrets = Vec::new();
+        if include_secrets && only.is_none() && cut == ExportCut::Archive {
+            let fold_only = self.fold_only_holder_needs_in_txn(&rtxn);
+            fold_only_secrets = fold_only.iter().map(|need| need.secret).collect();
+            holder_requests.extend(fold_only.into_iter().map(HolderExportRequest::unrecorded));
+        }
         // Each carried thread's binding, read in this snapshot, so its
         // members are told should its root go before the audit (FIX 6681).
         thread_roots.capture_in(&self.store.read(), &rtxn);
@@ -570,6 +623,7 @@ impl Vault {
                     secrets_included: include_secrets
                         && only.is_none()
                         && cut == ExportCut::Archive,
+                    fold_only_secrets,
                     embedding_setup,
                     sources: sources.into_iter().collect(),
                 },
@@ -600,6 +654,9 @@ impl Vault {
         let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
+            let replay = self.get_code_run_replay_record_in_txn(rtxn, &run_id)?;
+            let determinism = replay.as_ref().and_then(|record| record.determinism);
+            let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
                 let withheld =
@@ -618,6 +675,22 @@ impl Vault {
                 }
                 occurrences.push((output, withheld));
             }
+            // A binding travels only beside the occurrence its handle and
+            // path name; a dangling name is not evidence of a result. Same
+            // bytes under another path are another occurrence, so a binding
+            // never takes a same-hash occurrence's judgment. Withholding the
+            // occurrence withholds the handle too, never the name, path or reason.
+            let bindings = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    occurrences
+                        .iter()
+                        .find(|(output, _)| {
+                            output.handle == binding.handle && output.path == binding.path
+                        })
+                        .map(|(_, withheld)| (binding, *withheld))
+                })
+                .collect();
             // Each receipt goes beside the manifest of the occurrence it
             // describes, judged as that occurrence is.
             let receipts = self
@@ -633,6 +706,8 @@ impl Vault {
             writer.run(ExportSnapshotRun {
                 run_id,
                 outputs: occurrences,
+                bindings,
+                determinism,
                 receipts,
             })?;
             runs.push(run_id);
@@ -649,7 +724,7 @@ fn note_diary_author(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
-) -> Result<Option<crate::note::NoteActor>> {
+) -> Result<Option<crate::store::note_body::NoteActor>> {
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
     #[cfg(not(feature = "sync"))]
@@ -680,12 +755,12 @@ fn archive_custody_secret(
     on_device: bool,
     include_secrets: bool,
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
-    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use crate::secret_record::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
-            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
+            && !crate::secret_record::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {
@@ -726,6 +801,9 @@ fn carrier_withheld(
     let Some(carrier) = carrier else {
         return Ok(false);
     };
+    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+        return Ok(true);
+    }
     crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
         match error {
             Error::CorruptedIndex(_) => Ok(true),

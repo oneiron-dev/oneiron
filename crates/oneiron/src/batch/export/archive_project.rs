@@ -46,15 +46,16 @@ use super::bundle_validation::{agent_omission_reason, provenance_subject_key};
 use super::{
     AgentBundleOmission, ArchiveRecordFile, ArchiveRecordKind, ArchiveSideRow,
     BundleOmissionReason, ExportBundleOmission, ExportEdge, ExportEntity, ExportImportRefusal,
-    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
+    ExportRowBirth, VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
-use crate::agent_def::KnowledgeFormat;
-use crate::claim::{ClaimSubject, decode_claim_body};
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::WithheldKey;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBodyFile;
-use crate::skill::SkillRecord;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
+use crate::write_envelope::skill_record::SkillRecord;
 
 /// Where the export writer (`serialize::vault_document`) writes an attached
 /// file's digest, by member kind: field names from the row's root, `*` for
@@ -115,9 +116,11 @@ const FILE_DESCRIPTOR_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
 /// The fields naming the record a member's row is of, as the export writer
 /// writes them: an entity's `id`, a skill bundle's `entity.id`, an edge's two
 /// ends, a pack source's and an agent bundle's `entity_id`, a derivation
-/// envelope's claim `id`, a run's `run_id`, a custody record's `id` and an
-/// epoch floor's `session`. A side row is not listed: it goes with the record
-/// its table reads from it, judged with its group ([`project_side_rows`]).
+/// envelope's claim `id`, a run's `run_id`, a custody record's `id`, a row
+/// birth's born row `id` (REVIEW-4378 P1: the birth follows its row, never
+/// the facet text it also names), and an epoch floor's `session`. A side row
+/// is not listed: it goes with the record its table reads from it, judged
+/// with its group ([`project_side_rows`]).
 const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::Entity, &["id"]),
     (ArchiveRecordKind::Claim, &["id"]),
@@ -129,6 +132,7 @@ const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::DerivationEnvelope, &["id"]),
     (ArchiveRecordKind::Run, &["run_id"]),
     (ArchiveRecordKind::SecretCustody, &["id"]),
+    (ArchiveRecordKind::RowBirth, &["id"]),
     (ArchiveRecordKind::EpochFloor, &["session"]),
 ];
 
@@ -276,18 +280,37 @@ pub(crate) fn project_stored_archive(
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
+    // Blind-review P1: one fresh key for every surviving birth this
+    // projection writes. A kept birth naming a dropped row must leave that
+    // ref as a handle, never a raw id, as a fresh export of the kept set
+    // masks it (the transfer and the erase cut share this path).
+    let mut birth_key: Option<WithheldKey> = None;
     let mut bodies = Vec::with_capacity(members.len());
     for (record, rows) in manifest.records.iter_mut().zip(members) {
         let mut body = Vec::new();
         let mut count = 0_u64;
         for (line, fate) in rows {
+            let birth_row = matches!(fate, RowFate::Keep);
             let stays = match fate {
                 RowFate::Keep => true,
                 RowFate::Drop => false,
                 RowFate::ByFiles(files) => files.iter().any(|file| referenced.contains(file)),
             };
             if stays {
-                body.extend_from_slice(&line);
+                if record.kind == ArchiveRecordKind::RowBirth && birth_row {
+                    let key = birth_key.get_or_insert_with(WithheldKey::for_export);
+                    let carried: ExportRowBirth =
+                        serde_json::from_slice(&line).map_err(|_| invalid())?;
+                    let birth = carried.birth.masked(|row| kept.contains(row), key);
+                    let line = serde_json::to_vec(&ExportRowBirth {
+                        id: carried.id,
+                        birth,
+                    })
+                    .map_err(|_| invalid())?;
+                    body.extend_from_slice(&line);
+                } else {
+                    body.extend_from_slice(&line);
+                }
                 body.push(b'\n');
                 count += 1;
             }
@@ -393,7 +416,8 @@ impl KeptAgentRows {
                             serde_json::from_slice(line).map_err(|_| invalid())?;
                         if let Ok(id) = EntityId::from_hex(&skill.entity.id)
                             && let Ok(body) = skill.entity.body.to_bytes()
-                            && let Ok(record) = crate::skill::decode_skill_record(&body)
+                            && let Ok(record) =
+                                crate::write_envelope::skill_record::decode_skill_record(&body)
                         {
                             rows.skills.push((id, record));
                         }
@@ -554,7 +578,7 @@ impl KeptDeclarations {
             }
         }
         for agent in self.agents.iter().filter(|agent| agent.forked) {
-            let Ok(carrier) = crate::agent_def::birth_source_id(&agent.id) else {
+            let Ok(carrier) = crate::store::agent_birth_identity::birth_source_id(&agent.id) else {
                 continue;
             };
             let entity_id = agent.id.to_hex();

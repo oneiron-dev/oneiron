@@ -18,7 +18,7 @@ pub(crate) mod seal_worker;
 use crate::machine::MemoryRefusal;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use axum::http::{StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -26,19 +26,18 @@ use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
 use std::time::Instant;
+
 /// The owner's field editor. Its shell mints an editor token into its page
 /// (FIX 5618, `editor_auth`). A computation POST carrying one is admitted
 /// from its head, waits for one of two slots and spools its raw body, which
-/// no `DefaultBodyLimit` reads. A POST with no token is the capability-free
-/// door it was: those body limits and `EditorBudget`'s window still bound it.
+/// no `DefaultBodyLimit` reads. A capability-free POST spools under the
+/// same disk and memory floors; `EditorBudget`'s window still admits it
+/// before its body is read (Engine call 2026-11-05 12:04, FIX 141/142).
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
     let desk = editor_auth::EditorDesk::new();
     Router::new()
         .route("/sign/layout", post(presentation::layout))
-        .route(
-            "/sign/geometry",
-            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
-        )
+        .route("/sign/geometry", post(presentation::upload_geometry))
         .route_layer(axum::middleware::from_fn_with_state(
             Arc::clone(&desk.budget),
             editor_budget::admit,
@@ -46,7 +45,7 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/editor", get(presentation::editor))
         .route("/sign/field-renderer.js", get(presentation::field_script))
         .route("/sign/editor.js", get(presentation::editor_script))
-        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(DefaultBodyLimit::disable())
         .layer(axum::Extension(desk))
         .layer(axum::middleware::from_fn(private_response))
 }
@@ -90,7 +89,7 @@ async fn action(
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let Ok(caller) = signing_caller(&parts, &server) else {
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
         return refused();
     };
     let request: ingress::ActionBody =
@@ -98,10 +97,14 @@ async fn action(
             Ok(request) => request,
             Err(response) => return response,
         };
-    match server
-        .vault
-        .execute_signing_action_as(&token, &request.action, caller, ip, ua)
-    {
+    match server.vault.execute_signing_action_as(
+        &token,
+        &request.action,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    ) {
         Ok(outcome) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
@@ -122,17 +125,17 @@ async fn action(
 /// the vault's owner, with no credential of its own, is that person while
 /// the vault records him as its live owner; otherwise its capability stands
 /// alone, as a browser signer's does.
-fn signing_caller(request: &Parts, server: &SyncServer) -> Result<SigningCaller, ()> {
+fn signing_caller(
+    request: &Parts,
+    server: &SyncServer,
+) -> Result<(SigningCaller, Option<oneiron::EntityId>), ()> {
     let headers = &request.headers;
     if !headers.contains_key(header::AUTHORIZATION) {
-        let owner =
-            crate::auth::attested_owner(&request.extensions, server).is_some_and(|holder| {
-                crate::auth::CoreAuth::for_attested_owner(holder, server).is_ok()
-            });
-        return Ok(if owner {
-            SigningCaller::Person
-        } else {
-            SigningCaller::Bearer
+        let auth = crate::auth::attested_owner(&request.extensions, server)
+            .and_then(|holder| crate::auth::CoreAuth::for_attested_owner(holder, server).ok());
+        return Ok(match auth {
+            Some(auth) => (SigningCaller::Person, auth.principal_entity()),
+            None => (SigningCaller::Bearer, None),
         });
     }
     let auth = crate::auth::CoreAuth::for_managed_request(
@@ -145,10 +148,11 @@ fn signing_caller(request: &Parts, server: &SyncServer) -> Result<SigningCaller,
         crate::auth::CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
     })
     .map_err(|_| ())?;
-    Ok(match auth.actor_class() {
+    let caller = match auth.actor_class() {
         Some("human") => SigningCaller::Person,
         _ => SigningCaller::Agent,
-    })
+    };
+    Ok((caller, auth.principal_entity()))
 }
 
 type NetworkPeer = Result<
@@ -189,11 +193,12 @@ fn refused() -> Response {
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     peer: NetworkPeer,
     local_peer: LocalPeer,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
@@ -201,15 +206,22 @@ async fn pdf(
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let request: ingress::ItemBody = match ingress::payload(&server, admitted, &headers, body).await
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
+    let request: ingress::ItemBody = match ingress::payload(&server, admitted, headers, body).await
     {
         Ok(request) => request,
         Err(response) => return response,
     };
-    match server
-        .vault
-        .esign_pdf_for_capability(&token, request.item, ip, ua)
-    {
+    match server.vault.esign_pdf_for_capability_as(
+        &token,
+        request.item,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    ) {
         Ok(bytes) => {
             let mut response = (
                 [
@@ -263,9 +275,13 @@ enum ImageUpload {
 async fn image(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
     let vault = Arc::clone(&server.vault);
     let memory = server.memory.clone();
     let uploaded = ingress::spooled(&server, admitted, &headers, body, move |file, bytes| {
@@ -275,7 +291,7 @@ async fn image(
         };
         // A peak past u64 fits no machine: the lease refuses it at its floor.
         let peak = plan.peak_bytes(bytes).unwrap_or(u64::MAX);
-        let lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
+        let mut lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
             Ok(lease) => lease,
             Err(refusal) => return ImageUpload::Memory(refusal),
         };
@@ -283,7 +299,13 @@ async fn image(
             Ok(image) => image,
             Err(unread) => return ImageUpload::Unread(unread),
         };
-        match vault.upload_esign_signature_image(&token, &image) {
+        // The read bytes are held now, so the live reading is not charged
+        // them twice while the lease lives (FIX 9345). Only what was read
+        // is named allocated; the peak's decode and re-encode room stays
+        // pending on the lease until the upload returns.
+        let read = u64::try_from(image.len()).unwrap_or(u64::MAX);
+        lease.materialized(read, read);
+        match vault.upload_esign_signature_image_as(&token, &image, caller, verified_actor) {
             Ok(image_ref) => ImageUpload::Stored(image_ref),
             Err(_) => ImageUpload::Refused,
         }

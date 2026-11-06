@@ -1,40 +1,11 @@
 //! Public fan-out governance inputs and observable outcomes.
 
-use super::TaskCreateRateLimit;
 use crate::agent_dispatch::FanoutStatement;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub use crate::outbound_chokepoint::FanoutApprovalMode as ConsultFanOutMode;
 
-/// Vault-owned approval knobs. There is no per-peer budget by default.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsultFanOutPolicy {
-    /// The exceptional-width check threshold. It only marks the check, which
-    /// never holds; `mode` gates every fan-out at any width.
-    pub approval_threshold: u32,
-    pub mode: ConsultFanOutMode,
-    /// Optional anomaly detector, not a spend cap. Crossings pause visibly.
-    pub peer_rate: Option<ConsultFanOutRate>,
-    /// The owner-authored actor request rate. Past it a fan-out still lands,
-    /// and the first request past it in a window leaves an OF-520 check.
-    /// Every fan-out of an actor counts against the vault's row; a scoped
-    /// row's rate composes into its policy but does not move the check.
-    pub create_rate: TaskCreateRateLimit,
-}
-
-impl Default for ConsultFanOutPolicy {
-    fn default() -> Self {
-        crate::gate::default_consult_fanout_policy()
-    }
-}
-
-/// Optional per-peer rate evidence window.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsultFanOutRate {
-    pub window_secs: u64,
-    pub spike_at: u32,
-}
+pub use crate::gate::consult_fanout_values::{ConsultFanOutPolicy, ConsultFanOutRate};
 
 /// A ruling on the exact digest the human saw. Denial parks; it never cancels.
 /// On a width check, which held nothing, approve-once acknowledges it,
@@ -77,14 +48,7 @@ pub struct ConsultFanOutEstimate {
     pub statement: FanoutStatement,
 }
 
-/// Policy path supplied by an authenticated host for a frozen consult plan.
-/// The vault level is implicit; each additional level names its parent.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsultFanOutScope {
-    pub project_ref: Option<String>,
-    pub subproject_ref: Option<String>,
-    pub thread_ref: Option<String>,
-}
+pub use crate::gate::consult_fanout_values::ConsultFanOutScope;
 
 /// One consult fan-out meter row: the run's counts per peer, its state, and
 /// any pathology evidence. Rendering is never an admission input.

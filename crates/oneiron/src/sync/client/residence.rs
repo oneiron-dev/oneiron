@@ -5,12 +5,15 @@
 mod authority;
 mod bundle;
 mod checkpoint_roots;
+mod claim_vectors;
+pub(crate) use claim_vectors::default_claim_vector;
 pub(crate) mod custody;
 pub(crate) mod home_handoff;
 mod index;
 mod items;
 pub(super) mod kit_fetch;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod promoted_pads;
 mod rpc;
@@ -30,6 +33,8 @@ pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
+pub(crate) use media_vectors::request_media_vectors;
+pub use search::ResidenceSearchPage;
 
 use serde::Deserialize;
 
@@ -39,53 +44,9 @@ use crate::EntityId;
 use crate::sync::types::WindowKey;
 use rpc::{ResidenceRpc, refused, residence_budgets};
 
-/// Search explicitly distinguishes a complete home answer from a partial
-/// offline answer over this device's previously opened, cached items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchSource {
-    Home,
-    LocalOnly,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResidenceHit {
-    pub entity_id: String,
-    pub score: f32,
-    /// The canonical window holding the hit, so a first touch can open it.
-    pub window: WindowKey,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResidenceSearch {
-    pub hits: Vec<ResidenceHit>,
-    pub source: SearchSource,
-    pub complete: bool,
-}
-
-/// One grant-checked read cache entry. It is NOT a writable ledger replica.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThinItem {
-    pub entity_id: EntityId,
-    pub window: WindowKey,
-    /// The entity header and body, exactly as returned by the home.
-    pub raw: Vec<u8>,
-    /// The separately grant-checked text document frame.
-    pub document: Vec<u8>,
-}
-
-/// One item as a host shows it when a person opens it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OpenedItem {
-    /// A canonical local row: a sync-all replica's, a promoted window's or
-    /// one this machine wrote.
-    Resident {
-        entity_id: EntityId,
-        window: WindowKey,
-        raw: Vec<u8>,
-    },
-    /// A grant-checked read cache; its window is promoted before any edit.
-    Thin(ThinItem),
-}
+pub use crate::memory::residence_item::{
+    OpenedItem, ResidenceHit, ResidenceSearch, SearchSource, ThinItem,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

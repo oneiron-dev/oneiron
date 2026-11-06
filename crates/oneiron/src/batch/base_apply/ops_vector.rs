@@ -12,7 +12,7 @@ pub(super) fn apply_vector_arm(
     id: EntityId,
     vector: Vec<f32>,
     pending_embedding_token: Option<Vec<u8>>,
-    provenance: Option<crate::embed::EmbeddingProvenance>,
+    provenance: Option<crate::store::embedding::EmbeddingProvenance>,
 ) -> Result<()> {
     let vector = Zeroizing::new(vector);
     let pending_embedding_token = Zeroizing::new(pending_embedding_token);
@@ -59,14 +59,20 @@ pub(super) fn apply_media_vector_arm(
     wtxn: &mut RwTxn<'_>,
     space: String,
     id: EntityId,
-    kind: crate::embed::InputKind,
-    text_hash: Option<[u8; crate::embed::TEXT_HASH_LEN]>,
+    kind: crate::store::embedding::InputKind,
+    text_hash: Option<[u8; crate::store::embedding::TEXT_HASH_LEN]>,
     vector: Vec<f32>,
-    provenance: Option<crate::embed::EmbeddingProvenance>,
+    provenance: Option<crate::store::embedding::EmbeddingProvenance>,
 ) -> Result<()> {
     // OF-370: only promotion replays a room's media vector; it lands
     // when base's bindings still take it, else the backfill fills it.
     let vector = Zeroizing::new(vector);
+    // FIX 9398: and only for a live record. A plan cut before the record's
+    // delete or erase, which dropped the room's copies, never writes its
+    // vector back; a record the plan puts is live by now.
+    if !crate::vault::live_entity_row_in_txn(store, wtxn, &id)?.is_live() {
+        return Ok(());
+    }
     crate::embed::replay_media_vector_in_txn(
         store,
         wtxn,

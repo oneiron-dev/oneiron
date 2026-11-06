@@ -151,7 +151,8 @@ pub(crate) fn esign_approval_digest_from_frozen_payload(
 pub(crate) fn failure_signals_approval_digest_from_frozen_payload(
     payload: &[u8],
 ) -> Option<crate::consent::EffectDigest> {
-    use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
+    use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_CHANNEL;
+    use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_SEND_VERB;
     pressed_send_digest(payload, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB)
 }
 
@@ -235,6 +236,9 @@ fn call_effect(call: &EsignDeliveryCall) -> Result<ExternalEffectGateInput> {
                 connector: &normalize_key(&call.channel),
                 target: &call.target,
                 sender: call.channel_identity_ref,
+                // An e-sign delivery rides the e-sign connector, never a
+                // native or member mail send (FIX 11869).
+                native_mail_recipient: false,
                 thread_ref: None,
                 content_ref: call.content_ref.as_deref(),
                 send_ref: &call.send_ref,

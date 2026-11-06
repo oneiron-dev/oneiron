@@ -36,10 +36,10 @@
 //! composed from its facts (`crate::consent::browser_approve_once_digest`).
 
 use crate::calendar::CalendarInvitePayload;
+use crate::consent::approval_proof::PinnedApprovalFamily;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::gate::ExternalEffectGateInput;
 use crate::linear_sync::{LinearEffectRequest, MirroredTaskFields};
-use crate::outbound_intent_ledger::PinnedApprovalFamily;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
@@ -141,6 +141,9 @@ pub(crate) enum ApprovalTarget {
     ChannelIdentityLifecycle(ChannelIdentityLifecycleFacts),
     /// One classified send of a run's browser (FIX 10422).
     Browser(BrowserSendTarget),
+    /// An ordinary communication, calendar or HTTP-bundle dispatch whose
+    /// original target pin is unchanged and whose press is kept for retry.
+    ConnectorSlate(Box<ApprovalTarget>),
 }
 
 /// The facts one browser send pins (FIX 10422): the actor's class, the run,
@@ -328,6 +331,10 @@ pub(crate) struct OutboundSendFacts<'a> {
     pub(crate) target: &'a str,
     /// The sending identity the request resolved.
     pub(crate) sender: Option<EntityId>,
+    /// Whether the request's producer bound `sender` as a native or member
+    /// mail sender (`request_binding.rs` `bind_native_mail_recipient`), the
+    /// classification frozen with the send (FIX 11869).
+    pub(crate) native_mail_recipient: bool,
     /// The thread the send replies on.
     pub(crate) thread_ref: Option<&'a str>,
     pub(crate) content_ref: Option<&'a str>,
@@ -348,16 +355,18 @@ impl ApprovalTarget {
     /// member sender (a provider rail, an `email` send or replace with no
     /// sender bound, an e-sign or trusted-contact notice among them) pins
     /// as a communication: sender, original target, thread, content ref and
-    /// send ref. An `email` act with a bound sender keeps none: the Gate
-    /// reads that sender's row and names a native or member mail send by
-    /// mail's own canonical digest, which this pure composer cannot tell
-    /// apart from another sender's and must not shadow.
+    /// send ref. An `email` act its producer bound to a native or member
+    /// mail sender keeps none: the Gate reads that sender's row and names
+    /// the send by mail's own canonical digest, which this composer must
+    /// not shadow. Any other bound sender (a provider-rail identity on
+    /// `email`, a replace with a sender) pins as a communication too, by
+    /// the producer's prepared classification (FIX 11869).
     pub(crate) fn for_outbound(facts: &OutboundSendFacts<'_>) -> Option<Self> {
         let send_ref = facts.send_ref.to_owned();
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
             "linear" => return None,
-            MAIL_CONNECTOR if facts.sender.is_some() => return None,
+            MAIL_CONNECTOR if facts.sender.is_some() && facts.native_mail_recipient => return None,
             FAILURE_SIGNALS_CONNECTOR if !FAILURE_SIGNAL_BATCHES_PIN => return None,
             ESIGN_CONNECTOR => Self::Esign {
                 document: facts.target.to_owned(),
@@ -392,7 +401,16 @@ impl ApprovalTarget {
                 send_ref,
             },
         };
-        Some(target)
+        if facts.connector != FAILURE_SIGNALS_CONNECTOR
+            && matches!(
+                target,
+                Self::Communication { .. } | Self::Calendar { .. } | Self::HttpBundle { .. }
+            )
+        {
+            Some(Self::ConnectorSlate(Box::new(target)))
+        } else {
+            Some(target)
+        }
     }
 
     /// Whether a send on `connector` has its admitted press recomposed from
@@ -411,7 +429,8 @@ impl ApprovalTarget {
     /// for each of its actors, a campaign leg, and a scoped-MCP call. The
     /// retry reuses the kept press only while its own pinned digest is the
     /// kept one. A lifecycle intent applies in the Gate's writer and keeps
-    /// no Pending row to retry.
+    /// no Pending row to retry. Ordinary communication, calendar and HTTP-bundle
+    /// targets keep their press for the same frozen send as well (FIX 990).
     pub(crate) fn keeps_spent_press(&self) -> bool {
         matches!(
             self,
@@ -419,17 +438,20 @@ impl ApprovalTarget {
                 | Self::LinearMirror(_)
                 | Self::Campaign(_)
                 | Self::ScopedMcp(_)
+                | Self::ConnectorSlate(_)
         )
     }
 
     /// The family a dispatch's kept press is filed under beside its ledger
     /// row, typed by its target, never by its connector: a campaign leg
-    /// rides any channel. `None` for every other target.
+    /// rides any channel. Ordinary communication, calendar and HTTP-bundle
+    /// targets use ConnectorSlate; every other target keeps its existing path.
     pub(crate) fn pinned_family(&self) -> Option<PinnedApprovalFamily> {
         match self {
             Self::LinearDispatch { .. } => Some(PinnedApprovalFamily::LinearDispatch),
             Self::Campaign(_) => Some(PinnedApprovalFamily::CampaignLeg),
             Self::ScopedMcp(_) => Some(PinnedApprovalFamily::ScopedMcp),
+            Self::ConnectorSlate(_) => Some(PinnedApprovalFamily::ConnectorSlate),
             _ => None,
         }
     }
@@ -552,6 +574,7 @@ impl ApprovalTarget {
                 field(&mut hasher, "browser");
                 facts.hash(&mut hasher);
             }
+            Self::ConnectorSlate(target) => return target.digest(),
         }
         hasher.finalize()
     }

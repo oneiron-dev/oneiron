@@ -34,24 +34,10 @@ pub(in crate::sync) use self::revalidate::{
     revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use self::routing::Routes;
-pub(in crate::sync) use self::state::staged_births;
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
+pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 
-/// Role carried by a member/guest federation import path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FederationAdmissionRole {
-    Member,
-    Guest,
-}
-
-impl FederationAdmissionRole {
-    const fn origin(self) -> &'static str {
-        match self {
-            Self::Member => "federation_admission.member",
-            Self::Guest => "federation_admission.guest",
-        }
-    }
-}
+pub use crate::store::window_protocol::FederationAdmissionRole;
 
 /// How admission grades a federated CLAIM, TURN or CONVERSATION (FIX 360).
 #[cfg(feature = "sync")]
@@ -77,8 +63,13 @@ enum ImportGrading {
 /// so callers can import it through the ordinary replay/materialization path
 /// without giving the original remote op ids trust-blind write authority.
 ///
+/// `source_vault`, when present, selects the source's foreign WORLD namespace;
+/// it carries no authentication or first-party standing. Every returned pair
+/// names its actual destination window, in import order. With no source,
+/// admission retains the original window.
+///
 /// No facet stamp a peer sends onto a row this vault lacks is in the
-/// returned update. With no sender named here, nothing can bind such a stamp
+/// returned updates. With no sender named here, nothing can bind such a stamp
 /// to its row's birth, so it is dropped (`copy_admitted_edges`).
 #[cfg(feature = "sync")]
 pub fn admit_federated_window_update(
@@ -86,8 +77,9 @@ pub fn admit_federated_window_update(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-) -> Result<Vec<u8>> {
-    Ok(admit_window_update(
+    source_vault: Option<&[u8; 32]>,
+) -> Result<Vec<(WindowKey, Vec<u8>)>> {
+    let admitted = admit_window_update(
         vault,
         key,
         update,
@@ -96,9 +88,12 @@ pub fn admit_federated_window_update(
         ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
-        None,
-    )?
-    .bytes)
+        source_vault,
+    )?;
+    Ok(admitted
+        .parts()
+        .map(|part| (part.key().clone(), part.bytes().to_vec()))
+        .collect())
 }
 
 /// [`admit_federated_window_update`] for an update the federation peer
@@ -202,6 +197,7 @@ pub(crate) fn admit_staged_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     receipt_id: &[u8; 32],
+    source_vault: Option<&[u8; 32]>,
 ) -> Result<AdmittedUpdate> {
     admit_window_update(
         vault,
@@ -212,7 +208,7 @@ pub(crate) fn admit_staged_window_update(
         ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
-        None,
+        source_vault,
     )
 }
 
@@ -221,7 +217,8 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
     crate::federation::facet_read::HeldLane::Staged(*receipt_id).key()
 }
 
-/// `guest` is the source vault a guest's pact names: with one, the update's
+/// `guest` is the source namespace a guest's pact or a staged artifact's
+/// claimed manifest names, never authentication. With one, the update's
 /// CLAIMs land in their foreign WORLD copies ([`Routes`], FIX 3497), and the
 /// admitted update holds one part per window it lands in.
 #[cfg(feature = "sync")]
@@ -259,6 +256,9 @@ fn admit_window_update(
     for (part, part_key) in routes.keys.iter().enumerate() {
         let admitted = create_admission_doc(part_key, update, role, guest)?;
         copy_admitted_entities(vault, &policy, &remote, &admitted, grading, &routes, part)?;
+        // A body reference rides beside the exact carrier admission kept, so
+        // the body follows it by reference (FIX 12118).
+        crate::sync::asset_body::references::copy_refs_within(&remote, &admitted)?;
         let edges = routes.edges_of(&remote, part)?;
         let early = copy_admitted_edges(
             vault,
@@ -271,7 +271,17 @@ fn admit_window_update(
             &admitted.get_map("edges"),
         )?;
         if part == 0 {
-            crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+            // FIX 5588: the import lands on this install's machine, whose id
+            // alone names the receiving placement; never the sender's peer
+            // proof, though it is in scope on this path.
+            let receiving = {
+                let txn = vault.store.env.read_txn()?;
+                match crate::identity::read_machine_id_in_txn(vault, &txn)? {
+                    Some(machine) => crate::machine_destination::Destination::Machine(machine),
+                    None => crate::machine_destination::Destination::Unknown,
+                }
+            };
+            crate::sync::note::copy_judged(vault, &remote, &admitted, receiving)?;
         }
         copied.push((admitted, early));
     }
@@ -483,7 +493,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::receipt::validate_receipt_record_body(id, body)?;
         }
         crate::registry::ENTITY_TYPE_TASK => {
-            crate::habit::task_role_from_body_bytes(body)?;
+            crate::write_envelope::task_body::task_role_from_body_bytes(body)?;
         }
         crate::registry::ENTITY_TYPE_CODE_ARTIFACT => {
             crate::code_artifact::validate_code_artifact_body_bytes(body)?;
@@ -492,7 +502,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::blob_artifact::validate_blob_artifact_body_bytes(body)?;
         }
         crate::registry::ENTITY_TYPE_SKILL => {
-            crate::skill::decode_skill_record(body)?;
+            crate::write_envelope::skill_record::decode_skill_record(body)?;
         }
         crate::registry::ENTITY_TYPE_AGENT_DEF => {
             let definition = crate::agent_def::decode_agent_definition(body)?;
@@ -511,7 +521,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn validate_sync_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(body)
+        && crate::write_envelope::person_identity::is_identity_facet_body(body)
     {
         return Err(Error::InvalidClaimBody(
             "FACET cannot carry PERSON identity",

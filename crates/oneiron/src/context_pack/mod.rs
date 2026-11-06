@@ -14,6 +14,7 @@ mod once_disclosure;
 mod psych_mirror;
 mod quarantine;
 pub(crate) mod retained_copies;
+pub(crate) mod turn_fold;
 #[cfg(test)]
 pub(crate) use self::quarantine::quarantined_entity_count_for_test;
 pub mod source_ranking;
@@ -48,3 +49,5 @@ pub use world_partition::WORLD_STALE_FIELD;
 pub(crate) use validation::disclosure_admits_target;
 
 pub(crate) use hydration::{context_entity_matches_read_snapshot, same_claim_body};
+
+pub mod profile_sources;

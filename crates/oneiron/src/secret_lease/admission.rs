@@ -1,44 +1,12 @@
-//! The one cap-only admission rule, pure + door-side halves.
+//! Core half of `secret_lease::admission`: its store-layer items live in `oneiron_store::secret_lease::admission` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::secret_lease::admission::*;
 
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{
-    CustodyClass, CustodyTier, SecretBinding, SecretCustodyAdmission, SecretCustodyFloor,
-    SecretCustodyStatus,
-};
-
-// ---------------------------------------------------------------------------
-// The one admission rule
-// ---------------------------------------------------------------------------
-
-/// The one admission rule, pure: `Ok(requested)` iff `requested` is at or
-/// below `floor.band_for(class).max` AND at or below
-/// `binding.tier_ceiling`. The binding must be resolved from the record by
-/// the caller (a missing binding is [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied),
-/// settled before this call) — never caller-invented.
-///
-/// Rule (b) is a pure upper CAP: ONE-1919's floor keystone narrows the
-/// band's `max` and treats `min` as informational, so a request below the
-/// band's `min` — a SAFER tier — admits and is never forced upward.
-/// Floors and ceilings only ever CAP exposure; there is no
-/// minimum-exposure rule anywhere.
-pub fn tier_admission(
-    class: CustodyClass,
-    requested: CustodyTier,
-    binding: &SecretBinding,
-    floor: &SecretCustodyFloor,
-) -> Result<CustodyTier> {
-    let band = floor.band_for(class);
-    if requested > band.max || requested > binding.tier_ceiling {
-        return Err(Error::Secret(SecretError::SecretTierDenied {
-            class,
-            requested,
-            floor_min: band.min,
-            floor_max: band.max,
-            binding_ceiling: binding.tier_ceiling,
-        }));
-    }
-    Ok(requested)
-}
+use crate::secret_record::SecretCustodyAdmission;
+use crate::secret_record::{CustodyClass, CustodyTier, SecretBinding};
+use crate::secret_record::{SecretCustodyFloor, SecretCustodyStatus};
 
 /// The door-side half of the admission rule: record liveness plus binding
 /// resolution (rule (a)), then the pure tier gate (rules (b)+(c)).
@@ -69,6 +37,8 @@ pub(super) fn admit_record_use(
 /// reach T1, and so must the widest binding the record carries: a record
 /// with no binding (a masked secret) is capped by its floor alone, and one
 /// whose every binding is doored is used at its door and never revealed.
+/// A handle-only private copy never enters a model context, regardless of
+/// the class's floor or an effector's use binding.
 pub(crate) fn reveal_tier_admission(
     rec: &SecretCustodyAdmission,
     floor: &SecretCustodyFloor,
@@ -76,6 +46,11 @@ pub(crate) fn reveal_tier_admission(
     if rec.status != SecretCustodyStatus::Active {
         return Err(Error::Secret(SecretError::SecretCustodyNotActive {
             name: rec.name.clone(),
+        }));
+    }
+    if !rec.model_reveal_allowed {
+        return Err(Error::Secret(SecretError::SecretDoorPolicyRefused {
+            reason: "this secret is available to agents by handle only",
         }));
     }
     let requested = CustodyTier::T1Leased;

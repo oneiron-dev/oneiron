@@ -3,9 +3,17 @@
 
 use axum::routing::{get, post};
 
-use super::super::{OwnerRoute, OwnerTable};
+use super::super::{OwnerRoute, OwnerTable, RestShape};
+use super::schema::{
+    accept_request_body_schema, admitted_slate_schema, approve_charter_body_schema,
+    attest_request_body_schema, charter_view_schema, connector_key_schema,
+    discard_charter_body_schema, enabled_request_body_schema, propose_charter_body_schema,
+    qualify_request_body_schema, refresh_request_body_schema, refreshed_schema,
+    register_request_body_schema, registered_schema,
+};
 use super::{
-    accept, attest, enabled, proxy, qualify, refresh, register, revoke_proxy_write, setup,
+    accept, accept_staged, approve_charter, attest, charter, discard_charter, enabled,
+    propose_charter, proxy, qualify, refresh, register, revoke_proxy_write, setup,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {
@@ -16,6 +24,10 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/register",
                 summary: "Lists the connector's tools at its installed endpoint, screens and resolves them, drafts the grant slate and registers the key Pending at the negotiated revision.",
                 row: None,
+                shape: Some(RestShape::json(
+                    register_request_body_schema,
+                    registered_schema,
+                )),
             },
             post(register),
         ),
@@ -25,6 +37,7 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/setup",
                 summary: "The connector's key, its admission state and its grant slate, for a resumed setup.",
                 row: None,
+                shape: None,
             },
             get(setup),
         ),
@@ -34,8 +47,25 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/slate/accept",
                 summary: "The owner's stamp on the connector's slate, at the revision reviewed.",
                 row: None,
+                shape: Some(RestShape::json(
+                    accept_request_body_schema,
+                    admitted_slate_schema,
+                )),
             },
             post(accept),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/slate/staged/accept",
+                summary: "The owner's stamp on the slate a refresh staged beside an admitted connector's routing one, at the revision reviewed; the key keeps routing until qualify or attest swaps it in.",
+                row: None,
+                shape: Some(RestShape::json(
+                    accept_request_body_schema,
+                    admitted_slate_schema,
+                )),
+            },
+            post(accept_staged),
         ),
         (
             OwnerRoute {
@@ -43,6 +73,10 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/qualify",
                 summary: "Runs the probe suite through the installed endpoint with the owner's kit, activates the key, and approves the exact manifest the suite ran on.",
                 row: None,
+                shape: Some(RestShape::json(
+                    qualify_request_body_schema,
+                    connector_key_schema,
+                )),
             },
             post(qualify),
         ),
@@ -52,6 +86,10 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/attest",
                 summary: "The owner attests a pending connector the probe suite cannot grade (CONNECTOR-QUALIFY = A): its tools must still match the stamped slate, and the key activates with an owner-attested receipt.",
                 row: None,
+                shape: Some(RestShape::json(
+                    attest_request_body_schema,
+                    connector_key_schema,
+                )),
             },
             post(attest),
         ),
@@ -61,6 +99,10 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/refresh",
                 summary: "Lists the connector's tools again, at its pinned revision while it still answers that one.",
                 row: None,
+                shape: Some(RestShape::json(
+                    refresh_request_body_schema,
+                    refreshed_schema,
+                )),
             },
             post(refresh),
         ),
@@ -70,8 +112,61 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/enabled",
                 summary: "The owner's on/off switch for an admitted connector.",
                 row: None,
+                shape: Some(RestShape::json(
+                    enabled_request_body_schema,
+                    connector_key_schema,
+                )),
             },
             post(enabled),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/charter",
+                summary: "The connector key's stamped GOV-10 charter and its staged proposal.",
+                row: None,
+                shape: Some(RestShape::no_body(charter_view_schema)),
+            },
+            get(charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/propose",
+                summary: "Compiles a charter text and stages it on the connector's key; enforcement does not change until the owner approves it.",
+                row: None,
+                shape: Some(RestShape::json(
+                    propose_charter_body_schema,
+                    charter_view_schema,
+                )),
+            },
+            post(propose_charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/approve",
+                summary: "The owner's stamp on the staged charter whose text and compile hashes he reviewed; the gate enforces its compile from then on.",
+                row: None,
+                shape: Some(RestShape::json(
+                    approve_charter_body_schema,
+                    charter_view_schema,
+                )),
+            },
+            post(approve_charter),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/charter/discard",
+                summary: "Drops the staged charter proposal; a stamped charter stands.",
+                row: None,
+                shape: Some(RestShape::json(
+                    discard_charter_body_schema,
+                    charter_view_schema,
+                )),
+            },
+            post(discard_charter),
         ),
         (
             OwnerRoute {
@@ -79,6 +174,7 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/proxy",
                 summary: "Admits the OpenAI proxy for one paired actor.",
                 row: Some("vault.connectors.proxy.admit"),
+                shape: None,
             },
             post(proxy),
         ),
@@ -88,6 +184,7 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/proxy/revoke-write",
                 summary: "Revokes only the proxy remember grant at the reviewed key and slate revision, preserving read access and stored memory.",
                 row: Some("vault.connectors.proxy.revoke_write"),
+                shape: None,
             },
             post(revoke_proxy_write),
         ),

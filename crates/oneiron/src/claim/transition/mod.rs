@@ -106,9 +106,43 @@ pub(crate) fn stage_owner_machine_transition(
     )
 }
 
+/// Stage `kind` attributed to `actor` of class system, a writer no person
+/// stands behind: the engine's own principal for a critical confirm's lapse,
+/// or a MACHINE author for its own deferred Auto grant.
+pub(crate) fn stage_system_machine_transition(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: crate::EntityId,
+    kind: ClaimTransitionKind,
+    delta: TransitionDelta,
+    actor: crate::EntityId,
+    now: u64,
+) -> crate::Result<crate::ClaimBody> {
+    stage_machine_claim_transition(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        id,
+        kind,
+        delta,
+        actor,
+        crate::edge::EdgeActorClass::System,
+        crate::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
 /// Close a MACHINE-born claim through its signed history; any other claim is
 /// returned unchanged. `actor` is the typed door's authenticated writer, and
-/// `None` attributes the close to the vault's embedded owner.
+/// `None` attributes the close to the vault's embedded owner. The body's
+/// effective `valid_to` is signed independently of the actual `now` in seconds.
 pub(crate) fn close_machine_claim_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -121,7 +155,10 @@ pub(crate) fn close_machine_claim_in_txn(
     if !crate::authority::machine_claim_needs_history(&vault.store, txn, &closed)? {
         return Ok(closed);
     }
-    let delta = TransitionDelta::ValidTo(now);
+    let end = closed.valid_to.ok_or(crate::Error::InvalidClaimBody(
+        "lifecycle close requires valid_to",
+    ))?;
+    let delta = TransitionDelta::ValidTo(end);
     match actor {
         Some(writer) => stage_machine_transition_as(vault, txn, id, kind, delta, writer, now),
         None => stage_owner_machine_transition(vault, txn, id, kind, delta, now),
@@ -167,6 +204,7 @@ impl crate::Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data: crate::claim::encode_claim_body(&approved)?,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,

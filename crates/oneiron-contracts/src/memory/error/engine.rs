@@ -9,6 +9,18 @@ impl From<Error> for MemoryError {
             return Self::verb_hook(*stop);
         }
         let message = err.to_string();
+        if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
+            return Self {
+                resets_at: vec![next_eligible_at],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "Retry the share creation at the Unix time in resets_at; nothing was recorded or charged.",
+                    ],
+                )
+            };
+        }
         // FIX 3194: an outage keeps when to call again as its field.
         if let Error::ProviderUnavailable { retry_after } = err {
             return Self {
@@ -279,6 +291,13 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_INVALID_STATE,
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
+            ),
+            // FIX 12023 W0: the process that serves the vault spends its
+            // request nonces; no change to the request helps here.
+            ErrorKind::VaultServedElsewhere => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Send the request to the process that serves this vault."],
             ),
             // The vault holds too little authority history to fold (OF-469):
             // an import of what it names closes the gap; no request changes.

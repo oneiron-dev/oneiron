@@ -3,13 +3,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::support::normalized_ref;
 use super::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, AuthenticatedOwner, ConsentReceipt,
     ConsentRegistry, ConsentRegistryQuery, DisclosureClass, DisclosureEnvelope, EffectDigest,
     GrantBound,
+};
+/// The owner's auto-weave Grant door (FIX 3433), at this public path for the
+/// generated SDK and server callers; it lives with the gate's weave Grant.
+pub use crate::gate::weave_grant::{
+    AutoWeaveGrantRequest, AutoWeaveWriterClass, mint_auto_weave_grant,
 };
 
 /// Approve the exact engine-emitted effect digest, never a caller's description.

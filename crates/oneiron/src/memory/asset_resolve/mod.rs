@@ -30,27 +30,32 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, Sc
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::IMAGE_FULL;
-use crate::llm::decision::{
-    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
+use crate::llm::decision::{AudioRef, DecisionLadder, ImageRef, ResolvedMedia};
+use crate::model_decision::catalogue::IMAGE_FULL;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, EvidenceVersion,
+    Reversibility, cut_text, fit_state,
 };
-use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
-use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
-use crate::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::receipt::{PixelPull, ServedForm};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
+use oneiron_model::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
+use oneiron_model::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
+use oneiron_model::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
 
 mod blob;
 mod generation;
 mod hydrated;
+mod image_mask;
 mod reads;
 mod serving;
 mod types;
-pub(crate) use blob::{asset_media_in, release_asset_blob_in_txn};
+pub(crate) use blob::{
+    asset_media_in, discard_asset_blob_reference_in_txn, land_asset_blob_in_txn,
+    release_asset_blob_in_txn,
+};
 pub(super) use generation::asset_body;
 #[cfg(test)]
 pub(crate) use generation::generated_asset_body;
@@ -180,8 +185,8 @@ pub struct ImageHandle {
 }
 
 impl ImageHandle {
-    fn of(asset: EntityId, image: &ImageBytes) -> Self {
-        let mut content = blake3::hash(&image.bytes).to_hex().to_string();
+    fn of(asset: EntityId, digest: &[u8; 32]) -> Self {
+        let mut content = blake3::Hash::from(*digest).to_hex().to_string();
         content.truncate(HANDLE_HASH_HEX);
         Self { asset, content }
     }
@@ -200,8 +205,8 @@ impl ImageHandle {
         Ok(Self { asset, content })
     }
 
-    fn names(&self, image: &ImageBytes) -> bool {
-        blake3::hash(&image.bytes)
+    fn names(&self, digest: &[u8; 32]) -> bool {
+        blake3::Hash::from(*digest)
             .to_hex()
             .starts_with(self.content.as_str())
     }
@@ -267,10 +272,26 @@ fn base64_of(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// The canonical blob identity beside the pixels this reader may see.
+#[derive(Clone)]
+struct AssetImage {
+    content: [u8; 32],
+    pixels: ImageBytes,
+}
+
+impl AssetImage {
+    fn evidence(&self, asset: EntityId) -> EvidenceVersion {
+        EvidenceVersion {
+            id: asset,
+            body_hash: self.content,
+        }
+    }
+}
+
 /// The forms one admitted ASSET holds.
 pub(crate) struct AssetForms {
     asset: EntityId,
-    image: Option<ImageBytes>,
+    image: Option<AssetImage>,
     audio: Option<(Vec<u8>, String)>,
     /// The newest admitted ASSET_TEXT derived from the asset.
     text: Option<(EntityId, String)>,
@@ -307,12 +328,13 @@ impl AssetForms {
     /// refused for room: no pixels it reads and no text.
     fn climb(
         &self,
-        image: &ImageBytes,
+        image: &AssetImage,
         consumer: &AssetConsumer,
         pick: Option<&ImagePick<'_>>,
         admits: &mut dyn FnMut(usize) -> bool,
     ) -> MemoryResult<Option<Climb>> {
-        let handle = ImageHandle::of(self.asset, image).to_string();
+        let handle = ImageHandle::of(self.asset, &image.content).to_string();
+        let image = &image.pixels;
         let caption = self.text.as_ref().map(|(id, _)| id.to_hex());
         let mut picked = None;
         let mut needed = self.omitted;
@@ -494,9 +516,9 @@ impl AssetForms {
             return Ok(None);
         };
         let served = self.served_form(&climb);
-        let handle = Some(ImageHandle::of(self.asset, &image).to_string());
+        let handle = Some(ImageHandle::of(self.asset, &image.content).to_string());
         let (form, pixels, needed) = match climb.rung {
-            Rung::Full(_) => (ServedAssetForm::Image, Some(image), None),
+            Rung::Full(_) => (ServedAssetForm::Image, Some(image.pixels), None),
             Rung::Thumbnail(thumbnail, _) => {
                 (ServedAssetForm::Thumbnail, Some(thumbnail.image), None)
             }

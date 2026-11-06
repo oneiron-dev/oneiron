@@ -154,6 +154,18 @@ impl GitWire<'_> {
         let expected =
             settings_hash.ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
         let git_file = fs::read_to_string(path.join(".git"))?;
+        self.confirm_worktree_registration(repo, &git_file, expected)
+    }
+
+    /// The registration half of an add's confirmation: the already-read `.git`
+    /// names this repository's own worktree entry, and that entry keeps the
+    /// settings the add admitted.
+    fn confirm_worktree_registration(
+        &self,
+        repo: &GitWireRepo,
+        git_file: &str,
+        expected: &[u8; 32],
+    ) -> Result<()> {
         let prefix = format!("gitdir: {}/worktrees/", repo.common_dir.display());
         let name = git_file
             .strip_prefix(&prefix)
@@ -179,6 +191,15 @@ impl GitWire<'_> {
     /// Resolves a prepared worktree record by re-observing registration. The
     /// path is never stored: the record carries a scope hash, and recovery
     /// matches it against the paths git currently reports.
+    ///
+    /// A prepared add registered at this store's merge queue source root
+    /// settles by its registration alone (FIX 7706): the queue's landings
+    /// move that worktree's HEAD past the commit it was added at, so its
+    /// original commit proves nothing once the queue ran. It is applied when
+    /// the worktree is there and is this repository's own, with the settings
+    /// it was admitted under; registered but gone from disk, it is not, and
+    /// the queue's own drain puts it back. Every other prepared add is
+    /// confirmed at its commit.
     pub(super) fn finish_worktree_record(
         &self,
         repo: &GitWireRepo,
@@ -198,6 +219,24 @@ impl GitWire<'_> {
                 let argv = FrozenGitArgv::worktree_remove(&path)?;
                 self.run_mutation(repo, &argv)?;
                 true
+            }
+            (GitWireOperation::WorktreeAdd, Some(path)) if self.is_queue_source(repo, &path)? => {
+                if path.symlink_metadata().is_ok() {
+                    let expected = record
+                        .worktree_settings_hash
+                        .as_ref()
+                        .ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
+                    match fs::read_to_string(path.join(".git")) {
+                        Ok(git_file) => {
+                            self.confirm_worktree_registration(repo, &git_file, expected)?;
+                            true
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(error) => return Err(error.into()),
+                    }
+                } else {
+                    false
+                }
             }
             (GitWireOperation::WorktreeAdd, Some(path)) => {
                 let requested = record
@@ -220,6 +259,13 @@ impl GitWire<'_> {
             (_, _) => false,
         };
         self.settle_worktree(repo, record, resolved, now)
+    }
+
+    /// Whether `path` is the engine-derived merge queue source root of this
+    /// repository's object store, as the queue itself derives it.
+    fn is_queue_source(&self, repo: &GitWireRepo, path: &Path) -> Result<bool> {
+        let root = crate::merge_queue::queue_source_root(self.vault, &repo.identity().as_hex())?;
+        Ok(same_path(&root, path))
     }
 
     fn settle_worktree(

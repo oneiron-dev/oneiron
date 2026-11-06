@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
 use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
-use super::erase::any_gone_in_txn;
+use super::erase::{any_gone_in_txn, sync_card_membership};
 use super::loaded::{
     AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
 };
@@ -232,8 +232,12 @@ pub(super) fn ask_coach_in_txn(
         answer: None,
         application: None,
     };
+    // A new ask drops the old answer, and its membership with it (FIX 10434).
+    let old_sources = card.draft_source_rows();
     card.coach = Some(ask.clone());
     card.updated_at = at;
+    let new_sources = card.draft_source_rows();
+    sync_card_membership(&vault.store, txn, key, &old_sources, &new_sources)?;
     CARDS.put(&vault.store, txn, key, &card)?;
     // A touched card can arm the digest on its own (FIX 1979).
     crate::batch::queue_proactivity_change(vault, txn);
@@ -393,6 +397,7 @@ impl Vault {
             if !waiting(&card) {
                 return Ok(());
             }
+            let old_sources = card.draft_source_rows();
             // A row the draft was written from erased since it was read: the
             // answer lands, its draft's text does not (FIX 9221).
             let gone = any_gone_in_txn(&self.store, txn, &known)?;
@@ -411,6 +416,10 @@ impl Vault {
                 ask.answer = Some(answer);
             }
             card.updated_at = now;
+            // The answer lands, and its membership with it: the `gone` case
+            // yields an empty set, so nothing is added (FIX 10434).
+            let new_sources = card.draft_source_rows();
+            sync_card_membership(&self.store, txn, &key, &old_sources, &new_sources)?;
             CARDS.put(&self.store, txn, &key, &card)?;
             // A touched card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);

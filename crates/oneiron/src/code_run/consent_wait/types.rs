@@ -2,6 +2,8 @@
 //! dispatcher carries, the control row the engine keeps, and what a host
 //! reads and sends.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::authority::InvocationSlipBinding;
@@ -11,122 +13,12 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 1;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 7;
 
-/// The three answers canon's confirm offers (DEC-0006): approve once (the
-/// default), approve and stop asking, deny (CALLS: outcome names).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeConsentChoice {
-    ApproveOnce,
-    ApproveAndStopAsking,
-    Deny,
-}
-
-impl CodeConsentChoice {
-    /// Every choice, in the order the wait's ask offers them.
-    pub(crate) const ALL: [Self; 3] = [Self::ApproveOnce, Self::ApproveAndStopAsking, Self::Deny];
-
-    /// The stable word, which is also the option id the wait's ask offers.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ApproveOnce => "approve_once",
-            Self::ApproveAndStopAsking => "approve_and_stop_asking",
-            Self::Deny => "deny",
-        }
-    }
-
-    /// The choice an ask option id names, if any.
-    #[must_use]
-    pub fn from_option(option: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|choice| choice.as_str() == option)
-    }
-
-    /// Whether the choice lets the effect go to its own gate.
-    pub(crate) const fn approves(self) -> bool {
-        !matches!(self, Self::Deny)
-    }
-}
-
-/// What one settled code consent wait came to (CALLS: outcome names). A
-/// settlement is its own fact: it is not the answer, and it is not the
-/// run's consumption of the reply, which 1b records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeConsentSettleOutcome {
-    /// The effect ran and its connector acknowledged it.
-    Delivered,
-    /// Nothing ran, and nothing runs under this wait.
-    Refused,
-    /// The effect may have reached its connector; the ledger never sends it
-    /// again, and it is never reported as delivered.
-    DeliveryUnknown,
-}
-
-impl CodeConsentSettleOutcome {
-    /// The stable word.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Delivered => "delivered",
-            Self::Refused => "refused",
-            Self::DeliveryUnknown => "delivery_unknown",
-        }
-    }
-
-    /// The one-byte tag the settlement receipt carries.
-    pub(crate) const fn tag(self) -> u8 {
-        match self {
-            Self::Delivered => 1,
-            Self::Refused => 2,
-            Self::DeliveryUnknown => 3,
-        }
-    }
-
-    /// The outcome a settlement receipt's tag names, if any.
-    pub(crate) fn from_tag(tag: u8) -> Option<Self> {
-        [Self::Delivered, Self::Refused, Self::DeliveryUnknown]
-            .into_iter()
-            .find(|outcome| outcome.tag() == tag)
-    }
-}
-
-/// Where one code consent wait stands, derived from the row's facts and
-/// never stored on its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CodeConsentWaitState {
-    /// Minted with its held effect; its parked step has not sealed it, so no
-    /// answer reaches it.
-    Provisional,
-    /// Sealed, with no answer.
-    Waiting,
-    /// Answered; the effect's own gate has not settled it.
-    Settling,
-    /// Settled: delivered, refused or of unknown delivery. The parked run
-    /// has not taken the reply into its replay yet.
-    Settled,
-    /// The parked run took the settled reply into its replay, once (1b).
-    Consumed,
-}
-
-/// Where one code-mode connector call sits in its durable run. The
-/// dispatcher builds it from the executor's own bridge position and
-/// carries it on the host-owned write origin; no guest field reaches it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CodeConsentCallSite {
-    pub(crate) wait_id: EntityId,
-    pub(crate) run_id: EntityId,
-    pub(crate) run_ref: String,
-    pub(crate) step_start: u64,
-    pub(crate) bridge_seq: u64,
-    pub(crate) write_ordinal: u64,
-    pub(crate) write_receipt_id: EntityId,
-    /// BLAKE3 of the call's canonical identity (verb and sorted input).
-    pub(crate) request_digest: [u8; 32],
-}
+pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
+pub use crate::consent::code_wait_state::{
+    CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState,
+};
 
 /// The instrument a code run's caller was admitted on, kept with its wait:
 /// a reference and its witness, never a secret, and no authority on its
@@ -147,6 +39,11 @@ pub struct CodeConsentSavedCredential {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentPrincipal {
     pub(crate) actor_ref: EntityId,
+    /// The original caller's actor class, as its admitted surface bound it
+    /// (FIX 4520): a typed-ask retry rebinds this exact class, never a
+    /// guess. The class enum has no serde form, so the row keeps the
+    /// canonical byte.
+    pub(crate) actor_class: u8,
     pub(crate) credential: Option<CodeConsentSavedCredential>,
     /// The slip the opener's request was admitted on, read from the verified
     /// witness at the mint: an answer from that slip, or from one minted
@@ -167,6 +64,8 @@ pub(crate) struct CodeConsentConnectorCall {
     pub(crate) server: String,
     pub(crate) tool: String,
     pub(crate) endpoint: String,
+    pub(crate) payload_data_class: crate::consent::tool_scope::DataClass,
+    pub(crate) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     pub(crate) manifest_hash: [u8; 32],
     pub(crate) protocol_revision: String,
     /// A `self.use` custody record's ref, never its value.
@@ -195,9 +94,19 @@ pub struct CodeConsentBrowserAction {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
-    /// The counterparty the act's send reported (FIX 11907): the origin
-    /// of the page it acted on; none where it names none (a desktop's).
+    /// The counterparty the act's send reported (FIX 11907, 12395): the
+    /// page origin, or a mailto:/tel: href's normalized scheme+recipient;
+    /// none where it names none (a desktop's).
     pub audience: Option<String>,
+    /// The hold-time actor class byte (FIX 11908), decoded by
+    /// `EdgeActorClass::try_from_u8`: the engine stamps it at the hold from
+    /// its own caller, so a host-built action's value never stands.
+    #[serde(default)]
+    pub actor_class: u8,
+    /// The project the hold-time facts named (FIX 11908), stamped by the
+    /// engine at the hold like `actor_class`.
+    #[serde(default)]
+    pub project: Option<EntityId>,
     /// The tab in front when the act began.
     pub tab: String,
     /// The documents the row's live handle was read from; none for a row no
@@ -245,21 +154,18 @@ impl CodeConsentPendingEffect {
     }
 }
 
-/// The capability setting an "approve and stop asking" answer changes: one
-/// tool's row on the slate its governing key meets, at the revision the
-/// offer was made against (CALLS: stop-asking for connector.call).
+/// The tool-setting act an "approve and stop asking" answer remembers.
+/// Actor, connector and tool come from the same immutable call binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentRememberOffer {
-    pub(crate) slate_ref: EntityId,
-    pub(crate) slate_revision: u64,
-    pub(crate) tool: String,
+    pub(crate) settings_act: EntityId,
 }
 
 /// The question the wait's ask carries: who is asked, and the ids the
 /// opener witnesses it under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentQuestion {
-    pub(crate) owner: EntityId,
+    pub(crate) owners: BTreeSet<EntityId>,
     pub(crate) conversation: EntityId,
     pub(crate) turn: EntityId,
     pub(crate) message: EntityId,
@@ -312,6 +218,9 @@ pub(crate) struct CodeConsentCheckpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) choice: CodeConsentChoice,
+    /// Whether the first answer explicitly asked for the asking-lineage scope.
+    /// True only for an explicit stop-asking choice; default false.
+    pub(crate) remember_asking_lineage: bool,
     pub(crate) word_ref: EntityId,
     pub(crate) answerer: EntityId,
     pub(crate) principal_ref: String,
@@ -319,8 +228,8 @@ pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) authentication: GateDecisionId,
     /// The consent act's own receipt: approve-once or denied.
     pub(crate) decision: GateDecisionId,
-    /// The slate a stop-asking answer changed, at its new revision.
-    pub(crate) remembered: Option<(EntityId, u64)>,
+    /// The native standing consent grant the stop-asking answer minted.
+    pub(crate) remembered: Option<String>,
     /// The policy manifest frontier the answer was judged under. The owner
     /// gate decided it; no settlement-policy row is named (CALLS).
     pub(crate) policy_frontier: [u8; 32],
@@ -344,6 +253,9 @@ pub(crate) struct CodeConsentSettlement {
     pub(crate) outcome: CodeConsentSettleOutcome,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) reply_digest: [u8; 32],
+    /// The actual delivered connector reply carried a foreign result or
+    /// questions, after the side-row wall. Delivery without a result is false.
+    pub(crate) external_reply: bool,
     pub(crate) settled_at_ms: u64,
 }
 
@@ -429,6 +341,10 @@ pub struct CodeConsentAnswerInput {
     pub step_hash: [u8; 32],
     pub effect_digest: [u8; 32],
     pub choice: CodeConsentChoice,
+    /// Whether the owner explicitly asked for the asking-lineage remember scope.
+    /// Explicit choice only; default false. Normalized to false unless
+    /// `choice` is approve-and-stop-asking.
+    pub remember_asking_lineage: bool,
     /// The owner's own word on the wait's ask, naming the same choice.
     pub word_ref: EntityId,
 }
@@ -487,6 +403,11 @@ pub struct CodeConsentWaitView {
     /// The consumption receipt's links as the ledger holds them: the word
     /// and the settlement it consumed.
     pub consumption_links: Option<CodeWaitReceiptLinks>,
+    /// The first answer's actual asking-lineage scope, only for a stop-asking
+    /// choice; none before an answer or for other choices.
+    pub remember_asking_lineage: Option<bool>,
+    /// The first answer's minted standing grant ref, when it minted one.
+    pub remembered: Option<String>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
 }

@@ -5,8 +5,8 @@
 use super::{clearances_in, peer_read_keys_in, reading_defaults_in};
 use crate::claim::{RoomTerms, RoomTurnCeiling};
 use crate::context_board::room::{RoomPresence, room_clearance, room_worlds};
-use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// The facets `room` limits its reads to as `txn` reads it, from its
 /// project's signed slice alone; `All` is a room with no facet.

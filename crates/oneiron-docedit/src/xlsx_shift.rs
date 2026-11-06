@@ -139,10 +139,25 @@ pub fn retarget_sheets(
     order: &[String],
     fate: &dyn Fn(&str) -> SheetFate,
 ) -> Option<String> {
+    retarget_linked_sheets(formula, order, fate, &|_: &str| false)
+}
+
+/// [`retarget_sheets`], where a reference through a link `own` names by its
+/// bracketed text (`1` of `[1]Data!A1`) is into this workbook itself and
+/// follows `fate` as an unlinked one does: a renamed sheet keeps the link
+/// (`[1]Sales!A1`), and a deleted one reads `#REF!` (FIX 9080).
+#[must_use]
+pub(crate) fn retarget_linked_sheets(
+    formula: &str,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+    own: &dyn Fn(&str) -> bool,
+) -> Option<String> {
     let bytes = formula.as_bytes();
     let mut out = String::with_capacity(formula.len());
     let mut changed = false;
-    let mut external = false;
+    // The link a bracket just named, and where `out` holds it.
+    let mut external: Option<(&str, usize)> = None;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
@@ -167,13 +182,17 @@ pub fn retarget_sheets(
                     break;
                 }
             }
+            let link = formula[start..i]
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+                .unwrap_or_default();
+            external = Some((link, out.len()));
             out.push_str(&formula[start..i]);
             // `[1]Data!` names a sheet of another workbook.
-            external = true;
             continue;
         }
         let ch = formula[i..].chars().next()?;
-        let (prefix, end) = if b == b'\'' {
+        let (mut prefix, end) = if b == b'\'' {
             let end = quoted_end(bytes, i);
             if bytes.get(end) != Some(&b'!') || end < i + 2 {
                 out.push_str(&formula[i..end]);
@@ -187,7 +206,7 @@ pub fn retarget_sheets(
                 let end = number_end(bytes, i);
                 out.push_str(&formula[i..end]);
                 i = end;
-                external = false;
+                external = None;
                 continue;
             }
             let mut end = token_end(formula, i);
@@ -202,19 +221,29 @@ pub fn retarget_sheets(
             if bytes.get(end) != Some(&b'!') || (i > 0 && bytes[i - 1] == b'#') {
                 out.push_str(&formula[i..end]);
                 i = end;
-                external = false;
+                external = None;
                 continue;
             }
             (formula[i..end].to_owned(), end)
         } else {
             out.push(ch);
             i += ch.len_utf8();
-            external = false;
+            external = None;
             continue;
         };
         let written = &formula[i..=end];
         i = end + 1;
-        if std::mem::take(&mut external) || prefix.contains('[') {
+        let mut link = std::mem::take(&mut external).map(|(link, at)| (link.to_owned(), at));
+        // A quoted `'[1]My data'!` names its link inside the quotes.
+        if link.is_none()
+            && let Some((named, sheet)) = prefix
+                .strip_prefix('[')
+                .and_then(|rest| rest.split_once(']'))
+        {
+            link = Some((named.to_owned(), out.len()));
+            prefix = sheet.to_owned();
+        }
+        if link.as_ref().is_some_and(|(link, _)| !own(link)) || prefix.contains('[') {
             out.push_str(written);
             continue;
         }
@@ -240,9 +269,19 @@ pub fn retarget_sheets(
                     .collect(),
             ),
         };
+        // The workbook's own link stays on a renamed sheet, inside the
+        // quotes when its name needs them, and leaves with a deleted one.
+        if let Some((_, at)) = &link {
+            out.truncate(*at);
+        }
         match names {
             Some(names) => {
-                out.push_str(&sheet_prefix(&names.join(":")));
+                let sheet = sheet_prefix(&names.join(":"));
+                match (&link, sheet.strip_prefix('\'')) {
+                    (Some((link, _)), Some(quoted)) => out.push_str(&format!("'[{link}]{quoted}")),
+                    (Some((link, _)), None) => out.push_str(&format!("[{link}]{sheet}")),
+                    (None, _) => out.push_str(&sheet),
+                }
                 out.push('!');
             }
             None => out.push_str("#REF!"),
@@ -1096,58 +1135,61 @@ fn number_end(bytes: &[u8], start: usize) -> usize {
     end
 }
 
-fn fixed(text: &str) -> (bool, &str) {
-    match text.strip_prefix('$') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    }
-}
-
 /// `$AB` or `C`: one to three letters naming a sheet column.
+/// Case-insensitive (R5); over-long letters already fail the grid bound.
 fn column(text: &str) -> Option<Part> {
-    let (fixed, letters) = fixed(text);
-    if letters.is_empty() || letters.len() > 3 || !letters.bytes().all(|b| b.is_ascii_alphabetic())
-    {
-        return None;
+    match crate::a1::parse_line_side(text)? {
+        crate::a1::LineSide::Col { col, fixed } => {
+            let value = i64::from(col);
+            (value <= MAX_COLUMN).then_some(Part { fixed, value })
+        }
+        crate::a1::LineSide::Row { .. } => None,
     }
-    let value = letters.bytes().fold(0_i64, |value, b| {
-        value * 26 + i64::from(b.to_ascii_uppercase() - b'A' + 1)
-    });
-    (value <= MAX_COLUMN).then_some(Part { fixed, value })
 }
 
-/// `$12` or `7`: a sheet row.
+/// `$12` or `7`: a sheet row. Leading zeros accepted, as before; more
+/// than seven digits refused, as before (a zero-padded 8-digit row would
+/// otherwise pass the grid bound).
 fn row(text: &str) -> Option<Part> {
-    let (fixed, digits) = fixed(text);
-    if digits.is_empty() || digits.len() > 7 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
         return None;
     }
-    let value: i64 = digits.parse().ok()?;
-    (1..=MAX_ROW)
-        .contains(&value)
-        .then_some(Part { fixed, value })
+    match crate::a1::parse_line_side(text)? {
+        crate::a1::LineSide::Row { row, fixed } => {
+            let value = i64::from(row);
+            (1..=MAX_ROW)
+                .contains(&value)
+                .then_some(Part { fixed, value })
+        }
+        crate::a1::LineSide::Col { .. } => None,
+    }
 }
 
-/// `$B$12`, `B$12`, `$B12` or `B12`.
+/// `$B$12`, `B$12`, `$B12` or `B12`. Case-insensitive (R5).
 fn cell(text: &str) -> Option<(Part, Part)> {
-    let split = text
-        .char_indices()
-        .skip(1)
-        .find(|&(_, ch)| ch == '$' || ch.is_ascii_digit())?
-        .0;
-    Some((column(&text[..split])?, row(&text[split..])?))
+    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
+        return None;
+    }
+    let parsed = crate::a1::parse_cell(text)?;
+    let (col, row) = (i64::from(parsed.col), i64::from(parsed.row));
+    (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((
+        Part {
+            fixed: parsed.col_fixed,
+            value: col,
+        },
+        Part {
+            fixed: parsed.row_fixed,
+            value: row,
+        },
+    ))
 }
 
 fn number(value: i64) -> String {
     value.to_string()
 }
 
-fn letters(mut col: i64) -> String {
-    let mut out = Vec::new();
-    while col > 0 {
-        out.push(b'A' + ((col - 1) % 26) as u8);
-        col = (col - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
+/// The shared core's letters at this tokenizer's `i64` boundary: renders
+/// only see grid-checked values, so the `0` fallback is unreachable.
+fn letters(col: i64) -> String {
+    crate::a1::col_letters(u32::try_from(col).unwrap_or(0))
 }

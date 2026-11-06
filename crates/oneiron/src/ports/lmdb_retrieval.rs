@@ -1,9 +1,10 @@
 //! Configured text-query adapter, including composed session targets.
 use super::{RetrievalIndexExecution, TextQuery, Transactions};
-use crate::{
-    analyzer::MultilingualAnalyzer, error::Result, pipeline::ScoredEntity, store::ManifestDbs,
-};
+use crate::analyzer::MultilingualAnalyzer;
+use crate::error::Result;
+use crate::store::ManifestDbs;
 use heed::RoTxn;
+use oneiron_retrieval::pipeline::ScoredEntity;
 pub(crate) struct TextIndexView<'a, T> {
     target: &'a T,
     analyzer: &'a MultilingualAnalyzer,
@@ -26,7 +27,7 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
     ) -> Result<Vec<ScoredEntity>> {
         let mut scope = query.matches_scope;
         let options = crate::bm25::Bm25SearchOptions {
-            recency: None,
+            recency: query.recency,
             exact_posting_matches_scope: &mut scope,
             private_note_ids: query.private_note_ids,
         };

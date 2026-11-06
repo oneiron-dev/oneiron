@@ -21,9 +21,11 @@ pub enum LlmError {
 
 impl LlmError {
     /// Whether this failure says its provider is down, not that the request
-    /// or its credentials are wrong: a server error, a timeout, a cut stream
-    /// or an empty answer. The offer rests for its health, and a Dreamer
-    /// attempt it parks resumes when an offer recovers (OF-305).
+    /// or its credentials are wrong: a server error, a timeout, a cut stream,
+    /// an empty answer, or a lost media job (FIX 11464: EmptyResponse parity
+    /// until a named owner rules otherwise, L06-B 08:21). The offer rests for
+    /// its health, and a Dreamer attempt it parks resumes when an offer
+    /// recovers (OF-305).
     #[must_use]
     pub fn is_provider_unavailable(&self) -> bool {
         matches!(
@@ -33,7 +35,7 @@ impl LlmError {
                     | RetryableLlmError::Timeout
                     | RetryableLlmError::StreamCut
                     | RetryableLlmError::TransportFault(_)
-            ) | Self::Fatal(FatalLlmError::EmptyResponse)
+            ) | Self::Fatal(FatalLlmError::EmptyResponse | FatalLlmError::JobLost)
         )
     }
 }
@@ -147,6 +149,8 @@ pub enum RetryableLlmError {
     /// result row and receipt that carry the error.
     #[error("stream cut ({0})")]
     TransportFault(TransportFault),
+    #[error("device admission stopped")]
+    DeviceAdmissionStopped,
 }
 
 /// What cut a call on its transport, as the transport typed it.
@@ -206,6 +210,17 @@ impl RetryableLlmError {
     #[must_use]
     pub fn not_sent(stage: &str, detail: impl Into<String>) -> Self {
         Self::fault(TransportFaultKind::NotSent, Some(stage), detail.into())
+    }
+
+    /// Whether this is the typed not-sent fault a caller named by `stage`.
+    #[must_use]
+    pub fn is_not_sent_stage(&self, stage: &str) -> bool {
+        matches!(
+            self,
+            Self::TransportFault(fault)
+                if fault.kind == TransportFaultKind::NotSent
+                    && fault.stage.as_deref() == Some(stage)
+        )
     }
 
     /// The I/O failed at `stage` after the call went out: it may have run.
@@ -291,7 +306,11 @@ pub enum FatalLlmError {
     /// A request the provider refused, with its message: an HTTP 400's
     /// error text, bounded.
     #[error("invalid request: {message}")]
-    InvalidRequestDetail { message: String },
+    InvalidRequestDetail {
+        message: String,
+        /// The provider's structured error code, never inferred from its text.
+        code: Option<String>,
+    },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]
@@ -307,6 +326,12 @@ pub enum FatalLlmError {
     /// fallback's trigger, never handed to another offer.
     #[error("response erased")]
     ResponseErased,
+    /// A media job's submit went out and its provider's answer never
+    /// reached its row, so the job cannot be found again (FIX 11464): a
+    /// poll of the kept row reads this. The job may still run and bill at
+    /// its provider, so this is no proof the provider is down.
+    #[error("job lost")]
+    JobLost,
 }
 
 /// Why a decision read's answer cannot be read as its label probabilities. Each is checked on

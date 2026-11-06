@@ -1,6 +1,6 @@
 # Shared end-to-end harness
 
-This is Phase 2 support code, not the 29 test files. It drives a real, prebuilt
+This is the shared Phase 2 support code for the 29 planned test files. It drives a real, prebuilt
 server through public clients. It never imports engine crates, opens LMDB or Loro,
 seeds private records, builds a binary, installs a package, or downloads an asset.
 Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on the
@@ -8,8 +8,11 @@ coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
 The pinned plan has 29 files, 242 IDs, 443 public registry rows, and three explicit
-excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs;
-the `oneiron` TypeScript SDK uses its own camelCase DTOs. Do not interchange them.
+excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
+`vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
+DTOs. Bind each method's declared type rather than applying a casing rule to
+all SDK methods.
 Runtime OpenAPI is a binding diagnostic, never an expected-behavior oracle.
 
 ## Files and ownership
@@ -28,7 +31,7 @@ Under `/Users/olety/.claude/worktrees/solq-e2e-support/tests/e2e/`:
 
 Each area writer owns only their test file, area data, and
 `fixtures/<area>/manifest.json`. They do not edit shared helpers, shared pins, or
-another area's manifest. No existing tests are changed. The SDK dependencies are
+another area's manifest. Old unit tests are outside this suite and remain untouched. The SDK dependencies are
 `file:../../packages/oneiron` and `file:../../packages/oneiron-client`, not registry
 copies. The prepared JS package must already contain its built `dist/` and Linux
 native addon. No lockfile was generated on the Mac.
@@ -248,9 +251,12 @@ The binary bytes do not exist in this source-only writer lane. Do not invent
 hashes. The fleet build/asset lane must supply an **absolute**
 `E2E_BUILD_MANIFEST` and its independently supplied
 `E2E_BUILD_MANIFEST_SHA256`. Preflight verifies that digest, every listed asset,
-all fixture fragments, required capabilities, same-build provenance, and the
-29 test files. Missing pins block all selected IDs; there is no build/download
-fallback. The checked-in shared manifest declares binary requirements, not
+all fixture fragments, common runtime capabilities, same-build provenance, and
+the selected test files. Missing common pins block all selected IDs; optional
+client assets block only the cases that need them. There is no build/download
+fallback. Fixture `requires` lists document planned public prerequisites; they
+are not host capabilities. Tests use typed public calls, explicit capability
+gates, or TODOs to report unavailable journeys. The checked-in shared manifest declares binary requirements, not
 placeholder executable digests that could accidentally pass.
 
 `BuildManifest` is exported from `support/fixtures.ts`. It requires:
@@ -259,20 +265,23 @@ placeholder executable digests that could accidentally pass.
 - `assets`: mapping from ID to `{path,sha256,source:{uri,revision},licence,expectedFacts}`.
   Paths are absolute **files**, not directories. Include each loaded SDK/native
   file and organ dependency in the inventory, not just a directory hash.
-- Required IDs: `server`, `cli`, `bun`, `node`, `python`, `sdk-js`, `sdk-http`,
-  `native-addon`, `python-wheel`. `sdk-js` points to the prepared package's
-  public `dist/index.js`; `sdk-http` points to its public HTTP package entry.
-  `python` is the prepared venv interpreter; pin the installed extension as an
-  additional asset as well as the wheel. Add every required organ/browser/VM
-  executable and data file with a source, licence and digest.
-- `launcher`: argv prefix with an absolute, hash-listed Linux containment
-  executable. It must **exec** the appended command, keep host-visible PIDs,
-  deny outside network, retain loopback, and put all descendants (including
-  detached sessions) in the file's CPU/memory cgroup or equivalent. It receives
-  `E2E_FILE_SLOTS`, `E2E_CPU_CREDITS`, and `E2E_MEMORY_MIB`. No PID namespace that
-  hides ownership-journal PIDs from the coordinator. No shell interpolation.
-- `capabilities` includes `linux`, `network-isolated`, `four-slot-accounting`
-  plus each area's declared public prerequisites.
+- Common required IDs: `server`, `cli`, `bun`, `node`, `sdk-js`, `native-addon`.
+  `sdk-js` points to the prepared package's public `dist/index.js`; that package
+  loads its native addon even for remote pairing. Add `python` (the prepared
+  venv interpreter) and `python-wheel` for Python cases. Pin the installed Python extension as an additional
+  asset as well as the wheel. Include `sdk-http` if a case consumes it. Add every
+  required organ/browser/VM executable and data file with a source, licence and
+  digest. Every supplied asset is verified, even when its client is optional.
+- `launcher`: argv prefix with an absolute, hash-listed Linux executable that
+  execs the appended command without shell interpolation. On the fleet this can
+  be `/usr/bin/env`: the fleet job is already the sandbox (Engine, 5 Nov 02:51).
+  Do not add `sudo`, `unshare`, user namespaces or a nested cgroup. The fleet
+  enforces the booking's resource limits; the scheduler accounts for file slots
+  and passes `E2E_FILE_SLOTS`, `E2E_CPU_CREDITS`, and `E2E_MEMORY_MIB`. These are
+  accounting values, not additional per-file kernel limits. Ownership-journal
+  PIDs remain visible for cleanup. This mode does not claim network isolation.
+- `capabilities` includes `linux`, `fleet-job`, `slot-accounting`
+  plus runtime prerequisites explicitly checked by a selected scenario.
 - `environment`: prepared non-secret runtime paths/settings. HOME, XDG, TMP,
   locale, TZ and thread limits are fixture-owned. Inherited `ONEIRON_*` values
   are not carried into an engine. Generated credentials are private per flow.
@@ -294,24 +303,53 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 4
 
 `E2E_REPORT_DIR` optionally selects a protected absolute output directory.
 Otherwise the runner allocates one. The scheduler uses longest-estimated-file
-first, ties by name, with four slots and two CPU credits/4 GiB per slot.
-The reference total is 8 threads and 16 GiB. A missing containment launcher is a
-prerequisite, not permission to run eight uncontrolled servers on the host.
+first, ties by name, with up to four slots and two CPU credits/4 GiB per slot.
+The default reference total is 8 threads and 16 GiB. `--workers` accepts one
+through four slots and must fit the heaviest selected file.
+
+For wave 1 on a four-thread fleet booking, select the four files explicitly and
+use two slots (four CPU credits):
+
+```sh
+bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
+  --files boot.test.ts,memory.test.ts,retrieval.test.ts,privacy.test.ts
+```
+
+The report records the selected files and `scope.completePlan`. A partial run
+never claims completion of the 242-ID plan. The prepared manifest must identify
+the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
 
-Every planned ID gets PASS, FAIL or BLOCKED, duration and a reason where needed.
-Coverage includes the pinned row map and explicit exclusions. A required run
-succeeds only if all 242 IDs pass, file declarations/IDs match the plan, Bun's
-JUnit contains no skip/TODO/failure, all processes exit successfully, and the
-whole run (including preflight and cleanup) stays within 600 seconds. Optional
-profile results never claim default completeness. The 585-second planning
+Every selected planned ID gets PASS, FAIL or BLOCKED, duration and a reason
+where needed. Coverage includes the pinned row map and explicit exclusions. A
+run succeeds only if all selected IDs pass, file declarations/IDs match the
+plan, each PASS agrees with Bun's JUnit, and the whole run (including preflight
+and cleanup) stays within 600 seconds. A TODO or failing test keeps that run
+non-green but does not turn an independently passing sibling into FAIL. Full
+plan completion additionally requires all 242 IDs. Partial and optional-profile
+results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
 Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. Raw JUnit is not written to disk. Persisted artifacts
-are redacted first. Process logs are bounded rings; incomplete lines are not
-persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
+against registered IDs. The owned file process artifact retains redacted stdout/stderr,
+including the JUnit, up to the process reader's existing bounds. `fileDiagnostics` in the
+aggregate records JUnit presence, case/match/unknown/duplicate counts, file exit/signal,
+and registration errors. A harness error remains a FAIL but does not replace an existing
+per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
+recorded separately as `cleanupError`, preserving an earlier reason.
+
+Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld.
+Private stderr is retained only as decoded JSON with its fields redacted before serialization;
+non-JSON private stderr is withheld. This also redacts registered values containing quotes
+that were escaped in an SDK error envelope. CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
+stdin or credentials. SDK top-level failures also write their error envelope to stderr for
+redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values. Any truncated stdout/stderr
+stream is withheld entirely, with a truncation flag, because a cut secret fragment cannot be
+reliably redacted by matching the original full value.
+Bun receives a redacted error message rather than raw exception properties, so its JUnit
+cannot inspect a failing CLI's private stdout. Process logs are bounded rings; incomplete
+lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
 operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs
@@ -332,6 +370,6 @@ public-observation cadence, four slots, two CPU credits and 4 GiB per slot,
 and 600s whole-suite deadline. They are not new product laws. Zero automatic
 mutation retries, zero model downloads, no private clocks or queue ticks.
 
-This writer performed source readback and fixture digest/registry consistency
-checks only. Typechecking, runtime protocol qualification, and measured suite
-execution remain for the prepared Linux lane; they were not run on the Mac.
+Builds, typechecking and suite execution run only on fleet Linux hosts. Nothing
+in this suite is built or executed on the coordinator Mac. Engine bugs found by
+an E2E case are filed as FIX-LIST rows; they do not hold the suite PR.

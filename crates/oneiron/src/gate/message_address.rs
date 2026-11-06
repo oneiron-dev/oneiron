@@ -4,7 +4,7 @@
 //! decision row is kept: the write it refuses rolls back with it.
 
 use crate::error::{Error, GateDenialReason, GateError};
-use crate::memory::MemoryError;
+use oneiron_contracts::memory::MemoryError;
 
 /// `FORBIDDEN`, carrying the typed denial `gate.deny.message_address`, with
 /// `reason` as its message and `suggestion` as its remedy.

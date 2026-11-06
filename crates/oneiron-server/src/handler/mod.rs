@@ -6,10 +6,12 @@
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
+mod admitted_windows;
 mod app_tier;
 mod asset_bodies;
 mod conn_state;
 mod connection;
+mod document_copy;
 mod documents;
 mod ephemeral;
 mod federation;
@@ -26,6 +28,8 @@ mod note_socket_tests;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+mod sealed_updates;
+pub(crate) mod selector_scope;
 mod socket_stop;
 mod transport;
 mod window_copy;
@@ -37,7 +41,7 @@ mod window_sync;
 pub(crate) use self::connection::ws_routes;
 pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
-pub(crate) use self::window_sync::selector_grant_scope;
+pub(crate) use self::selector_scope::selector_grant_scope;
 
 #[cfg(test)]
 mod tests;

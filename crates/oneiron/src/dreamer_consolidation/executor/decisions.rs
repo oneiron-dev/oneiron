@@ -10,10 +10,11 @@ use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::settle::decision_pages::{json_len, split_pages};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::BoundedAutoChecker;
-use crate::llm::decision::{
-    AnswerActor, AskAct, AskRole, AskTo, DecisionAsk, DecisionBand, DecisionBandPolicy,
-    DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, HumanAskReason,
-    MAX_DECISION_STATE_BYTES, RoleRank, TypedDecision,
+use crate::llm::decision::{AskRole, AskTo, DecisionAsk, HeldLadder, TypedDecision};
+use crate::model_decision::AnswerActor;
+use crate::model_decision::{
+    AskAct, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung,
+    HumanAskReason, MAX_DECISION_STATE_BYTES, RoleRank,
 };
 
 mod identity_choice;
@@ -290,8 +291,15 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
         // step that traps or fails leaves the prefix on the tally.
-        for (hash, usage) in &spent {
-            charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage)?;
+        for (index, (hash, usage, _)) in spent.iter().enumerate() {
+            if let Err(error) = charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage) {
+                for (_, usage, memoized) in &spent[index..] {
+                    if !*memoized {
+                        charges.record_usage(usage);
+                    }
+                }
+                return Err(error.into());
+            }
         }
         decided
     }
@@ -299,7 +307,7 @@ impl ConsolidationExecutor<'_> {
 
 /// The verdict role's request for a typed read: its model, scope and binding, with no
 /// messages yet.
-fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRequest> {
+fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Result<LlmRequest> {
     let keyless = call.inference.selected_keyless();
     Ok(LlmRequest {
         model: call.model.clone(),
@@ -308,7 +316,7 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRe
             scope: scope.clone(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::Durable {
-                fallback: crate::llm::DeterministicFallback {
+                fallback: oneiron_model::llm::DeterministicFallback {
                     name: "json_rules_v1".into(),
                     config: None,
                 },

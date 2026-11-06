@@ -9,7 +9,9 @@
 //! never the unrestricted empty record set (FIX 7928). Only a non-owner guest
 //! grant, read from its own row in the caller's transaction, is a guest's: a
 //! live Owner, an own-device or member grant and an in-Grant agent never meet
-//! a pact here, whatever a pact binding names.
+//! a pact here, whatever a pact binding names. Ordinary membership credentials
+//! instead meet the full six-axis Scope of their current membership grant
+//! (FIX 12441); cached proofs cannot retain removed member authority.
 
 use std::collections::BTreeSet;
 
@@ -17,11 +19,11 @@ use super::*;
 use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{
-    FederationDirectionScope, FederationGrant, FederationGrantScope, Scope, ScopeAxis,
-    selector_range_of,
-};
+use crate::federation::{FederationGrant, FederationGrantScope};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_authority::federation::{
+    FederationDirectionScope, Scope, ScopeAxis, selector_range_of,
+};
 
 /// A narrowing widens back by its own party only, within the dual-signed
 /// ceiling; any other widening takes an epoch-advancing dual-signed re-pact
@@ -172,7 +174,7 @@ pub(in crate::authority) fn clamp_scope(
 
 fn bands_within(
     bands: &ScopeAxis<u8>,
-    ranges: &ScopeAxis<crate::federation::SelectorRange>,
+    ranges: &ScopeAxis<oneiron_authority::federation::SelectorRange>,
 ) -> ScopeAxis<u8> {
     if matches!(ranges, ScopeAxis::All) {
         return bands.clone();
@@ -319,6 +321,12 @@ impl Vault {
         claims: &SlipClaims,
         position: impl FnOnce() -> Result<Option<Scope>>,
     ) -> bool {
+        if !self
+            .member_slip_scope_is_current_in_txn(txn, claims)
+            .unwrap_or(false)
+        {
+            return false;
+        }
         let Some(current) = self.guest_view_narrowed_in_txn(txn, claims) else {
             return true;
         };
@@ -359,15 +367,21 @@ impl Vault {
     /// The scope a cached view with `claims` carries in `txn` (FIX 9117): its
     /// own, met with its guest grant's current effective scope once a later
     /// narrowing reached past it, as a fresh verification meets it. Every
-    /// non-guest view, and a guest view still inside, keeps its own.
+    /// non-member, non-guest view keeps its own. A member view meets every
+    /// current grant axis; an unjudgeable member bound admits no Scope.
     pub(crate) fn current_view_scope_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
     ) -> Scope {
-        match self.guest_view_narrowed_in_txn(txn, claims) {
+        let scope = match self.guest_view_narrowed_in_txn(txn, claims) {
             Some(current) => clamp_scope(&claims.scope, &current),
             None => claims.scope.clone(),
+        };
+        match self.current_member_slip_scope_in_txn(txn, claims) {
+            Ok(Some(current)) => scope.meet(&current),
+            Ok(None) => scope,
+            Err(_) => Scope::default(),
         }
     }
 
@@ -375,13 +389,17 @@ impl Vault {
     /// grant's current effective scope (FIX 9117): true for every non-guest
     /// view and for a guest view no later narrowing reached past. A door
     /// that skips its per-row judgment for a whole-vault view takes its
-    /// narrowed path once this is false.
+    /// narrowed path once this is false. A member view must also stay inside
+    /// every axis of its current membership grant.
     pub(crate) fn guest_view_current_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
     ) -> bool {
         self.guest_view_narrowed_in_txn(txn, claims).is_none()
+            && self
+                .member_slip_scope_is_current_in_txn(txn, claims)
+                .unwrap_or(false)
     }
 
     /// [`Self::guest_view_current_in_txn`] in its own snapshot, closed before
@@ -393,7 +411,8 @@ impl Vault {
 
     /// A slip verified in `txn`: its grant, invitation and delegation still
     /// stand, and a Connect guest's view is met with its grant's current
-    /// effective scope (FIX 7929).
+    /// effective scope (FIX 7929). An ordinary member's view meets its
+    /// current membership Scope on all six axes (FIX 12441).
     pub(super) fn admitted_slip_view_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -401,12 +420,42 @@ impl Vault {
         now: u64,
     ) -> Result<VerifiedSlip> {
         self.require_live_slip_refs_in_txn(txn, verified.claims(), now)?;
-        Ok(
-            match self.guest_view_narrowed_in_txn(txn, verified.claims()) {
-                Some(current) => verified.meet_current_scope(&current),
-                None => verified,
-            },
-        )
+        let verified = match self.guest_view_narrowed_in_txn(txn, verified.claims()) {
+            Some(current) => verified.meet_current_scope(&current),
+            None => verified,
+        };
+        self.member_bounded_slip_view_in_txn(txn, verified)
+    }
+
+    /// A contact-bound slip verified in `txn` (FIX 4325): its naming still
+    /// stands. No guest narrowing applies: the binding names no grant.
+    pub(super) fn admitted_trusted_contact_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: TrustedContactCredential,
+        now: u64,
+    ) -> Result<TrustedContactCredential> {
+        self.require_live_slip_refs_in_txn(txn, credential.claims(), now)?;
+        Ok(credential)
+    }
+
+    /// Whether a contact credential verified earlier still holds in `txn`
+    /// (FIX 4325): its slip live on this vault's clock and fold, its naming
+    /// still standing. The contact's own doors recheck it in their acting
+    /// transaction, as an owner act rechecks its proof.
+    pub(crate) fn trusted_contact_holds_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: &TrustedContactCredential,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let claims = credential.claims();
+        Ok(now >= claims.issued_at
+            && now < claims.expires_at
+            && fold.vault_id == Some(claims.vault_id)
+            && fold.slip_is_live(&claims.slip_id)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?)
     }
 
     /// Whether a guest grant reaches TASK `task` (FIX 7928, 7929): an Ask

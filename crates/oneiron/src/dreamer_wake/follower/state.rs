@@ -5,6 +5,8 @@
 //! pins) and its model results (a suffix's readings with the cache evidence
 //! of its call, or a keyframe's folded text).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -14,11 +16,11 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::dreamer_wake::{SieveSpan, SpanKind};
 use crate::error::{Error, Result};
-use crate::llm::{CacheCallUsage, Scope, ScopeResource};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{CacheCallUsage, Scope, ScopeResource};
 
 use super::log::{Log, quote_in};
 
@@ -38,6 +40,11 @@ const CHUNKS: SideTable<(SessionKey, (EntityId, EntityId), [u8; 32]), (u64, u32)
     SideTable::new(&side_table::DREAMER_FOLLOWER_CHUNK);
 pub(super) const RESULTS: SideTable<ResultKey, FollowerResult, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_RESULT);
+/// Whether a masked copy of a `DREAMER_FOLLOWER_RESULT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_follower_result_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<FollowerResult, Named>(bytes)
+}
 
 /// The try writing a session: its attempt and the lease generation within
 /// that try. One writer at a time; a publish from any other is refused.
@@ -454,10 +461,11 @@ pub(super) fn forget_frames_in_txn(
 /// whole, a suffix's result keeps its other readings, and a row that no
 /// longer decodes goes, so an erase never fails on it.
 pub(super) fn forget_results_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     turns: &[EntityId],
 ) -> Result<()> {
+    let store = write.store;
     let rows = RESULTS
         .iter_raw_from(store, txn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -501,11 +509,39 @@ pub(super) fn forget_results_in_txn(
         match (kept, <ResultKey as SideKey>::decode_key(&raw)) {
             (Some(kept), Some(key)) => RESULTS.put(store, txn, &key, &kept)?,
             _ => {
+                crate::secret_custody::revoke_side_row_prefix_custody_in_txn(
+                    write, txn, &RESULTS, &raw,
+                )?;
                 RESULTS.delete_from(store, txn, &raw)?;
             }
         }
     }
     Ok(())
+}
+
+/// Every TURN the results name — a keyframe's folded turns and every
+/// reading's TURN — for the exclusion hook, which must find folded words
+/// whose frames are already gone.
+pub(super) fn result_turns_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut turns = BTreeSet::new();
+    let rows = RESULTS
+        .iter_raw_from(store, txn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (_, value) in rows {
+        match RESULTS.decode_value(&value) {
+            Ok(FollowerResult::Keyframe { turns: folded, .. }) => {
+                turns.extend(folded);
+            }
+            Ok(FollowerResult::Readings { readings, .. }) => {
+                turns.extend(readings.iter().map(|reading| reading.turn));
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(turns)
 }
 
 /// The units and step hashes `attempt`'s results charge that no settlement

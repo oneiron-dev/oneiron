@@ -12,12 +12,12 @@ use super::manifest::{
     SectionBindingResolver, StateFamilyRef,
 };
 use crate::entity_id::EntityId;
-use crate::skill::SkillRecord;
-use crate::skill_hub::{
-    HubIndexEntry, HubPackage, HubPin, HubRef, RefFetch, SkillHubAdapter, pinned_tracking,
-};
+use crate::skill_hub::{RefFetch, SkillHubAdapter, pinned_tracking};
+use crate::store::skill_package::{HubIndexEntry, HubPackage};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::skill_record::SkillRecord;
+use crate::write_envelope::skill_source::{HubPin, HubRef};
 
 /// The section bindings this engine actually implements. Shared by proposal
 /// validation, post-consent admission and the registry rebuild, so a section

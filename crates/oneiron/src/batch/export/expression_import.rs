@@ -5,18 +5,17 @@
 use std::io::{Read, Seek};
 
 use super::archive_index::{
-    FLAG_EXPRESSION, IndexedArchive, QUEUE_EXPRESSION, Tag, id_at, ready_key,
+    FLAG_EXPRESSION, IndexedArchive, Loc, QUEUE_EXPRESSION, Tag, id_at, ready_key,
 };
-use super::document_import::parse_id;
+use super::document_import::{parse_id, stamp_archived_birth};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
-use crate::claim::{
-    ArchivedExpressionPreference, ClaimSubject, ExpressionPreferenceArchive, decode_claim_body,
-};
+use crate::claim::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 use crate::{EntityId, Vault};
 
 /// A history key's tail: learned-at and id.
@@ -29,7 +28,11 @@ pub(super) fn is_expression(row: &ExportEntity) -> bool {
             .to_bytes()
             .ok()
             .and_then(|bytes| decode_claim_body(&bytes, false).ok())
-            .is_some_and(|body| crate::claim::is_expression_preference_predicate(&body.predicate))
+            .is_some_and(|body| {
+                crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+                    &body.predicate,
+                )
+            })
 }
 
 /// One expression row as its history holds it.
@@ -55,7 +58,9 @@ fn archived_row(
 }
 
 /// The history `group` (mapped subject, predicate and NUL) names, read back
-/// from the row index in native order.
+/// from the row index in native order, with the archived Supersedes links
+/// each of its rows closes by (FIX 8658): the links are archive data the
+/// cross-check below still has to account for, edge by edge.
 fn history(
     archive: &IndexedArchive<'_, impl Read + Seek>,
     group: &[u8],
@@ -70,7 +75,19 @@ fn history(
         rows.push(archived_row(archive, &row)?);
         after = Some(key);
     }
-    ExpressionPreferenceArchive::new(rows)
+    let mut links = Vec::new();
+    for row in &rows {
+        let mut prefix = row.id.as_bytes().to_vec();
+        prefix.push(EdgeKind::Supersedes as u8);
+        let mut after: Option<Vec<u8>> = None;
+        while let Some((key, value)) = archive.index.next(Tag::Edge, &prefix, after.as_deref())? {
+            let closed = id_at(&key, ENTITY_ID_LEN + 1)?;
+            let edge: ExportEdge = archive.spool.parse(Loc::decode(&value)?)?;
+            links.push((row.id, closed, edge.created_at));
+            after = Some(key);
+        }
+    }
+    ExpressionPreferenceArchive::new(rows, links)
 }
 
 /// Groups every expression row into its history, checks each history and the
@@ -205,6 +222,11 @@ pub(super) fn restore<R: Read + Seek>(
         ))?;
     let history = history(archive, &group)?;
     let (inserted, unchanged) = history.restore_in_txn(vault, txn, actor)?;
+    // FIX 1178: each landed row's archived birth, stamped once the history
+    // compares exact.
+    for id in history.ids() {
+        stamp_archived_birth(vault, txn, archive, &id)?;
+    }
     archive.index.remove(Tag::HistoryPending, id.as_bytes())?;
     for id in history.ids() {
         archive.index.remove(Tag::Waiting, id.as_bytes())?;
@@ -237,9 +259,12 @@ pub(super) fn validate_local_actor(
         .ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("import actor header"))?;
-    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+        header.entity_type,
+        actor.actor_class(),
+    )?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("import actor is not locally active"));
     }

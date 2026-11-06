@@ -1,5 +1,7 @@
 //! Typed serving payloads and observable extraction receipts.
-use crate::{ModelId, affect::Vad, embed::EmbedderLocality};
+use crate::store::embedding::EmbedderLocality;
+use oneiron_contracts::affect::Vad;
+use oneiron_model::llm::ModelId;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 #[derive(Debug, Clone, Serialize)]
@@ -208,21 +210,7 @@ fn strict_part_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
         dominance: vad.dominance,
     })
 }
-/// The scheduling class of one extraction call. It orders calls in a host's
-/// dispatcher and is never part of the input, its digest or a marker's dedupe
-/// key: the tagger never sees it. A tagging marker carries one, and the
-/// reconciler passes each marker's effective class (FIX 6755).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExtractionWork {
-    /// A call someone waits on: the explicit tag door, and a marker a chat or
-    /// voice witness commit owes. It goes before every waiting bulk call, and
-    /// a running call is never pre-empted for it.
-    Live,
-    /// Everything else: a marker an import, a host executor, a promotion, a
-    /// publication or a recovery owes, and feedback redaction.
-    Bulk,
-}
+pub use crate::store::ExtractionWork;
 /// Who one extraction call is made for: the key a host's dispatcher shares
 /// its room by (FIX 9519), so one caller's backlog never holds another's
 /// calls back. Opaque and stable: an actor, or a vault's own background
@@ -394,6 +382,24 @@ pub trait ExtractionEncoder: Send + Sync {
     ) -> EncoderAttempt {
         let _ = caller;
         self.infer(input, work)
+    }
+    /// A call with the invocation's vault and host extraction permission.
+    /// Queued transports must retain the context and admit each actual send.
+    fn infer_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &crate::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        if let Err(error) = context.authorize(input, work, self.model_id(), self.locality()) {
+            return EncoderAttempt {
+                execution: None,
+                panicked: false,
+                result: Err(error),
+            };
+        }
+        self.infer_for(input, work, caller)
     }
 }
 /// Not deserializable: persistence requires a locally validated shadow receipt.

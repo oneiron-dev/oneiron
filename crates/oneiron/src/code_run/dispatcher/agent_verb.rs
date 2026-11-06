@@ -6,8 +6,11 @@ mod session_write;
 use serde_json::Value;
 
 use crate::EntityId;
+use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
-use crate::code_run::payload::decode_self_dispatch_outcome;
+use crate::code_run::payload::{
+    agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+};
 use crate::code_run::replay::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayGeneration, CodeRunReplayRecord,
 };
@@ -19,9 +22,11 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
-use crate::task_verb::sdk::{AgentVerb, ConnectorCallReply, SecretUseAnswer};
+use crate::task_verb::sdk::AgentVerb;
+use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -44,6 +49,9 @@ const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 /// (FIX 3194): nothing was written, so the run parks, and a replay of the
 /// step asks the door again.
 const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+
+/// A media call's admission trapped before its physical effect ran.
+const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -130,15 +138,29 @@ impl HostSelfDispatcher<'_> {
         let origin = origin
             .with_hook_ask(self.parked_ask(&parked, site)?)
             .with_step(site.map(|_| invocation));
+        // Only the native point-view producer is covered here. Other verbs
+        // keep their existing unknown ledger until their reads are captured.
+        let read_capture =
+            (call.verb == AgentVerb::VaultGet && site.is_some()).then(ReadCapture::default);
+        let origin = match &read_capture {
+            Some(capture) => origin.with_read_capture(capture.clone()),
+            None => origin,
+        };
+        let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
-            return Ok(connector_call_answer(
+            let answer = self.program_door_call(&**door, &call, &origin, invocation);
+            let captured = read_capture.and_then(|capture| capture.finish());
+            let outcome = connector_call_answer(
                 call.verb,
                 worded(
-                    answered(self.keep_no_secret_value(call.verb, answer)),
+                    answered(self.keep_no_secret_value(call.verb, answer?)),
                     &**door,
                 ),
-            ));
+            );
+            if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
+                self.note_verb_read_worlds(site, answer, captured);
+            }
+            return Ok(outcome);
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -220,6 +242,22 @@ impl HostSelfDispatcher<'_> {
                     )?;
                 return Err(error);
             }
+            Err(error @ Error::DurableStepTrapped) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &never_ran_mark(MEDIA_STEP_TRAPPED),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(error);
+            }
             Err(error) => return Err(error),
         };
         // A receipt keeps its call's answer as its record's first row.
@@ -237,6 +275,8 @@ impl HostSelfDispatcher<'_> {
             true,
             site.run_id,
         )?;
+        // The replay row is persisted; the door releases what the answer held (FIX 10633).
+        door.answer_recorded();
         Ok(outcome)
     }
 
@@ -316,7 +356,7 @@ impl HostSelfDispatcher<'_> {
     ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
         match answer {
             Ok(mut answer) if verb == AgentVerb::RevealWait => {
-                let kept = crate::task_verb::sdk::kept_reveal_answer(&answer.output);
+                let kept = crate::code_run::kept_reveal_answer(&answer.output);
                 if kept != answer.output {
                     let output = std::mem::replace(&mut answer.output, kept);
                     *self.hook_view.borrow_mut() = Some(serde_json::json!({ "output": output }));
@@ -344,7 +384,7 @@ impl HostSelfDispatcher<'_> {
         let (true, Some(door)) = (wait.verb == AgentVerb::RevealWait, &self.agent_verbs) else {
             return Ok(None);
         };
-        let Some(lease) = crate::task_verb::sdk::kept_reveal_lease(&answer.output) else {
+        let Some(lease) = crate::code_run::kept_reveal_lease(&answer.output) else {
             return Ok(None);
         };
         let origin = HostWriteOrigin::new(self.agent_verb_envelope(wait.verb, None)?)
@@ -589,8 +629,8 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 }
 
 /// The mark a write's receipt keeps when it never ran: a verb hook stopped it
-/// ([`VERB_HOOK_STOPPED`]), or no provider answered it
-/// ([`PROVIDER_UNAVAILABLE`]).
+/// ([`VERB_HOOK_STOPPED`]), no provider answered it ([`PROVIDER_UNAVAILABLE`]),
+/// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
         effect: SelfEffect::AgentVerb,
@@ -606,6 +646,7 @@ fn never_ran(row: &CodeRunBridgeCall) -> bool {
         Ok(SelfDispatchOutcome::Denied(refused))
             if refused.reason_codes == [VERB_HOOK_STOPPED]
                 || refused.reason_codes == [PROVIDER_UNAVAILABLE]
+                || refused.reason_codes == [MEDIA_STEP_TRAPPED]
     )
 }
 
@@ -708,34 +749,30 @@ fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
         .wait_ref()
 }
 
-/// A verb call's identity: the verb and its input with object keys sorted, so
-/// a re-run that writes the same fields in another order makes the same call.
-fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
-    fn sorted(value: &Value) -> Value {
-        match value {
-            Value::Object(fields) => {
-                let mut fields: Vec<_> = fields.iter().collect();
-                fields.sort_unstable_by_key(|(name, _)| *name);
-                Value::Object(
-                    fields
-                        .into_iter()
-                        .map(|(name, value)| (name.clone(), sorted(value)))
-                        .collect(),
-                )
-            }
-            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
-    let mut identity = verb.as_bytes().to_vec();
-    identity.push(0);
-    identity.extend(sorted(input).to_string().into_bytes());
-    identity
-}
-
 /// The identity of the verb call a receipt row recorded, if the row is one.
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
     let (verb, input) = recorded_call(row)?;
+    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+        if !input.is_empty() {
+            return None;
+        }
+        let rmpv::Value::Map(fields) = &row.request else {
+            return None;
+        };
+        let (_, rmpv::Value::Binary(digest)) = fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("input_identity"))?
+        else {
+            return None;
+        };
+        if digest.len() != 32 {
+            return None;
+        }
+        let mut identity = verb.as_bytes().to_vec();
+        identity.push(0);
+        identity.extend_from_slice(digest);
+        return Some(identity);
+    }
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
 }
 
@@ -784,4 +821,79 @@ pub(crate) fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
             .and_then(|(_, value)| value.as_str())
     };
     Some((field("verb")?, field("input")?))
+}
+
+/// How an operation's send went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretUseStatus {
+    /// The provider answered; `result` is its answer.
+    Answered,
+    /// The operation failed; `failure` says why.
+    Failed,
+    /// It ran, but its result could not be cleared of the value, so none
+    /// comes back.
+    Withheld,
+}
+
+/// `self.use`'s answer. It never holds the value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseAnswer {
+    pub status: SecretUseStatus,
+    /// The operation's answer, when it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    /// Why it failed, when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    pub receipt: SecretUseRecord,
+}
+
+/// One use's receipt: what was used, by what, and how it went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseRecord {
+    pub handle: String,
+    /// The secret's rotation generation when it was used.
+    pub generation: u32,
+    /// The custody record whose value the send actually presented, as its
+    /// door released it (FIX 8052); distinct from the admitted handle.
+    /// `None` when nothing was sent, or nothing said what was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_custody: Option<EntityId>,
+    /// The generation the send actually presented; distinct from the
+    /// admitted generation. `None` when nothing said what was presented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_generation: Option<u32>,
+    /// The effector the binding names, such as `connector:slack`.
+    pub effector: String,
+    pub operation: String,
+    /// The Gate record that keeps it, `gate:<hex>`.
+    pub decision: String,
+    pub used_at: u64,
+}
+
+/// The answer of a `reveal.wait` as a run's record keeps it: without the
+/// value. The guest reads the full answer; its step row and any receipt keep
+/// this one.
+#[must_use]
+pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
+    let mut kept = output.clone();
+    if let Some(fields) = kept.as_object_mut() {
+        fields.remove("value");
+        fields.remove("value_base64");
+    }
+    kept
+}
+
+/// The lease a kept `granted` answer of `reveal.wait` names: the lease a
+/// replay of its step reads the value again under (FIX 2360). `None` for any
+/// other answer.
+pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
+    if output.get("decision")?.as_str()? != "granted" {
+        return None;
+    }
+    let lease = output.get("receipt")?.get("lease")?.as_str()?;
+    EntityId::from_hex(lease).ok()
 }

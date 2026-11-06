@@ -12,11 +12,11 @@ use super::{
     record_external_effect_policy,
 };
 use crate::connector_key;
+use crate::consent::approval_proof::AdmittedApproval;
 use crate::error::Result;
 use crate::gate::decision::{GateDecision, GateOutcome};
 use crate::gate::input::ExternalEffectGateInput;
 use crate::gate::resolution::PolicyManifestResolution;
-use crate::outbound_intent_ledger::AdmittedApproval;
 use crate::store::{GateDecisionId, Store};
 
 /// What one admission of a two-actor mutation recorded: both actors'

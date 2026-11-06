@@ -42,7 +42,7 @@ pub(super) fn score_query_terms(
         // strictly ascending — an equal or descending neighbour means two
         // dup items share one entity (df drift) and scoring fails closed.
         let mut previous = None;
-        let mut count = 0u64;
+        let mut entries = Vec::new();
         for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
@@ -54,12 +54,12 @@ pub(super) fn score_query_terms(
                 ));
             }
             previous = Some(entry.id);
-            count += 1;
+            entries.push(entry);
         }
-        if count == 0 {
+        if entries.is_empty() {
             continue;
         }
-        let df = count as f64;
+        let df = entries.len() as f64;
         if df > n && !union {
             return Err(corrupted_with_diagnostic(
                 diagnostics,
@@ -69,15 +69,7 @@ pub(super) fn score_query_terms(
         }
         let n = n.max(df);
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
-        let Some(dups) = store
-            .text_postings()
-            .get_duplicates(rtxn, super::codec::posting_key(&query_term.term).as_bytes())?
-        else {
-            continue;
-        };
-        'entries: for item in dups {
-            let (_, dup) = item?;
-            let entry = decode_posting_entry(diagnostics, &dup)?;
+        'entries: for entry in entries {
             let id = entry.id;
             if !accept(&id)? {
                 continue;

@@ -12,21 +12,27 @@ mod call;
 mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
+pub mod dispatch_identity;
 mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
 mod guest_revoke;
 mod identity_kind;
+pub mod intent_id;
 mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
 mod pack_attribution;
 mod projection;
+pub mod prompt_stamp;
 mod questions;
 mod record;
 mod reference_refusal;
+mod refusal_reason;
+pub mod task_type_ref;
+pub use refusal_reason::RefusalReason;
 mod send_receipt_txn;
 mod served_form;
 mod session;
@@ -39,8 +45,9 @@ pub use self::authority_audit::{
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER, AUTHORITY_AUDIT_DEFAULT_LIMIT,
     AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditEventKind,
     AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow,
-    ColdAuthorityAuditRow, authority_audit_embedded,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow, authority_audit_embedded,
 };
+pub(crate) use self::call::unread_call_receipt_actor_in_txn;
 pub use self::call::{
     ActionInputs, CALL_RECEIPT_REF_PREFIX, CONNECTION_CALL_ACTOR_CLASS, CallAttemptRef,
     CallAttemptWitness, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
@@ -90,12 +97,13 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
-    GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
-    QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
-    QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
-    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
+    AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
+    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
@@ -127,6 +135,7 @@ pub(crate) use self::kernel::{
     FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
+pub(crate) use self::ledgers::durable_send_receipts_lenient;
 #[cfg(test)]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
@@ -219,3 +228,9 @@ pub(crate) use archive_source::{
 
 #[cfg(feature = "sync")]
 pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_id};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
+pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
+pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;

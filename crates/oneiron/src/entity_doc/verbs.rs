@@ -117,6 +117,21 @@ impl Vault {
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let (out, landed) = self.with_write_txn_grouped(|txn| {
+            for edit in edits {
+                let actor = edit
+                    .actor
+                    .ok_or(invalid("text operation requires an actor"))?;
+                super::forks::authorize(self, txn, authorization, entity, actor)?;
+                // A shared vault's role and record scope (FIX 9846).
+                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+            }
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
+                return Err(if edits.is_empty() {
+                    crate::error::Error::EntityNotFound
+                } else {
+                    refusal
+                });
+            }
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
@@ -127,9 +142,6 @@ impl Vault {
                 let actor = edit
                     .actor
                     .ok_or(invalid("text operation requires an actor"))?;
-                super::forks::authorize(self, txn, authorization, entity, actor)?;
-                // A shared vault's role and record scope (FIX 9846).
-                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
                 doc.doc
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
@@ -182,6 +194,9 @@ impl Vault {
             // A shared vault's role and record scope, whether the update lands
             // or is retained for review (FIX 9846).
             self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, &request.entity)? {
+                return Err(refusal);
+            }
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
@@ -526,7 +541,7 @@ pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
-    stamp: crate::provenance::ActorStamp,
+    stamp: crate::write_envelope::provenance::ActorStamp,
     replacement: &str,
     at: u64,
     sources: &[EntityId],

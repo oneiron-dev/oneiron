@@ -8,11 +8,11 @@ use crate::commitment::{
     CommitmentRecord, CommitmentStatus, CommitmentStrength, decode_commitment_claim,
 };
 use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{WakeTrigger, request_wake_in_txn};
 use crate::error::{Error, Result};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 
 use super::wake_event::{CommitmentWakeDue, encode_commitment_wake_event};
 
@@ -176,6 +176,19 @@ pub(super) fn current_wake_eligibility(
     }
     let txn = vault.store.env.read_txn()?;
     series_eligibility_in_txn(vault, &txn, record)
+}
+
+/// [`current_wake_eligibility`] through the caller's transaction: the same
+/// two checks, for an approval the caller commits beside its own write.
+pub(super) fn current_wake_eligibility_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    record: &CommitmentRecord,
+) -> Result<WakeEligibility> {
+    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(record) {
+        return Ok(skip);
+    }
+    series_eligibility_in_txn(vault, txn, record)
 }
 
 /// Eligible while the instance's series still fires, so an instance a

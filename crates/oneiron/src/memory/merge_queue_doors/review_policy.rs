@@ -19,11 +19,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
-use crate::critic::LensCatalog;
 use crate::merge_queue::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
     StoredQueueReviewPolicy, review_policy_unreadable_hold,
 };
+use crate::store::critic_lens::LensCatalog;
 use crate::{EdgeActorClass, EntityId};
 
 /// The Scope verb a Grant lists for the read row.
@@ -171,7 +171,7 @@ impl Memory<'_> {
         let row = input.policy.map(|policy| QueueReviewPolicy {
             catalog: policy.catalog,
             thresholds: policy.thresholds,
-            set_by: actor,
+            set_by: Some(actor),
             set_at,
         });
         self.vault

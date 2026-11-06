@@ -16,16 +16,18 @@ use crate::agent_dispatch::{
     AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
+use crate::context_projection::ContextSpec;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::habit::TaskRole;
 use crate::registry::{
     ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
+
+mod brief_text;
 
 /// Weight for the `AssignedTo` / `Mentions` edge a brief writes.
 const BRIEF_ASSIGN_EDGE_WEIGHT: f32 = 1.0;
@@ -68,6 +70,7 @@ impl Vault {
             state: ThreadState::Open,
             locator: anchor.locator.clone(),
             drift: None,
+            body: None,
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
@@ -205,6 +208,7 @@ impl Vault {
                 state,
                 locator: thread.anchor.locator.clone(),
                 drift: thread.drift,
+                body: thread.anchor.body.clone(),
             };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
@@ -328,11 +332,13 @@ impl Vault {
                 .find(|thread| thread.thread_id == *thread_id)
                 .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
             let comments = comments_from_active_claims(*thread_id, claims);
-            let thread_text = comments
-                .iter()
-                .map(|comment| comment.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let resources = crate::office_body::document_resources();
+            let (mut transcript_room, thread_text) =
+                brief_text::thread_transcript(&comments, &resources)?;
+            // The codec owns a second copy beside the returned transcript.
+            transcript_room
+                .take(oneiron_docedit::resource::wide(thread_text.len()))
+                .map_err(crate::office_body::machine_memory_refused)?;
             let brief_value = encode_brief_value(
                 thread_id,
                 &task_id,
@@ -369,13 +375,8 @@ impl Vault {
             if let Some(agent) = assignee
                 && self.get_entity_type_in_txn(&*wtxn, &agent)? == Some(ENTITY_TYPE_AGENT_DEF)
             {
-                let mut briefing = format!(
-                    "Annotation thread {} on artifact {}@{} was assigned to you as {brief_ref}. The thread:\n{thread_text}",
-                    thread_id.to_hex(),
-                    artifact_id.to_hex(),
-                    thread.anchor.version,
-                );
-                briefing.truncate(briefing.floor_char_boundary(CONTEXT_SPEC_MAX_TEXT_BYTES));
+                let (_briefing_room, briefing) =
+                    brief_text::agent_briefing(&thread, &brief_ref, &thread_text, &resources)?;
                 // The brief claim above is in this transaction, so dispatch's
                 // annotation hold sees it and parks the attempt while the
                 // thread is unattached.
@@ -727,6 +728,7 @@ pub(super) fn thread_from_head(
             artifact_id,
             version: head.anchor_version,
             locator: head.locator,
+            body: head.body,
         },
         origin_version: head.origin_version,
         state: head.state,

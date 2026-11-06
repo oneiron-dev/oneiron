@@ -16,13 +16,12 @@
 //! hosts register again. An entry ref restricts a read as an audience term;
 //! it is never a PERSON, a membership or a grant.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
 use super::*;
+use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceSessionRosterV1};
 use crate::error::RoomLiveSpeakersHold;
 use crate::interlocutor::{Interlocutor, InterlocutorSet};
-use crate::voice_identity::{VoiceAttributionEvidence, VoiceSessionRosterV1};
 
 /// Whether a live call with no stored roster holds its room's reads. While
 /// nothing in production writes a roster (FIX 3344), it does not: the call
@@ -30,55 +29,7 @@ use crate::voice_identity::{VoiceAttributionEvidence, VoiceSessionRosterV1};
 /// live source (CALLS "FIX 1388/1389 C2", amended 10-18).
 const MISSING_ROSTER_HOLDS: bool = false;
 
-/// The vault's live room-bound voice calls, by room.
-#[derive(Debug, Default)]
-pub(crate) struct LiveSpeakers {
-    rooms: Mutex<BTreeMap<EntityId, LiveRoom>>,
-}
-
-#[derive(Debug, Default)]
-struct LiveRoom {
-    /// Moves on each register and end. A room keeps it after its last call
-    /// ends, so a later call never reads as an earlier one did.
-    revision: u64,
-    /// Each live call's token and the roster ref its host heard it under.
-    calls: BTreeMap<EntityId, Option<String>>,
-}
-
-impl LiveSpeakers {
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<EntityId, LiveRoom>> {
-        self.rooms.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn register(&self, room: EntityId, call: EntityId, roster_ref: Option<String>) {
-        let mut rooms = self.lock();
-        let live = rooms.entry(room).or_default();
-        live.revision = live.revision.saturating_add(1);
-        live.calls.insert(call, roster_ref);
-    }
-
-    /// Token-exact and idempotent: an ended call never removes another.
-    fn remove(&self, room: EntityId, call: EntityId) {
-        let mut rooms = self.lock();
-        if let Some(live) = rooms.get_mut(&room)
-            && live.calls.remove(&call).is_some()
-        {
-            live.revision = live.revision.saturating_add(1);
-        }
-    }
-
-    fn snapshot(&self, room: EntityId) -> (u64, Vec<(EntityId, Option<String>)>) {
-        self.lock().get(&room).map_or((0, Vec::new()), |live| {
-            (
-                live.revision,
-                live.calls
-                    .iter()
-                    .map(|(call, roster)| (*call, roster.clone()))
-                    .collect(),
-            )
-        })
-    }
-}
+pub(crate) use crate::store::live_speaker_calls::LiveSpeakers;
 
 /// One voice call live in a room, registered by its host after the room
 /// proof. Hold it for the call's life: dropping it ends the registration,
@@ -158,8 +109,9 @@ impl RoomLiveSpeakerEntries {
         self.calls > 0
     }
 
-    /// Whether a live call brings a listener the room's members do not
-    /// cover: a speaker it must place, or a call with no stored roster.
+    /// Whether a live call brings a listener neither the room's members
+    /// nor a known vault Owner covers: a speaker it must place, or a call
+    /// with no stored roster.
     /// Such a listener's clearance is an unknown's.
     #[must_use]
     pub fn reads_unknown(&self) -> bool {
@@ -212,56 +164,55 @@ impl RoomLiveSpeakerEntries {
 }
 
 /// One speaker a live call must place in its room: heard on its roster and
-/// not positively a member.
+/// not covered by a member or a live vault Owner.
 pub(crate) struct RequiredSpeaker<'a> {
     pub(crate) speaker_key: &'a str,
     /// Placed by print or invite: it enters with no "who is this?" ask.
     pub(crate) placed: bool,
 }
 
-/// The speakers of `roster` that `members` do not cover, in the order first
-/// heard: every speaker the roster could not place, and every placed one
-/// whose placed identity is not a member on every segment that placed it.
-/// A placement that matches no member, or matches only partly, is not one.
+/// The speakers of `roster` that neither `members` nor a positive live
+/// vault Owner covers, in the order first heard. Every placed identity of
+/// a speaker must be covered; a wholly unplaced speaker remains required.
+/// This coverage changes no interlocutor identity or supervision.
 pub(crate) fn required_live_speakers<'a>(
     roster: &'a VoiceSessionRosterV1,
     members: &[EntityId],
-) -> Vec<RequiredSpeaker<'a>> {
+    is_owner: impl Fn(EntityId) -> Result<bool>,
+) -> Result<Vec<RequiredSpeaker<'a>>> {
     let mut keys: Vec<&str> = Vec::new();
     for segment in &roster.segments {
         if !keys.contains(&segment.speaker_key.as_str()) {
             keys.push(segment.speaker_key.as_str());
         }
     }
-    keys.into_iter()
-        .filter_map(|speaker_key| {
-            let placed: Vec<EntityId> = roster
-                .segments
-                .iter()
-                .filter(|segment| segment.speaker_key == speaker_key)
-                .filter_map(|segment| match &segment.evidence {
-                    VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
-                        Some(*subject_ref)
-                    }
-                    VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
-                        Some(*attendee_ref)
-                    }
-                    VoiceAttributionEvidence::ResidualCluster { .. } => None,
-                })
-                .collect();
-            if placed.is_empty() {
-                return Some(RequiredSpeaker {
-                    speaker_key,
-                    placed: false,
-                });
-            }
-            let covered = placed.iter().all(|identity| members.contains(identity));
-            (!covered).then_some(RequiredSpeaker {
-                speaker_key,
-                placed: true,
+    let mut required = Vec::new();
+    for speaker_key in keys {
+        let placed: Vec<EntityId> = roster
+            .segments
+            .iter()
+            .filter(|segment| segment.speaker_key == speaker_key)
+            .filter_map(|segment| match &segment.evidence {
+                VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => Some(*subject_ref),
+                VoiceAttributionEvidence::InviteElimination { attendee_ref } => Some(*attendee_ref),
+                VoiceAttributionEvidence::ResidualCluster { .. } => None,
             })
-        })
-        .collect()
+            .collect();
+        let mut covered = !placed.is_empty();
+        for identity in &placed {
+            if !members.contains(identity) && !is_owner(*identity)? {
+                covered = false;
+                break;
+            }
+        }
+        if !covered {
+            required.push(RequiredSpeaker {
+                speaker_key,
+                placed: !placed.is_empty(),
+            });
+        }
+    }
+    Ok(required)
 }
 
 fn hold(room: EntityId, call: EntityId) -> Error {
@@ -361,7 +312,9 @@ impl Vault {
                 live.rosterless = true;
                 continue;
             };
-            for speaker in required_live_speakers(&roster, members) {
+            for speaker in required_live_speakers(&roster, members, |identity| {
+                crate::disclosure::live_vault_owner_person_in_txn(self, txn, identity)
+            })? {
                 let entry = crate::task_verb::attendee_entry_id(
                     room,
                     &ContainerAttendee::Speaker {

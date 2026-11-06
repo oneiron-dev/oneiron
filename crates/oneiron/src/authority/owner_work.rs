@@ -37,6 +37,10 @@
 //! signer's pieces of its commitment join at its parents, and the fold keeps
 //! it with them joined (`permit_pieces`, FIX 11866).
 //!
+//! The owner's mark that he imported an export secret request's supplement
+//! has effect as a cancel does, on an export secret request of his own, and
+//! the fold keeps the request marked (`import_mark`, FIX 12062).
+//!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
@@ -49,6 +53,7 @@
 
 mod cancel;
 mod custody;
+mod import_mark;
 mod kit_custody;
 mod permit_pieces;
 mod privacy_basis;
@@ -64,10 +69,12 @@ use super::*;
 
 pub(crate) use self::root_basis::{RootBasisCheck, check_root_basis_in_txn};
 
-/// One admitted request, as its entry carried it.
+/// One admitted request, as its entry carried it. The body rides in an
+/// `Arc` the folded view shares, so a view build clones no permit set
+/// (FIX 12013).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorkRequest {
-    request: OwnerWorkRequest,
+    request: Arc<OwnerWorkRequest>,
     /// The install key that signed it.
     key: [u8; 32],
     /// Each chain that admitted the carrier under the key at the request's
@@ -109,16 +116,32 @@ pub(super) struct OwnerWorkState {
     /// Each root request's cancels with effect, by the request's entry
     /// (`cancel`).
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    /// Each export secret request the owner's mark with effect says he
+    /// imported the supplement of (`import_mark`, FIX 12062).
+    imported: BTreeSet<AuthorityEntryHash>,
     /// Each custody permit piece, by its signer, commitment and place: what
     /// a request in pieces joins its permits from (`permit_pieces`, FIX
-    /// 11866).
+    /// 11866). Kept after its request joins (FIX 12015): a later fold
+    /// re-joins from pieces, a resumed fold seeds from them, and one
+    /// commitment may serve requests on more than one secret.
     permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
+    /// Each (signer, commitment) whose permit set a kept request joined and
+    /// verified here, with that request as the fold keeps it: the `Arc`
+    /// `requests` holds (FIX 12014, 12139). A later join of the same request
+    /// hands it out and copies no permit; one of another request on the set
+    /// shares its permits, copying and hashing none (FIX 12281). The first
+    /// join still verifies. A piece that changes a set drops its entry, and
+    /// a merge keeps only the left's entries on unchanged sets. An entry
+    /// whose request is superseded or whose secret is revoked is pruned (FIX
+    /// 12140).
+    verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
 }
 
-/// One admitted request as this install reads it.
+/// One admitted request as this install reads it. The body is the fold
+/// state's shared `Arc`, not a copy (FIX 12013).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct FoldedWorkRequest {
-    request: OwnerWorkRequest,
+    request: Arc<OwnerWorkRequest>,
     /// It counts at full strength here: its carrier's removal race passes.
     counts: bool,
 }
@@ -150,6 +173,9 @@ pub(crate) struct FoldedOwnerWork {
     revoked: BTreeSet<EntityId>,
     /// Each root request's cancels with effect, by the request's entry.
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    /// Each export secret request whose supplement the owner's mark says he
+    /// imported.
+    imported: BTreeSet<AuthorityEntryHash>,
 }
 
 impl AuthorityFold {
@@ -161,7 +187,20 @@ impl AuthorityFold {
         self.owner_work
             .requests
             .get(hash)
-            .map(|folded| &folded.request)
+            .map(|folded| folded.request.as_ref())
+    }
+
+    /// The admitted request signed as entry `hash`, counted here or not, as
+    /// the fold's own shared body: a reader that outlives the fold view
+    /// holds it without copying its permits (FIX 12138).
+    pub(crate) fn shared_owner_work_request(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> Option<Arc<OwnerWorkRequest>> {
+        self.owner_work
+            .requests
+            .get(hash)
+            .map(|folded| Arc::clone(&folded.request))
     }
 
     /// The admitted request signed as entry `hash` when it counts here,
@@ -175,7 +214,22 @@ impl AuthorityFold {
             .requests
             .get(hash)
             .filter(|folded| folded.counts)
-            .map(|folded| &folded.request)
+            .map(|folded| folded.request.as_ref())
+    }
+
+    /// The entry hashes of the admitted requests that count here (FIX
+    /// 4633): the owner-work map's keys whose stored `counts` flag is
+    /// true. Same native membership as
+    /// [`counted_owner_work_request`](Self::counted_owner_work_request),
+    /// as an enumeration.
+    pub(super) fn counted_owner_work_request_hashes(
+        &self,
+    ) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.owner_work
+            .requests
+            .iter()
+            .filter(|(_, folded)| folded.counts)
+            .map(|(hash, _)| *hash)
     }
 
     /// The one result of the request signed as entry `request`.
@@ -216,9 +270,9 @@ impl AuthorityFold {
                     && folded.request.kit_root().is_none()
                     && folded.request.executor == executor
                     && !self.owner_work.results.contains_key(*hash)
-                    && !cancel::closed(&self.owner_work, hash, &folded.request)
+                    && !cancel::closed(&self.owner_work, hash, folded.request.as_ref())
             })
-            .map(|(hash, folded)| (*hash, &folded.request))
+            .map(|(hash, folded)| (*hash, folded.request.as_ref()))
     }
 
     /// Owner work requests and results that are valid without effect.
@@ -295,8 +349,9 @@ impl AuthorityFold {
 /// The owner work transitions, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: each is signed by an install key, never a roster key (FIX 2222:
-/// the host root acts as nobody), a cancel's too, and a custody permit
-/// piece's, but for a kit request's, which its anchor signs (FIX 11866).
+/// the host root acts as nobody), a cancel's and an import mark's too, and a
+/// custody permit piece's, but for a kit request's, which its anchor signs
+/// (FIX 11866).
 /// `None` for any other op.
 pub(super) fn apply_owner_work(
     state: &mut FoldState,
@@ -314,6 +369,9 @@ pub(super) fn apply_owner_work(
         AuthorityOp::OwnerWorkCancel(owner_cancel) => {
             Some(cancel::apply_cancel(state, entry, owner_cancel, hash, view))
         }
+        AuthorityOp::ExportSupplementImported(mark) => Some(import_mark::apply_import_mark(
+            state, entry, mark, hash, view,
+        )),
         AuthorityOp::CustodyPermitPiece(piece) => Some(permit_pieces::apply_permit_piece(
             state, entry, piece, hash, view,
         )),
@@ -403,10 +461,17 @@ fn apply_request(
     heads.superseded.extend(replaced);
     heads.live.insert(hash);
     custody::note_custody_revoke(work, &request);
+    let body = request.into_shared();
+    permit_pieces::keep_joined(work, (key, hash), &body);
+    // Only a custody request supersedes custody heads or revokes a secret,
+    // and the joins it ends leave the memo (FIX 12140).
+    if body.kind() == OwnerWorkKind::Custody {
+        permit_pieces::prune_joined(work);
+    }
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: request.into_owned(),
+            request: body,
             key,
             marks,
             narrow_only,
@@ -461,12 +526,12 @@ fn apply_result(
     Ok(())
 }
 
-/// Joins two states: requests, refusals, revoked secrets and cancels by
-/// union, a request superseded on either side is superseded, and of two
-/// different results of one request the lesser entry hash stands, the other
-/// is without effect. Two copies of one request that disagree never count
-/// here. Custody permit pieces join by union, the lesser of two kept for one
-/// place standing (FIX 11866).
+/// Joins two states: requests, refusals, revoked secrets, cancels and
+/// import marks by union, a request superseded on either side is
+/// superseded, and of two different results of one request the lesser
+/// entry hash stands, the other is without effect. Two copies of one
+/// request that disagree never count here. Custody permit pieces join by
+/// union, the lesser of two kept for one place standing (FIX 11866).
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -483,8 +548,14 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
+    merged.imported.extend(right.imported.iter().copied());
+    // A verified set stays verified only on the side whose pieces it was
+    // judged on: the left's, where the merge left them unchanged. The
+    // right's verdicts are not carried; a later join judges again.
     for (key, piece) in &right.permit_pieces {
-        permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece);
+        if permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece) {
+            merged.verified_permit_sets.remove(&(key.0, key.1));
+        }
     }
     for (request, cancels) in &right.cancels {
         merged
@@ -517,10 +588,14 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
         let superseded = &held.superseded;
         held.live.retain(|hash| !superseded.contains(hash));
     }
+    // A join whose request the right superseded, or whose secret it
+    // revoked, leaves the memo (FIX 12140).
+    permit_pieces::prune_joined(merged);
 }
 
 /// The fold's view of every request and result, under this install's pin and
-/// holds.
+/// holds. Each view request shares the fold state's `Arc` body, so a view
+/// build copies no permit set (FIX 12013).
 pub(super) fn folded_owner_work(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
@@ -562,6 +637,7 @@ pub(super) fn folded_owner_work(
         refused: work.refused.clone(),
         revoked: work.revoked.clone(),
         cancels: work.cancels.clone(),
+        imported: work.imported.clone(),
     }
 }
 
@@ -584,7 +660,7 @@ pub(super) fn counted_request<'s>(
                 &folded.marks,
                 StandingView::Install,
             ));
-    counts.then_some(&folded.request)
+    counts.then_some(folded.request.as_ref())
 }
 
 /// The requests `machine` carried that have no result yet, for its next
@@ -605,7 +681,7 @@ pub(super) fn pending_carried_by(
             folded.request.kit_root().is_none()
                 && folded.request.carrier == machine
                 && !fold.owner_work.results.contains_key(*hash)
-                && !cancel::closed(&fold.owner_work, hash, &folded.request)
+                && !cancel::closed(&fold.owner_work, hash, folded.request.as_ref())
         })
         .map(|(hash, _)| *hash)
 }

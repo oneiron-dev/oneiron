@@ -8,7 +8,10 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
 
-use super::codec::{decode_access_grant_body, encode_access_grant_body, invalid_grant};
+use super::codec::{
+    decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body, erased_grant,
+    invalid_grant,
+};
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;
 
@@ -56,7 +59,14 @@ impl Vault {
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
             && matches!(
-                decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope,
+                match decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+                    Ok(grant) => grant.scope,
+                    // Inert history keeps its terms: judge them as live
+                    // ones (FIX 4981), never raw-error on erased bodies.
+                    Err(_) => {
+                        decode_erased_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope
+                    }
+                },
                 AccessGrantScope::ChannelIdentity { .. }
                     | AccessGrantScope::DiaryCoreference { .. }
             )
@@ -124,15 +134,36 @@ impl Vault {
     pub fn create_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
         let data = encode_access_grant_body(grant)?;
         let mut wtxn = self.store.env.write_txn()?;
-        self.check_channel_identity_access_write(&wtxn, id, grant)?;
-        self.check_companion_profile_target(&wtxn, grant)?;
-        crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
-        if self.store.port_entity_record(&wtxn, id)?.is_some() {
-            return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
-        }
-        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        self.create_access_grant_body_in_txn(&mut wtxn, id, grant, data)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// The same create checks and write, composed with an engine transaction.
+    pub(crate) fn create_access_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        grant: &AccessGrant,
+    ) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        self.create_access_grant_body_in_txn(wtxn, id, grant, data)
+    }
+
+    fn create_access_grant_body_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        grant: &AccessGrant,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        self.check_channel_identity_access_write(wtxn, id, grant)?;
+        self.check_companion_profile_target(wtxn, grant)?;
+        crate::share::check_generic_grant_write(self, wtxn, id, grant)?;
+        if self.store.port_entity_record(wtxn, id)?.is_some() {
+            return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
+        }
+        self.apply_access_grant_body(wtxn, id, grant.created_at, data)
     }
 
     /// Revokes an AccessGrant by rewriting the same record as revoked.
@@ -183,7 +214,13 @@ impl Vault {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
-            } => decode_access_grant_body(&body)?,
+            } => match decode_access_grant_body(&body) {
+                Ok(grant) => grant,
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
+                }
+                Err(error) => return Err(error),
+            },
             LiveEntityRow::Live { entity_type, .. } => {
                 return Err(Error::InvalidEntityType(entity_type));
             }
@@ -206,11 +243,14 @@ impl Vault {
     /// admission and the write share one write transaction, as a revoke's
     /// do. The write passes every check [`Vault::put_access_grant`] runs and
     /// lands at `learned_at`. A deleted grant is no grant to write over.
+    /// Every changed write records its caller's act after apply and before
+    /// commit in the same transaction; a no-op records nothing.
     pub(crate) fn put_admitted_access_grant(
         &self,
         id: &EntityId,
         learned_at: u64,
         admit: impl FnOnce(&heed::RoTxn<'_>, Option<AccessGrant>) -> Result<(AccessGrant, bool)>,
+        record: impl FnOnce(&mut heed::RwTxn<'_>, &AccessGrant) -> Result<()>,
     ) -> Result<(AccessGrant, bool)> {
         use crate::vault::LiveEntityRow;
         let mut wtxn = self.store.env.write_txn()?;
@@ -218,7 +258,13 @@ impl Vault {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
-            } => Some(decode_access_grant_body(&body)?),
+            } => Some(match decode_access_grant_body(&body) {
+                Ok(grant) => grant,
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
+                }
+                Err(error) => return Err(error),
+            }),
             LiveEntityRow::Live { entity_type, .. } => {
                 return Err(Error::InvalidEntityType(entity_type));
             }
@@ -232,6 +278,7 @@ impl Vault {
             self.check_companion_profile_target(&wtxn, &grant)?;
             crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
             self.apply_access_grant_body(&mut wtxn, id, learned_at, data)?;
+            record(&mut wtxn, &grant)?;
             wtxn.commit()?;
         }
         Ok((grant, write))
@@ -240,9 +287,18 @@ impl Vault {
     /// Reads and decodes an AccessGrant record.
     pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_access_grant_in_txn(&rtxn, id)
+    }
+
+    /// The current grant, including terminal status, in the caller's snapshot.
+    pub(crate) fn get_access_grant_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<AccessGrant>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -327,6 +383,7 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
         apply_ops(
             &self.store,
             &self.config,
@@ -340,6 +397,7 @@ impl Vault {
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

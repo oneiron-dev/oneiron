@@ -55,7 +55,7 @@ impl AuthorityFold {
         self.owner_work
             .requests
             .get(hash)
-            .is_some_and(|folded| cancelled(&self.owner_work, hash, &folded.request))
+            .is_some_and(|folded| cancelled(&self.owner_work, hash, folded.request.as_ref()))
     }
 
     /// Whether a newer request on its target superseded the root request
@@ -65,7 +65,7 @@ impl AuthorityFold {
         self.owner_work
             .requests
             .get(hash)
-            .is_some_and(|folded| superseded(&self.owner_work, hash, &folded.request))
+            .is_some_and(|folded| superseded(&self.owner_work, hash, folded.request.as_ref()))
     }
 
     /// The owner's cancels that name the request signed as entry `request`,

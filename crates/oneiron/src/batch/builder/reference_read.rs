@@ -11,11 +11,14 @@ use heed::{RoTxn, RwTxn};
 
 use super::BatchOp;
 use crate::Vault;
-use crate::claim::{ClaimBody, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{GateReasonCode, GateRetentionContext, RecordedClaimGateDecision};
+use crate::gate::RecordedClaimGateDecision;
+use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::store::gate_reason::GateReasonCode;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
 pub(super) struct GatedClaim {
@@ -49,19 +52,54 @@ fn put_targets_admitted(
     txn: &RoTxn<'_>,
     ops: &[BatchOp],
 ) -> Result<bool> {
+    head_targets_admitted(
+        vault,
+        reader,
+        txn,
+        ops.iter().filter_map(|op| match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
+            _ => None,
+        }),
+    )
+}
+
+/// The same target judgment for the actual heads a projector will mutate.
+pub(super) fn head_targets_admitted(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &RoTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<bool> {
     if vault.turn_doors_owner_in(reader, txn)? {
         return Ok(true);
     }
     let mut judged = BTreeSet::new();
-    for op in ops {
-        let (BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. }) = op else {
-            continue;
-        };
-        if judged.insert(*id) && !crate::batch::put_target_admitted_in(reader, txn, id)? {
+    for id in ids {
+        if judged.insert(id) && !crate::batch::put_target_admitted_in(reader, txn, &id)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// Typed references of actual written heads, read after the whole batch stages.
+pub(super) fn projected_head_claims(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    ids: &BTreeSet<EntityId>,
+) -> Result<Vec<GatedClaim>> {
+    ids.iter()
+        .map(|id| {
+            let body = vault
+                .get_claim_in_txn(txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            Ok(GatedClaim {
+                id: *id,
+                body,
+                envelope: None,
+            })
+        })
+        .collect()
 }
 
 /// Every CLAIM body the preflight gates, in op order, derived in `txn` as the
@@ -160,7 +198,7 @@ pub(super) fn staged_reference_denial(
     let mut found = None;
     for claim in claims {
         if let Some(envelope) = &claim.envelope {
-            crate::gate::validate_write_envelope(envelope)?;
+            crate::write_envelope::validate_write_envelope(envelope)?;
         }
         if let Some(field) = crate::gate::unresolved_claim_reference(reader, &*txn, &claim.body)? {
             found = Some((claim, field));
@@ -186,9 +224,10 @@ pub(super) fn staged_reference_denial(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
-        crate::gate::GateWriteMode {
+        crate::store::GateWriteMode {
             record_decision: true,
             persist_pending_consent: false,
             resolve_pending: false,
@@ -211,7 +250,12 @@ pub(super) fn staged_reference_denial(
         decision,
         claim: claim.id,
         retention: GateRetentionContext {
-            world: Some(claim.body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(
+                claim
+                    .body
+                    .world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(claim.body.scope_project),
             sub_project: None,
             thread: None,

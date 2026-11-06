@@ -8,9 +8,9 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
+use oneiron_model::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
 
 use super::lifecycle::derived_key_catalog_in_txn;
 use super::record::{
@@ -37,7 +37,9 @@ use self::row::row_ordinal;
 pub use self::row::{
     EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
 };
-pub(crate) use self::spend_reserve::{SpendReserve, reserve_connector_spend_in_txn};
+pub(crate) use self::spend_reserve::{
+    SpendReserve, reconcile_connector_spend_in_txn, reserve_connector_spend_in_txn,
+};
 
 /// vault_meta usage rows: key id (16 bytes) ++ row source tag u8 ++ row
 /// ordinal u64 BE (`EffectorBudgetRowId::usage_key`) -> canonical msgpack
@@ -443,6 +445,12 @@ pub struct ConnectorDispatchTelemetry {
 pub struct ConnectorKeyDispatchTally {
     pub admitted: u64,
     pub refused: u64,
+    /// Dispatches a full count-bound window paced (FIX 8686): uncharged and
+    /// not refused, to be admitted again at `paced_until`.
+    pub paced: u64,
+    /// When the windows that paced the batch all open again, Unix seconds
+    /// on the engine's clock; `None` when nothing was paced.
+    pub paced_until: Option<u64>,
     pub ladder_events: Vec<EffectorBudgetLadderEvent>,
     /// The catalog key of the pool this batch's per-grant key met (ONE-1794).
     pub pool_key_ref: Option<EntityId>,
@@ -534,7 +542,9 @@ pub(super) fn budget_row_read(
         used,
         remaining: budget.limit.saturating_sub(used),
         percent_used: percent,
-        on_exhaust: budget.on_exhaust,
+        // What exhausting the row does, so a count row never reads as
+        // suspending (FIX 8753).
+        on_exhaust: budget.exhaust_policy(),
         window_start: usage.window_start,
         // The read reports the TRUE ladder state — every threshold the live
         // usage has crossed — not the event-emission memory. Usage can

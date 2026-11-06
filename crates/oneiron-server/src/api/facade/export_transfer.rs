@@ -390,14 +390,25 @@ fn secret_supplement(
 ) -> Result<Value, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let owner = super::owner_binding::facade_owner(server, auth, EXPORT_VERB)?;
-    let request = blake3::Hash::from_hex(request)
-        .map(|hash| *hash.as_bytes())
-        .map_err(|_| unknown_supplement())?;
-    let supplement = server
-        .vault
-        .export_secret_supplement(&owner, request)
-        .map_err(MemoryError::from)?
-        .ok_or_else(unknown_supplement)?;
+    let supplement = match crate::owner::export_supplement::show(&server.vault, &owner, request) {
+        Ok(supplement) => supplement,
+        Err(crate::owner::OwnerError::Invalid(_) | crate::owner::OwnerError::NotFound(..)) => {
+            return Err(unknown_supplement());
+        }
+        Err(crate::owner::OwnerError::Engine(error)) => {
+            return Err(MemoryError::from(*error).into());
+        }
+        // The shared read never answers these; the engine door knows no
+        // changed, refused or host failure.
+        Err(error) => {
+            return Err(FacadeApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                MEMORY_CODE_INTERNAL,
+                format!("export supplement read failed: {error}"),
+                ["Retry the read."],
+            ));
+        }
+    };
     encoded(&supplement)
 }
 

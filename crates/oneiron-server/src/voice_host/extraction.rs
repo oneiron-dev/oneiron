@@ -122,8 +122,13 @@ impl TinyExtractor {
             .budget
             .admit_for_request(&request)
             .inspect_err(|denied| {
-                self.vault
-                    .budget_denied_hooks(denied, &self.budget, request.model.as_str(), None);
+                self.vault.budget_denied_hooks(
+                    denied,
+                    &self.budget,
+                    request.model.as_str(),
+                    None,
+                    None,
+                );
             })
             .map_err(LlmError::from)?;
         let mut lease = OpenLease {
@@ -178,18 +183,26 @@ fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostErr
     {
         return Err(HostError::InvalidResponse);
     }
-    // A thinking model's Reasoning part is not the answer: read the one Text
-    // part beside it (FIX 11038).
-    let mut answer = response
-        .message
-        .content
-        .iter()
-        .filter(|part| !matches!(part, ContentPart::Reasoning { .. }));
-    let (Some(ContentPart::Text { text }), None) = (answer.next(), answer.next()) else {
+    // A thinking model's Reasoning parts are not the answer: read the Text
+    // beside them, joined in wire order when the answer arrives as several
+    // blocks (FIX 11038, FIX 12516). Thinking is never parsed or spoken.
+    let mut answer = String::new();
+    let mut blocks = 0u32;
+    for part in &response.message.content {
+        match part {
+            ContentPart::Text { text } => {
+                answer.push_str(text);
+                blocks += 1;
+            }
+            ContentPart::Reasoning { .. } => {}
+            _ => return Err(HostError::InvalidResponse),
+        }
+    }
+    if blocks == 0 {
         return Err(HostError::InvalidResponse);
-    };
+    }
     let extraction: Extraction =
-        serde_json::from_str(text).map_err(|_| HostError::InvalidResponse)?;
+        serde_json::from_str(&answer).map_err(|_| HostError::InvalidResponse)?;
     for items in [&extraction.entity_labels, &extraction.salient_terms] {
         if items
             .iter()

@@ -12,13 +12,16 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::offer_settle::RecordedOfferAnswer;
+use super::carrier_erase::offer_answer_erased_wins;
+use super::offer_settle::{OfferAnswer, RecordedOfferAnswer};
 use super::offers::{OfferBallot, OfferState, OfferVoteTally, StoredOffer};
 use crate::EntityId;
-use crate::agent_dispatch::SpendScopeId;
+use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
-use crate::llm::run_admission::DeclaredMaximum;
+use crate::run_budget::DeclaredMaximum;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::workspace_roster::{RequiredParty, RosterActor, RosterBindingErase};
 
 /// A settled card's id keys its join's intent and the participation facts
@@ -49,6 +52,29 @@ impl OfferRow {
                 (erased_history.card.room, erased_history.card.branch)
             }
         }
+    }
+}
+
+/// The live card filed under `offer_id`, if any. A card that turned
+/// history refuses: nothing shows, answers, reopens or replays it again
+/// (FIX 4228, 4869).
+///
+/// # Errors
+///
+/// Storage errors, a row that cannot be read, or a history row.
+pub(super) fn live_offer(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    offer_id: &str,
+) -> Result<Option<StoredOffer>> {
+    match OFFER_ROWS.get(store, txn, &offer_id.to_owned())? {
+        None => Ok(None),
+        Some(OfferRow::Live(stored)) => Ok(Some(stored)),
+        Some(OfferRow::History { .. }) => Err(Error::InvalidConfig(
+            "this offer card named a party that was erased; it is history, and nothing shows, \
+             answers, reopens or replays it again"
+                .into(),
+        )),
     }
 }
 
@@ -118,6 +144,88 @@ impl OfferHistory {
         named |= self.votes.remove(&actor).is_some();
         named
     }
+}
+
+/// Two copies of one actor slot as one under carrier equivalence (FIX 4871):
+/// erase wins, and two live actors still conflict.
+fn merged_actor(ours: RosterActor, theirs: RosterActor) -> Option<RosterActor> {
+    carrier_actor_merged(ours, theirs, RosterActor::Erased)
+}
+
+/// Two copies of one settled card's history as one (FIX 4871): the union of
+/// what each forgot, where each vault erased a different party. Every field
+/// but who they name must match, and two live actors in one slot still
+/// conflict, as live copies do. Ballots union per voter, and the tally is
+/// counted from them, as [`StoredOffer::into_card`] counts a live card's;
+/// the latest engagement stands, as `merged_offer` keeps it.
+pub(super) fn offer_history_erased_wins(
+    ours: &OfferHistory,
+    theirs: &OfferHistory,
+) -> Option<OfferHistory> {
+    let (card, other) = (&ours.card, &theirs.card);
+    if card.offer_id != other.offer_id
+        || card.room != other.room
+        || card.branch != other.branch
+        || card.what != other.what
+        || card.artifact_ref != other.artifact_ref
+        || card.lease_cap != other.lease_cap
+        || card.spend_scope != other.spend_scope
+        || card.join_ref != other.join_ref
+        || card.state != other.state
+        || card.created_at != other.created_at
+        || card.until != other.until
+        || ours.draft_digest != theirs.draft_digest
+        || ours.reopen_epoch != theirs.reopen_epoch
+    {
+        return None;
+    }
+    let agent = merged_actor(card.agent, other.agent)?;
+    let payer = match (&card.payer, &other.payer) {
+        (Some(ours), Some(theirs)) => Some(merged_actor(*ours, *theirs)?),
+        (None, None) => None,
+        _ => return None,
+    };
+    let mut votes = ours.votes.clone();
+    for (voter, ballot) in &theirs.votes {
+        match votes.get(voter) {
+            None => {
+                votes.insert(*voter, *ballot);
+            }
+            Some(held) if held != ballot => return None,
+            Some(_) => {}
+        }
+    }
+    let mut vote_tally = OfferVoteTally::default();
+    for ballot in votes.values() {
+        match ballot.action {
+            OfferAnswer::Join => vote_tally.join += 1,
+            OfferAnswer::NotNow => vote_tally.not_now += 1,
+        }
+    }
+    Some(OfferHistory {
+        card: HistoryCard {
+            offer_id: card.offer_id.clone(),
+            room: card.room,
+            branch: card.branch,
+            agent,
+            what: card.what.clone(),
+            artifact_ref: card.artifact_ref.clone(),
+            lease_cap: card.lease_cap.clone(),
+            payer,
+            spend_scope: card.spend_scope.clone(),
+            join_ref: card.join_ref.clone(),
+            state: card.state.clone(),
+            created_at: card.created_at,
+            until: card.until,
+            last_engaged_at: card.last_engaged_at.max(other.last_engaged_at),
+            vote_tally,
+        },
+        draft_digest: ours.draft_digest.clone(),
+        minted_by: merged_actor(ours.minted_by, theirs.minted_by)?,
+        answer: offer_answer_erased_wins(&ours.answer, &theirs.answer)?,
+        votes,
+        reopen_epoch: ours.reopen_epoch,
+    })
 }
 
 /// Whether `stored` names `actor` where only a live party's id can stand

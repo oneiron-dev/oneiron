@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AgentCeiling;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -13,39 +12,7 @@ use super::constants::MAX_DELEGATION_DEPTH;
 use super::decision::{GateDecision, GateOutcome};
 use crate::error::GateError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PolicyApprovalCeiling {
-    Auto,
-    Proposed,
-}
-
-impl PolicyApprovalCeiling {
-    pub(super) fn parse(value: &Value) -> Option<Self> {
-        match value.as_str()? {
-            "auto" => Some(Self::Auto),
-            "proposed" => Some(Self::Proposed),
-            _ => None,
-        }
-    }
-
-    /// Gate-side conversion from the persisted AGENT_DEF descriptor mirror.
-    /// Lives here so the dependency direction stays `gate.rs` → `agent_def.rs`
-    /// and `PolicyApprovalCeiling` stays `pub(crate)`.
-    pub(super) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
-        match ceiling {
-            AgentCeiling::Auto => Self::Auto,
-            AgentCeiling::Proposed => Self::Proposed,
-        }
-    }
-
-    pub(super) fn restrict(self, other: Self) -> Self {
-        if matches!(self, Self::Proposed) || matches!(other, Self::Proposed) {
-            Self::Proposed
-        } else {
-            Self::Auto
-        }
-    }
-}
+pub(crate) use crate::store::policy_record::PolicyApprovalCeiling;
 
 #[must_use]
 pub(super) fn foreign_agent_effective_ceiling(
@@ -428,8 +395,8 @@ impl SourceTrustCeiling {
         actor_ref: Option<&str>,
     ) -> Option<SourceTrustRow> {
         let first = self.row(source)?;
-        // Actor-specific untrusted clamps override a class-wide permit only
-        // for that actor. They can never create a permit without that baseline.
+        // An actor-specific row overrides a class-wide permit only for that
+        // actor. It never creates a permit without that baseline.
         if let Some(id) = actor_ref.and_then(|actor| EntityId::from_hex(actor).ok())
             && let Some(row) = self.additional_bound_rows.get(&(source, id))
         {
@@ -483,68 +450,6 @@ impl SourceTrustCeiling {
         }
         for ((source, _), row) in other.additional_bound_rows {
             self.set_row(source, row);
-        }
-    }
-
-    fn restrict_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
-        let Some(first) = self.row(source) else {
-            return; // Untrusted input cannot open a source permit.
-        };
-        match row.actor_ref {
-            Some(actor) if first.actor_ref != Some(actor) => {
-                if let Some(existing) = self.additional_bound_rows.get_mut(&(source, actor)) {
-                    *existing = existing.merge(row);
-                } else if first.actor_ref.is_none() {
-                    // A class-wide permit covers this actor. Intersect just
-                    // that actor's scope, leaving every other actor unchanged.
-                    let bound_first = SourceTrustRow {
-                        actor_ref: Some(actor),
-                        ..first
-                    };
-                    self.additional_bound_rows
-                        .insert((source, actor), bound_first.merge(row));
-                }
-            }
-            _ => {
-                if row.actor_ref.is_none() {
-                    // A class-wide restriction intersects every existing
-                    // actor slot, preserving each binding. It must neither
-                    // single out the first scanned actor nor grant outsiders.
-                    *self.slot_mut(source) = Some(first.merge(SourceTrustRow {
-                        actor_ref: first.actor_ref,
-                        ..row
-                    }));
-                    for ((slot_source, _), bound) in &mut self.additional_bound_rows {
-                        if *slot_source == source {
-                            *bound = bound.merge(SourceTrustRow {
-                                actor_ref: bound.actor_ref,
-                                ..row
-                            });
-                        }
-                    }
-                } else {
-                    *self.slot_mut(source) = Some(first.merge(row));
-                }
-            }
-        }
-    }
-
-    pub(super) fn restrict_only(&mut self, other: Self) {
-        self.malformed_manifest_seen |= other.malformed_manifest_seen;
-        for source in [
-            ClaimSource::UserStated,
-            ClaimSource::Observed,
-            ClaimSource::Inferred,
-            ClaimSource::Imported,
-            ClaimSource::ToolOutput,
-            ClaimSource::Generated,
-        ] {
-            if let Some(row) = other.row(source) {
-                self.restrict_row(source, row);
-            }
-        }
-        for ((source, _), row) in other.additional_bound_rows {
-            self.restrict_row(source, row);
         }
     }
 

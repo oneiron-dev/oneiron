@@ -74,6 +74,7 @@ impl EntityStoreMaintenance for Store {
     }
     fn port_entity_document_pointer_put(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
         body: &[u8],
@@ -86,7 +87,7 @@ impl EntityStoreMaintenance for Store {
         }
         // A pointer body is no epoch: what an epoch summary's words carried
         // stays on its record (Sol round 23).
-        super::keep_worlds_of_unmade_epoch_in_txn(self, txn, id, entity_type, body)?;
+        super::keep_worlds_of_unmade_epoch_in_txn(write, txn, id, entity_type, body)?;
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(body);
         self.entities.put(txn, id.as_bytes(), &payload)
@@ -169,12 +170,13 @@ impl EntityStoreMaintenance for Store {
         &self,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
-        streak: crate::habit::HabitStreak,
+        streak: crate::write_envelope::task_body::HabitStreak,
     ) -> Result<()> {
         let Some(mut row) = self.port_entity_record(txn, id)? else {
             return Ok(());
         };
-        let body = crate::habit::rewrite_habit_streak_fields(&row.body, streak)?;
+        let body =
+            crate::write_envelope::task_body::rewrite_habit_streak_fields(&row.body, streak)?;
         if body != row.body {
             // The record scope stamp binds to the id, not the body bytes, so a
             // derived streak rewrite keeps the birth stamp as it is.
@@ -200,6 +202,7 @@ impl EntityStoreMaintenance for Store {
                 end: learned_at,
             },
             learned_at,
+            row_version: 0,
             body: body.to_vec(),
         };
         self.entities.put(txn, id.as_bytes(), &row.encode())?;

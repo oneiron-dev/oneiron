@@ -23,10 +23,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::MEMORY_CODE_INTERNAL;
+use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError};
 use crate::runtime_hooks::filter;
 use crate::task_verb::TaskAskResult;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 use super::credential::{RefusalReceipt, VerbAskCredentialRef, VerbAskResumed};
 use super::plain_resume::{self, PlainRowResume};
@@ -38,6 +38,21 @@ use super::{InvocationId, VerbHookStop, ask, credential};
 const VERB_ASK_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// The most rows one drain pass deletes.
 const VERB_ASK_PRUNE_MAX: usize = 256;
+
+/// Whether a resumed chain's run failed transiently (FIX 1431): the drain's
+/// exact flakes policy — an internal code with no hook behind it. The
+/// caller's retry may re-open the consumed ask and run again. `pub` for the
+/// chat witness door (oneiron-server), which classifies the same way.
+pub fn run_failed_transient(error: &MemoryError) -> bool {
+    error.hook.is_none() && error.code == MEMORY_CODE_INTERNAL
+}
+
+/// Whether a verb run's `Err` is a clean storage abort (FIX 1431): only
+/// `Storage` and `MapFull` convert a failure into a resumed retry.
+/// Corruption variants stay wedged-loud rather than re-run.
+pub(crate) fn error_failed_storage(error: &Error) -> bool {
+    matches!(error, Error::Storage(_) | Error::MapFull)
+}
 
 /// How settlement runs a stopped call again without its caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +164,7 @@ impl Vault {
             actor,
             class,
             args,
+            inputs,
             resume,
             ask: group,
         } = ready;
@@ -180,7 +196,9 @@ impl Vault {
             )?,
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
-                receipt = Some(RefusalReceipt::new(&reference, &verb, actor, class, &args));
+                receipt = Some(RefusalReceipt::new(
+                    &reference, &verb, actor, class, &args, inputs,
+                ));
                 let resumed =
                     credential::resume(self, key, group, verb, actor, class, args, reference)?;
                 match resumed {
@@ -206,7 +224,7 @@ impl Vault {
                     return Ok(false);
                 }
                 hook => {
-                    let transient = hook.is_none() && error.code == MEMORY_CODE_INTERNAL;
+                    let transient = run_failed_transient(&error);
                     (
                         ask::SavedOutcome::error(error.code, &error.message),
                         transient,

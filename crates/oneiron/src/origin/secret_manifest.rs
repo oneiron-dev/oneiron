@@ -12,7 +12,6 @@
 use std::path::Path;
 
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
@@ -22,6 +21,7 @@ use crate::origin::smart_http::{
     ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, origin_repo_dir, validate_repo_name,
 };
 use crate::secret_manifest::{SecretManifest, parse_secret_manifest};
+use crate::store::code_snapshot::RepoRef;
 
 /// Where a repository declares its secrets, relative to its root.
 ///
@@ -29,9 +29,6 @@ use crate::secret_manifest::{SecretManifest, parse_secret_manifest};
 /// root `secrets.toml` is where several frameworks keep values, and common
 /// ignore templates leave it out of commits; a manifest must be committed.
 pub const SECRET_MANIFEST_PATH: &str = ".oneiron/secret-manifest.toml";
-
-/// The largest manifest read: names and paths, far below this.
-const MANIFEST_LIMIT: usize = 256 * 1024;
 
 /// A manifest read from one published commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,7 +240,7 @@ impl Vault {
 /// The manifest file's bytes in `commit`'s tree, or `None` when it has none
 /// or `commit` names no commit. Only a regular file counts: a symlink or a
 /// submodule at the path declares nothing.
-fn manifest_bytes(
+pub(crate) fn manifest_bytes(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     commit: &GitOid,
@@ -285,9 +282,6 @@ fn manifest_bytes(
     // fails as a whole, and that is no answer to give the owner.
     match wire.object_size(repo, &oid)? {
         None => Ok(None),
-        Some(size) if size > MANIFEST_LIMIT as u64 => Err(Error::Secret(
-            SecretError::InvalidSecretCustodyBody("secret manifest is larger than 256 KiB"),
-        )),
         Some(_) => Ok(Some(wire.read_object(repo, &oid)?)),
     }
 }

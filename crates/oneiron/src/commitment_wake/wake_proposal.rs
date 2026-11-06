@@ -6,12 +6,13 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, DreamerAdmittedAttempt};
+use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::derived_domains::COMMITMENT_WAKE_PROPOSAL;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -147,18 +148,7 @@ pub fn commitment_wake_proposal_claim_id(attempt_id: AttemptId) -> EntityId {
     .unwrap_or_else(|_| unreachable!("a derived commitment wake proposal id is never reserved"))
 }
 
-/// The sentinel-safe raw-prefix rule for an id taken from a raw digest
-/// prefix: a prefix landing on a reserved id (roughly a 2^-120 event) is
-/// perturbed (`raw[0] ^= 1`, `raw[15] ^= 1`), no RFC-4122 bit rewritten.
-pub(crate) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).unwrap_or_else(|_| {
-            unreachable!("perturbed commitment wake proposal id is non-reserved")
-        })
-    })
-}
+pub(crate) use crate::entity_id::entity_id_from_digest_prefix;
 
 /// Wraps the ordinary consolidation executor with the commitment-wake arm.
 ///
@@ -205,6 +195,24 @@ impl<'p, E> CommitmentWakeExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for CommitmentWakeExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        // A window holds only prepared partitions; a commitment wake's
+        // payload is no partition payload, so it never has a Ready plan
+        // and never reaches a window.
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -436,7 +444,7 @@ fn match_landed_proposal(
 /// about an obligation, never a restatement of what the user said.
 fn commitment_wake_evidence(instance_id: EntityId) -> Value {
     crate::dreamer_consolidation::encode_consolidation_evidence(
-        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+        &crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope {
             refs: vec![instance_id],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,

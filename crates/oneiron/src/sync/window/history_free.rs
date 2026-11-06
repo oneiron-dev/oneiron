@@ -28,6 +28,7 @@ use super::super::loro_support::{
     TombstoneIndex, export_snapshot, export_updates_since, map_for_each_tombstone_value,
     map_for_each_value_bytes,
 };
+use super::super::origin_claims::{receipt_actor, section_fit_body};
 use super::super::types::WindowKey;
 use super::bridge::BRIDGE_ORIGIN;
 use super::egress::{
@@ -36,6 +37,7 @@ use super::egress::{
 };
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::deletion::WithdrawnCutoff;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
@@ -65,7 +67,8 @@ impl WindowExport {
 ///
 /// An entity-map value is held back when its body is one a scrub keeps off the wire (a custody,
 /// diagnostic, delegated-identity or LFS chunk carrier, a claim no replay door accepts, an
-/// attribution of a redacted author), whatever the live state holds. A scrub removes keys (a hard
+/// attribution of a redacted author, a receipt naming an erased actor), whatever the live state
+/// holds. A scrub removes keys (a hard
 /// or withdrawn delete, a dropped NOTE) or rewrites values in place (a NOTE proposal's redacted
 /// explainer, a deleted entity's retained shell), and the bytes it took out stay in history and
 /// in an old root's state. So a value whose key is gone is held back, unless a soft tombstone
@@ -79,6 +82,10 @@ pub(crate) struct HistoryCheck {
     redacted: BTreeSet<(EntityId, [u8; 32])>,
     /// Entities whose CRDT tombstone is soft while this vault holds them deleted.
     erased: BTreeSet<EntityId>,
+    /// Actors this vault erased that a `skill.section_fit` receipt carrier of the window
+    /// names, live or in history: such a receipt body never ships. The scrub rewrites the
+    /// live leaf to `""`, so live rows alone no longer name them.
+    erased_receipt_actors: BTreeSet<EntityId>,
     /// The exact header-only shells of user-deleted world claims the window keeps beside their
     /// world witness, as the egress claim scrub proves them: carriers no claim door decodes, yet
     /// the live state of the window.
@@ -126,9 +133,13 @@ impl HistoryCheck {
             }
         }
         let mut pad_worlds = BTreeSet::new();
+        let mut receipt_actors = BTreeSet::new();
         map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
             if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
                 pad_worlds.insert(world);
+            }
+            if let Some(actor) = blob.and_then(section_fit_actor) {
+                receipt_actors.insert(actor);
             }
         });
         let entities_root = ContainerID::new_root("entities", ContainerType::Map);
@@ -143,9 +154,13 @@ impl HistoryCheck {
                     value: LoroValue::Binary(blob),
                     ..
                 }) = &op.content
-                && let Some(Ok(world)) = crate::world_keys::pad_body_world(blob)
             {
-                pad_worlds.insert(world);
+                if let Some(Ok(world)) = crate::world_keys::pad_body_world(blob) {
+                    pad_worlds.insert(world);
+                }
+                if let Some(actor) = section_fit_actor(blob) {
+                    receipt_actors.insert(actor);
+                }
             }
         }
         // A shallow doc's own root holds state no retained operation carries:
@@ -158,6 +173,9 @@ impl HistoryCheck {
                     if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
                         pad_worlds.insert(world);
                     }
+                    if let Some(actor) = blob.and_then(section_fit_actor) {
+                        receipt_actors.insert(actor);
+                    }
                 });
             } else {
                 tracing::warn!(window = %key, "history check: shallow root unreadable");
@@ -167,6 +185,12 @@ impl HistoryCheck {
         for world in pad_worlds {
             if crate::world_keys::world_keys_destroyed_in_txn(&vault.store, &rtxn, world)? {
                 late_pad_worlds.insert(world);
+            }
+        }
+        let mut erased_receipt_actors = BTreeSet::new();
+        for actor in receipt_actors {
+            if vault.carrier_actor_erased_in_txn(&rtxn, &actor)? {
+                erased_receipt_actors.insert(actor);
             }
         }
         let mut retained_shells = BTreeSet::new();
@@ -201,6 +225,7 @@ impl HistoryCheck {
         Ok(Self {
             redacted,
             erased,
+            erased_receipt_actors,
             retained_shells,
             late_pad_worlds,
             withdrawn,
@@ -321,6 +346,8 @@ impl HistoryCheck {
             })
             || EntityId::from_hex(key)
                 .is_ok_and(|id| super::withdrawn::withdrawn_body(&self.withdrawn, &id, blob))
+            || section_fit_actor(blob)
+                .is_some_and(|actor| self.erased_receipt_actors.contains(&actor))
     }
 }
 
@@ -328,6 +355,15 @@ impl HistoryCheck {
 fn soft_tombstoned(doc: &LoroDoc, key: &str) -> bool {
     super::super::loro_support::map_get_bytes(&doc.get_map("tombstones"), key)
         .is_some_and(|value| !crate::deletion::decode_tombstone_value(&value).is_hard())
+}
+
+/// The actor a `skill.section_fit` receipt row names, if it names one: the receipt's actor
+/// leaf off the row's body, past its metadata header.
+fn section_fit_actor(blob: &[u8]) -> Option<EntityId> {
+    let data = blob.get(ENTITY_METADATA_HEADER_LEN..)?;
+    let body = section_fit_body(blob, data)?;
+    let leaf = receipt_actor(&body)?;
+    EntityId::from_hex(leaf).ok()
 }
 
 /// The version of the state at a shallow root: `start` excludes the root's own operations.
@@ -622,12 +658,19 @@ fn scrub_for_export(
         crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     let message_docs_scrubbed =
         crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 6870: and an erased repo's portable manifest.
+    let repo_manifests_scrubbed =
+        crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.
     let origin_claims_scrubbed =
         crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
+    // FIX 12769: and a section-fit receipt carrier that names an erased actor.
+    let section_fit_scrubbed =
+        crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     let births_scrubbed =
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
@@ -643,8 +686,11 @@ fn scrub_for_export(
         || room_facts_scrubbed
         || document_pins_scrubbed
         || message_docs_scrubbed
+        || repo_manifests_scrubbed
         || origin_claims_scrubbed
+        || section_fit_scrubbed
         || births_scrubbed
+        || positions_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)

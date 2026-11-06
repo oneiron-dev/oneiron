@@ -34,11 +34,9 @@ use super::projected_join::ProjectedRowSource;
 use super::projected_tree::{
     commit_tree, file_input, presence, rebuild_tree, tree_blob, write_blob,
 };
-use super::{CandidateQueue, MODE_GITLINK, PreparedPushCandidate};
-use crate::code_document::CodeFileMetadataEdit;
-use crate::code_revision::{CodeRevisionFork, CodeTreeBlob, CodeTreeInventory};
-use crate::codebase::entity_id_from_hash_material;
+use super::{CandidateQueue, MODE_GITLINK, PreparedPushCandidate, PushCandidateBase};
 use crate::error::{Error, Result};
+use crate::file_secret_marks::KeyPlaces;
 use crate::git_wire::{GitObjectKind, GitOid, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_marks::{RepoBlobAddress, RepoMarkFacts, RepoSecretMarkLookup};
@@ -47,11 +45,14 @@ use crate::origin::secret_projection::claims::RepoProjectionClaim;
 use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::RepoProjectedFileCopy;
 use crate::origin::secret_projection::git::projection_ingress_dir;
-use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{
+use crate::store::code_document_values::CodeFileMetadataEdit;
+use crate::store::code_revision_record::{CodeRevisionFork, CodeTreeInventory};
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::repo_proposal_record::RepoProposedFile;
+use crate::store::repo_proposal_record::{
     ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
-use crate::secret_custody::KeyPlaces;
 use crate::{EntityId, Vault};
 
 /// A projected decision: the prepared attachment, or a hold with the pins
@@ -87,7 +88,7 @@ impl Vault {
         digest: [u8; 32],
         projection: &ProjectedRowSource,
     ) -> Result<Option<ProjectedDecision>> {
-        use CodePushCandidateState::{HeldBase, HeldShape};
+        use CodePushCandidateState::{HeldBase, HeldPredecessor, HeldShape};
         let source = &row.source;
         let Some(new_hex) = &source.new_oid else {
             return held(HeldShape, "ref_deleted");
@@ -148,7 +149,11 @@ impl Vault {
             return held(HeldShape, "non_fast_forward");
         }
         // The ORIGINAL the copy's old tip stands for, by every occurrence
-        // the copy recorded; none, or several, hold (FIX 9235).
+        // the copy recorded; several hold (FIX 9235). An old tip no copy
+        // object is continues the agent's own earlier push into this copy:
+        // its base is the seal that consumed that push, at the canonical
+        // commit its tested revision pinned, and an unsealed one holds as
+        // the ordinary path's does (FIX 10273, KEEP 5).
         let originals = {
             let txn = self.store.env.read_txn()?;
             RepoProjectionClaim::originals_of_copy_in_txn(
@@ -159,14 +164,26 @@ impl Vault {
                 GitObjectKind::Commit,
             )?
         };
-        let [canonical_old] = originals.as_slice() else {
-            return held(HeldBase, "no_exact_base_or_ambiguous_base");
+        let (canonical_old, base) = match originals.as_slice() {
+            // CALL L on the canonical store, from the ORIGINAL only.
+            [canonical_old] => {
+                match self.resolve_push_candidate_base(wire, canonical, queue, canonical_old)? {
+                    Ok(base) => (canonical_old.clone(), base),
+                    Err(hold) => return Ok(Some(Err((hold, None)))),
+                }
+            }
+            [] => {
+                match self.projected_predecessor_base(canonical, queue, projection.graph, &old)? {
+                    Some(sealed) => sealed,
+                    None if self.received_predecessor_pending(&source.object_store, &old)? => {
+                        return held(HeldPredecessor, "predecessor_unsealed");
+                    }
+                    None => return held(HeldBase, "no_exact_base_or_ambiguous_base"),
+                }
+            }
+            _ => return held(HeldBase, "no_exact_base_or_ambiguous_base"),
         };
-        // CALL L on the canonical store, from the ORIGINAL only.
-        let base = match self.resolve_push_candidate_base(wire, canonical, queue, canonical_old)? {
-            Ok(base) => base,
-            Err(hold) => return Ok(Some(Err((hold, None)))),
-        };
+        let canonical_old = &canonical_old;
         let tested = base
             .revision
             .tested_queue
@@ -257,6 +274,25 @@ impl Vault {
             }
             places.insert(*path, (marks.places(), opaque));
         }
+        // Each masked file's ORIGINAL key bytes: the only secret its
+        // translation carries back into the proposal (FIX 10276).
+        let original_spans: BTreeMap<String, Vec<Vec<u8>>> = places
+            .iter()
+            .filter(|(_, (_, opaque))| !*opaque)
+            .filter_map(|(path, (spans, _))| {
+                let content = &original_files.get(*path)?.content;
+                let keys: Vec<Vec<u8>> = spans
+                    .iter()
+                    .filter(|(member, _)| member.is_empty())
+                    .flat_map(|(_, spans)| spans.iter())
+                    .filter_map(|&(start, end)| {
+                        let range = usize::try_from(start).ok()?..usize::try_from(end).ok()?;
+                        content.get(range).map(<[u8]>::to_vec)
+                    })
+                    .collect();
+                (!keys.is_empty()).then(|| ((*path).to_owned(), keys))
+            })
+            .collect();
         let mut inputs = Vec::with_capacity(changed.len());
         let mut unmapped = Vec::new();
         for path in &changed {
@@ -476,13 +512,15 @@ impl Vault {
                     content: file.1.clone(),
                     source_operation: Some(file.0.source_operation),
                     metadata_edit: Some(file.0.metadata_edit.clone()),
+                    withheld_base_blake3: None,
                 })
                 .collect(),
             created_at: row.received_at,
+            original_spans,
         };
         let prepared = match self.prepare_received_files_proposal(canonical, input)? {
             Ok(prepared) => prepared,
-            Err(_) => return held_with(HeldShape, "base_snapshot_refused", pins),
+            Err(reason) => return held_with(HeldShape, reason, pins),
         };
         let hold = super::projected::refresh_projected_candidate_hold(&pins, pins.hold_cause());
         Ok(Some(Ok(PreparedPushCandidate {
@@ -515,6 +553,57 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// The seal that consumed the agent's earlier push into the copy
+    /// `graph` whose COPY tip is `old` (FIX 10273, KEEP 5): the tested
+    /// revision of the canonical store `canonical` on the queue's green
+    /// chain whose complete link names it, with the canonical commit that
+    /// revision pinned. `None` when no sealed revision consumed it.
+    ///
+    /// # Errors
+    /// A store failure, or a pinned commit that is no object id.
+    fn projected_predecessor_base(
+        &self,
+        canonical: &GitWireRepo,
+        queue: &CandidateQueue,
+        graph: EntityId,
+        old: &GitOid,
+    ) -> Result<Option<(GitOid, PushCandidateBase)>> {
+        let store = canonical.identity().as_hex();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut next = queue.green.clone();
+        while let Some(revision) = next {
+            if !seen.insert(revision.revision_id) {
+                break;
+            }
+            if let Some(tested) = &revision.tested_queue
+                && tested.store == store
+                && tested.received_pushes.iter().any(|link| {
+                    link.new_commit == old.as_str()
+                        && link
+                            .projection
+                            .as_ref()
+                            .is_some_and(|projected| projected.graph == graph)
+                })
+            {
+                let commit = GitOid::parse_hex(tested.commit.clone())?;
+                let anchor = self
+                    .resolve_code_revision_import_anchor(revision.revision_id)?
+                    .map(|manifest| {
+                        crate::store::code_import_manifest::manifest_id(&manifest.digest)
+                    })
+                    .transpose()?;
+                return Ok(Some((commit, PushCandidateBase { revision, anchor })));
+            }
+            next = match revision.parent_revision_id {
+                Some(parent) => self.get_code_revision(&parent)?,
+                None => None,
+            };
+        }
+        Ok(None)
+    }
+}
+
 fn held_with(
     state: CodePushCandidateState,
     reason: &str,
@@ -528,3 +617,5 @@ fn held_with(
         Some(pins),
     ))))
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

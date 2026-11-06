@@ -75,3 +75,7 @@ use rmpv::Value;
 use std::collections::BTreeSet;
 
 pub mod standing;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::copy::persona_snapshot_copy_accepts_masked;

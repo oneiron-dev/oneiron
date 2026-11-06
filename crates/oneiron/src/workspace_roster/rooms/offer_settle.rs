@@ -23,6 +23,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::offer_history::live_offer;
 use super::offers::{
     OFFER_CURRENT, OFFERS, OfferCard, OfferState, StoredOffer, current_key, is_offer_id,
     join_refused,
@@ -35,7 +36,7 @@ use crate::memory::{
     WitnessTurn,
 };
 use crate::workspace_roster::join_door::require_admission_party_in_txn;
-use crate::workspace_roster::join_receipt::JOINS;
+use crate::workspace_roster::join_history::live_join;
 use crate::workspace_roster::{
     ConsentAnswer, ConsentPart, JoinDecision, JoinOutcome, JoinReceiptRef, JoinSubject,
     RosterActor, require_join_for_branch_in_txn, rooms_consent_in_txn,
@@ -116,8 +117,7 @@ impl Settled {
         txn: &heed::RoTxn<'_>,
         stored: StoredOffer,
     ) -> Result<Self> {
-        let join = JOINS
-            .get(&vault.store, txn, &stored.card.join_ref)?
+        let join = live_join(&vault.store, txn, &stored.card.join_ref)?
             .map(|receipt| JoinOutcome::of(&receipt));
         Ok(Self {
             card: stored.into_card(),
@@ -198,6 +198,7 @@ impl Acceptance {
                 author: WitnessAuthor::Companion,
                 message_type: "text".to_owned(),
                 content,
+                parts: None,
                 metadata: Some(serde_json::Value::Object(metadata)),
                 is_visible: true,
                 order: 0,
@@ -369,8 +370,7 @@ fn answer_in_txn(
     now: u64,
 ) -> MemoryResult<Step> {
     vault.verify_write_actor_in_txn(txn, &caller)?;
-    let mut stored = OFFERS
-        .get(&vault.store, txn, &request.offer_id)?
+    let mut stored = live_offer(&vault.store, txn, &request.offer_id)?
         .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?;
     // The party whose admission the card asks for answers it, whatever the
     // join's state.
@@ -490,8 +490,7 @@ impl Memory<'_> {
         let caller = self.write_actor();
         let card = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let stored = OFFERS
-                .get(&vault.store, &txn, &request.offer_id)?
+            let stored = live_offer(&vault.store, &txn, &request.offer_id)?
                 .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?;
             require_admission_party_in_txn(vault, &txn, stored.card.room, caller)?;
             stored.card

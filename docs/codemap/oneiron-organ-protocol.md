@@ -11,16 +11,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/frame.rs` | src | m | 1 enum · 10 fn · 1 re-export | FrameError | Framing: `len: u32 LE \| MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries… |
-| `src/frame/booked.rs` | src | s | 1 trait · 3 fn · 1 crate-vis | FrameBooking | Booked frames (FIX 6195): room for every allocation a frame makes, made before it is made |
-| `src/lib.rs` | src | s | 4 mod · 7 re-export | — | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
-| `src/memory.rs` | src | s | 1 struct · 1 enum · 1 const | MemoryAnswer, MemoryAsk | The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it… |
+| `src/codec.rs` | src | m | 1 enum · 6 fn · 30 crate-vis | CodecError | The protocol's own MessagePack codec (protocol 2.0, FIX 6191) |
+| `src/codec/de.rs` | src | m | 3 crate-vis | — | The decoder: MessagePack with named fields onto serde's data model |
+| `src/codec/ser.rs` | src | m | 3 crate-vis | — | The encoder: serde's data model onto MessagePack with named fields |
+| `src/codec/ser/compound.rs` | src | s | 3 crate-vis | — | Sequence, map and struct output, including unknown-length compounds |
+| `src/codec/ser/ext.rs` | src | s | 3 crate-vis | — | rmp-serde's typed MessagePack extension contract |
+| `src/frame.rs` | src | m | 1 enum · 7 fn · 1 re-export | FrameError | Framing (protocol 2.0): a message is one or more frames back to back, each `len: u32 LE \| more: u8 \| len… |
+| `src/frame/booked.rs` | src | s | 1 trait · 7 fn · 1 const · 1 crate-vis | FrameBooking | Booked messages (FIX 6195): room for every allocation a message makes, made before it is made |
+| `src/lib.rs` | src | s | 5 mod · 7 re-export | — | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/memory.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const | MemoryAnswer, MemoryAsk | The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it… |
+| `src/memory/borrowed.rs` | src | s | 1 crate-vis | — | Borrowed decoding for the two fixed-size memory control types |
 | `src/region.rs` | src | s | 2 struct · 8 fn | MappedRegion, SharedRegion | Read-only shared regions: how blob bytes cross without being copied |
 | `src/runtime.rs` | src | m | 6 struct · 1 trait · 10 fn · 2 const · 1 re-export | Answer, AskReply, Asker, CallContext, InputBytes, Organ, OutputBytes | The organ side: handshake, frames, a small worker pool and cancel flags |
 | `src/runtime/answer.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 crate-vis | AnswerMemory, AskBytes | An answer's bytes, in the organ's own memory (FIX 8454) |
-| `src/seal.rs` | src | s | 4 struct · 5 enum | SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification, SealRevisionEvidence, SealRevisionKind, SealSignatureEvidence +1 | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
-| `src/shape.rs` | src | s | 1 fn · 2 const · 3 crate-vis | — | A structural check of a MessagePack frame before it is decoded |
+| `src/seal.rs` | src | s | 4 struct · 5 enum · 1 fn · 2 const | SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification, SealRevisionEvidence, SealRevisionKind, SealSignatureEvidence +1 | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
 | `src/spin.rs` | src | s | 2 fn · 1 const | — | Spinning a moment before sleeping |
-| `src/wire.rs` | src | m | 22 struct · 10 enum · 7 fn · 8 const | Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, CancelReason +24 | The protocol's messages |
+| `src/value.rs` | src | s | 1 struct · 1 enum · 15 fn · 3 crate-vis | Integer, Value | A MessagePack value, as the protocol carries args, bodies, reports and asks (protocol 2.0, FIX 6191) |
+| `src/value/ops.rs` | src | s | 6 crate-vis | — | A value's drop, clone, comparison and print, none of which recurses: each walks the value with a stack on… |
+| `src/value/wire.rs` | src | m | 4 crate-vis | — | A value on the wire: written piece by piece and read token by token, with no recursion, and carried through… |
+| `src/wire.rs` | src | m | 22 struct · 10 enum · 6 fn · 7 const · 1 re-export | Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, CancelReason +24 | The protocol's messages |
 | `tests/frames.rs` | test | s | — | — | A frame is bounded by what it decodes to, not only by its bytes: a peer cannot make the other side… |
 | `tests/sessions.rs` | test | s | — | — | The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`): a session speaks the lower… |

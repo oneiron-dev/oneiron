@@ -56,22 +56,7 @@ use crate::registry::{
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// The door-owned TURN body key a thread binding rides under.
-pub(crate) const ROOM_THREAD_KEY: &str = "room_thread";
-
-/// A thread TURN's birth binding: its thread's root, the room whose
-/// membership it reads under, the trunk turn the thread hangs off and, on
-/// the root alone, the audience the thread names (`None`: it reads as its
-/// room does). The room is the canonical one, never a session's shell, and
-/// every turn of a thread repeats its root's room and anchor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ThreadBinding {
-    pub(crate) root: EntityId,
-    pub(crate) room: EntityId,
-    pub(crate) anchor: Option<EntityId>,
-    pub(crate) audience: Option<BTreeSet<EntityId>>,
-}
+pub(crate) use crate::store::conversation_body::{ROOM_THREAD_KEY, ThreadBinding};
 
 /// The binding a TURN's MessagePack `body` carries; `None` for a trunk
 /// TURN, or a body that is no map and so names no thread. A binding that
@@ -143,7 +128,9 @@ pub(crate) fn names_actor_in(
     let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
     Ok(
         crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)?
-            .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Person)
+            .filter(|anchor| {
+                anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person
+            })
             .is_some_and(|anchor| ids.contains(&anchor.subject_ref)),
     )
 }

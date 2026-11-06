@@ -9,7 +9,7 @@ use crate::{Error, Result, Vault};
 
 use super::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 
-pub const HONESTY_AXIS: &str = "honesty";
+pub use crate::skill::learning_judge::HONESTY_AXIS;
 pub const SEAL_QUALITY_AXIS: &str = "seal_flaw_free";
 
 /// Findings and their sampling correction. No term is derived from an

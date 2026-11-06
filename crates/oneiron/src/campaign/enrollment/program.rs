@@ -1,13 +1,14 @@
 //! Persisted campaign program and step state authorizing both halves of the consequence.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 use super::step_connector::descriptor_checked;
 use super::storage::{
     CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, bytes_from_hex, id_from_hex, invalid, pin_schema,
 };
 use crate::Vault;
-use crate::campaign::claims::{CampaignMemberChannel, normalize_campaign_pack_token};
+use crate::campaign::claims::normalize_campaign_pack_token;
 use crate::campaign::surface::{
     CampaignLifecycle, CampaignRecord, campaign_type_byte, load_campaign_in_txn,
     owned_campaign_in_txn, read_campaign,
@@ -31,95 +32,16 @@ const PROGRAM_STEP: SideTable<(EntityId, EntityId), ProgramStepRow, LegacyJson> 
 // Campaign program state (the outward leg's persisted authority)
 // ---------------------------------------------------------------------------
 
-/// A campaign program: the persisted binding between a campaign and the steps
-/// its enrollments execute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CampaignProgram {
-    /// Row schema version.
-    pub schema_version: u32,
-    /// Program identity.
-    pub program_ref: EntityId,
-    /// Campaign this program belongs to.
-    pub campaign_ref: EntityId,
-    /// The saved query this program enrolls from; absent means nothing
-    /// enrolls into it from a sweep.
-    pub audience: Option<CampaignProgramAudience>,
-}
-
-/// A program's audience: the campaign's edge to its target SAVED_QUERY
-/// (ARCH-0059), and the program step a newly entered member enrolls at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CampaignProgramAudience {
-    /// The saved query whose entries enroll.
-    pub query_ref: EntityId,
-    /// The step of this program an entry enrolls at.
-    pub entry_step_ref: EntityId,
-}
-
-/// The outward half of a program step.
-///
-/// `call_seq` is DURABLE program state, never a clock or a process counter:
-/// ONE-1691 derives the intent id from `(attempt_id, call_seq, server, tool,
-/// payload_hash)`, so a process-local counter would mint a fresh intent — and a
-/// second send — on every restart.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignProgramOutbound {
-    /// Durable call sequence within the program.
-    pub call_seq: u64,
-    /// Outbound verb.
-    pub verb: String,
-    /// Frozen program-authored body.
-    pub payload: Vec<u8>,
-    /// Whether the channel honors the ledger's idempotency key. Persisted
-    /// rather than assumed: getting this wrong turns an ambiguous send into a
-    /// duplicate one. Derived from the connector's descriptor when one
-    /// describes the channel (FIX 2774).
-    pub idempotency_supported: bool,
-}
-
-/// One step of a campaign program.
-///
-/// The step is the single persisted source for BOTH halves of the consequence:
-/// the `campaign.member` channel row (channel, consent basis, sticky sender)
-/// and, when present, the outward call. A cohort row with no channel would be
-/// an unauthorized send waiting to happen, which is why CA-01 rejects one — so
-/// enrollment without a resolvable step fails closed rather than writing a
-/// channel-less member.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignProgramStep {
-    /// Row schema version.
-    pub schema_version: u32,
-    /// Owning program.
-    pub program_ref: EntityId,
-    /// Step identity.
-    pub step_ref: EntityId,
-    /// Normalized channel token.
-    pub channel: String,
-    /// Sticky sender identity for this channel.
-    pub sender_ref: EntityId,
-    /// Evidence entity authorizing contact on this channel.
-    pub basis_evidence: EntityId,
-    /// Outward leg; absent means "enroll, send nothing".
-    pub outbound: Option<CampaignProgramOutbound>,
-}
-
-impl CampaignProgramStep {
-    /// The CA-01 channel row this step authorizes.
-    #[must_use]
-    pub fn member_channel(&self) -> CampaignMemberChannel {
-        CampaignMemberChannel {
-            channel: self.channel.clone(),
-            basis_evidence: self.basis_evidence,
-            sender_ref: self.sender_ref,
-        }
-    }
-}
+pub use crate::memory::campaign_records::program_definition::CampaignProgram;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramAudience;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramOutbound;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramStep;
 
 /// Persists a campaign program row, raw.
 ///
 /// An audience is validated here: the query and the campaign share an
-/// owner, the campaign is active, and the entry step is one of this
-/// program's own steps. Any number of programs may enroll from one query;
+/// owner, the campaign is Draft, Active or Paused, and the entry step is one
+/// of this program's own steps. Any number of programs may enroll from one query;
 /// only a second program of the SAME campaign on the same query is refused
 /// (`audience_taken_by`). That check shares the write's transaction.
 ///
@@ -218,8 +140,8 @@ fn audience_taken_by(other: &CampaignProgram, program: &CampaignProgram) -> bool
 }
 
 /// The audience rules that need no write transaction: the query and the
-/// campaign share an owner, the campaign is active, and the entry step is
-/// this program's own.
+/// campaign share an owner, the campaign is Draft, Active or Paused, and the
+/// entry step is this program's own.
 fn validate_audience(
     vault: &Vault,
     program: &CampaignProgram,
@@ -231,7 +153,7 @@ fn validate_audience(
         .ok_or_else(|| {
             invalid("the campaign is absent or not owned by the audience query's owner")
         })?;
-    if campaign.definition.lifecycle != CampaignLifecycle::Active {
+    if !campaign_program_edits_open(&campaign) {
         return Err(invalid("an archived campaign takes no audience"));
     }
     if campaign_program_step(vault, program.program_ref, audience.entry_step_ref)?.is_none() {
@@ -285,81 +207,21 @@ pub fn campaign_program_step(
 /// longer token could never enroll anyone.
 pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
 
-/// The authored half of a campaign program, stored beside its binding by the
-/// checked doors ([`create_campaign_program`] and its siblings).
-///
-/// No owner is stored: the program's owner is its campaign's, read through the
-/// campaign, so there is no second owner to keep in step with the first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignProgramDefinition {
-    /// Operator-facing name.
-    pub name: String,
-    /// Monotonic version, incremented by every accepted write.
-    pub definition_version: u64,
-    /// Lifecycle state. An archived program enrolls no one.
-    pub lifecycle: CampaignLifecycle,
-    /// The program's steps, in authored order.
-    pub step_refs: Vec<EntityId>,
-    /// Creation time.
-    pub created_at: u64,
-    /// Last accepted write.
-    pub updated_at: u64,
-}
+/// Longest accepted email subject, in bytes (FIX 11641): the Gmail
+/// `Subject:` room inside RFC 5322's line limit. The stalwart 998-byte cap
+/// accepts it too, so one bound serves both email halves.
+pub(super) const CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES: usize = 600;
 
-/// One step as an owner writes it: a [`CampaignProgramStep`] without the
-/// fields the engine stamps (its schema version and owning program).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignProgramStepDraft {
-    /// Step identity, unique within the program. A program-local key the
-    /// caller picks, so an audience can name its entry step in the same
-    /// write; it grants nothing.
-    pub step_ref: EntityId,
-    /// Normalized channel token.
-    pub channel: String,
-    /// Sticky sender: a channel identity of this step's channel.
-    pub sender_ref: EntityId,
-    /// Evidence entity the step cites as its contact basis.
-    pub basis_evidence: EntityId,
-    /// Outward leg; absent means "enroll, send nothing".
-    pub outbound: Option<CampaignProgramOutbound>,
-}
-
-/// A whole program definition as an owner writes it. Create takes one, and
-/// update replaces the stored one with another, whole.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampaignProgramDraft {
-    /// Operator-facing name.
-    pub name: String,
-    /// Every step, in order.
-    pub steps: Vec<CampaignProgramStepDraft>,
-    /// The saved query the program enrolls from, and its entry step. `None`
-    /// binds none.
-    pub audience: Option<CampaignProgramAudience>,
-}
-
-/// An authored campaign program, as the checked doors return it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthoredCampaignProgram {
-    /// The binding row: identity, campaign and audience.
-    pub program: CampaignProgram,
-    /// The parent campaign's owner, which is the program's.
-    pub owner_actor: EntityId,
-    /// The authored definition.
-    pub definition: CampaignProgramDefinition,
-    /// The steps, in [`CampaignProgramDefinition::step_refs`] order.
-    pub steps: Vec<CampaignProgramStep>,
-    /// Whether a sweep enrolls from the audience now: the program is bound,
-    /// it and its campaign are active, and the query is active and Wake or
-    /// Reactive. A Manual or inactive query may be bound; it simply gets no
-    /// automatic intake, and this says so.
-    pub automatic_intake: bool,
-}
+pub use crate::memory::campaign_records::program_definition::AuthoredCampaignProgram;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramDefinition;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramDraft;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramStepDraft;
 
 /// Creates an authored campaign program under a campaign the principal owns.
 ///
 /// The owner is the campaign's, read through `owned_campaign_in_txn`, the
 /// check `update_campaign` makes, so a caller who does not own the campaign
-/// gets the answer an absent one gets. The campaign must be active. The
+/// gets the answer an absent one gets. The campaign must be Draft, Active or Paused. The
 /// sender, audience and binding checks (`write_program_in_txn`) share the
 /// write's one transaction.
 ///
@@ -392,7 +254,7 @@ pub fn create_campaign_program(
             campaign_ref,
             campaign_kind,
         )?;
-        require_active_campaign(&campaign)?;
+        require_campaign_program_edits_open(&campaign)?;
         write_program_in_txn(
             vault,
             wtxn,
@@ -408,7 +270,7 @@ pub fn create_campaign_program(
                 definition: CampaignProgramDefinition {
                     name: draft.name.clone(),
                     definition_version: 1,
-                    lifecycle: CampaignLifecycle::Active,
+                    lifecycle: campaign.definition.lifecycle,
                     step_refs: draft.steps.iter().map(|step| step.step_ref).collect(),
                     created_at: now,
                     updated_at: now,
@@ -498,8 +360,8 @@ pub fn update_campaign_program(
         let (program, current) = authored_program_in_txn(vault, wtxn, &campaign, program_ref)?
             .ok_or(Error::EntityNotFound)?;
         require_expected_program_version(&current, expected_definition_version)?;
-        require_active_campaign(&campaign)?;
-        if current.lifecycle != CampaignLifecycle::Active {
+        require_campaign_program_edits_open(&campaign)?;
+        if current.lifecycle == CampaignLifecycle::Archived {
             return Err(invalid("an archived campaign program is read-only"));
         }
         write_program_in_txn(
@@ -558,6 +420,9 @@ pub fn archive_campaign_program(
             authored_program_in_txn(vault, wtxn, &campaign, program_ref)?
                 .ok_or(Error::EntityNotFound)?;
         require_expected_program_version(&definition, expected_definition_version)?;
+        if definition.lifecycle == CampaignLifecycle::Archived {
+            return Err(invalid("an archived campaign program is read-only"));
+        }
         definition.definition_version = next_program_version(definition.definition_version)?;
         definition.lifecycle = CampaignLifecycle::Archived;
         definition.updated_at = now;
@@ -597,7 +462,7 @@ pub(super) fn require_program_step_enrolls(
     let rtxn = vault.store.env.read_txn()?;
     if !program_enrolls_in_txn(vault, &rtxn, campaign_kind, program)? {
         return Err(invalid(
-            "the campaign program or its campaign is archived; nothing enrolls into it",
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
         ));
     }
     let dropped = stored_program_in_txn(vault, &rtxn, program.program_ref)?
@@ -612,7 +477,7 @@ pub(super) fn require_program_step_enrolls(
 }
 
 /// Whether `program` enrolls now: its campaign exists and is active, and its
-/// authored definition, when a checked door wrote one, is not archived.
+/// authored definition, when a checked door wrote one, is active.
 fn program_enrolls_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -627,6 +492,62 @@ fn program_enrolls_in_txn(
     Ok(stored_program_in_txn(vault, txn, program.program_ref)?
         .and_then(|(_, definition)| definition)
         .is_none_or(|definition| definition.lifecycle == CampaignLifecycle::Active))
+}
+
+/// P1-2 #4499: the campaign leg's under-writer lifecycle recheck.
+///
+/// The enrollment leg prepares its gate input from live rows, then the
+/// chokepoint admits under its own writer; a pause that commits in between
+/// must stop the send. Both writers call this under the same transaction
+/// that would record the decision (New) or re-govern the retry (live
+/// retry), so a refusal records nothing new and sends nothing.
+///
+/// Scoped by the gate's existing `ApprovalTarget::Campaign` facts only:
+/// any other effect passes through with no storage read. A campaign leg
+/// must still bind to its program, and both the campaign and the program
+/// must still enroll (`program_enrolls_in_txn`, so definition-less raw
+/// rows keep today's pass-through), and an authored step the program
+/// dropped still fails closed. No version lock: the facts carry no
+/// definition version, and a pause already flips lifecycle text, which
+/// this recheck reads.
+///
+/// # Errors
+///
+/// `IntentLedgerError::InvalidInput` when the leg is not a sendable
+/// campaign leg now; storage failures surface as `IntentLedgerError::Engine`.
+pub(crate) fn admit_campaign_leg_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    gate: &crate::gate::ExternalEffectGateInput,
+) -> std::result::Result<(), crate::outbound_intent_ledger::IntentLedgerError> {
+    use crate::gate::ApprovalTarget;
+    use crate::outbound_intent_ledger::IntentLedgerError;
+
+    let Some(ApprovalTarget::Campaign(facts)) = gate.provenance.approval_target.as_ref() else {
+        return Ok(());
+    };
+    let campaign_kind = campaign_type_byte(vault)?;
+    let Some((program, definition)) = stored_program_in_txn(vault, txn, facts.program_ref)? else {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    };
+    if program.campaign_ref != facts.campaign_ref {
+        return Err(IntentLedgerError::InvalidInput(
+            "campaign program does not belong to the prepared campaign",
+        ));
+    }
+    if !program_enrolls_in_txn(vault, txn, campaign_kind, &program)? {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    }
+    if definition.is_some_and(|definition| !definition.step_refs.contains(&facts.step_ref)) {
+        return Err(IntentLedgerError::InvalidInput(
+            "the step is no longer part of its campaign program",
+        ));
+    }
+    Ok(())
 }
 
 /// Everything one checked definition write lands.
@@ -831,15 +752,46 @@ fn validate_step_draft(step: &CampaignProgramStepDraft) -> Result<()> {
             return Err(invalid("a step's outbound verb must be a non-empty name"));
         }
         descriptor_checked(&step.channel, outbound)?;
+        validate_outbound_subject(&step.channel, outbound)?;
     }
     Ok(())
 }
 
-fn require_active_campaign(campaign: &CampaignRecord) -> Result<()> {
-    if campaign.definition.lifecycle == CampaignLifecycle::Active {
+/// The subject rule (FIX 11641): channel `email` carries one, any other
+/// channel carries none, so no dead field lands on slack/line rows. The
+/// channel is normalized by now ([`validate_step_draft`] refused any other
+/// spelling above), so the email check is exact.
+fn validate_outbound_subject(channel: &str, outbound: &CampaignProgramOutbound) -> Result<()> {
+    match (channel == "email", outbound.subject.as_ref()) {
+        (true, Some(subject)) => {
+            if subject.is_empty()
+                || subject.len() > CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES
+                || subject.chars().any(char::is_control)
+            {
+                return Err(invalid(
+                    "a step's email subject must be 1..=600 bytes without control characters",
+                ));
+            }
+            Ok(())
+        }
+        (true, None) => Err(invalid("a step's email outbound requires a subject")),
+        (false, None) => Ok(()),
+        (false, Some(_)) => Err(invalid("only a step's email outbound carries a subject")),
+    }
+}
+
+fn campaign_program_edits_open(campaign: &CampaignRecord) -> bool {
+    matches!(
+        campaign.definition.lifecycle,
+        CampaignLifecycle::Draft | CampaignLifecycle::Active | CampaignLifecycle::Paused
+    )
+}
+
+fn require_campaign_program_edits_open(campaign: &CampaignRecord) -> Result<()> {
+    if campaign_program_edits_open(campaign) {
         return Ok(());
     }
-    Err(invalid("an archived campaign's programs are read-only"))
+    Err(invalid("a campaign's programs are read-only after archive"))
 }
 
 fn require_expected_program_version(
@@ -852,6 +804,75 @@ fn require_expected_program_version(
     Err(Error::ConcurrentWrite(
         "campaign program definition version is not current",
     ))
+}
+
+/// Moves every authored program of `campaign_ref` to the campaign's new
+/// lifecycle in the caller's write. Archived programs stay archived. Before a
+/// Draft/Paused campaign becomes Active, prove that all its unarchived rows,
+/// including definition-less raw rows, hold at most one audience per query.
+/// Draft/Paused deliberately do not hold a query, so this transition closes
+/// the duplicate-bind race. Moved programs bump their definition versions;
+/// callers re-read them after the campaign transition.
+pub(crate) fn transition_campaign_programs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    campaign_ref: EntityId,
+    lifecycle: CampaignLifecycle,
+    now: u64,
+) -> Result<()> {
+    let mut programs = Vec::new();
+    for (program_ref, mut row) in PROGRAM.scan(&vault.store, &*wtxn)? {
+        let definition = row
+            .definition
+            .take()
+            .map(decode_program_definition)
+            .transpose()?;
+        let program = decode_program(program_ref, row)?;
+        if program.campaign_ref == campaign_ref {
+            programs.push((program, definition));
+        }
+    }
+    if lifecycle == CampaignLifecycle::Active {
+        let mut audiences = BTreeSet::new();
+        for (program, definition) in &programs {
+            if definition
+                .as_ref()
+                .is_some_and(|definition| definition.lifecycle == CampaignLifecycle::Archived)
+            {
+                continue;
+            }
+            if let Some(audience) = program.audience
+                && !audiences.insert(audience.query_ref)
+            {
+                return Err(invalid(
+                    "another unarchived program of this campaign already binds this saved query",
+                ));
+            }
+        }
+    }
+    for (program, definition) in programs {
+        let Some(mut definition) = definition else {
+            continue;
+        };
+        let next_lifecycle = if definition.lifecycle == CampaignLifecycle::Archived {
+            CampaignLifecycle::Archived
+        } else {
+            lifecycle
+        };
+        if next_lifecycle == definition.lifecycle {
+            continue;
+        }
+        definition.definition_version = next_program_version(definition.definition_version)?;
+        definition.lifecycle = next_lifecycle;
+        definition.updated_at = now;
+        PROGRAM.put(
+            &vault.store,
+            wtxn,
+            &program.program_ref,
+            &encode_authored_program(&program, &definition),
+        )?;
+    }
+    Ok(())
 }
 
 fn next_program_version(current: u64) -> Result<u64> {
@@ -962,6 +983,7 @@ struct ProgramOutboundRow {
     verb: String,
     payload: String,
     idempotency_supported: bool,
+    subject: Option<String>,
 }
 
 fn encode_program(program: &CampaignProgram) -> ProgramRow {
@@ -1041,6 +1063,7 @@ fn encode_program_step(step: &CampaignProgramStep) -> ProgramStepRow {
             verb: outbound.verb.clone(),
             payload: bytes_to_hex_lower(&outbound.payload),
             idempotency_supported: outbound.idempotency_supported,
+            subject: outbound.subject.clone(),
         }),
     }
 }
@@ -1060,6 +1083,7 @@ fn decode_program_step(
                 verb: outbound.verb,
                 payload: bytes_from_hex(&outbound.payload, CONTEXT)?,
                 idempotency_supported: outbound.idempotency_supported,
+                subject: outbound.subject,
             })
         })
         .transpose()?;

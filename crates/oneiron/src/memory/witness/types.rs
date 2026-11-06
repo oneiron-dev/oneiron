@@ -56,6 +56,11 @@ pub struct WitnessMessage {
     pub message_type: String,
     /// Text content; BM25-indexed under the `content` field when non-empty.
     pub content: String,
+    /// Ordered model-output parts owned by this MESSAGE. Text readers keep
+    /// reading `content`; reasoning never enters their joined text or the
+    /// editable document. Absent for text-only writers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<crate::ContentPart>>,
     /// Opaque metadata, passed through as MessagePack.
     pub metadata: Option<serde_json::Value>,
     /// Visibility flag (default true app-side).
@@ -75,7 +80,7 @@ pub struct WitnessMessage {
     /// opaque. A stored message's quote is a birth fact, so a retry carries
     /// the same one. Absent ⇒ no quote.
     #[serde(default)]
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
 }
 
 /// One conversational turn to witness: create-or-get CONVERSATION/TURN plus
