@@ -52,50 +52,54 @@ pub(super) fn prepare(spec: &GuestSpec) -> Result<MountArchive> {
             .open(host)?;
         let prefix = PathBuf::from(index.to_string());
         append_directory(&mut builder, &prefix, &directory.metadata()?)?;
-        let mut pending = vec![(directory, prefix)];
-        while let Some((directory, prefix)) = pending.pop() {
+        let entries = std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))?;
+        let mut pending = vec![(directory, prefix, entries)];
+        while let Some((directory, prefix, entries)) = pending.last_mut() {
+            let Some(entry) = entries.next() else {
+                pending.pop();
+                continue;
+            };
+            let entry = entry?;
             let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
-            for entry in std::fs::read_dir(&anchored)? {
-                let entry = entry?;
-                let name = entry.file_name();
-                let path = prefix.join(&name);
-                if entry.file_type()?.is_symlink() {
-                    let target = std::fs::read_link(anchored.join(&name))?;
-                    let mut header = header(&entry.metadata()?, tar::EntryType::Symlink);
-                    builder.append_link(&mut header, &path, target)?;
-                    continue;
-                }
-                let name = std::ffi::CString::new(name.as_bytes())
-                    .map_err(|_| super::refused("native mount filename"))?;
-                // SAFETY: the live directory descriptor and single filename
-                // are owned here. NOFOLLOW never opens a descendant link;
-                // NONBLOCK prevents a raced FIFO from blocking the host.
-                let fd = unsafe {
-                    libc::openat(
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
-                    )
-                };
-                if fd < 0 {
-                    return Err(std::io::Error::last_os_error().into());
-                }
-                // SAFETY: openat returned a fresh descriptor, now owned once.
-                let file = unsafe { File::from_raw_fd(fd) };
-                let metadata = file.metadata()?;
-                if metadata.is_dir() {
-                    append_directory(&mut builder, &path, &metadata)?;
-                    pending.push((file, path));
-                } else if metadata.is_file() {
-                    let mut header = header(&metadata, tar::EntryType::Regular);
-                    header.set_size(metadata.len());
-                    header.set_cksum();
-                    builder.append_data(&mut header, path, file.take(metadata.len()))?;
-                } else {
-                    return Err(super::refused(
-                        "native mount entry is not a file, directory or link",
-                    ));
-                }
+            let name = entry.file_name();
+            let path = prefix.join(&name);
+            if entry.file_type()?.is_symlink() {
+                let target = std::fs::read_link(anchored.join(&name))?;
+                let mut header = header(&entry.metadata()?, tar::EntryType::Symlink);
+                builder.append_link(&mut header, &path, target)?;
+                continue;
+            }
+            let name = std::ffi::CString::new(name.as_bytes())
+                .map_err(|_| super::refused("native mount filename"))?;
+            // SAFETY: the live directory descriptor and single filename
+            // are owned here. NOFOLLOW never opens a descendant link;
+            // NONBLOCK prevents a raced FIFO from blocking the host.
+            let fd = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            // SAFETY: openat returned a fresh descriptor, now owned once.
+            let file = unsafe { File::from_raw_fd(fd) };
+            let metadata = file.metadata()?;
+            if metadata.is_dir() {
+                append_directory(&mut builder, &path, &metadata)?;
+                let entries = std::fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+                pending.push((file, path, entries));
+            } else if metadata.is_file() {
+                let mut header = header(&metadata, tar::EntryType::Regular);
+                header.set_size(metadata.len());
+                header.set_cksum();
+                builder.append_data(&mut header, path, file.take(metadata.len()))?;
+            } else {
+                return Err(super::refused(
+                    "native mount entry is not a file, directory or link",
+                ));
             }
         }
     }
