@@ -314,19 +314,65 @@ impl Vault {
         })
     }
 
-    /// The project run `run`'s browser sends in (FIX 10422): a pumped agent
-    /// run is its dispatch's leased try, and sends in the project that
-    /// dispatch was given. `None` for a run that is no agent dispatch's try
-    /// (a credential's or a turn program's), or one given no project.
+    /// The project run `run`'s browser sends in, as its host knows it (FIX
+    /// 10422, 11906):
+    /// - a pumped agent run is its dispatch's leased try, and sends in the
+    ///   project that dispatch was given;
+    /// - a turn program's code run sends in the project whose home room the
+    ///   turn that woke it landed in;
+    /// - a program admission job's run sends in the one project every run
+    ///   it was induced from sent in.
+    ///
+    /// `None` for any other run (a credential's `execute_code` run, whose
+    /// caller names its project instead), for one given no project, and
+    /// for an admission job whose sources name none or differ.
     ///
     /// # Errors
     /// Storage errors.
     pub fn browser_run_project(&self, run: EntityId) -> Result<Option<EntityId>> {
+        self.run_project(run, true)
+    }
+
+    /// [`Self::browser_run_project`]; an admission job's sources are read
+    /// with `admission` false, so no job is read through another.
+    fn run_project(&self, run: EntityId, admission: bool) -> Result<Option<EntityId>> {
         let attempt = crate::attempt_queue::AttemptId::from_bytes(run.as_bytes())?;
-        Ok(crate::attempt_queue::AttemptQueue::new(self)
-            .get(attempt)?
-            .as_ref()
-            .and_then(crate::agent_dispatch::record_dispatch_input)
-            .and_then(|input| input.project_ref))
+        if let Some(record) = crate::attempt_queue::AttemptQueue::new(self).get(attempt)? {
+            if let Some(input) = crate::agent_dispatch::record_dispatch_input(&record) {
+                return Ok(input.project_ref);
+            }
+            if record.kind == crate::browser_library::PROGRAM_ADMISSION_KIND {
+                return if admission {
+                    self.admission_run_project(&record)
+                } else {
+                    Ok(None)
+                };
+            }
+        }
+        let txn = self.store.env.read_txn()?;
+        crate::dreamer_runner::program_run_project_in_txn(self, &txn, &run)
+    }
+
+    /// The one project every source run of the admission job `record`
+    /// sent in: `None` when it names no source, a source has no project,
+    /// two differ, or the job does not decode.
+    fn admission_run_project(
+        &self,
+        record: &crate::attempt_queue::AttemptRecord,
+    ) -> Result<Option<EntityId>> {
+        let Ok(job) = crate::browser_library::ProgramAdmissionJob::decode(record) else {
+            return Ok(None);
+        };
+        let mut agreed: Option<EntityId> = None;
+        for source in &job.from_runs {
+            let Some(project) = self.run_project(*source, false)? else {
+                return Ok(None);
+            };
+            if agreed.is_some_and(|found| found != project) {
+                return Ok(None);
+            }
+            agreed = Some(project);
+        }
+        Ok(agreed)
     }
 }
