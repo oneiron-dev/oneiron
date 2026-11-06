@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use self::admission::{read_granted_in_txn, settle_in_txn};
+use self::candidate_run::ReplayCandidate;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
@@ -50,9 +51,9 @@ use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
-    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
-    ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,
-    InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
+    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay, ExactReplayRequest,
+    FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage,
+    ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::DecisionLadder;
@@ -65,11 +66,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 mod admission;
+mod candidate_run;
 mod engine;
 mod instruction;
 mod publisher;
 mod work;
 pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
+pub use self::candidate_run::CandidateRun;
 pub use self::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
@@ -131,42 +134,6 @@ pub struct CodeFixSettled {
     /// Each candidate's shadow replay: the Coach's own for a skill or prompt
     /// heal first, then each publisher candidate.
     pub candidates: Vec<CandidateRun>,
-}
-
-/// One candidate's shadow replay: its outcome and its export's verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CandidateRun {
-    pub candidate_id: String,
-    /// `None` when the replay could not run, or did not fail before the fix.
-    pub outcome: Option<FixOutcome>,
-    pub export: CodeFixVerdict,
-    /// How the replay ran the real failure (FIX 1662): the request the
-    /// failing call sent, or a call rebuilt from its text. `None` when it
-    /// could not run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub replay: Option<ReplayFidelity>,
-    /// An engine candidate's matched pair (FIX 1661, 2144), content-free:
-    /// its pin, each arm's summary, and whether it was judged or why not.
-    /// `None` for an instruction, and for a candidate whose failure no
-    /// longer stood.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<EngineCandidateRun>,
-    /// The Grant an instruction's exact replay read the kept request under
-    /// (FIX 9448): its keep is rechecked against that Grant alone. `None`
-    /// for an engine pair, which holds its own, and for any other run.
-    pub grant: Option<EntityId>,
-}
-
-impl CandidateRun {
-    /// Whether this run stands for its candidate: every run does but an
-    /// engine pair kept not run at another shadow protocol, or kept for want
-    /// of the Coach's Grant when `read_granted` says that Grant now reads
-    /// the run's scope; each is tried once more (FIX 1661, 2144, 7031).
-    fn tried(&self, read_granted: bool) -> bool {
-        self.engine
-            .as_ref()
-            .is_none_or(|engine| !engine.retries(read_granted))
-    }
 }
 
 /// A candidate's run, the record it sealed, and the captured step an
@@ -395,7 +362,7 @@ impl Vault {
                     !settled
                         .candidates
                         .iter()
-                        .any(|run| run.candidate_id == *id && run.tried(granted))
+                        .any(|run| !run.coach_own && run.candidate_id == *id && run.tried(granted))
                 });
                 if !lacks {
                     continue;
@@ -470,10 +437,9 @@ impl Vault {
                 let mut settled = work.settled.take().ok_or_else(super::invalid)?;
                 let granted = read_granted_in_txn(self, &*txn, &settled, &work.source, coach)?;
                 for run in runs {
-                    let kept = settled
-                        .candidates
-                        .iter()
-                        .position(|kept| kept.candidate_id == run.0.candidate_id);
+                    let kept = settled.candidates.iter().position(|kept| {
+                        !kept.coach_own && kept.candidate_id == run.0.candidate_id
+                    });
                     if kept.is_some_and(|at| {
                         settled
                             .candidates
@@ -594,23 +560,25 @@ impl Vault {
                 .fix
                 .clone()
                 .filter(|fix| !fix.trim().is_empty())
-                .map(|instruction| {
-                    (
-                        format!("coach.{}", route.as_str()),
-                        PublisherCandidateKind::Instruction { instruction },
-                    )
+                .map(|instruction| ReplayCandidate {
+                    id: format!("coach.{}", route.as_str()),
+                    kind: PublisherCandidateKind::Instruction { instruction },
+                    coach_own: true,
                 }),
             _ => None,
         };
-        let drafted_id = own.as_ref().map(|(id, _)| id.clone());
         // A publisher candidate needs no draft of the Coach's: it is replayed
         // against the real failure whatever the heal's route.
-        let candidates: Vec<(String, PublisherCandidateKind)> = own
+        let candidates: Vec<ReplayCandidate> = own
             .into_iter()
             .chain(
                 host.publisher_candidates()
                     .iter()
-                    .map(|candidate| (candidate.id.clone(), candidate.kind.clone())),
+                    .map(|candidate| ReplayCandidate {
+                        id: candidate.id.clone(),
+                        kind: candidate.kind.clone(),
+                        coach_own: false,
+                    }),
             )
             .collect();
         measure_candidates(self, &candidates);
@@ -624,7 +592,6 @@ impl Vault {
             decisions,
             evidence: &snapshot.evidence,
             snapshot: &snapshot,
-            drafted: drafted_id,
             candidates,
             exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
@@ -684,7 +651,15 @@ impl Vault {
         if matches!(snapshot.replay.exact, ExactReplay::Erased) {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
-        measure_candidates(self, missing);
+        let candidates: Vec<ReplayCandidate> = missing
+            .iter()
+            .map(|(id, kind)| ReplayCandidate {
+                id: id.clone(),
+                kind: kind.clone(),
+                coach_own: false,
+            })
+            .collect();
+        measure_candidates(self, &candidates);
         let job = snapshot_job(&snapshot, source, route, settled.failure_class, proposal);
         let replay = CoachReplay {
             vault: self,
@@ -693,8 +668,7 @@ impl Vault {
             decisions,
             evidence: &snapshot.evidence,
             snapshot: &snapshot,
-            drafted: None,
-            candidates: missing.to_vec(),
+            candidates,
             exact: RefCell::new(snapshot.replay.exact.clone()),
             baseline: RefCell::new(None),
         };
@@ -718,10 +692,11 @@ impl Vault {
         };
         let failure_class = replay.job.failure_class;
         let mut candidates = Vec::with_capacity(replay.candidates.len());
-        for (candidate_id, kind) in &replay.candidates {
-            let (shadow, fidelity, engine, capsule) = match kind.engine_pin() {
+        for candidate in &replay.candidates {
+            let candidate_id = &candidate.id;
+            let (shadow, fidelity, engine, capsule) = match candidate.kind.engine_pin() {
                 None => {
-                    let shadow = replay.shadow_replay(&replay.job.source, candidate_id)?;
+                    let shadow = replay.shadow_candidate(candidate)?;
                     (shadow, replay.fidelity(), None, None)
                 }
                 Some(pin) => {
@@ -755,6 +730,7 @@ impl Vault {
             };
             let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
+                coach_own: candidate.coach_own,
                 outcome,
                 export,
                 replay: replay_fidelity,
@@ -784,13 +760,15 @@ const fn class_name(class: FailureClassV1) -> &'static str {
 
 /// Measures the candidates one run replays (Rule 5): how many, and the
 /// longest id or instruction among them, each read whole.
-fn measure_candidates(vault: &Vault, candidates: &[(String, PublisherCandidateKind)]) {
+fn measure_candidates(vault: &Vault, candidates: &[ReplayCandidate]) {
     let longest = candidates
         .iter()
-        .map(|(id, kind)| match kind {
-            PublisherCandidateKind::Instruction { instruction } => id.len().max(instruction.len()),
+        .map(|candidate| match &candidate.kind {
+            PublisherCandidateKind::Instruction { instruction } => {
+                candidate.id.len().max(instruction.len())
+            }
             PublisherCandidateKind::EngineBuild { .. }
-            | PublisherCandidateKind::EnginePatch { .. } => id.len(),
+            | PublisherCandidateKind::EnginePatch { .. } => candidate.id.len(),
         })
         .max()
         .unwrap_or(0);

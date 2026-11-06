@@ -115,11 +115,17 @@ impl<T: Read + Write> State<T> {
             .bytes
             .checked_add(frame.len())
             .ok_or_else(|| wasmtime::Error::msg("file proposal length overflow"))?;
-        if self.session.write_chunk(frame).is_err() {
-            self.poisoned = true;
-            return Ok(Err("file proposal transport failed".into()));
+        match self.session.write_chunk(frame) {
+            Ok(Ok(())) => Ok(Ok(frame.len() as u64)),
+            Ok(Err(reason)) => {
+                self.poisoned = true;
+                Ok(Err(reason))
+            }
+            Err(_) => {
+                self.poisoned = true;
+                Ok(Err("file proposal transport failed".into()))
+            }
         }
-        Ok(Ok(frame.len() as u64))
     }
 
     fn close_file(&mut self, id: u64) -> wasmtime::Result<Reply> {

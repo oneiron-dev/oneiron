@@ -2,12 +2,13 @@
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
+use super::admitted;
 use super::decode::LoadError;
 use super::revision_facts::RevisionAnalysisError;
 use super::{decode, walk};
 use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
-use crate::memory::LedgerHold;
+use crate::memory::{LedgerHold, SealMemoryRefusal};
 use crate::native::held_bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub(crate) enum XrefStyle {
 /// it drops (FIX 12260); it has no clone of its own.
 #[derive(Debug)]
 pub(crate) struct RevisionState {
+    pub limits: SealResourceLimits,
     pub max_obj: u32,
     pub root: ObjectId,
     pub info: Option<ObjectId>,
@@ -35,7 +37,8 @@ pub(crate) struct RevisionState {
     pub first_page_annots: Vec<Object>,
     pub root_dict: Dictionary,
     pub acroform_dict: Option<Dictionary>,
-    /// Holds the clones above; none until [`held_state`] charges them.
+    /// Reserved for a ledger hold on the clones above; none: their memory
+    /// is admitted when they are built (see [`revision_state`]).
     _held: Option<LedgerHold>,
 }
 
@@ -273,7 +276,13 @@ fn ref_of(obj: &Object) -> Option<ObjectId> {
 }
 
 /// Extract the trailer/xref revision state from a parsed document.
-pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealError> {
+pub(super) fn revision_state(
+    doc: &Document,
+    bytes: &[u8],
+    limits: &SealResourceLimits,
+    stage: SealStage,
+) -> Result<RevisionState, SealError> {
+    let memory_error = |refusal: SealMemoryRefusal| refusal.seal_error(stage);
     let trailer = &doc.trailer;
     let root = trailer
         .get(b"Root")
@@ -282,7 +291,10 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
         .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     let info = trailer.get(b"Info").ok().and_then(ref_of);
     let id = match trailer.get(b"ID") {
-        Ok(Object::Array(a)) => Some(a.clone()),
+        Ok(Object::Array(a)) => {
+            admitted::objects(limits, a).map_err(memory_error)?;
+            Some(a.clone())
+        }
         _ => None,
     };
     let prev = last_startxref(bytes)?;
@@ -296,8 +308,20 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
     // shapes must survive signing with their fields intact (a direct dict
     // treated as absent would be clobbered by a fresh AcroForm).
     let (acroform, acroform_dict) = match root_dict.get(b"AcroForm") {
-        Ok(Object::Reference(r)) => (Some(*r), walk::dictionary(doc, *r).cloned()),
-        Ok(Object::Dictionary(d)) => (None, Some(d.clone())),
+        Ok(Object::Reference(r)) => {
+            let dict = match walk::dictionary(doc, *r) {
+                Some(dict) => {
+                    admitted::dictionary(limits, dict).map_err(memory_error)?;
+                    Some(dict.clone())
+                }
+                None => None,
+            };
+            (Some(*r), dict)
+        }
+        Ok(Object::Dictionary(dict)) => {
+            admitted::dictionary(limits, dict).map_err(memory_error)?;
+            (None, Some(dict.clone()))
+        }
         _ => (None, None),
     };
     // /Fields may itself be an INDIRECT array (a valid direct /AcroForm can
@@ -306,19 +330,30 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
     // to an array (a dangling or cyclic chain included) fails closed:
     // rewriting an unreadable list would silently orphan every field.
     let acroform_fields = match acroform_dict.as_ref().and_then(|d| d.get(b"Fields").ok()) {
-        Some(f) => walk::resolve(doc, f)
-            .and_then(|o| o.as_array().ok().cloned())
-            .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?,
+        Some(f) => {
+            let fields = walk::resolve(doc, f)
+                .and_then(|o| o.as_array().ok())
+                .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
+            admitted::objects(limits, fields).map_err(memory_error)?;
+            fields.clone()
+        }
         None => Vec::new(),
     };
     let first_page_dict = walk::dictionary(doc, first_page)
-        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?
-        .clone();
-    let first_page_annots = first_page_dict
+        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    admitted::dictionary(limits, first_page_dict).map_err(memory_error)?;
+    let first_page_dict = first_page_dict.clone();
+    let first_page_annots = match first_page_dict
         .get(b"Annots")
         .ok()
-        .and_then(|a| walk::resolve(doc, a).and_then(|o| o.as_array().ok().cloned()))
-        .unwrap_or_default();
+        .and_then(|a| walk::resolve(doc, a).and_then(|o| o.as_array().ok()))
+    {
+        Some(annots) => {
+            admitted::objects(limits, annots).map_err(memory_error)?;
+            annots.clone()
+        }
+        None => Vec::new(),
+    };
     // Allocation starts past BOTH the highest referenced object number and
     // the trailer /Size: free or unreferenced numbers below /Size stay out
     // of reach of the new revision's object numbers. A /Size that does not
@@ -336,7 +371,9 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
         Err(_) => 0,
     };
     let max_obj = max_existing.max(size_max);
+    admitted::dictionary(limits, root_dict).map_err(memory_error)?;
     Ok(RevisionState {
+        limits: limits.clone(),
         max_obj,
         root,
         info,
@@ -352,24 +389,6 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
         acroform_dict,
         _held: None,
     })
-}
-
-/// [`revision_state`], its clones charged to the operation's ledger as soon
-/// as they are built and given back when the state drops (FIX 12260). A
-/// refusal is the seal's memory error at `stage`.
-fn held_state(
-    doc: &Document,
-    bytes: &[u8],
-    limits: &SealResourceLimits,
-    stage: SealStage,
-) -> Result<RevisionState, SealError> {
-    let mut state = revision_state(doc, bytes)?;
-    let held = limits
-        .memory
-        .hold(state.held_bytes())
-        .map_err(|refusal| refusal.seal_error(stage))?;
-    state._held = Some(held);
-    Ok(state)
 }
 
 /// §7.1 rule 2: reject malformed or repaired xref structures. Every
@@ -464,7 +483,7 @@ fn checked_state(bytes: &[u8], limits: &SealResourceLimits) -> Result<RevisionSt
         }
         Err(_) => return Err(input_invalid(InputInvalidCode::MalformedXref)),
     }
-    held_state(&doc, bytes, limits, SealStage::InputValidation)
+    revision_state(&doc, bytes, limits, SealStage::InputValidation)
 }
 
 /// Admits a prepared input of more than one revision (FIX 6272): each
@@ -507,5 +526,5 @@ pub(crate) fn reparse_revision(
             fatal_pdf(FatalCode::PdfInvariantFailed)
         })
     })?;
-    held_state(&doc, bytes, limits, SealStage::PdfIncrementalUpdate)
+    revision_state(&doc, bytes, limits, SealStage::PdfIncrementalUpdate)
 }

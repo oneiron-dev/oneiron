@@ -78,6 +78,16 @@ pub(super) fn record_media_device_in_txn(
     }
 }
 
+/// The mark beside a media row in the same read snapshot as that row.
+#[cfg(feature = "sync")]
+pub(super) fn media_provenance_in_txn(
+    store: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &([u8; 16], EntityId),
+) -> Result<Option<EmbeddingProvenance>> {
+    MEDIA_DEVICE.get(store, txn, key)
+}
+
 /// Drops the mark of the media vector under `key`, with that vector.
 pub(super) fn drop_media_device_in_txn(
     store: &impl SideTableDbs,

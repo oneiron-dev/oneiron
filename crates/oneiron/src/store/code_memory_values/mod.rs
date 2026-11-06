@@ -1,5 +1,8 @@
 //! Symbol-anchored memory values, deterministic union rules and row codecs.
 
+mod pull_result;
+pub use pull_result::CodeMemoryPullResult;
+
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{CodeError, Error, Result};
 use crate::side_table::{self, Raw, RawValue, SideTable};

@@ -99,6 +99,36 @@ impl PolicyManifestResolution {
         )
     }
 
+    /// Whether every floor-counted read grant keeps a world, facet, or
+    /// audience boundary. Grants are alternatives: one broad grant leaves
+    /// these axes open. This inspects no rows or per-row selector values.
+    pub(crate) fn scoped_read_grants_have_nonretrieval_bound(
+        &self,
+        actor: &ScopedReadActorKey,
+    ) -> bool {
+        if actor.vault_owner_ref().is_some() {
+            return false;
+        }
+        let mut saw_grant = false;
+        for grant in self.scoped_grants().iter().filter(|grant| {
+            scoped_read_grant_has_read_effector(grant)
+                && scoped_read_actor_matches(grant, actor)
+                && !grant.receipt_required
+                && grant.budget.is_none()
+                && RetrievalPolicyFloor::from_grant(grant).is_some()
+        }) {
+            saw_grant = true;
+            let scope = &grant.authority_scope;
+            if scope.worlds == ScopeAxis::All
+                && scope.facets == ScopeAxis::All
+                && scope.audience == ScopeAxis::All
+            {
+                return false;
+            }
+        }
+        saw_grant
+    }
+
     /// [`Self::retrieval_floor_for_actor`] for `actor` as if it held a proof
     /// of `explicit_scope`: the floor of the scoped grants it matches met
     /// with that Scope's, or that Scope's alone when it matches none. The
@@ -199,6 +229,24 @@ impl RetrievalPolicyFloor {
                 .allowed_entity_types
                 .as_ref()
                 .is_none_or(|types| !types.is_empty())
+    }
+
+    /// Whether this reader has a static grant boundary, independently of
+    /// request narrowing and of which rows exist or were visited.
+    pub(crate) fn has_grant_scope_bound(&self, credential: Option<&Scope>) -> bool {
+        let baseline = Self::legacy();
+        self.deny_all
+            || self.allowed_entity_types != baseline.allowed_entity_types
+            || self.max_sensitivity_band < baseline.max_sensitivity_band
+            || (!self.include_stale && baseline.include_stale)
+            || self.min_confidence > baseline.min_confidence
+            || self.min_salience > baseline.min_salience
+            || credential.is_some_and(|scope| {
+                Scope {
+                    verbs: ScopeAxis::All,
+                    ..scope.clone()
+                } != Scope::top()
+            })
     }
 
     /// The kinds and band this floor reads, as a canonical Scope.

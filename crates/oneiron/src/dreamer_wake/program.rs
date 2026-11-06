@@ -142,6 +142,14 @@ impl<'p, E> TurnProgramExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,

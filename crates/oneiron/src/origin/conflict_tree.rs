@@ -1,5 +1,5 @@
 //! Draft-v1 `.jjconflict`-shape export. Typed open claims remain authoritative.
-use super::export::{write_commit, write_tree_files};
+use super::export::{opaque_git_author, write_commit, write_tree_files};
 use super::publication::{OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, read_tree_files};
@@ -56,14 +56,17 @@ impl Vault {
         }
         let files = conflict_files(git, repo, &conflict)?;
         let tree = write_tree_files(git, repo, &files, request.now)?;
+        // Public Git strings stay opaque per vault and actor (FIX 5020);
+        // the typed publication below keeps the actual actor.
+        let (author_name, author_email) = opaque_git_author(self, request.actor_id)?;
         let commit = write_commit(
             git,
             repo,
             GitCommitRequest {
                 tree,
                 parents: request.expected_old_oid.clone().into_iter().collect(),
-                author_name: request.actor_id.to_hex(),
-                author_email: format!("{}@actor.invalid", request.actor_id.to_hex()),
+                author_name,
+                author_email,
                 // Claim creation time, not wall time, keeps a repeated projection deterministic.
                 authored_at: 0,
                 message: format!(

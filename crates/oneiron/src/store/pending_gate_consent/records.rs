@@ -22,8 +22,6 @@ pub(crate) const PENDING_GATE_CONSENT_VERSION: u8 = 0;
 /// [`STORAGE_ABI_VERSION`] bump.
 pub(in crate::store) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
 
-const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
-
 pub(super) const OWNER_ANSWER_OBLIGATION_VERSION: u8 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,8 +144,7 @@ pub(super) fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord)
         return Err(Error::CorruptedIndex("pending gate consent"));
     }
     if let Some(dreamer_run_id) = record.dreamer_run_id.as_deref()
-        && (dreamer_run_id.trim().is_empty()
-            || dreamer_run_id.len() > PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN)
+        && dreamer_run_id.trim().is_empty()
     {
         return Err(Error::CorruptedIndex("pending gate consent"));
     }

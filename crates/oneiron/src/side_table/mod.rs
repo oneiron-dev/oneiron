@@ -12,6 +12,7 @@ mod codec;
 mod decls;
 mod erased;
 mod key;
+mod raw_reverse;
 #[cfg(test)]
 mod tests;
 

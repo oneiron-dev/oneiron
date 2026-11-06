@@ -205,7 +205,11 @@ fn uidoffset(input: ParserInput) -> NomResult<()> {
 }
 
 fn xuid(input: ParserInput) -> NomResult<()> {
-    let array = (tag(&b"["[..]), separated_list1(space1, digit1), tag(&b"]"[..]));
+    let array = (
+        tag(&b"["[..]),
+        pair(digit1, fold_many0(preceded(space1, digit1), || (), |_, _| ())),
+        tag(&b"]"[..]),
+    );
     (tag(&b"/XUID"[..]), space1, array, space1, tag(&b"def"[..]), multispace1)
         .parse(input)
         .map(|(i, _)| (i, ()))
@@ -241,15 +245,21 @@ fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(input: ParserInput
 }
 
 fn source_code(input: ParserInput) -> NomResult<(SourceCode, CodeLen)> {
-    let (rest_of_input, bytes) = delimited(tag(&b"<"[..]), many_m_n(1, 4, hex_char), tag(&b">"[..])).parse(input)?;
-    let code_len = bytes.len();
-    let source_code = bytes
-        .into_iter()
-        .rev()
-        .zip(0..4)
-        .map(|(byte, i)| 256u32.pow(i) * byte as u32)
-        .sum();
-    Ok((rest_of_input, (source_code, code_len as u8)))
+    let (rest_of_input, (source_code, code_len)) = delimited(
+        tag(&b"<"[..]),
+        fold_many_m_n(
+            1,
+            4,
+            hex_char,
+            || (0u32, 0u8),
+            |(source_code, code_len), byte| {
+                ((source_code << 8) | u32::from(byte), code_len + 1)
+            },
+        ),
+        tag(&b">"[..]),
+    )
+    .parse(input)?;
+    Ok((rest_of_input, (source_code, code_len)))
 }
 
 fn hex_u16(input: ParserInput) -> NomResult<u16> {

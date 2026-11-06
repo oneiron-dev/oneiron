@@ -94,6 +94,10 @@ pub struct LimitsConfig {
     /// is refused with the typed 413 naming this bound, and raises the
     /// OF-520 question once per caller, door and field.
     pub retrieval_query_bytes: usize,
+    /// Original text bytes one semantic search may carry before its row
+    /// raises the OF-520 question. The query still runs whole past this row;
+    /// only the embedder's own input window cuts it.
+    pub semantic_query_bytes: usize,
     /// Stored body bytes one multi-row read decodes. A row past it is served
     /// with a `bodyOmitted` marker in place of its body; a single-entity read
     /// returns its body whole, whatever its size.
@@ -182,6 +186,7 @@ impl Default for LimitsConfig {
             // Format bounds far above a question or a page of bodies: 128
             // times the facade's 8 KiB query and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
+            semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
@@ -251,6 +256,7 @@ impl LimitsConfig {
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
+            semantic_query_bytes,
             projection_body_bytes,
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
@@ -345,6 +351,7 @@ impl LimitsConfig {
             seal_answer_bytes,
             seal_memory_asks,
             seal_crl_bytes,
+            seal_ocsp_bytes,
             seal_tsa_bytes,
             seal_report_json_bytes,
             seal_prepared_stream_bytes,
@@ -398,6 +405,12 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            codebase_manifest_files,
+            requested_result_rows,
+            embedding_dimensions,
+            shared_merge_evidence_rows,
+            memory_reason_evidence_rows,
+            memory_reason_tokens,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -417,6 +430,7 @@ impl LimitsConfig {
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.semantic_query_bytes, semantic_query_bytes);
         set(&mut self.projection_body_bytes, projection_body_bytes);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
         set(
@@ -551,6 +565,7 @@ impl LimitsConfig {
             (EngineLimit::SealAnswerBytes, seal_answer_bytes),
             (EngineLimit::SealMemoryAsks, seal_memory_asks),
             (EngineLimit::SealCrlBytes, seal_crl_bytes),
+            (EngineLimit::SealOcspBytes, seal_ocsp_bytes),
             (EngineLimit::SealTsaBytes, seal_tsa_bytes),
             (EngineLimit::SealReportJsonBytes, seal_report_json_bytes),
             (
@@ -646,6 +661,18 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
+            (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::EmbeddingDimensions, embedding_dimensions),
+            (
+                EngineLimit::SharedMergeEvidenceRows,
+                shared_merge_evidence_rows,
+            ),
+            (
+                EngineLimit::MemoryReasonEvidenceRows,
+                memory_reason_evidence_rows,
+            ),
+            (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -676,6 +703,7 @@ impl LimitsConfig {
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("semantic_query_bytes", self.semantic_query_bytes as u64),
             ("projection_body_bytes", self.projection_body_bytes as u64),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),

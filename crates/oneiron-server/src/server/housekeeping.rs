@@ -218,6 +218,9 @@ impl SyncServer {
                     }
                 }
             }
+            server
+                .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
+                .await;
             super::consult_settle::settle_consults(Arc::clone(server.vault())).await;
             server.prune_mcp_credentials().await;
             // OF-181: a parked run cancelled, which no entry or call touches
@@ -448,10 +451,22 @@ impl SyncServer {
                 return;
             }
         };
-        let pruned = self.mcp_registry.lock().await.prune_revoked_or_expired(now);
+        let (pruned, evicted) = {
+            let mut cursors = self.memories_cursors.lock().await;
+            let mut registry = self.mcp_registry.lock().await;
+            let stale = registry.stale_connection_ids(now);
+            let pruned = registry.prune_revoked_or_expired(now);
+            let before = cursors.entries.len() + cursors.read_sets.len();
+            for id in stale {
+                cursors.close_mcp_connection(&id.0);
+            }
+            let evicted = before.saturating_sub(cursors.entries.len() + cursors.read_sets.len());
+            (pruned, evicted)
+        };
         if pruned > 0 {
             tracing::info!(
                 pruned,
+                evicted,
                 "housekeeping pruned revoked or expired MCP credentials"
             );
         }

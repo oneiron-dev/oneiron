@@ -1,7 +1,7 @@
 //! Gate-decision ledger key prefixes, key constructors, and the id successor.
 
 use crate::error::{Error, Result};
-use crate::store::{index_key_with_id, string_index_prefix};
+use crate::store::{hashed_string_index_prefix, index_key_with_id, string_index_prefix};
 
 use super::types::GateDecisionId;
 
@@ -42,7 +42,7 @@ pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8
 /// Only accepted value byte for the backfill-complete flag row.
 pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
 
-pub(in crate::store) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
+pub(in crate::store) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v2:";
 
 /// The full raw key of one ledger row, for tests that plant rows directly;
 /// production reads and writes go through the typed ledger table.
@@ -137,7 +137,7 @@ pub(in crate::store) fn gate_decision_claim_index_key(
 }
 
 pub(super) fn attempt_run_index_prefix(run_id: &str) -> Vec<u8> {
-    string_index_prefix(ATTEMPT_RUN_INDEX_PREFIX, run_id)
+    hashed_string_index_prefix(ATTEMPT_RUN_INDEX_PREFIX, run_id)
 }
 
 pub(super) fn attempt_run_index_key(run_id: &str, attempt_id: &[u8; 16]) -> Vec<u8> {

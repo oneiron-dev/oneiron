@@ -67,18 +67,19 @@ pub(super) enum LifecycleJobKind {
 }
 
 /// The lifecycle loop and the housekeeping pass it last started, beside the
-/// claim VAD payment worker's loop. Dropping it stops both loops;
-/// [`Self::stop`] also waits out the pass and the payment run in flight.
+/// claim VAD payment and cloud-registration revoke loops. Dropping it stops
+/// the loops; [`Self::stop`] also waits out their blocking runs in flight.
 pub(crate) struct LifecycleScheduler {
     tick: JoinHandle<()>,
     /// The claim VAD payment worker (FIX 11702): while it runs, the vault's
     /// write door answers before the consolidations its write owes.
     claim_vad_payment: JoinHandle<()>,
+    cloud_registration_revokes: Option<JoinHandle<()>>,
     server: Arc<SyncServer>,
 }
 
 impl LifecycleScheduler {
-    /// Stops both loops, then asks every housekeeping pass in flight, the
+    /// Stops the loops, then asks every housekeeping pass in flight, the
     /// owner's included, to start no further sweep or page, and waits for
     /// each, so nothing a pass or a payment run writes lands after this
     /// returns.
@@ -87,6 +88,10 @@ impl LifecycleScheduler {
         self.claim_vad_payment.abort();
         let _ = (&mut self.tick).await;
         let _ = (&mut self.claim_vad_payment).await;
+        if let Some(worker) = &mut self.cloud_registration_revokes {
+            worker.abort();
+            let _ = worker.await;
+        }
         self.server.housekeeping_passes.stop().await;
     }
 }
@@ -95,6 +100,9 @@ impl Drop for LifecycleScheduler {
     fn drop(&mut self) {
         self.tick.abort();
         self.claim_vad_payment.abort();
+        if let Some(worker) = &self.cloud_registration_revokes {
+            worker.abort();
+        }
     }
 }
 
@@ -149,6 +157,7 @@ impl SyncServer {
         admit: HousekeepingAdmission,
     ) -> LifecycleScheduler {
         let claim_vad_payment = self.spawn_claim_vad_payment_worker(Arc::clone(&admit));
+        let cloud_registration_revokes = self.spawn_cloud_registration_erase_revoker();
         let server = Arc::clone(self);
         let tick = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
@@ -211,6 +220,7 @@ impl SyncServer {
         LifecycleScheduler {
             tick,
             claim_vad_payment,
+            cloud_registration_revokes,
             server: Arc::clone(self),
         }
     }

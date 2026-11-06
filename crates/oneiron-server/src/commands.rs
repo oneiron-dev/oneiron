@@ -101,7 +101,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     // named, read before the vault opens (FIX 5788).
     let anchor =
         crate::owner::backup::CustodyAnchorCredentials::handed(args.custody_anchor_credentials_fd)?;
-    serve_anchored(config, files, anchor).await
+    serve_anchored(config, files, anchor, &args).await
 }
 
 /// The files a plain `serve` read its config from, as its runtime file names
@@ -119,6 +119,7 @@ pub use files::files;
 mod history_import;
 mod init;
 pub use init::init;
+pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
 mod reembed;
 pub use reembed::reembed;
 mod account;
@@ -135,7 +136,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    DRAIN_GRACE, build_embedder, build_server, sign_root_project, start_desktop_workers,
+    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, sign_root_project,
+    start_desktop_workers,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;
@@ -151,6 +153,7 @@ pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;
 pub(crate) use owner::page_seal_at;
+pub use owner::reminder_route;
 pub use owner::widen_proposals;
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
@@ -161,6 +164,8 @@ mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 mod seat;
 pub use self::seat::{seat_login_plan, seat_routes, seat_runner_policy, seat_runners};
+mod registry;
+pub use self::registry::registry;
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {

@@ -11,6 +11,7 @@ repository.workspace = true
 arc-swap = { workspace = true }
 blake3 = { workspace = true, features = ["zeroize"] }
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
+half = "2"
 heed = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }

@@ -39,6 +39,8 @@ pub(crate) struct PostcommitWork {
     /// Whether this transaction put or marked a notification, whose live
     /// queries wake only after it commits (FIX 3084).
     pub(crate) notifications_changed: bool,
+    /// NOTE documents invalidated only after this transaction commits.
+    pub(crate) note_document_ids: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -130,6 +132,18 @@ pub(crate) fn queue_task_updates(
             queued.task_ids.extend(ids);
         }
     });
+}
+
+impl Vault {
+    /// Queue a NOTE document invalidation for this transaction's owner.
+    /// No owner scope means no work; rollback or unwind discards the id.
+    pub(crate) fn queue_note_document_update_in_txn(&self, txn: &RwTxn<'_>, id: EntityId) {
+        PENDING_VAD.with(|pending| {
+            if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(self, txn)) {
+                queued.note_document_ids.insert(id);
+            }
+        });
+    }
 }
 
 /// Mark settled TASKs for the owner's post-commit peer-result wake (FIX 1140).
@@ -236,8 +250,9 @@ pub(super) fn ops_put_tasks(ops: &[BatchOp]) -> Vec<EntityId> {
             BatchOp::Put {
                 id,
                 entity_type: crate::registry::ENTITY_TYPE_TASK,
+                data,
                 ..
-            } => Some(*id),
+            } => Some(crate::context_board::task_body_for_announcement(data, *id)),
             _ => None,
         })
         .collect()
@@ -306,4 +321,21 @@ pub(super) fn pending_dreamer_vad_approvals(
         }
     }
     Ok(pending_ids)
+}
+
+/// Move a successful nested actor batch's postcommit work to its actual owner.
+pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: PostcommitWork) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.vad_ids.extend(work.vad_ids);
+            queued.proactivity_changed |= work.proactivity_changed;
+            queued.task_ids.extend(work.task_ids);
+            queued.rows.extend(work.rows);
+            queued.room_joins.extend(work.room_joins);
+            queued.pad_windows.extend(work.pad_windows);
+            queued.settled_tasks.extend(work.settled_tasks);
+            queued.notifications_changed |= work.notifications_changed;
+            queued.note_document_ids.extend(work.note_document_ids);
+        }
+    });
 }

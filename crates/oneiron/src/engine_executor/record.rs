@@ -350,6 +350,43 @@ pub(super) fn record_terminal_output(
     record_text_output(storage, record, terminal_output_path(seq), &text)
 }
 
+/// Whether this canonical run's latest durable marker is Complete, observed
+/// with its record and body in the caller's transaction. A parked or resumed
+/// Waiting marker never closes the run's scratchpad.
+pub(crate) fn code_run_complete_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> crate::Result<bool> {
+    let Some(record) = vault.get_code_run_replay_record_in_txn(txn, &run)? else {
+        return Ok(false);
+    };
+    if record.run_id != run {
+        return Err(Error::CorruptedIndex("executor replay run identity"));
+    }
+    let Some(output) = record
+        .outputs
+        .iter()
+        .filter(|output| is_terminal_output_path(&output.path))
+        .max_by(|left, right| left.path.cmp(&right.path))
+    else {
+        return Ok(false);
+    };
+    let bytes = vault
+        .code_run_result_body_in_txn(txn, output)?
+        .ok_or(Error::CorruptedIndex(
+            "executor replay terminal marker body",
+        ))?;
+    let marker: ExecutorTerminalMarker = serde_json::from_slice(&bytes)
+        .map_err(|_| Error::CorruptedIndex("executor replay terminal marker"))?;
+    if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
+        return Err(Error::CorruptedIndex(
+            "executor replay terminal marker schema",
+        ));
+    }
+    Ok(matches!(marker.status, StoredTerminalStatus::Complete))
+}
+
 /// The run's latest terminal status. A Waiting marker the run resumed from
 /// is behind it: the reply its step's call came back with is in the record,
 /// and the run goes on from the next step. For a code consent wait the

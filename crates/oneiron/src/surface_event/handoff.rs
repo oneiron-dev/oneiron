@@ -627,8 +627,12 @@ pub(super) fn attempts_for_run_in_write_txn(
         let record = queue
             .get_in_write_txn(wtxn, id)?
             .ok_or(Error::CorruptedIndex("attempt run index"))?;
-        if record.run_id.as_deref() != Some(run_id) {
-            return Err(Error::CorruptedIndex("attempt run index"));
+        if !crate::store::hashed_string_index_matches(
+            record.run_id.as_deref(),
+            run_id,
+            "attempt run index",
+        )? {
+            continue;
         }
         records.push(record);
     }

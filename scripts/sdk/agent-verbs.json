@@ -106,6 +106,36 @@
       "openapi": true
     },
     {
+      "name": "vault.commitments.reminder_route.get",
+      "description": "Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::commitment_doors::CommitmentReminderRouteReply",
+      "call": "memory.commitments_reminder_route_get_as(&memory.embedded_owner(\"vault.commitments.reminder_route.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.reminder_route.set",
+      "description": "Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged.",
+      "input": "crate::memory::commitment_doors::CommitmentReminderRouteSetRequest",
+      "output": "crate::memory::commitment_doors::CommitmentReminderRouteReply",
+      "call": "memory.commitments_reminder_route_set_as(&memory.embedded_owner(\"vault.commitments.reminder_route.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "fetch",
       "description": "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links.",
       "input": "crate::web_fetch::WebFetchRequest",
@@ -3960,6 +3990,38 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.fit.set",
+      "description": "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert.",
+      "input": "SkillFitSetRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_fit_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fit.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.advisory_ask.set",
+      "description": "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way.",
+      "input": "SkillAdvisoryAskRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_advisory_ask_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.advisory_ask.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",
@@ -5701,6 +5763,40 @@
       "openapi": true
     },
     {
+      "name": "vault.sync.quarantine.held_edits",
+      "description": "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>",
+      "call": "crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.quarantine.held_edits\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.retained_work.wait.set",
+      "description": "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.",
+      "input": "crate::task_verb::sdk::RetainedWorkWaitSetRequest",
+      "output": "u64",
+      "call": "crate::task_verb::sdk::set_retained_work_wait_secs_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.retained_work.wait.set\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.burst.ingress",
       "description": "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt.",
       "input": "crate::task_verb::sdk::ConnectDelivery",
@@ -6478,7 +6574,7 @@
     },
     {
       "name": "vault.off_record.notes.create",
-      "description": "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
@@ -6493,8 +6589,24 @@
       "openapi": true
     },
     {
+      "name": "vault.off_record.artifacts.save",
+      "description": "A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver.",
+      "input": "crate::task_verb::sdk::OffRecordArtifactSaveRequest",
+      "output": "crate::task_verb::sdk::OffRecordArtifactSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.artifacts.save\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.off_record.claims.upsert",
-      "description": "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordClaimRequest",
       "output": "crate::memory::CommitReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
@@ -6605,7 +6717,7 @@
     },
     {
       "name": "vault.off_record.rooms.start",
-      "description": "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential.",
+      "description": "A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential.",
       "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
@@ -6665,7 +6777,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+      "description": "A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
@@ -6763,6 +6875,22 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.outbound_calls.request.erase",
+      "description": "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting.",
+      "input": "OutboundCallRequestEraseRequest",
+      "output": "crate::task_verb::sdk::OutboundCallRequestErased",
+      "call": "crate::task_verb::sdk::erase_outbound_call_request_as_owner(memory.vault(), &memory.embedded_owner(\"vault.outbound_calls.request.erase\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7149,7 +7277,7 @@
       "name": "vault.coach.training_offers.answer",
       "description": "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice.",
       "input": "crate::skill_optimize::offer_doors::OfferAnswerRequest",
-      "output": "crate::skill_optimize::OfferAnswerRecord",
+      "output": "crate::skill_optimize::offer_doors::OfferAnswerReply",
       "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8714,6 +8842,21 @@
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.code_run_lifts",
+      "description": "The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged.",
+      "input": "crate::code_run::CodeRunSecretLiftRequest",
+      "output": "crate::code_run::CodeRunSecretLiftStatus",
+      "call": "memory.vault().code_run_secret_lifts_as_owner(&memory.embedded_owner(\"vault.secrets.code_run_lifts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -12523,6 +12666,7 @@
       "name": "vault.artifacts.propose_output",
       "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
       "refs": [
+        "/read_rows/*",
         "/made_by/inputs/*/row",
         "/made_by/trigger/task",
         "/made_by/trigger/ask",
@@ -17936,7 +18080,7 @@
     },
     {
       "name": "vault.artifacts.append",
-      "description": "Appends one version of bytes to a blob artifact's append-only chain.",
+      "description": "Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep.",
       "uniffi": {
         "args": {
           "artifact_ref": "String",
@@ -17945,10 +18089,10 @@
           "occurred_at": "Option<i64>",
           "learned_at": "Option<i64>"
         },
-        "output": "BlobVersionView"
+        "output": "BlobVersionAppendOutcome"
       },
       "input": "AppendBlobVersionRequest",
-      "output": "crate::memory::BlobVersionView",
+      "output": "crate::memory::BlobVersionAppendOutcome",
       "call": "memory_requests::append_blob(memory, input)?",
       "scope": "Write",
       "admission": {
@@ -19875,7 +20019,7 @@
       "host": {
         "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
-        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles.",
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true

@@ -43,7 +43,8 @@ impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
             .connector
             .connect()
             .and_then(|mut connection| connection.tools_list())
-            .map_err(|_| probe_failure())?;
+            .map_err(|_| probe_failure())?
+            .tools;
         ensure_declared(manifest, &declared)?;
         let expected = manifest
             .tools()

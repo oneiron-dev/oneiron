@@ -125,10 +125,10 @@ impl FirecrackerBackend {
         // The OCI identity the host selected, kept before the boot artifacts
         // it resolves to shadow the image (FIX 9136).
         #[cfg(target_os = "linux")]
-        let selected_oci = image
-            .oci
-            .as_ref()
-            .and_then(|oci| oneiron_container::ImageRef::pinned(&oci.image).ok());
+        let oci_reference = image.oci.as_ref().map(|oci| oci.image.as_str());
+        #[cfg(target_os = "linux")]
+        let selected_oci =
+            oci_reference.and_then(|reference| oneiron_container::ImageRef::pinned(reference).ok());
         #[cfg(target_os = "linux")]
         let resolved;
         #[cfg(target_os = "linux")]
@@ -143,6 +143,12 @@ impl FirecrackerBackend {
             .config
             .as_ref()
             .ok_or_else(|| refused("jailer host profile unavailable"))?;
+        #[cfg(target_os = "linux")]
+        let oci_config = oci_reference
+            .map(|reference| config.for_oci_image(reference))
+            .transpose()?;
+        #[cfg(target_os = "linux")]
+        let config = oci_config.as_ref().unwrap_or(config);
         config.validate()?;
         config.pins.verify(image)?;
         #[cfg(target_os = "linux")]

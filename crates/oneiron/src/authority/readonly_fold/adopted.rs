@@ -127,7 +127,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<Option<AuthorityHistoryRequest>> {
     let Some(adopted) =
-        crate::authority::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+        crate::authority::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
     else {
         return Ok(None);
     };
@@ -138,7 +138,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
             posture,
             txn,
             key,
-            &adopted,
+            adopted.as_ref(),
             required,
             &BTreeMap::new(),
         )? {

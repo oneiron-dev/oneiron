@@ -74,7 +74,7 @@ pub enum NotificationKind {
     Finding,
     EventReceived,
     ImportFinished,
-    /// A built proactivity digest; `source.result` names its id.
+    /// A built digest, including proactivity and weave; `source.result` names its id.
     Digest,
     /// A decision waiting on its recipient; `source.producer` names what
     /// asks, `source.result` the thing to answer and `source.detail`, when

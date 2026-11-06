@@ -213,6 +213,13 @@ impl PolicyManifestResolution {
             .effective(actor))
     }
 
+    /// Runtime routing knobs, not admission authority. Absence preserves the existing boundaries.
+    pub(crate) fn entity_resolution_bands(
+        &self,
+    ) -> crate::gate::entity_resolution_bands::EntityResolutionBands {
+        self.entity_resolution_bands.unwrap_or_default()
+    }
+
     /// One snapshot supplies the same carry-forward floor to typed, raw and Gate doors.
     #[must_use]
     pub(crate) fn carry_forward_floor(

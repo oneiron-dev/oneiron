@@ -51,7 +51,10 @@ pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
 };
-pub(crate) use self::trap::wake_trap_in_txn;
+pub(crate) use self::trap::{
+    TrapBrokenPark, TrapConsumePrecheck, retire_peer_wait_binding_for_trap_in_txn,
+    trap_consume_precheck_in_txn, wake_trap_in_txn,
+};
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
@@ -86,7 +89,8 @@ pub(crate) use self::response_pins::{
     retire_erased_step_responses_in_rows,
 };
 pub(crate) use self::step_state::{
-    erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
+    step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,

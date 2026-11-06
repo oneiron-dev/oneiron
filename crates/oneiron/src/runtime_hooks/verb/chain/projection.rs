@@ -18,7 +18,7 @@ use crate::runtime_hooks::{HookGrant, filter, grant};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
-use super::super::{VerbDomain, served};
+use super::super::{VerbCallScope, VerbDomain, served};
 use super::{Chain, phase_token, session};
 
 /// What a value withheld from a hook's input reads as there (CALLS, FIX
@@ -108,7 +108,7 @@ struct Input<'i> {
     invocation: String,
     actor: String,
     class: &'static str,
-    scope: Option<&'i str>,
+    scope: Option<&'i VerbCallScope>,
     args: &'i Value,
     board_epoch: Option<u64>,
     receipt_tail: &'i Value,
@@ -168,7 +168,7 @@ impl Chain<'_> {
             invocation: self.call.invocation.to_hex(),
             actor: self.call.actor.to_hex(),
             class: filter::class_token(self.call.class),
-            scope: self.call.scope.as_deref(),
+            scope: self.call.scope.as_ref(),
             args: &args,
             board_epoch: self.call.board_epoch,
             receipt_tail: &tail,

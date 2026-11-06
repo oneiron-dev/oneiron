@@ -56,6 +56,8 @@ pub(super) struct Routes<'a> {
     /// The guest's WORLDs that land under foreign ids here, by the sender's
     /// id (FIX 3657).
     pub(super) worlds: BTreeMap<EntityId, EntityId>,
+    /// Entity-subject ids proven by a carried WORLD row or its stored foreign copy.
+    entity_subjects: BTreeSet<EntityId>,
     /// The key each edge naming one of those WORLDs lands under, by its own.
     rekeyed: BTreeMap<String, String>,
 }
@@ -67,6 +69,7 @@ pub(super) struct Routes<'a> {
 pub(super) struct GuestCopy<'a> {
     pub(super) source: &'a [u8; 32],
     pub(super) worlds: &'a BTreeMap<EntityId, EntityId>,
+    entity_subjects: &'a BTreeSet<EntityId>,
 }
 
 #[cfg(feature = "sync")]
@@ -80,6 +83,7 @@ impl<'a> Routes<'a> {
             withheld: BTreeSet::new(),
             edges: BTreeMap::new(),
             worlds: BTreeMap::new(),
+            entity_subjects: BTreeSet::new(),
             rekeyed: BTreeMap::new(),
         }
     }
@@ -115,13 +119,14 @@ impl<'a> Routes<'a> {
         let carried = carried_kinds(&remote.get_map("entities"));
         let carried_worlds = carried
             .iter()
-            .filter(|(_, kind)| **kind == ENTITY_TYPE_WORLD)
+            .filter(|(_, kind)| **kind == Some(ENTITY_TYPE_WORLD))
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
         // The ids an InWorld or SetIn edge, or a CLAIM about one, names as
         // its source, which may be WORLDs, and as its target, which its kind
         // types a WORLD (FIX 3891).
         let mut named = BTreeSet::new();
+        let mut entity_candidates = BTreeSet::new();
         let mut typed_world_targets = BTreeSet::new();
         map_for_each_value_bytes(&remote.get_map("entities"), |raw, blob| {
             let (Some(blob), Ok(id)) = (blob, EntityId::from_hex(raw)) else {
@@ -147,6 +152,12 @@ impl<'a> Routes<'a> {
                 );
                 routes.withheld.insert(id);
                 return;
+            }
+            if let ClaimSubject::Entity(subject) = &body.subject
+                && matches!(carried.get(subject), None | Some(Some(ENTITY_TYPE_WORLD)))
+            {
+                named.insert(*subject);
+                entity_candidates.insert(*subject);
             }
             if let Some([source, target]) = world_edge_subject(&body.subject) {
                 if carried_as_non_world(&carried, target) {
@@ -201,7 +212,14 @@ impl<'a> Routes<'a> {
             }
             edges.push((raw.to_owned(), (src, kind, tgt)));
         });
-        routes.rename_worlds(vault, guest, carried_worlds, typed_world_targets, named)?;
+        routes.rename_worlds(
+            vault,
+            guest,
+            carried_worlds,
+            typed_world_targets,
+            named,
+            entity_candidates,
+        )?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
@@ -266,10 +284,14 @@ impl<'a> Routes<'a> {
         carried: Vec<EntityId>,
         typed_world_targets: BTreeSet<EntityId>,
         named: BTreeSet<EntityId>,
+        entity_candidates: BTreeSet<EntityId>,
     ) -> Result<()> {
         for id in carried {
             let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
             self.worlds.insert(id, here);
+            if entity_candidates.contains(&id) {
+                self.entity_subjects.insert(id);
+            }
         }
         for id in typed_world_targets {
             self.worlds.insert(
@@ -278,7 +300,10 @@ impl<'a> Routes<'a> {
             );
         }
         for id in named {
-            if self.worlds.contains_key(&id) {
+            // Edge-kind evidence alone does not type an Entity subject a WORLD.
+            let needs_entity_proof =
+                entity_candidates.contains(&id) && !self.entity_subjects.contains(&id);
+            if self.worlds.contains_key(&id) && !needs_entity_proof {
                 continue;
             }
             let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
@@ -289,6 +314,9 @@ impl<'a> Routes<'a> {
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD)
             {
                 self.worlds.insert(id, here);
+                if entity_candidates.contains(&id) {
+                    self.entity_subjects.insert(id);
+                }
             }
         }
         Ok(())
@@ -314,6 +342,7 @@ impl<'a> Routes<'a> {
         self.guest.map(|source| GuestCopy {
             source,
             worlds: &self.worlds,
+            entity_subjects: &self.entity_subjects,
         })
     }
 
@@ -445,16 +474,19 @@ const fn world_edge_subject(subject: &ClaimSubject) -> Option<[EntityId; 2]> {
 }
 
 /// The kind of each row `entities` carries, by its canonical hex id.
+/// A present row with unreadable metadata keeps `None`, distinct from absence.
 #[cfg(feature = "sync")]
-fn carried_kinds(entities: &loro::LoroMap) -> BTreeMap<EntityId, u8> {
+fn carried_kinds(entities: &loro::LoroMap) -> BTreeMap<EntityId, Option<u8>> {
     let mut kinds = BTreeMap::new();
     map_for_each_value_bytes(entities, |raw, blob| {
-        if let (Some(header), Ok(id)) = (
-            blob.and_then(EntityMetadataHeader::parse),
-            EntityId::from_hex(raw),
-        ) && id.to_hex() == raw
+        if let Ok(id) = EntityId::from_hex(raw)
+            && id.to_hex() == raw
         {
-            kinds.insert(id, header.entity_type);
+            kinds.insert(
+                id,
+                blob.and_then(EntityMetadataHeader::parse)
+                    .map(|header| header.entity_type),
+            );
         }
     });
     kinds
@@ -465,10 +497,24 @@ fn carried_kinds(entities: &loro::LoroMap) -> BTreeMap<EntityId, u8> {
 /// own rows say so: a row this vault stores at the sender's id is not the
 /// sender's.
 #[cfg(feature = "sync")]
-fn carried_as_non_world(carried: &BTreeMap<EntityId, u8>, target: EntityId) -> bool {
+fn carried_as_non_world(carried: &BTreeMap<EntityId, Option<u8>>, target: EntityId) -> bool {
     carried
         .get(&target)
-        .is_some_and(|kind| *kind != ENTITY_TYPE_WORLD)
+        .copied()
+        .flatten()
+        .is_some_and(|kind| kind != ENTITY_TYPE_WORLD)
+}
+
+/// A guest CLAIM about a proven WORLD entity names its foreign copy (FIX 3892).
+/// A carried non-WORLD or an edge-kind inference cannot supply that proof.
+#[cfg(feature = "sync")]
+pub(super) fn rename_world_entity_subject(subject: &mut ClaimSubject, guest: GuestCopy<'_>) {
+    if let ClaimSubject::Entity(entity) = subject
+        && guest.entity_subjects.contains(&*entity)
+        && let Some(here) = guest.worlds.get(&*entity)
+    {
+        *entity = *here;
+    }
 }
 
 /// A guest CLAIM about an InWorld or SetIn edge names the edge by the ids

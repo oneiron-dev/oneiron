@@ -60,11 +60,11 @@ BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init", "oneiron-vm-o
 # What /sbin/oneiron-vault-init runs besides the engine's binaries.
 TOOLS = ("sh", "mount", "umount", "cat", "head", "sync", "reboot")
 PROVISION_REVISION = 1
-# The outbox carrier's wire revision (oneiron_vault_contract::vm_outbox): 4
-# adds the notice's action and the host's answer to a removal of its
-# kept-aside copy (FIX 11985), and each end refuses the other's revision 3,
-# so a host pairs only with an image whose manifest names 4.
-OUTBOX_WIRE_REVISION = 4
+# Outbox carrier revision 4 added the notice's action and the host's
+# answer to removal of its kept-aside copy (FIX 11985), refusing revision 3
+# at that floor. Revision 5 adds descriptor-only offers and a go before
+# bodies (FIX 11071 / 6685); pair the host with an image naming revision 5.
+OUTBOX_WIRE_REVISION = 5
 # The restore channel's wire revision (oneiron_vault_contract::vm_restore):
 # every cold boot of this image dials it first, so a host pairs only with an
 # image whose manifest names it.

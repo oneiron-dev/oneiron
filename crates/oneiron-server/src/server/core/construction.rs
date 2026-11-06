@@ -35,22 +35,29 @@ impl SyncServer {
         // (FIX 8091, L14 s45 09:35); a crossing still only measures.
         oneiron::authority::set_authority_work_wait_ms(config.limits.queue_wait_timeout_ms);
         vault.recover_admission_intents()?;
-        // Genuine host authority must exist before any scoped-read fail-closed
-        // policy applies. Dev/no-secret and blind-relay modes mint nothing.
-        // An empty configured secret mints nothing either, and every upgrade
-        // bearing it (or nothing) still 401s at the auth door, so booting
-        // rootless here is fail-closed, not open. The configured secret
-        // admits rooting; the root signs with this install's own issuer seed
-        // for the vault (FIX-LIST 3018), drawn only for a vault no root has
-        // reached. An install holding no seed serves rootless, said once.
-        let issuer = match host_root_secret(&vault, &config) {
-            Some(_) => match vault.bootstrap_host_slip_issuer() {
+        // Hosted authority is automatic from the operator's explicit posture,
+        // not a customer auth-secret step. Other postures retain their existing
+        // secret-based rooting and rootless warning behavior.
+        let hosted = vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted;
+        let issuer = if hosted || host_root_secret(&vault, &config).is_some() {
+            match vault.bootstrap_host_slip_issuer() {
                 Ok(issuer) => {
                     vault.ensure_host_root_slip(&issuer)?;
                     // The engine's MACHINE writers sign with host-held keys (ONE-1634).
                     vault.provision_engine_machine_identities(&issuer)?;
+                    if hosted
+                        && !vault.checkpoint_policy_selection_available()
+                        && !vault.checkpoint_root_eligible(&issuer.public_key())?
+                    {
+                        return Err(oneiron::Error::Record(
+                            oneiron::error::RecordError::CheckpointPolicyRefused(
+                                "the hosted issuer is not an eligible checkpoint host root",
+                            ),
+                        ));
+                    }
                     Some(Arc::new(issuer))
                 }
+                Err(error) if hosted => return Err(error),
                 Err(error) => {
                     tracing::warn!(
                         kind = ?error.kind(),
@@ -60,8 +67,9 @@ impl SyncServer {
                     );
                     None
                 }
-            },
-            None => None,
+            }
+        } else {
+            None
         };
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
@@ -155,6 +163,12 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        // The opened vault's own embedding width asks once, here: past its
+        // row the server's questions are told, and the vault serves as opened.
+        let _ = vault.measure_limit(
+            oneiron::limit_ask::EngineLimit::EmbeddingDimensions,
+            u64::try_from(vault.embedding_dimensions()).unwrap_or(u64::MAX),
+        );
         // Reader children wake this server's runner, which also keeps their
         // cutoff.
         let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
@@ -233,7 +247,7 @@ impl SyncServer {
         }
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
-        let memory = crate::machine::MachineMemory::new();
+        let memory = crate::machine::MachineMemory::process();
         // FIX 8569, 8574, 8596, 8598: office reads and edits reserve from
         // the same line, each reservation waiting the host's queue wait.
         // The first server of a process registers it.
@@ -290,6 +304,7 @@ impl SyncServer {
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
+            residence_work_changed: Default::default(),
             queue_driver_started: std::sync::atomic::AtomicBool::new(false),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
@@ -318,8 +333,10 @@ impl SyncServer {
             memories_cursors,
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
-            embedder: None,
-            tagger: None,
+            model_slots: Arc::new(Default::default()),
+            model_setup: None,
+            model_setup_runtime: std::sync::OnceLock::new(),
+            gpu_pool: std::sync::OnceLock::new(),
             llm: None,
             decision_read: None,
             decision_reads,
@@ -343,6 +360,7 @@ impl SyncServer {
             // admission, not a new timeout of its own.
             hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
+            tagger_egress: None,
             owner_host: None,
             feedback: None,
             feedback_triage: crate::config::FeedbackTriageConfig::default(),

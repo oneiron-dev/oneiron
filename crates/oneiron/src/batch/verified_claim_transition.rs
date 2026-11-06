@@ -87,6 +87,7 @@ impl VerifiedClaimTransition {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at: header.learned_at,
+            row_version: Some(header.row_version),
             data: data.clone(),
             allow_maintenance: false,
             allow_reserved_predicate: true,
@@ -130,6 +131,7 @@ impl VerifiedClaimTransition {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -177,6 +179,7 @@ impl VerifiedClaimTransition {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -609,7 +612,7 @@ impl VerifiedClaimTransition {
             TransitionKind::StoredSectionFitActorErasure { .. }
         );
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-            occurred, learned_at, data, allow_maintenance: false,
+            occurred, learned_at, row_version: _, data, allow_maintenance: false,
             allow_reserved_predicate, hub_sync_imported: false }
             if *id == self.id && *occurred == self.occurred
                 && *learned_at == self.learned_at && *data == self.next_body

@@ -3,6 +3,7 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+pub(crate) mod claim_order;
 mod claim_read_status;
 mod contracts;
 pub(crate) use claim_read_status::ClaimReadStatus;
@@ -45,14 +46,18 @@ pub use dependent_walk::{
 pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
+mod dependency_registration;
 mod integrity;
+pub(crate) use dependency_registration::{
+    record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
+};
 mod lmdb_aux;
 pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
-pub(crate) use lmdb_entity::{indexes_named_entity, reindex_named_entities};
+pub(crate) use lmdb_entity::{BodyReadError, indexes_named_entity, reindex_named_entities};
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
@@ -84,10 +89,10 @@ pub(crate) use integrity::{
 };
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
-    record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
-    retire_withdrawn_in_txn, source_has_dependents_in_txn, stage_stale_mark_in_txn, stale_in_txn,
-    withdraw_from_lost_source_in_session_txn, withdraw_from_lost_source_in_txn,
-    withdrawn_worlds_in,
+    marked_stale_in_overlay, record_dependency_in_txn, record_derived_edge_in_txn,
+    record_withdrawn_in_txn, retire_withdrawn_in_txn, source_has_dependents_in_txn,
+    stage_stale_mark_in_txn, stale_in_txn, withdraw_from_lost_source_in_session_txn,
+    withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
 pub use records::*;
 pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
@@ -97,7 +102,9 @@ pub(crate) use time::{
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
-pub(crate) use lmdb_visibility::removed_in_txn;
-pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
+pub(crate) use lmdb_visibility::{
+    deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
+};
+pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

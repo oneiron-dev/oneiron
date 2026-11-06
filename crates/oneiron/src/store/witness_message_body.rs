@@ -47,11 +47,6 @@ const RESERVED_METADATA_KEYS: [&str; 7] = [
 /// unknown value and fails closed.
 const MAX_WITNESS_MESSAGE_TYPE_BYTES: usize = 128;
 
-/// The highest position a message may claim inside one turn. Ordering is a
-/// signal readers sort by; an unbounded one is a channel rather than a
-/// position.
-pub(crate) const MAX_WITNESS_MESSAGE_ORDER: u32 = 65_535;
-
 /// Metadata nesting bound. Depth beyond this is a structure no transcript
 /// reader consumes and a decode cost every reader pays.
 const MAX_WITNESS_METADATA_DEPTH: usize = 8;
@@ -71,6 +66,15 @@ const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
 
+/// One durable ordered MESSAGE part. Custody references carry no part bytes;
+/// revealing one still requires the existing secret entry grant.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum StoredMessagePart {
+    Inline(crate::ContentPart),
+    Custody { custody: String },
+}
+
 /// One MESSAGE envelope, exactly as the write door will encode it.
 ///
 /// `metadata` is the rmpv value the body carries (the engine converts JSON to
@@ -85,7 +89,7 @@ pub(crate) struct WitnessMessageEnvelope<'a> {
     /// Text content, BM25-indexed by the caller when non-empty.
     pub(crate) content: &'a str,
     /// Ordered terminal parts owned by the MESSAGE, never its editable text.
-    pub(crate) parts: Option<Vec<crate::ContentPart>>,
+    pub(crate) parts: Option<Vec<StoredMessagePart>>,
     /// Opaque passenger data, or `None`.
     pub(crate) metadata: Option<Value>,
     /// Whether the row is part of the visible transcript.
@@ -150,9 +154,6 @@ pub(crate) fn witness_message_envelope_denial(
     if !valid_message_type(envelope.message_type) {
         return malformed;
     }
-    if envelope.order > MAX_WITNESS_MESSAGE_ORDER {
-        return malformed;
-    }
     // A user's own words are never invisible. `companion`/`system` rows may be
     // hidden (an executor's kept-to-itself reasoning is a real, gated shape);
     // an invisible row attributed to the owner is a forgery with no reader.
@@ -208,7 +209,7 @@ pub(crate) enum WitnessMessageBodyAuthor {
 ///
 /// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody) when the bytes are not decodable, are
 /// not the canonical key set in canonical order, carry an unknown author or
-/// type token, exceed the order ceiling, hide a `user` row, carry malformed
+/// type token, hide a `user` row, carry malformed
 /// metadata, or do not re-encode byte-identically.
 pub(crate) fn validate_canonical_witness_message_body(
     body: &[u8],
@@ -228,7 +229,7 @@ pub(crate) fn validate_canonical_witness_message_body(
     let mut author: Option<&str> = None;
     let mut message_type: Option<&str> = None;
     let mut content: Option<&str> = None;
-    let mut parts: Option<Vec<crate::ContentPart>> = None;
+    let mut parts: Option<Vec<StoredMessagePart>> = None;
     let mut metadata: Option<Value> = None;
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;
@@ -379,4 +380,79 @@ fn encoded_metadata_len(metadata: &Value) -> Option<usize> {
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, metadata).ok()?;
     Some(encoded.len())
+}
+
+/// The REPLICATED MESSAGE door (ONE-1686): CLOSED, on the evidence.
+///
+/// # What the replicated door actually carries
+///
+/// A MESSAGE that arrives over sync reaches `batch::apply_put` with
+/// `replicated = true`, a `write_envelope` of `None`, a `WindowKey` that is a
+/// calendar month (`YYYY-MM`), and a CRDT map key that is the entity id. The
+/// body itself is the six-axis transcript envelope and carries no signature,
+/// no signer key and no actor ref. `crate::write_envelope::WriteEnvelope` —
+/// the type that carries `WriteActor` provenance into a write — appears
+/// nowhere in `crate::sync`, and nothing on the replay path reads the row's
+/// `AuthoredBy` edge (edges materialize in a LATER pass than entities, so it
+/// is not even present when the body lands).
+///
+/// The kinds that DO admit remote rows carry their own proof inside the body:
+/// an AUTHORITY_LOG entry names its signer and is folded against this vault's
+/// roster; a REDACTION_AUDIT receipt carries an Ed25519 attestation bound to a
+/// mirrored lease. A MESSAGE envelope has no such half. There is no verified
+/// source actor or peer at this door to bind remote authorship to.
+///
+/// # Why that means closed, not narrowed
+///
+/// `check_witness_message_ceiling` is the ONLY authorization for a MESSAGE
+/// row, and its subject is an ACTOR: which actor may author which bucket,
+/// against the policy snapshot the write commits under. With no actor there is
+/// no ceiling to run, and admitting the row anyway would make sync a second,
+/// weaker MESSAGE authorization path — a peer (including a foreign vault whose
+/// blob `sync::selector::admit_federated_entity_blob` copies through verbatim,
+/// MESSAGE having no pinned admission arm there) could mint transcript rows in
+/// this vault's own voice. Every author bucket therefore fails closed, with the
+/// bucket named so the quarantine row says which forgery was attempted:
+///
+/// * `system` — the ENGINE'S own voice, carrying no `AuthoredBy` edge at all;
+///   permitted locally only by an owner-authored, actor-bound `auto` ceiling
+///   that no replicated envelope can present.
+/// * `user`/`companion` — attributed rows whose local counterpart is bound to
+///   a store-verified actor entity by an `AuthoredBy` edge the writing door
+///   mints in the same transaction. Replicated, there is no actor to bind and
+///   nothing downstream could tell an honest row from a forged one.
+///
+/// This narrows exactly ONE entity kind's remote door. Every other kind
+/// converges unchanged, and a local MESSAGE row already in LMDB is skipped by
+/// the byte-identical short-circuit in `sync::window::forward_rematerialize`
+/// before it ever reaches this door, so a healthy vault replaying its own
+/// mirror is untouched.
+///
+/// A row whose put carries an own-device lane that vouches for it meets
+/// the gate's `validate_own_device_witness_message_body` instead (FIX 9600). This door
+/// stays every other replay's: federated, recovered, or from no proven sender.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody), always. `sync::quarantine` classifies
+/// the kind as a remote-op rejection, so the row is quarantined with its
+/// payload and the window continues; nothing partial is written, because the
+/// refusal precedes every store mutation in `apply_put`.
+pub(crate) fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()> {
+    // The envelope floor runs FIRST even though the verdict is refusal either
+    // way: the quarantine row keeps the rejection reason, and "a peer shipped
+    // bytes that are not a transcript row at all" is a different operational
+    // fact from "a peer shipped a well-formed row it has no authority to
+    // author". It also keeps the floor where it belongs if a future protocol
+    // revision ever does carry a verified source actor here.
+    Err(match validate_canonical_witness_message_body(body)? {
+        WitnessMessageBodyAuthor::System => Error::Record(RecordError::InvalidWitnessMessageBody(
+            "a replicated MESSAGE may not claim the unattributed system author",
+        )),
+        WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion => {
+            Error::Record(RecordError::InvalidWitnessMessageBody(
+                "a replicated MESSAGE carries no local actor binding for its author",
+            ))
+        }
+    })
 }

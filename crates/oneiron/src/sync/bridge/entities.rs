@@ -78,6 +78,7 @@ pub(super) fn materialize_entities_with_changes(
     let mut born = Vec::new();
     // Whether this batch wrote a POLICY_MANIFEST (FIX 5338).
     let mut floor_written = false;
+    let mut claims_written = false;
     let result = vault.with_write_txn_grouped(|wtxn| {
         // One delta has no row order. AUTHORITY_LOG rows go first, parents
         // before children, so a signer's enrollment lands before the rows it
@@ -194,6 +195,7 @@ pub(super) fn materialize_entities_with_changes(
                 // which fires only after THAT commit.
                 match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
                     Some(ENTITY_TYPE_CLAIM) => {
+                        claims_written = true;
                         crate::batch::queue_proactivity_change(vault, wtxn);
                     }
                     // A peer's consult or settlement reaches this
@@ -235,6 +237,9 @@ pub(super) fn materialize_entities_with_changes(
     });
 
     if result.is_ok() {
+        if claims_written {
+            vault.verb_hook_bindings_changed();
+        }
         for (id, blob) in &born {
             note_born(vault, *id, blob);
         }

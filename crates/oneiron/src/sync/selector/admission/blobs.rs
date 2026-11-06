@@ -20,7 +20,7 @@ use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 
 #[cfg(feature = "sync")]
 use super::super::validators::{admit_federated_authority_log, validate_federated_pack};
-use super::routing::{GuestCopy, Routes, rename_world_edge_subject};
+use super::routing::{GuestCopy, Routes, rename_world_edge_subject, rename_world_entity_subject};
 use super::{
     ImportGrading, refuse_peer_agent_definition_widening, validate_admitted_replicated_body,
 };
@@ -208,6 +208,7 @@ fn admit_federated_entity_blob_graded(
         body.world =
             Some(crate::federation::guest_claim_world(guest.source, body.world)?.entity_id());
         rename_world_edge_subject(&mut body.subject, guest.worlds);
+        rename_world_entity_subject(&mut body.subject, guest);
     }
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;

@@ -142,6 +142,14 @@ pub enum SweepWork {
         /// Due records whose notices were raised.
         records: u64,
     },
+    BodyLineIndexRebuild {
+        /// Indexes rebuilt and readable now.
+        rebuilt: u64,
+        /// Bodies whose rebuild failed; each stays queued for the next sweep.
+        failed: u64,
+        /// Bodies dropped as already fixed, inline, or gone.
+        dropped: u64,
+    },
     AnnotationBodyAnchors {
         /// Comment heads stamped, moved, landed on an export or detached.
         moved: u64,
@@ -160,9 +168,9 @@ impl SweepWork {
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
             Self::SecretLift(work) => work.failed,
-            Self::ClaimVadDebt { failed, .. } | Self::AnnotationBodyAnchors { failed, .. } => {
-                failed
-            }
+            Self::ClaimVadDebt { failed, .. }
+            | Self::BodyLineIndexRebuild { failed, .. }
+            | Self::AnnotationBodyAnchors { failed, .. } => failed,
             _ => 0,
         }
     }
@@ -198,6 +206,11 @@ impl SweepWork {
             Self::SecretLift(work) => work == SecretLiftWork::default(),
             Self::ClaimVadDebt { settled, failed } => settled == 0 && failed == 0,
             Self::FoundKeyNotices { records } => records == 0,
+            Self::BodyLineIndexRebuild {
+                rebuilt,
+                failed,
+                dropped,
+            } => rebuilt == 0 && failed == 0 && dropped == 0,
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
         }
     }

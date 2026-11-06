@@ -154,11 +154,23 @@ pub struct SelfDeniedResult {
     pub reason_codes: Vec<String>,
 }
 
+/// Measured facts from a native proposal-spool disk-floor failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfSandboxProposalDiskFloor {
+    pub needed: u64,
+    pub available: u64,
+    pub reserve: u64,
+}
+
 /// Result of a `self.*` trap that failed after crossing an audited write boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfFailedResult {
     pub effect: SelfEffect,
     pub error: String,
+    /// The stable facade code recorded from a typed native failure, if any.
+    pub code: Option<String>,
+    /// The original measured facts when `code` names the proposal-spool floor.
+    pub disk_floor: Option<SelfSandboxProposalDiskFloor>,
 }
 
 /// Durable wait produced for effects that need human/external resolution.

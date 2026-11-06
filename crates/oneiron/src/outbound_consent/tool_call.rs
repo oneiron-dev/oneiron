@@ -109,7 +109,8 @@ impl PreparedToolCall {
     pub(crate) fn headers(&self) -> &BTreeMap<String, String> {
         &self.frozen.headers
     }
-    /// Whether preparation forced `dry_run` from the mutation intent.
+    /// Whether the tool descriptor frozen with this call marks it destructive.
+    /// This does not imply that preparation forced a `dry_run` argument.
     pub(crate) fn destructive_hint(&self) -> bool {
         self.frozen.destructive_hint
     }

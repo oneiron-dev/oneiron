@@ -293,10 +293,19 @@ pub(crate) fn asset_file_in_txn(
     id: &EntityId,
     body: &[u8],
 ) -> Result<Option<AssetFileManifest>> {
-    let Some(held) = owned_body_in_txn(store, txn, id, &current_occurrence(id)?)? else {
+    let occurrence = current_occurrence(id)?;
+    let Some(held) = owned_body_in_txn(store, txn, id, &occurrence)? else {
         return Ok(None);
     };
     if body.is_empty() {
+        return Ok(None);
+    }
+    // A room's inline row does not inherit the base row's file descriptor.
+    if store.entities().stages_row(id.as_bytes())
+        && !store
+            .vault_meta()
+            .stages_row(&super::owned_body::BODY.key_bytes(&(*id, occurrence)))
+    {
         return Ok(None);
     }
     let manifest =

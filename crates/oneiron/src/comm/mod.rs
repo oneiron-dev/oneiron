@@ -19,6 +19,7 @@ mod claims;
 mod consent;
 mod descriptor;
 mod generic_put_routing;
+mod head_admission;
 mod inbound_events;
 mod opt_out_slots;
 mod parties;
@@ -64,8 +65,10 @@ pub(crate) use self::descriptor::{
 };
 pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
 pub(crate) use self::generic_put_routing::{
-    route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+    RoutedBatchPuts, route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+    take_projector_only_batch_puts_preserving_births_in_txn,
 };
+pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn, person_party_key_in_txn,

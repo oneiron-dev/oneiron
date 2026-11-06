@@ -13,13 +13,33 @@ use crate::provenance::made_by::{MadeByClass, MadeByProcess};
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
+    // The token lookup's refs to this artifact's rows go in the same writer
+    // (FIX 12403): a token-keyed row is not artifact-prefixed, so collect
+    // the doomed rows first, delete, then unref.
+    let mut doomed_exports = Vec::new();
+    for (key, record) in EXPORTS.scan_from(store, txn, entity.as_bytes())? {
+        if let Some(token) = record.token {
+            doomed_exports.push((token, key));
+        }
+    }
+    let mut doomed_authors = Vec::new();
+    for (key, record) in EXPORT_AUTHORS.scan_from(store, txn, entity.as_bytes())? {
+        doomed_authors.push((record.token, key));
+    }
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
     EXPORT_AUTHORS.delete_from(store, txn, entity.as_bytes())?;
+    for (token, key) in &doomed_exports {
+        author_token::index::unref_export(store, txn, token, key)?;
+    }
+    for (token, key) in &doomed_authors {
+        author_token::index::unref_author(store, txn, token, key)?;
+    }
     for (group, route) in LIVE_EDIT_GROUPS.scan(store, txn)? {
         if route.artifact == *entity {
             LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
         }
     }
+    consent::revoke_office_edit_grants_naming_in_txn(store, txn, entity)?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }

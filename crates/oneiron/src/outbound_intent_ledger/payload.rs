@@ -366,7 +366,10 @@ pub(crate) fn payload_recipient_in_txn(
 ) -> Option<EntityId> {
     let frozen: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let party = frozen.get(FROZEN_COUNTERPARTY_FIELD)?.as_str()?;
-    crate::comm::resolve_party_ref_in_txn(vault, txn, party)
+    vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, txn, party)
         .ok()
         .flatten()
 }

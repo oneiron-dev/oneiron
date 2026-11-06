@@ -3,7 +3,7 @@
 use super::argv::{FrozenGitArgv, os_args};
 use super::failure::invalid;
 use super::{GitWire, GitWireOperation, GitWireRepo, GitWireResult, lock_repository};
-use crate::checkout::lease::CheckoutLeaseAct;
+use crate::store::checkout_lease::CheckoutLeaseAct;
 use std::path::Path;
 
 impl GitWire<'_> {

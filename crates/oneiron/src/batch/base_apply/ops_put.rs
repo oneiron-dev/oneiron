@@ -3,7 +3,7 @@
 use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use zeroize::Zeroizing;
 
@@ -19,6 +19,7 @@ pub(super) fn apply_put_arm(
     mut entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: Option<u64>,
     data: Vec<u8>,
     allow_maintenance: bool,
     allow_reserved_predicate: bool,
@@ -63,6 +64,7 @@ pub(super) fn apply_put_arm(
         entity_type,
         replicated,
         (state.birth_mask, sources),
+        &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
@@ -83,6 +85,7 @@ pub(super) fn apply_put_arm(
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
+                    row_version: None,
                 }],
                 text_index_trusted,
                 ApplyOpsGateMode::new(
@@ -126,6 +129,10 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    put_options.decision.pending_auto_probe = preflight_decision_id
+        .and_then(|decision| state.pending_auto_probes.get(&decision))
+        .copied()
+        .filter(|probe| probe.matches(&id, preflight_decision_id));
     let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new
@@ -148,6 +155,7 @@ pub(super) fn apply_put_arm(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version,
             },
             options: put_options,
             context: PutContext {
@@ -217,6 +225,7 @@ pub(super) fn apply_put_arm(
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
+                row_version: None,
             }],
             text_index_trusted,
             ApplyOpsGateMode::new(

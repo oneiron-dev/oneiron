@@ -1,5 +1,5 @@
-//! Grant-scoped home-node reads for opened-item devices.
-//! App-tier bind provides the actor; request bytes never choose a principal.
+//! Home-node reads for opened-item devices and proved machines.
+//! Actor reads use app-tier bind; machine-only reads use the socket proof.
 
 #[cfg(test)]
 pub(super) mod tests;
@@ -13,11 +13,14 @@ mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod pad_objects;
 mod pad_refill;
 mod pages;
 mod search;
+mod work;
+pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
 use base64::Engine;
 use oneiron::EntityId;
@@ -43,7 +46,6 @@ use serde_json::{Value, json};
 
 use self::authority::*;
 use self::bundles::*;
-pub(super) use self::home_handoff::{machine_method, run_machine};
 pub(crate) use self::index::ResidenceTouchStage;
 use self::index::*;
 use self::search::*;
@@ -54,6 +56,24 @@ use crate::wire_telemetry::LimitRow;
 /// A result and the rows it carries (DEC-0005).
 type Answer = (Value, Option<Vec<EntityId>>);
 use crate::server::SyncServer;
+
+/// The residence calls a socket may make with only its machine proof.
+pub(super) fn machine_method(method: &str) -> bool {
+    method == "residence.pad.fetch" || home_handoff::machine_method(method)
+}
+
+pub(super) fn run_machine(
+    server: &SyncServer,
+    peer: PeerMachine,
+    method: &str,
+    params: Value,
+) -> Result<Answer, AppError> {
+    if method == "residence.pad.fetch" {
+        pad_custody::pad_fetch_keys(server, peer, params)
+    } else {
+        home_handoff::run_machine(server, peer, method, params)
+    }
+}
 
 /// One revision-bound metadata projection per authenticated socket. Replacing
 /// it on the next window keeps memory bounded and never caches a grant decision
@@ -157,6 +177,9 @@ struct SearchRequest {
     /// selector and caller check below stands.
     #[serde(default)]
     scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
+    /// A recall clock pin, not a historical grant or storage snapshot.
+    #[serde(default)]
+    as_of: Option<u64>,
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
@@ -194,6 +217,7 @@ impl SearchRequest {
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            self.as_of,
             locality,
             self.page.as_ref(),
             |request| {
@@ -433,13 +457,16 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
             ),
+            "residence.media_vectors" => {
+                media_vectors::media_vectors(server, auth, peer, request.params)
+            }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {
                 bundle_commit::bundle_commit(server, auth, peer, request.params)
             }
             "residence.bundle.commit.status" => {
-                bundle_commit::bundle_commit_status(server, peer, request.params)
+                bundle_commit::bundle_commit_status(server, auth, peer, request.params)
             }
             "residence.bundle.list" => bundle_list(server, peer, request.params),
             "residence.bundle.get" => bundle_get(server, peer, request.params),

@@ -5,6 +5,7 @@ pub(crate) mod admission;
 pub(crate) mod diagnostic_codec;
 pub(crate) mod event;
 pub(crate) mod invariant_canonical;
+pub(crate) mod normal_baseline;
 pub(crate) mod untrusted_text;
 
 pub use address::diagnostic_event_id;

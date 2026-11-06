@@ -168,6 +168,9 @@ pub(super) async fn handle_connection(
             Some(answered) = verb_calls.join_next(), if !verb_calls.is_empty() => {
                 ConnEvent::Answered(answered)
             }
+            Some(answered) = conn_state.residence_work.join_next(), if !conn_state.residence_work.is_empty() => {
+                ConnEvent::ResidenceAnswered(answered)
+            }
             msg = transport.read_next(),
                 if direct_rx.is_empty() && verb_calls.len() < MAX_VERB_CALLS_IN_FLIGHT =>
             {
@@ -181,7 +184,19 @@ pub(super) async fn handle_connection(
 
         let next_message = match event {
             ConnEvent::Inbound(msg) => msg,
-            ConnEvent::Answered(Ok(Ok(()))) => continue,
+            ConnEvent::Answered(Ok(Ok(()))) | ConnEvent::ResidenceAnswered(Ok(Ok(()))) => continue,
+            ConnEvent::ResidenceAnswered(Ok(Err(error))) => {
+                tracing::warn!(conn_id, %error, "bundle work reply failed — closing");
+                break;
+            }
+            ConnEvent::ResidenceAnswered(Err(error)) => {
+                tracing::warn!(
+                    conn_id,
+                    panicked = error.is_panic(),
+                    "bundle work driver ended — closing"
+                );
+                break;
+            }
             ConnEvent::Answered(Ok(Err(error))) => {
                 tracing::warn!(conn_id, %error, "verb RPC answer failed — closing");
                 break;
@@ -520,7 +535,16 @@ pub(super) async fn handle_connection(
                     );
                     break;
                 }
-                if let Err(error) = server.vault().resume_from_slim_on_inbound() {
+                let lifecycle_observation = match &msg {
+                    SyncMessage::Rpc(payload) => crate::livequery::decode_rpc_call(payload)
+                        .is_ok_and(|(request, _)| {
+                            crate::api::is_slim_lifecycle_observation(&request.method)
+                        }),
+                    _ => false,
+                };
+                if !lifecycle_observation
+                    && let Err(error) = server.vault().resume_from_slim_on_inbound()
+                {
                     tracing::warn!(
                         conn_id,
                         kind = ?error.kind(),
@@ -560,7 +584,19 @@ pub(super) async fn handle_connection(
                     )
                     .map(|call| {
                         if let Some(call) = call {
-                            verb_calls.spawn(call.answer(Arc::clone(&server), direct_tx.clone()));
+                            match call {
+                                super::super::app_tier::VerbCall::Residence(call) => {
+                                    conn_state.residence_work.spawn(
+                                        call,
+                                        Arc::clone(&server),
+                                        direct_tx.clone(),
+                                    );
+                                }
+                                call => {
+                                    verb_calls
+                                        .spawn(call.answer(Arc::clone(&server), direct_tx.clone()));
+                                }
+                            }
                         }
                     }),
                     SyncMessage::Sub(payload) => handle_app_message_with_connection(
@@ -637,7 +673,9 @@ pub(super) async fn handle_connection(
     // OF-237: the socket closes, then every verb RPC it admitted runs to its
     // end; none is aborted. Only after them does its place in an embedded
     // engine's drain go, so no worker stops under one.
+    conn_state.residence_work.detach();
     drop(transport);
+    conn_state.residence_work.drain().await;
     while verb_calls.join_next().await.is_some() {}
     conn_state.closed(server.vault());
     tracing::info!(conn_id, "connection closed");

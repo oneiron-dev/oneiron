@@ -144,6 +144,11 @@ impl Vault {
         // The custody revokes the actor sweeps make reach the owner's other
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.and_then(GatedDeletion::owner_act);
+        let pending_cloud_revokes = if reason.active_store_hard_purge_v1() {
+            self.cloud_registration_revokes_before_local_erase(&wtxn, id)
+        } else {
+            Default::default()
+        };
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -220,6 +225,11 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            pending_cloud_revokes.publish();
+            // Hard reasons only: only they wrote the marker above.
+            if reason.active_store_hard_purge_v1() {
+                self.notify_local_delete_materialized(&[*id]);
+            }
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -274,9 +284,15 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
+            let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id);
+            crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
+            crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
@@ -313,6 +329,7 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;

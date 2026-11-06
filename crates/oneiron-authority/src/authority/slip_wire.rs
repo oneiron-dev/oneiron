@@ -89,7 +89,44 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
     if let Some(renews) = action.renews {
         entries.push((Value::from(SLIP_KEY_RENEWS), binary_value(renews)));
     }
+    // FIX 4325: only a contact-bound mint carries the key, after the
+    // renews's, so every other mint's bytes stay as they were.
+    if let Some(binding) = &claims.trusted_contact {
+        entries.push((
+            Value::from(SLIP_KEY_TRUSTED_CONTACT),
+            trusted_contact_value(binding),
+        ));
+    }
     Value::Map(entries)
+}
+
+fn trusted_contact_value(binding: &TrustedContactSlipBinding) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(TRUSTED_CONTACT_KEY_PERSON),
+            Value::from(binding.person.to_hex()),
+        ),
+        (
+            Value::from(TRUSTED_CONTACT_KEY_VERSION),
+            Value::from(binding.version),
+        ),
+    ])
+}
+
+fn decode_trusted_contact(value: &Value) -> Result<TrustedContactSlipBinding> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SLIP_TRUSTED_CONTACT_KEYS)?;
+    let person_text = decode_string(required(entries, TRUSTED_CONTACT_KEY_PERSON)?)?;
+    let person = crate::EntityId::from_hex(&person_text).map_err(|_| invalid_authority())?;
+    if person.to_hex() != person_text {
+        return Err(invalid_authority());
+    }
+    let version = required(entries, TRUSTED_CONTACT_KEY_VERSION)?
+        .as_u64()
+        .ok_or_else(invalid_authority)?;
+    let binding = TrustedContactSlipBinding { person, version };
+    binding.validate()?;
+    Ok(binding)
 }
 
 fn delegation_value(delegation: &SupportDelegation) -> Value {
@@ -179,13 +216,16 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
 }
 
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    // The support delegation (OF-606), the comm reach (FIX 3899) and a
-    // renewal's predecessor (FIX 5481) are the optional keys: each at most
-    // once, and every other key exactly as before.
+    // The support delegation (OF-606), the comm reach (FIX 3899), a
+    // renewal's predecessor (FIX 5481) and a trusted-contact binding
+    // (FIX 4325) are the optional keys: each at most once, and every other
+    // key exactly as before.
     let delegations = optional_values(entries, SLIP_KEY_DELEGATION);
     let comms = optional_values(entries, SLIP_KEY_COMM);
     let renewals = optional_values(entries, SLIP_KEY_RENEWS);
-    if delegations.len() > 1 || comms.len() > 1 || renewals.len() > 1 {
+    let trusted_contacts = optional_values(entries, SLIP_KEY_TRUSTED_CONTACT);
+    if delegations.len() > 1 || comms.len() > 1 || renewals.len() > 1 || trusted_contacts.len() > 1
+    {
         return Err(invalid_authority());
     }
     let base: Vec<(Value, Value)> = entries
@@ -193,7 +233,12 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
         .filter(|(key, _)| {
             !matches!(
                 key.as_str(),
-                Some(SLIP_KEY_DELEGATION | SLIP_KEY_COMM | SLIP_KEY_RENEWS)
+                Some(
+                    SLIP_KEY_DELEGATION
+                        | SLIP_KEY_COMM
+                        | SLIP_KEY_RENEWS
+                        | SLIP_KEY_TRUSTED_CONTACT
+                )
             )
         })
         .cloned()
@@ -276,6 +321,10 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
                     .and_then(CommReach::parse)
                     .ok_or_else(invalid_authority)
             })
+            .transpose()?,
+        trusted_contact: trusted_contacts
+            .first()
+            .map(|value| decode_trusted_contact(value))
             .transpose()?,
     };
     let action = SlipMintAction {

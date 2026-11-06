@@ -61,7 +61,15 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows, settled_tasks, notifications_changed),
+            (
+                task_ids,
+                rows,
+                room_joins,
+                pad_windows,
+                settled_tasks,
+                notifications_changed,
+                note_document_ids,
+            ),
             retirement_staged,
         ) = self.store.group_write_classed(callback, class, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -71,9 +79,9 @@ impl Vault {
             // A credential erase this write stages finishes after it (KS-6 part 2).
             let credentials_before = crate::store::credential_erases_staged();
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-            let (result, postcommit) = {
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+            let result = {
                 let _active_write_txn = crate::store::active_write_txn_guard();
-                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)
@@ -83,7 +91,7 @@ impl Vault {
                             .map_err(E::from)?;
                         Ok(result)
                     }) {
-                    Ok(result) => (result, vad_scope.finish()),
+                    Ok(result) => result,
                     Err(err) => return Rows::Discard(Err(err)),
                 }
             };
@@ -94,6 +102,7 @@ impl Vault {
             {
                 return Rows::Discard(Err(E::from(err)));
             }
+            let postcommit = vad_scope.finish();
             // FIX 7957: each row this write changed leaves its window a
             // durable marker, so a crash before the live mirror loses no edit.
             #[cfg(feature = "sync")]
@@ -128,6 +137,7 @@ impl Vault {
                         postcommit.pad_windows,
                         postcommit.settled_tasks,
                         postcommit.notifications_changed,
+                        postcommit.note_document_ids,
                     ),
                     staged != retirements_before
                         || crate::store::credential_erases_staged() != credentials_before,
@@ -142,6 +152,12 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // A pad seal can leave its text frontier unchanged. Wake live NOTE
+        // subscribers only now that the seal is durable (FIX 12110).
+        #[cfg(feature = "sync")]
+        for id in note_document_ids {
+            self.notify_note_document(id);
+        }
         // FIX 3084: a notification this write put or marked wakes the live
         // queries that follow notifications, now that it is durable.
         if notifications_changed {
@@ -164,7 +180,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         self.note_committed_rows(rows);
         #[cfg(not(feature = "sync"))]
-        drop((rows, room_joins));
+        drop((rows, room_joins, note_document_ids));
         // FIX 3321: a join this write filed reaches the live window of its
         // room or thread, now that it is durable.
         #[cfg(feature = "sync")]

@@ -287,6 +287,24 @@ impl Vault {
             .map(|row| row.receipt())
             .transpose()
     }
+
+    /// Retained operations authored by one session, including documents it created.
+    pub(crate) fn code_document_receipts_for_session_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        session: EntityId,
+    ) -> Result<Vec<CodeEditReceipt>> {
+        let session = session.to_hex();
+        let mut receipts = Vec::new();
+        for item in CODE_DOCUMENT_INGRESS.iter_from(&self.store, txn, &[])? {
+            let (_, row) = item?;
+            if row.session == session {
+                receipts.push(row.receipt()?);
+            }
+        }
+        Ok(receipts)
+    }
+
     /// A durable ingress identity prevents replay after a process death from
     /// appending the same edit twice. Reusing an identity with other bytes refuses.
     pub fn apply_code_file_edit_once(

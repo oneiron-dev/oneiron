@@ -216,12 +216,19 @@ fn prepare_step_source(
         return Ok(Err(admitted::lapsed()));
     }
     let read = {
+        let _bodies = vault.pin_all_result_bodies();
         let rtxn = vault.store.env.read_txn()?;
         read_step_in_txn(vault, &rtxn, capsule, &start)?
     };
     let (prefix, window) = match read {
         Ok(read) => read,
         Err(unavailable) => return Ok(Err(unavailable)),
+    };
+    let Some(determinism) = prefix.determinism else {
+        return Ok(Err(unavailable(
+            Reason::SourceMissing,
+            "determinism_unknown",
+        )));
     };
     let frozen = match freeze_bodies(vault, capsule.run, &prefix, admits)? {
         Ok(frozen) => frozen,
@@ -236,7 +243,7 @@ fn prepare_step_source(
         binding: capsule.binding.clone(),
         route_pin: capsule.route_pin.clone(),
         seed: capsule.seed,
-        determinism: prefix.determinism,
+        determinism,
         bridge_start: start.bridge_start,
         bridge_end,
         start,

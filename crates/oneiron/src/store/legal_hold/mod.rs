@@ -16,6 +16,14 @@ mod events;
 mod notice;
 mod pending;
 mod settlement;
+mod use_limit;
+
+pub(crate) use use_limit::{
+    CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
+    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
+    use_limit_in_txn,
+};
+use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -36,7 +44,7 @@ pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
+    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -65,10 +73,6 @@ const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
 /// The host orders an owner's confirmed erase met. Key: id16 (record).
 const HOST_ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_HOST_ERASE_LINK);
-/// Records kept after a refused privacy erasure (C6). Key: id16 (record).
-const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_USE_LIMIT);
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EraseLink {
@@ -258,23 +262,6 @@ fn standing_row_in_txn(
     Ok(hold)
 }
 
-/// Whether a standing hold names the record or claim partition `id`, for a
-/// door with no store handle. Read inside the destroying transaction.
-pub(crate) fn held_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<bool> {
-    Ok(!standing_on_in_txn(dbs, txn, &id_key(id))?.is_empty())
-}
-
-/// Whether a standing hold names the gate-decision partition `claim`
-/// (`None`: the claim-free one).
-pub(crate) fn partition_held_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    claim: Option<&[u8; 16]>,
-) -> Result<bool> {
-    let key = claim.map_or([0; 17], id_key);
-    Ok(!standing_on_in_txn(dbs, txn, &key)?.is_empty())
-}
-
 /// Writes `hold`, keeping its target index exact: a standing hold indexes
 /// every target it names, a lifted one none.
 pub(crate) fn put_hold_in_txn(
@@ -348,6 +335,11 @@ impl Store {
     ) -> Result<()> {
         let holds = standing_on_in_txn(self, txn, key)?;
         if holds.is_empty() {
+            if let Some(LegalHoldTarget::Record(record)) = target
+                && cooperative_restriction_active_in_txn(self, txn, &record)?
+            {
+                return Err(Error::EntityNotFound);
+            }
             return Ok(());
         }
         let now = self.clock.now_recorded_at();
@@ -461,29 +453,6 @@ pub(crate) fn flush_refusals_in_txn(
     Ok(written)
 }
 
-fn keep_use_limited_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    record: EntityId,
-    at: u64,
-) -> Result<()> {
-    if USE_LIMITS.contains(store, txn, &record)? {
-        return Ok(());
-    }
-    // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).
-    crate::dreamer_consolidation::mark_person_about_dropped_in_txn(store, txn, &record)?;
-    USE_LIMITS.put(
-        store,
-        txn,
-        &record,
-        &LegalHoldUseLimit {
-            record,
-            since: at,
-            reason: LegalHoldReason::PrivacyEraseKept,
-        },
-    )
-}
-
 /// A privacy erasure request over `records` (C5): returns the records no
 /// hold names, for the caller to erase, and the held ones it keeps. Each
 /// held record logs a refusal with its reason; where Oneiron hosts the bytes
@@ -518,25 +487,6 @@ pub(crate) fn split_privacy_erase_in_txn(
         kept.push(*record);
     }
     Ok((erase, kept))
-}
-
-/// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing hold, customer or host order, still keeps it
-/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
-/// last hold lifts, narrows or lapses. A marker no standing hold backs
-/// restricts nothing.
-pub(crate) fn use_limit_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    record: &EntityId,
-) -> Result<Option<LegalHoldUseLimit>> {
-    let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
-        return Ok(None);
-    };
-    if notice::retaining_holds_in_txn(dbs, txn, record)?.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(limit))
 }
 
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase

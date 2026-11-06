@@ -50,6 +50,7 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
     };
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };
@@ -64,6 +65,7 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
+            page.known_reads.extend(source_of(decl, key));
             // A repo-mutation row reads by its own door (FIX 2890).
             let found = match super::retained::hit(vault, txn, decl, key, value)? {
                 Some(found) => found,
@@ -136,6 +138,20 @@ pub(super) fn path(key: &[u8]) -> String {
         ),
         None => format!("carrier::{}", hex(key)),
     }
+}
+
+/// The typed-body producer keys its document by the actual source entity.
+/// No source is inferred for other carrier formats.
+pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
+    let (decl, row_key) = carrier_of(key)?;
+    source_of(decl, row_key)
+}
+
+fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
+    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) {
+        return None;
+    }
+    super::records::record_id(row_key.strip_prefix(decl.prefix)?)
 }
 
 fn cursor(place: u8, key: &[u8]) -> Vec<u8> {

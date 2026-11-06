@@ -14,6 +14,7 @@ pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;
+mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
@@ -72,7 +73,8 @@ pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
-    HarnessEvaluationTarget, RetuneThresholds,
+    HarnessEvaluationTarget, HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation,
+    HarnessOf360Scheduled, RetuneThresholds,
 };
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
@@ -143,7 +145,8 @@ impl DreamerRunnerStore<'_> {
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask), the relationship-stewardship pass, the identity
+    /// many wakes ask), a proposed digest-rhythm pass, the relationship-
+    /// stewardship pass, the identity
     /// re-check, the action-mode refresh (one per owner, OF-335) and the
     /// harness self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
@@ -161,6 +164,7 @@ impl DreamerRunnerStore<'_> {
             run_id.clone(),
             now,
         )?;
+        self.enqueue_proactivity_policy_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_identity_recheck_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_action_mode_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
@@ -223,6 +227,9 @@ pub(crate) fn execute(
         }
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        digest::policy_author::PROACTIVITY_POLICY_FACET => {
+            digest::policy_author::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         stewardship::STEWARDSHIP_FACET => {
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;

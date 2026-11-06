@@ -6,11 +6,11 @@ side_tables! {
     /// bytes32.
     /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
     CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
-    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
+    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_connector_write_accepts_masked];
     /// Owner-installed ICS feed configuration and last public completion. Key: system name.
     CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named;
     /// Per-feed poll cursor. Key: bytes32.
-    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
+    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_ics_feed_cursor_accepts_masked];
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
@@ -27,6 +27,9 @@ side_tables! {
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
     CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored [accepts: crate::dreamer_runner::call_receipt_accepts_masked]
         => crate::Vault::erase_call_receipt_actor_in_txn;
+    /// Native agent/time of one exact call receipt; its primary's sole actor scrub removes
+    /// these witnesses in the same writer. Key: receipt id16.
+    CALL_RECEIPT_AGENT_WITNESS: VaultMeta b"call_receipt_agent_witness:v1:" Named Engine;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
@@ -137,6 +140,8 @@ side_tables! {
     /// Posting-list row of one claim under its world (base reality under the reserved base id),
     /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
     CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw;
+    /// Owner-selected ordinary Clipboard cleanup arms. Key: (). No clip text.
+    CLIPBOARD_RETENTION: VaultMeta b"clipboard.retention.v1" Named;
     /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
     /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
     /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
@@ -154,6 +159,9 @@ side_tables! {
     /// (FIX 10434): `draft_source_rows`. Key: id16(source) + id16(actor) + u8(signal) +
     /// id16(task).
     COACH_AGENT_HEALTH_CARD_BY_SOURCE: VaultMeta b"coach:agent_health_card_by_source:v1:" Raw;
+    /// The latest wake waiting for a free live health-review slot (FIX 9224).
+    /// Key: target attempt id16 + big-endian lease generation4.
+    COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -171,6 +179,12 @@ side_tables! {
     /// be64 of the lease generation, be32 of the call.
     COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
+    /// One durable step capture's owner witness (FIX 6734): the owner an erase takes the
+    /// capture for, its role in the step, and the capture's full step key. Written with the
+    /// capture and rebound with its terminal claim; the capture eraser drops every witness
+    /// of a capture it takes, so no own scrub. Key: id16 of the owner, one role byte, then
+    /// the capture's step key.
+    COACH_BLOCKED_SOURCE_OWNER: VaultMeta b"coach:blocked_source_owner:v1:" Raw;
     /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
     /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
     /// pass reaches the end of the credit table, or by an erase of an entity it names. Key: ().
@@ -185,6 +199,9 @@ side_tables! {
     /// Each COACH_DIAGNOSTIC_ISSUE under its recurrence key, written with it (FIX 7343). Key:
     /// the key's 32 bytes, then id16 of the issue.
     COACH_DIAGNOSTIC_ISSUE_BY_KEY: VaultMeta b"coach:diagnostic_issue_by_key:v1:" Raw;
+    /// One accepted owner run-now joined a running feedback sweep and owes a later sweep.
+    /// Scheduling intent only, no content or actor. Key/value: ().
+    COACH_FEEDBACK_SWEEP_PENDING: VaultMeta b"coach:feedback_sweep_pending:v1" Named Engine;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
     /// hash32 of the fact.
@@ -289,7 +306,8 @@ side_tables! {
     /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
     /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
     /// string(row: `with_skill`, `without_skill` or `unavailable`).
-    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
+    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
+        => crate::code_run::erase_contribution_forks_in_txn;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
@@ -343,7 +361,7 @@ side_tables! {
     /// id16(set).
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
     /// A code run's replay record, keyed by run id. Key: id16.
-    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored [accepts: crate::code_run::code_run_replay_record_accepts_masked];
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
     /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
     /// id16(attempt) + be64(lease generation) + be64(step).
@@ -353,9 +371,12 @@ side_tables! {
     /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
     /// took it. The capsule table's scrub erases it. Key: id16(record).
     CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
+    /// The owner's value-free dismissal of one code-run secret lift proposal. The
+    /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
+    CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
-    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored [accepts: crate::code_run::code_run_summary_memo_accepts_masked];
     /// One program step's type feedback (FIX 8277): its check's state, measures and diagnostics
     /// or the run's body holding them, the preparation note, the actor the run ran as and the
     /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +
@@ -439,6 +460,10 @@ side_tables! {
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
+    /// Record-only occurrence of the accepted provider-event archive version one inbound
+    /// MESSAGE landed from (FIX 10851): provenance metadata only, never read/delete
+    /// authority. Key: id16 (MESSAGE).
+    CONNECTOR_MESSAGE_ARCHIVE: VaultMeta b"connector.conversation_archive.v1:" Named;
     /// One connector credential slot's issuer binding and issuer change (FIX 988). Key: id16.
     CONNECTOR_CREDENTIAL_BINDING: VaultMeta b"connector.credential_binding.v1/" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
@@ -564,6 +589,9 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// Recipient-selected storage-only restriction, independent of legal holds.
+    /// Key: id16(record) + bytes32(pact) + bytes16(request nonce).
+    COOPERATIVE_RESTRICTION: VaultMeta b"cooperative_deletion:restriction:v1:" Named;
     /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).

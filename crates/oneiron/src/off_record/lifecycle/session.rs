@@ -975,6 +975,45 @@ impl OffRecordSession<'_> {
         self.vault.pin_result_body(digest)
     }
 
+    /// Notes a detached line-index rebuild for the body `digest` in this
+    /// session's vault (FIX 1186b): the session arm's forward, beside
+    /// [`Self::pin_result_body`].
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        self.vault.note_body_line_index_rebuild(digest, len)
+    }
+
+    /// Notes the scan-bound search credit issued for the window (`digest`,
+    /// `base`, `len`): the exact emitted (`offset`, `line`, `credit`), kept
+    /// in memory on this session's vault only (FIX 1189 discount, #4311 P1-B).
+    pub(crate) fn note_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        self.vault
+            .note_search_credit(digest, base, len, offset, line, credit);
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit this session's
+    /// vault last issued for the window (`digest`, `base`, `len`): the full
+    /// tuple must match, else the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        self.vault
+            .valid_search_credit(digest, base, len, offset, line, credit)
+    }
+
     /// The custody read guard of this session's vault, for a body read that
     /// opens an instance's key: taken before its snapshot and held through
     /// the key's last use (FIX 6019), as a vault read takes it.
@@ -1002,6 +1041,14 @@ impl OffRecordSession<'_> {
     /// frame (KS-3).
     pub(crate) fn known_source(&self) -> Result<Option<crate::secret_custody::KnownSource>> {
         self.vault.known_source()
+    }
+
+    /// Run-local output prints from this session's vault, live per frame.
+    pub(crate) fn run_known_source(
+        &self,
+        exec_run: crate::EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        self.vault.run_known_source(exec_run)
     }
 
     /// The `[limits]` rows of this session's vault.

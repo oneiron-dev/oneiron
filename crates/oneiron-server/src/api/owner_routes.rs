@@ -47,7 +47,9 @@ pub(super) mod backup_setting_routes;
 pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
+mod claim_refinement_routes;
 mod cleanup_decide;
+pub(super) mod code_run_secret_lift_routes;
 mod commitment_routes;
 pub(super) mod concern_routes;
 pub(super) mod conflict_routes;
@@ -58,6 +60,7 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
+mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
@@ -72,6 +75,7 @@ mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
+mod harness_evaluation_routes;
 pub(super) mod history_routes;
 pub(super) mod house_routes;
 mod hub_table;
@@ -134,7 +138,9 @@ fn owner_tables() -> OwnerTable {
         authority_clock_routes::owner_table(),
         budget_hold_routes::owner_table(),
         checkpoint_policy_routes::owner_table(),
+        claim_refinement_routes::owner_table(),
         commitment_routes::owner_table(),
+        curator_rubric_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),
         connector_consent_routes::owner_table(),
@@ -143,6 +149,7 @@ fn owner_tables() -> OwnerTable {
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
+        harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),
         free_time_routes::owner_table(),
         embedding_space_routes::owner_table(),
@@ -188,6 +195,7 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
@@ -460,7 +468,7 @@ struct OwnerStatus {
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
-    /// Every sync link since this process started, summed per inner frame
+    /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
     /// The browser readiness a managed `Ping` carries, read from the same
@@ -1012,7 +1020,12 @@ async fn witness_off_record(
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let receipt = blocking(move || {
-        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+        off_record::witness(
+            server.vault(),
+            &owner,
+            &request,
+            server.embedder_slot().as_ref(),
+        )
     })
     .await?;
     Ok(Json(receipt))

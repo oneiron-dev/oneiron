@@ -181,13 +181,17 @@ pub(super) fn host_row(
             // Its render takes a turn in the renderer line as it starts, at
             // the agent's fair place (FIX 7653).
             let renderer = AdmittedRenderer::at_render(server, Some(principal), Arc::default());
-            encode(memory.artifacts_review_slides_through(
-                &request,
-                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides", None),
-                host.dial(DecisionRung::Big),
-                &host.bands(),
-                renderer.as_ref().map(AdmittedRenderer::slides),
-            )?)
+            // Its model rungs bill the payer the run's line binds (FIX 3574).
+            let slides = on_caller_payer(line.and_then(RunAdmission::payer), || {
+                memory.artifacts_review_slides_through(
+                    &request,
+                    &HostUnitDecider::new(server, class, "vault.artifacts.review_slides", None),
+                    host.dial(DecisionRung::Big),
+                    &host.bands(),
+                    renderer.as_ref().map(AdmittedRenderer::slides),
+                )
+            });
+            encode(slides?)
         }
         AgentVerb::VaultArtifactsBodyDeckPreview => {
             let request = decode(input)?;

@@ -77,7 +77,7 @@ pub use policy::PolicyConfig;
 pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
-pub use server_config::{IngressAuth, ServeConfig, SyncServerConfig};
+pub use server_config::{EmbeddedHolderOverrides, IngressAuth, ServeConfig, SyncServerConfig};
 pub use shared_env::SharedEnvConfig;
 pub use skills::{ReplayJudgeWording, SkillsConfig};
 pub use trusted_proxy::TrustedProxy;

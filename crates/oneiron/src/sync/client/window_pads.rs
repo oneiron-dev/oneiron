@@ -21,7 +21,7 @@ use std::ops::ControlFlow;
 use base64::Engine;
 use loro::LoroDoc;
 
-use super::base::SyncClient;
+use super::base::{ResidenceReceipt, SyncClient};
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport::{
     self, TransportError, WindowPadArrival, WindowPadAssembly, WindowPadBinding, WindowPadForm,
@@ -138,11 +138,39 @@ impl SyncClient {
                 .continued
                 .insert(window_key.to_owned(), (id, payload));
         }
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok(frames)
+    }
+
+    pub(crate) fn window_send_batch_frames(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+    ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
+        let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
+        // Each batch draw checks the buffered whole update; no standalone
+        // continuation copy is needed for these frames.
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        Ok((frames, binding))
+    }
+
+    fn record_window_send(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+        binding: WindowPadBinding,
+    ) {
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
             None if sealed => SentKey::Update(window_key.to_owned(), binding.payload_digest),
-            None => return Ok(frames),
+            None => return,
         };
         self.window_pad_ledger().sent.insert(
             key,
@@ -154,7 +182,34 @@ impl SyncClient {
                 queued: *blake3::hash(raw).as_bytes(),
             },
         );
-        Ok(frames)
+    }
+
+    /// Forgets only this unfinished send, never a newer binding or envelope.
+    pub(crate) fn forget_window_send(
+        &self,
+        window_key: &str,
+        binding: &WindowPadBinding,
+        first_id: Option<[u8; 32]>,
+    ) {
+        let mut ledger = self.window_pad_ledger();
+        let key = match binding.queue_seq {
+            Some(seq) => SentKey::Residence(seq),
+            None => SentKey::Update(window_key.to_owned(), binding.payload_digest),
+        };
+        if ledger
+            .sent
+            .get(&key)
+            .is_some_and(|sent| sent.window == window_key && sent.binding == *binding)
+        {
+            ledger.sent.remove(&key);
+        }
+        if ledger
+            .continued
+            .get(window_key)
+            .is_some_and(|(id, _)| Some(*id) == first_id)
+        {
+            ledger.continued.remove(window_key);
+        }
     }
 
     /// [`Self::prepare_window_send`] and [`Self::window_send_frames`] at once,
@@ -186,8 +241,8 @@ impl SyncClient {
     }
 
     /// The home's receipt `payload` for a send of `window_key`, under
-    /// `RESIDENCE_ACK` or `WINDOW_PAD_RECEIPT`. One that binds a residence
-    /// update acknowledges its queued row by that row's own bytes; a
+    /// `RESIDENCE_ACK`, `RESIDENCE_HELD` or `WINDOW_PAD_RECEIPT`. A residence
+    /// ACK confirms durable bytes; Held answers without retiring the row. A
     /// `NotReady` sends the same bytes again as the carrier, returned. A
     /// receipt for no send held here is passed over: its row stays queued.
     pub(super) fn accept_window_pad_receipt(
@@ -197,7 +252,11 @@ impl SyncClient {
         payload: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let receipt = WindowPadReceipt::decode(payload)?;
-        let key = if sub_tag == window_sub_tags::RESIDENCE_ACK {
+        let held = sub_tag == window_sub_tags::RESIDENCE_HELD;
+        if held && receipt.readiness == WindowPadReadiness::NotReady {
+            return Err(invalid("held residence receipt has no admitted pads"));
+        }
+        let key = if sub_tag == window_sub_tags::RESIDENCE_ACK || held {
             SentKey::Residence(
                 receipt
                     .binding
@@ -239,13 +298,19 @@ impl SyncClient {
                 &raw,
             );
         }
-        if let SentKey::Residence(seq) = key
-            && self
+        if let SentKey::Residence(seq) = key {
+            let answer = if held {
+                ResidenceReceipt::Held(sent.queued)
+            } else {
+                ResidenceReceipt::Durable(sent.queued)
+            };
+            if self
                 .residence_acks
-                .insert(seq, sent.queued)
-                .is_some_and(|old| old != sent.queued)
-        {
-            return Err(invalid("conflicting residence acknowledgment"));
+                .insert(seq, answer)
+                .is_some_and(|old| old.digest() != &sent.queued)
+            {
+                return Err(invalid("conflicting residence acknowledgment"));
+            }
         }
         Ok(Vec::new())
     }

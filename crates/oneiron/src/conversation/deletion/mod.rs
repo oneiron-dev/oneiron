@@ -586,13 +586,48 @@ impl Vault {
             cursor = ids.last().copied();
         }
         // Reactions this PERSON made on the room's remaining records.
-        let reactions = {
-            let txn = self.store.env.read_txn()?;
-            authorize_room_erasure(self, &txn, room, person, actor)?;
-            crate::reaction::person_reaction_claims_in(self, &txn, room, person)?
-        };
-        let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
-        crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
+        for kind in crate::reaction::ROOM_RECORD_KINDS {
+            let scope = [
+                &[EdgeDirection::In as u8][..],
+                room.as_bytes(),
+                &[kind as u8][..],
+            ]
+            .concat();
+            let mut count = {
+                let txn = self.store.env.read_txn()?;
+                authorize_room_erasure(self, &txn, room, person, actor)?;
+                crate::scan_check::ScanCount::start(
+                    &self.store,
+                    &txn,
+                    crate::scan_check::EngineScan::EdgePeerRows,
+                    &scope,
+                )?
+            };
+            let mut after = None;
+            loop {
+                let (records, reactions) = {
+                    let txn = self.store.env.read_txn()?;
+                    authorize_room_erasure(self, &txn, room, person, actor)?;
+                    crate::reaction::person_reaction_page_in(
+                        self,
+                        &txn,
+                        room,
+                        person,
+                        kind,
+                        after,
+                        crate::reaction::ROOM_RECORD_PAGE,
+                    )?
+                };
+                count.rows(records.len());
+                let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
+                crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
+                if records.len() < crate::reaction::ROOM_RECORD_PAGE {
+                    break;
+                }
+                after = records.last().copied();
+            }
+            count.finish(self);
+        }
         crate::workspace_roster::scrub_room_audience(self, room, person, &reauthorize, |ids| {
             progress.unheld(self, ids, actor, &reauthorize)
         })?;

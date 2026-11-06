@@ -34,6 +34,8 @@ export interface EngineOptions {
   /** Host configuration only. Read current public config before supplying TOML. */
   readonly serverConfig?:string;
   readonly initArgs?:readonly string[];
+  /** MRL prefix width; serialized at config root before [keystore] so init first-opens with it. Engine owns the 1 <= fd < dimensions check at open. */
+  readonly fastDims?:number;
   readonly embedder?:EndpointEmbedder;
   readonly oneironer?:EndpointTagger;
   readonly surface?:"primary"|"tool-first";
@@ -87,6 +89,7 @@ export class EngineFixture {
     const peers=options.peers??0;
     if(!Number.isInteger(peers)||peers<0) throw new TypeError("peers must be a nonnegative integer");
     if(peers>0&&process.env.E2E_FILE_SLOTS!=="2") throw new BlockedDoor("Multi-peer flows require a two-slot file");
+    if(options.fastDims!==undefined&&(!Number.isInteger(options.fastDims)||options.fastDims<1)) throw new TypeError("fastDims must be a positive integer");
     const root=await tempRoot(options.id??"engine");
     const env=isolatedEnv(root,build.environment);
     for(const key of Object.keys(env)) if(key.startsWith("ONEIRON_")) delete env[key];
@@ -107,7 +110,7 @@ export class EngineFixture {
         ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
       const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
         "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
-      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n\n[keystore]\nbackend = "off"\n${options.serverConfig??""}`,{mode:0o600});
+      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "off"\n${options.serverConfig??""}`,{mode:0o600});
       const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true);
       if(init.exitCode!==0) throw new CliError(init);
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);

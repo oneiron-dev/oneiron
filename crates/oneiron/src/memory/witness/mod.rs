@@ -36,6 +36,7 @@ pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use self::program::ImportedTurnStamp;
+pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 
 pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{

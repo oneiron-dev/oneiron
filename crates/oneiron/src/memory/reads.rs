@@ -23,7 +23,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod receipt_page;
 
-pub use receipt_page::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
+pub use receipt_page::VaultReceiptsPage;
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -471,7 +471,7 @@ impl Memory<'_> {
         // The lane admits inside the posting scan, before the rank and the
         // cut, so a row it withholds takes no place a readable match could
         // fill (FIX 9955); each hit keeps the revision the index matched.
-        let found = lane.search_text_revisioned(query, limit, None)?;
+        let found = lane.search_text_revisioned(query, limit, None, None)?;
         let hits = ScopedReadResult {
             value: found.hits,
             receipt: found.receipt,
@@ -530,7 +530,23 @@ impl Memory<'_> {
         )?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let body = row.body.as_deref().and_then(decode_body_json);
+            let mut body = row.body.as_deref().and_then(decode_body_json);
+            if let Some(value) = &mut body {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                    let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                        &self.vault.store,
+                        &txn,
+                        value,
+                    )?;
+                    keys.mask_json(value);
+                }
+            }
             let snippet = body.as_ref().and_then(|body| {
                 body.get("content")
                     .and_then(serde_json::Value::as_str)

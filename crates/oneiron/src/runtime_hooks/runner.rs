@@ -5,10 +5,12 @@
 //! commit order, per hook and per source.
 
 mod body;
+mod evaluation;
+mod retained;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -19,7 +21,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
 use super::block::{self, HookBlock};
-use super::body::{HookBodyRuntime, HookRunContext, HookVerdict};
+use super::body::{HookBodyRuntime, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
 use super::lineage::{self, HookCheck, LineageLink};
@@ -30,8 +32,9 @@ use super::store::{
     self, CursorRow, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
 };
 
+use body::receipt;
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
-use body::{VerdictPins, receipt, record};
+use retained::RetainedPass;
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
 /// more is read again from its cursors on the next pass.
@@ -88,6 +91,20 @@ pub struct HookPassReport {
 }
 
 impl HookPassReport {
+    fn append(&mut self, next: Self) {
+        self.disabled |= next.disabled;
+        self.entries_read += next.entries_read;
+        self.runs += next.runs;
+        self.memo_hits += next.memo_hits;
+        self.skipped += next.skipped;
+        self.refused += next.refused;
+        self.failed += next.failed;
+        self.intents_applied += next.intents_applied;
+        self.intents_refused += next.intents_refused;
+        self.checks += next.checks;
+        self.more |= next.more;
+    }
+
     fn count(&mut self, verdict: &Verdict) {
         self.runs += 1;
         match verdict.state {
@@ -133,6 +150,16 @@ impl FactHookRunner {
         runtime: &dyn HookBodyRuntime,
         max_entries: usize,
     ) -> Result<HookPassReport> {
+        self.pass_with(vault, runtime, max_entries, None)
+    }
+
+    fn pass_with(
+        &self,
+        vault: &Vault,
+        runtime: &dyn HookBodyRuntime,
+        max_entries: usize,
+        retained: Option<RetainedPass<'_>>,
+    ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
         if !vault.hooks_enabled()? {
             report.disabled = true;
@@ -167,28 +194,52 @@ impl FactHookRunner {
                 .cmp(&a.selector.priority)
                 .then_with(|| a.body_hash.cmp(&b.body_hash))
         });
+        let mut retained = retained;
+        if let Some(pass) = &mut retained {
+            pass.runs.keep_source_order_for(&bindings);
+        }
+        let blocked = retained
+            .as_ref()
+            .map_or_else(HashSet::new, |pass| pass.runs.bindings());
         let mut pass = Pass {
             vault,
             runtime,
             verdict: self.verdict.as_deref(),
-            bindings: &bindings,
             all: &all,
             bodies: HashMap::new(),
             classes: HashMap::new(),
             report,
+            retained,
+            blocked,
         };
-        for source in FactSource::ALL {
-            pass.run_source(source, max_entries)?;
+        if pass.retained.is_some() {
+            for binding in &bindings {
+                let sources = pass
+                    .retained
+                    .as_ref()
+                    .expect("retained pass")
+                    .runs
+                    .sources(binding.0);
+                for source in sources {
+                    pass.run_source(source, max_entries, std::slice::from_ref(binding))?;
+                }
+            }
+        } else {
+            for source in FactSource::ALL {
+                pass.run_source(source, max_entries, &bindings)?;
+            }
         }
         Ok(pass.report)
     }
 
-    /// Runs passes until `shutdown` turns true. It subscribes to the vault's
+    /// Runs passes until `shutdown` turns true, then finishes retained runs. It subscribes to the vault's
     /// change notice before the first pass, catches up from every cursor at
     /// start, then wakes on a notice or every [`HOOK_RUNNER_TICK`]. Each pass
-    /// runs on a blocking thread, under one `admit`; a refused pass waits
-    /// for the next notice or tick. `verdict` answers generative hooks'
-    /// `ai.verdict`.
+    /// runs on a blocking thread, under one `admit`; owned evaluations keep
+    /// that admission until their completion tail lands. A waiting callback
+    /// holds its own binding's cursor, not other bindings or the pass caller.
+    /// A refused pass starts no new evaluation. `verdict` answers generative
+    /// hooks' `ai.verdict`.
     #[cfg(feature = "sync")]
     pub fn spawn(
         vault: std::sync::Arc<Vault>,
@@ -205,51 +256,64 @@ impl FactHookRunner {
             Some(verdict) => Self::new().with_verdict(verdict),
             None => Self::new(),
         });
+        let completed = Arc::new(tokio::sync::Notify::new());
+        let wake = Arc::clone(&completed);
+        let retained = Arc::new(std::sync::Mutex::new(retained::RetainedRuns::new(
+            Arc::clone(&vault),
+            Arc::clone(&runtime),
+            runner.verdict.clone(),
+            Arc::new(move || wake.notify_one()),
+        )));
         tokio::spawn(async move {
+            let mut shutdown_closed = false;
             loop {
-                if *shutdown.borrow() {
+                let stopping = shutdown_closed || *shutdown.borrow();
+                let pending = retained
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .is_pending();
+                if stopping && !pending {
                     break;
                 }
-                let more = match admit() {
-                    Some(admission) => {
-                        let (pass_runner, pass_vault, pass_runtime) = (
-                            Arc::clone(&runner),
-                            Arc::clone(&vault),
-                            Arc::clone(&runtime),
-                        );
-                        let pass = tokio::task::spawn_blocking(move || {
-                            let _admission = admission;
-                            pass_runner.run_pass(
-                                &pass_vault,
-                                pass_runtime.as_ref(),
-                                HOOK_PASS_ENTRIES,
-                            )
-                        })
-                        .await;
-                        match pass {
-                            Ok(Ok(report)) => report.more,
-                            Ok(Err(error)) => {
-                                tracing::warn!(%error, "fact hook pass failed");
-                                false
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "fact hook pass did not finish");
-                                false
-                            }
-                        }
+                let admission = if stopping { None } else { admit() };
+                let (pass_runner, pass_retained) = (Arc::clone(&runner), Arc::clone(&retained));
+                let pass = tokio::task::spawn_blocking(move || {
+                    pass_retained
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .drive(&pass_runner, admission)
+                })
+                .await;
+                let more = match pass {
+                    Ok(Ok(report)) => report.more,
+                    Ok(Err(error)) => {
+                        runner.drained.store(false, Ordering::Release);
+                        tracing::warn!(%error, "fact hook pass failed");
+                        false
                     }
-                    None => false,
+                    Err(error) => {
+                        tracing::warn!(%error, "fact hook pass did not finish");
+                        false
+                    }
                 };
-                if more {
+                let pending = retained
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .is_pending();
+                if stopping && !pending {
+                    break;
+                }
+                if more && !pending {
                     continue;
                 }
                 tokio::select! {
-                    changed = shutdown.changed() => {
+                    changed = shutdown.changed(), if !stopping => {
                         if changed.is_err() {
-                            break;
+                            shutdown_closed = true;
                         }
                     }
-                    _ = changes.changed() => {}
+                    _ = completed.notified() => {}
+                    _ = changes.changed(), if !stopping => {}
                     () = tokio::time::sleep(HOOK_RUNNER_TICK) => {}
                 }
             }
@@ -286,17 +350,18 @@ fn pause_disabled(vault: &Vault, all: &[(EntityId, PackHookBinding)]) -> Result<
 }
 
 /// One pass's working state.
-struct Pass<'v> {
+struct Pass<'v, 'jobs> {
     vault: &'v Vault,
     runtime: &'v dyn HookBodyRuntime,
     verdict: Option<&'v dyn HookVerdict>,
-    /// Enabled fact bindings, in run order.
-    bindings: &'v [(EntityId, PackHookBinding)],
     /// Every live binding, for the authority recheck before an intent lands.
     all: &'v [(EntityId, PackHookBinding)],
     bodies: HashMap<EntityId, std::result::Result<String, String>>,
     classes: HashMap<EntityId, HookActorClass>,
     report: HookPassReport,
+    retained: Option<RetainedPass<'jobs>>,
+    /// A pending run owns this binding's next cursor position in every source.
+    blocked: HashSet<EntityId>,
 }
 
 /// One binding on one fact.
@@ -309,9 +374,16 @@ struct Run<'r> {
     actor: HookActorClass,
 }
 
-impl Pass<'_> {
-    fn run_source(&mut self, source: FactSource, max_entries: usize) -> Result<()> {
-        let bindings = self.bindings;
+impl Pass<'_, '_> {
+    fn run_source(
+        &mut self,
+        source: FactSource,
+        max_entries: usize,
+        bindings: &[(EntityId, PackHookBinding)],
+    ) -> Result<()> {
+        if bindings.iter().all(|(id, _)| self.blocked.contains(id)) {
+            return Ok(());
+        }
         let mut cursors = Vec::with_capacity(bindings.len());
         for (id, _) in bindings {
             cursors.push(self.cursor_for(*id, source)?);
@@ -333,10 +405,14 @@ impl Pass<'_> {
                 )?;
             }
             for ((id, binding), cursor) in bindings.iter().zip(&cursors) {
-                if cursor.is_some_and(|cursor| entry.position <= cursor) {
+                if self.blocked.contains(id)
+                    || cursor.is_some_and(|cursor| entry.position <= cursor)
+                {
                     continue;
                 }
-                self.deliver(*id, binding, entry)?;
+                if self.deliver(*id, binding, entry)? {
+                    self.blocked.insert(*id);
+                }
             }
         }
         // Every entry up to `through` was delivered or passed over; skipped
@@ -346,6 +422,9 @@ impl Pass<'_> {
             let at = vault.store.clock.now_recorded_at();
             vault.with_write_txn_grouped(|txn| {
                 for (id, _) in bindings {
+                    if self.blocked.contains(id) {
+                        continue;
+                    }
                     store::advance_cursor_in_txn(vault, txn, *id, through, at)?;
                 }
                 Ok(())
@@ -384,15 +463,15 @@ impl Pass<'_> {
         binding_id: EntityId,
         binding: &PackHookBinding,
         entry: &FactEntry,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if !filter::verbs_admit_kind(&binding.selector.verbs, entry.kind) {
             self.report.skipped += 1;
-            return Ok(());
+            return Ok(false);
         }
         let key = store::run_key(binding_id, binding, entry)?;
         if store::memo(self.vault, &key)?.is_some() {
             self.report.memo_hits += 1;
-            return Ok(());
+            return Ok(false);
         }
         let grant = grant::effective_grant(self.vault, binding_id, binding)?;
         let memory = self
@@ -403,12 +482,12 @@ impl Pass<'_> {
             Err(error) => {
                 tracing::warn!(code = %error.code, "a hook's reader has no read lane");
                 self.report.skipped += 1;
-                return Ok(());
+                return Ok(false);
             }
         };
         let Some(seen) = read::fact_row(&lane, &grant, entry)? else {
             self.report.skipped += 1;
-            return Ok(());
+            return Ok(false);
         };
         let actor = self.actor_class(entry.actor)?;
         if !filter::fact_matches(
@@ -420,7 +499,7 @@ impl Pass<'_> {
             actor,
         )? {
             self.report.skipped += 1;
-            return Ok(());
+            return Ok(false);
         }
         let body = self.body(binding_id, binding);
         let run = Run {
@@ -440,7 +519,7 @@ impl Pass<'_> {
         lane: &ScopedRead<'_>,
         seen: &SeenFact,
         body: std::result::Result<String, String>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let now = self
             .vault
             .store
@@ -455,62 +534,27 @@ impl Pass<'_> {
             &seen.claim_json,
             now,
         )?;
-        let started = Instant::now();
-        let mut context = HookRunContext::new(run.binding.selector.budget_ms);
-        let deadline = context.deadline();
-        let mut pins = Vec::new();
-        let mut verdicts = VerdictPins::new();
-        let result = match body {
-            Ok(body) => {
-                let mut answer = |request: &str| read::answer(lane, run.grant, request, &mut pins);
-                // Each verdict is pinned as it is heard: replay answers from
-                // the pins rather than asking a model again. Each asks in
-                // the run's own trusted context (FIX 10068, 10075).
-                let host = self.verdict;
-                let mut verdict = |request: &str| {
-                    let trusted = verdict_context(
-                        run.binding_id,
-                        run.binding,
-                        run.grant,
-                        &run.key,
-                        verdicts.heard(),
-                        deadline,
-                    );
-                    let answer = ask_verdict(run.binding, host, &trusted, request);
-                    let reply = answer.reply.clone();
-                    verdicts.push(request, answer);
-                    reply
-                };
-                // What a runtime's body uses is unavailable until the
-                // runtime reports it (FIX 9332).
-                context.body_starts();
-                self.runtime
-                    .run_fact_hook(&body, &input, &mut context, &mut answer, &mut verdict)
-            }
-            Err(reason) => Err(Error::InvalidConfig(reason)),
-        };
-        // The body's worker has joined, a failed run's too: its accounting
-        // ends here, and an overrun goes beside its outcome (FIX 8842).
-        let overrun = context.finish();
-        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let verdict = judge(run.binding, result, overrun, &context);
-        let memo = record(
-            self.vault,
+        if let Some(retained) = &mut self.retained {
+            retained.enqueue(run, self.all, lane.actor_key().clone(), body, input, now)?;
+            return Ok(true);
+        }
+        let prepared = evaluation::evaluate(
+            self.runtime,
+            self.verdict,
             run,
-            &input,
-            pins,
-            verdicts,
-            &verdict,
-            duration_ms,
+            lane,
+            body,
+            input,
             now,
-            self.runtime.runtime_identity(),
-        )?;
-        let queued = self.commit(run, memo, &verdict)?;
-        self.report.count(&verdict);
+            false,
+        );
+        let memo = prepared.memo(self.vault, run)?;
+        let queued = self.commit(run, memo, &prepared.verdict)?;
+        self.report.count(&prepared.verdict);
         if queued {
             apply::drain_one(self.vault, self.all, &run.key, &mut self.report)?;
         }
-        Ok(())
+        Ok(false)
     }
 
     /// The run's one write: lineage and any owner check, local outcomes,

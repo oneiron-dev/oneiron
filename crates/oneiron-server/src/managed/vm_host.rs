@@ -492,6 +492,10 @@ impl VaultVm {
         if config.artifact_origin {
             boot_args.push_str(" oneiron.artifact_origin=1");
         }
+        boot_args.push_str(" oneiron.vault=");
+        boot_args.push_str(&self.vault);
+        boot_args.push_str(" oneiron.owner=");
+        boot_args.push_str(&config.provision.derivation_owner);
         self.api(
             "PUT",
             "/boot-source",

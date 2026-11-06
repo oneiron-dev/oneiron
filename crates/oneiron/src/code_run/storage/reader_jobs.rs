@@ -362,6 +362,7 @@ impl ReaderTxn<'_, '_> {
     fn settle_summary(&mut self, job: &ReaderJob, memo: [u8; 32], now_ms: u64) -> Result<()> {
         let reply = match (&job.state, &job.finding) {
             (ReaderJobState::Done, Some(found)) => {
+                let reference = found.reference()?;
                 self.put_row(
                     &MEMOS,
                     &memo,
@@ -375,7 +376,7 @@ impl ReaderTxn<'_, '_> {
                 serde_json::json!({
                     "task": job.task.to_hex(),
                     "state": job.state.word(),
-                    "ref": found.handle,
+                    "ref": reference,
                     "handle": found.handle,
                     "bytes": found.bytes,
                 })
@@ -394,17 +395,18 @@ impl ReaderTxn<'_, '_> {
         self.deliver_reply(job.task, reply, now_ms)
     }
 
-    /// Deletes the `f` row of `finding` while it names `task`: the first
-    /// child to report a handle keeps its row.
+    /// Deletes only this task's occurrence index and first-reporter content alias.
     fn drop_finding_row(
         &mut self,
         parent_run: EntityId,
         finding: &ReaderFindingRef,
         task: EntityId,
     ) -> Result<()> {
-        let key = finding_key(parent_run, &finding.handle);
-        if self.index(&key)?.as_deref() == Some(task.as_bytes().as_slice()) {
-            self.delete_index(&key)?;
+        for reference in [finding.reference()?, finding.handle.clone()] {
+            let key = finding_key(parent_run, &reference);
+            if self.index(&key)?.as_deref() == Some(task.as_bytes().as_slice()) {
+                self.delete_index(&key)?;
+            }
         }
         Ok(())
     }
@@ -425,7 +427,7 @@ impl ReaderTxn<'_, '_> {
             return Ok(settled);
         }
         let jobs = self.set_jobs(&set)?;
-        let result = reduce_task_wait_set(&set, &jobs, now_ms);
+        let result = reduce_task_wait_set(&set, &jobs, now_ms)?;
         if result.done {
             set.settled_at_ms = Some(now_ms);
             set.settled = Some(result.clone());
@@ -669,10 +671,6 @@ impl ExecutorStorage<'_> {
             return Ok(None);
         };
         let mut card = crate::code_run::result_card(self, owner, &output, None)?;
-        // The parent reads its children's findings by content handle, never
-        // by the child's occurrence: name the card by the handle, as the
-        // settle reply does, so its `ref` resolves.
-        card["ref"] = serde_json::json!(handle);
         card["task"] = serde_json::json!(task.to_hex());
         Ok(Some(card))
     }
@@ -727,29 +725,35 @@ impl ExecutorStorage<'_> {
         })
     }
 
-    /// The child of `parent_run` whose settled finding is `handle`: the
-    /// first to report it, while it is done or partial.
+    /// The settled child finding named by its exact occurrence ref, or the
+    /// first reporter of an unqualified content handle. The index selects a
+    /// job; its persisted finding must still match the reference.
     pub(crate) fn reader_finding(
         &self,
         parent_run: EntityId,
-        handle: &str,
+        reference: &str,
     ) -> Result<Option<ReaderJob>> {
         self.reader_read(|txn, dbs| {
-            let Some(task) = INDEX.get(&dbs, txn, &finding_key(parent_run, handle))? else {
+            let Some(task) = INDEX.get(&dbs, txn, &finding_key(parent_run, reference))? else {
                 return Ok(None);
             };
             let task = id_at(&task, 0)?;
-            Ok(JOBS.get(&dbs, txn, &task)?.filter(|job| {
+            let Some(job) = JOBS.get(&dbs, txn, &task)?.filter(|job| {
                 job.binding.parent_run == parent_run
                     && matches!(
                         job.state,
                         ReaderJobState::Done | ReaderJobState::Partial { .. }
                     )
-                    && job
-                        .finding
-                        .as_ref()
-                        .is_some_and(|finding| finding.handle == handle)
-            }))
+            }) else {
+                return Ok(None);
+            };
+            let Some(finding) = &job.finding else {
+                return Ok(None);
+            };
+            if finding.handle != reference && finding.reference()? != reference {
+                return Ok(None);
+            }
+            Ok(Some(job))
         })
     }
 
@@ -1082,6 +1086,8 @@ impl ExecutorStorage<'_> {
             if let Some(previous) = job.finding.take() {
                 tx.drop_finding_row(parent_run, &previous, task)?;
             }
+            let reference = finding.reference()?;
+            tx.put_index(&finding_key(parent_run, &reference), task.as_bytes())?;
             let key = finding_key(parent_run, &finding.handle);
             if tx.index(&key)?.is_none() {
                 tx.put_index(&key, task.as_bytes())?;
@@ -1288,7 +1294,9 @@ impl ExecutorStorage<'_> {
     /// Stores `text` as summary job `task`'s finding while it is live at
     /// `generation`: a stored value of the job's own run (a record with no
     /// executor, its one name `summary`), marked with its members' taint,
-    /// then reported as the job's finding. The run's end settles it.
+    /// then reported as the job's finding. Its replay save stamps the
+    /// spawning actor's response ownership in the same transaction. The
+    /// run's end settles it.
     pub(crate) fn store_summary_job_text(
         &self,
         task: EntityId,
@@ -1342,7 +1350,12 @@ impl ExecutorStorage<'_> {
             Some(held) => *held = binding,
             None => record.bindings.push(binding),
         }
-        self.put_code_run_replay_record_if_generation_with_heal(&record, expected, None)?;
+        self.put_owned_code_run_replay_record(
+            &record,
+            expected,
+            job.run,
+            job.binding.actor.entity,
+        )?;
         let rows = members.iter().try_fold(Vec::new(), |mut all, member| {
             all.extend(member.rows.clone()?);
             Some(all)

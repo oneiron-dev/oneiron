@@ -535,6 +535,7 @@ impl Vault {
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data: content_hash.as_bytes().to_vec(),
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

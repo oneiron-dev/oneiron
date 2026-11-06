@@ -124,6 +124,8 @@ side_tables! {
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
     /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
     SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
+    /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
+    SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked];
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -148,6 +150,9 @@ side_tables! {
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
         => crate::secret_lease::erase_receipt_actor_in_txn;
+    /// Canonical lift counts by run, family and actual source entity or explicitly unmapped
+    /// source (FIX 10493). No values. Key: run id16, family byte, source tag, source id16 if known.
+    SECRET_LIFT_CONTRIBUTION: VaultMeta b"secret_lift:contribution:v1:" Named Engine;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
@@ -160,8 +165,8 @@ side_tables! {
     /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
     /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
-    /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
-    /// (OF-067). Key: id16 (run id).
+    /// Completion metadata for one lift run (OF-067); its canonical contribution rows supply
+    /// the served receipt's counts. Never a value or a digest. Key: id16 (run id).
     SECRET_LIFT_RECEIPT: VaultMeta b"secret_lift:receipt:v1:" Named;
     /// The lift sweep run in progress: its trigger and its `(family, last key)` cursor (OF-067).
     /// Key: ().
@@ -187,7 +192,7 @@ side_tables! {
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
-        => crate::self_heal::erase_centroid_source_in_txn;
+        => crate::store::centroid_evidence::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -217,7 +222,7 @@ side_tables! {
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored [accepts: crate::store::send_receipt_attempt_audit_accepts_masked];
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason) and its
@@ -367,7 +372,7 @@ side_tables! {
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
     SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
-        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+        [refs: CALLABLE_CASE_REFS] [accepts: crate::skill::skill_callable_case_accepts_masked] => crate::skill::erase_callable_case_actor_in_txn;
     /// The frozen callable cases by what they were made from, so an erase reads only the cases
     /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
     /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
@@ -679,7 +684,7 @@ side_tables! {
     /// actor's scrub forgets the asker and keeps the row; behind the hard-delete marker, an erase
     /// of the asker or of the AGENT_DEF its plan seats leaves the row's erased form: its ids,
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
-    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
+    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v2:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// The erase selector of each asker a hard erase reached: value-free and permanent, one
     /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a

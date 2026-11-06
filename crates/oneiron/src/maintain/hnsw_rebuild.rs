@@ -1,13 +1,12 @@
 //! HNSW prepare/validate/commit rebuilds plus the SLIM dropped-marker rehydrate.
 
 use crate::Vault;
-use crate::entity_id::{EntityId, parse_entity_id};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::hnsw::{
     LinkDiscipline, build_hnsw_graph_from_snapshot, hnsw_is_dropped, read_link_discipline,
     read_vector_version, write_rebuilt_hnsw,
 };
-use crate::le_bytes_to_f32_vec;
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 
 pub(super) struct PreparedHnswRebuild {
@@ -104,24 +103,7 @@ fn prepare_rebuild_hnsw_with_discipline(
     })
 }
 
-pub(crate) fn validate_rebuild_vector(
-    vault: &Vault,
-    id_bytes: &[u8],
-    vector_bytes: &[u8],
-) -> Result<EntityId> {
-    let id = parse_entity_id(id_bytes, ERR_VECTOR_KEY)?;
-    let vector = le_bytes_to_f32_vec(vector_bytes, vault.config.dimensions)?;
-    if vector.len() != vault.config.dimensions {
-        return Err(Error::DimensionMismatch {
-            expected: vault.config.dimensions,
-            got: vector.len(),
-        });
-    }
-    if let Some(error) = Error::invalid_vector_component(&vector) {
-        return Err(error);
-    }
-    Ok(id)
-}
+pub(crate) use crate::store::vector_index::rebuild::validate_rebuild_vector;
 
 fn is_healable_rebuild_error(error: &Error) -> bool {
     matches!(
@@ -229,8 +211,6 @@ fn hnsw_marker_is_dropped(vault: &Vault) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     hnsw_is_dropped(&vault.store, &rtxn)
 }
-
-const ERR_VECTOR_KEY: &str = "vector key";
 
 pub(super) fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
     let Some(raw) = raw else {

@@ -11,7 +11,8 @@
 //! it, never takes an empty success and never runs a fresh effect. Under a
 //! live instance the exact record lands, and replay checks it as before.
 //! Its owners are the run, the actor its live run binding names, the actor
-//! a turn program's run runs as, and the source rows its verb calls served.
+//! a turn program's run runs as, the source rows its verb calls served, and
+//! the input rows its output occurrences keep.
 //! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
 //! this retires every image's copy beside it.
 
@@ -60,6 +61,8 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
+                code: None,
+                disk_floor: None,
             }))
         else {
             return ResponseScan::opaque_row();
@@ -85,8 +88,9 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
 /// Who owns the replay record `value`'s outcomes: its run, the actor its
 /// live run binding names, the actor a turn program's run runs as, the run
 /// and actor its owner row names (a write receipt's among them, FIX 5718),
-/// and the source rows its verb calls listed as served. None for a record
-/// that does not decode.
+/// the source rows its verb calls listed as served, and each output's known
+/// input rows. These own this checkpoint response, not the live run's body
+/// occurrences. None for a record that does not decode.
 ///
 /// # Errors
 ///
@@ -102,6 +106,9 @@ pub(crate) fn replay_owners(
     let mut owners = vec![record.run_id];
     owners.extend(record.live_run.as_ref().map(|live| live.actor));
     owners.extend(record.agent_verb_rows().into_iter().flatten());
+    for output in &record.outputs {
+        owners.extend(output.input_rows.iter().flatten().copied());
+    }
     owners.extend(crate::dreamer_runner::program_run_actor_in_txn(
         dbs,
         txn,
@@ -144,6 +151,8 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
+                code: None,
+                disk_floor: None,
             }))?;
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());

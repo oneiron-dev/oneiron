@@ -70,6 +70,8 @@ mod lens_frames;
 mod linear_host;
 mod livequery;
 pub mod logging;
+#[cfg(target_os = "macos")]
+mod mac_worker_bootstrap;
 mod machine;
 pub mod managed;
 mod managed_owner_check;

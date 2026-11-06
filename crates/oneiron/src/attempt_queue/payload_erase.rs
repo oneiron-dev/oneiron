@@ -36,6 +36,7 @@
 
 mod asker;
 mod connector_reply;
+pub(super) mod feedback_triage;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -60,6 +61,9 @@ use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::attempt_manifest::{
+    erase_manifest_revision_pins, scrub_hard_erased_manifest_revisions_in_txn,
+};
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
 use crate::{
@@ -79,9 +83,7 @@ use super::types::{AttemptId, AttemptRecord};
 pub(crate) use self::model_step::erase_model_step_failure_reasons_in_txn;
 
 // FIX 7115: the payload text in checkpoint images, a row-held response.
-pub(crate) use self::response::{
-    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque, retire_attempt_payload_in_txn,
-};
+pub(crate) use self::response::attempt_row_opaque;
 
 /// The input member that holds the AGENT_DEF snapshot.
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
@@ -117,7 +119,7 @@ enum TextOwner {
 /// Who owns `record`'s dispatch text: its target AGENT_DEF, the actor the
 /// dispatch runs as. `None` for a row that is no agent dispatch, or whose
 /// input does not decode: it names no owner.
-fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
+pub(crate) fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
     let input = record_dispatch_input(record)?;
     agent_dispatch_actor(&input)
         .ok()
@@ -184,6 +186,13 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord, owner: TextOwner) -> 
     }
     record.payload = encode_dreamer_attempt_payload(&payload)?;
     Ok(true)
+}
+
+/// [`erase_dispatch_payload_text`] for the dispatch target's text: what a
+/// checkpoint image carries of a dispatch's row in its place (the store's
+/// response scan, through its attempt operations).
+pub(crate) fn erase_dispatch_payload_text_target(record: &mut AttemptRecord) -> Result<bool> {
+    erase_dispatch_payload_text(record, TextOwner::Target)
 }
 
 /// The AGENT_DEF body in `value` without its instructions key; every other
@@ -276,6 +285,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
     let mut reply_body_events = BTreeSet::new();
+    let mut pin_candidates = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -284,6 +294,14 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if record.manifest.iter().any(|entry| {
+            entry
+                .revision
+                .as_ref()
+                .is_some_and(|(entity, _)| actors.contains(entity))
+        }) {
+            pin_candidates.insert(id);
+        }
         if let Some(event_id) =
             connector_reply::frozen_connector_event_id_for_erase(&record, actors)
         {
@@ -300,6 +318,10 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
                     record.payload = action.encode()?;
                     rewrites.push((raw.into_owned(), record));
                 }
+            }
+        } else if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND {
+            if feedback_triage::rewrite_in_txn(store, txn, &mut record)? {
+                rewrites.push((raw.into_owned(), record));
             }
         } else if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
@@ -345,10 +367,42 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
+    // Payload rewrites win; a pin-only candidate is read only when no
+    // existing rewrite carries that row, so each archive mark moves once.
+    for (_, record) in &mut rewrites {
+        pin_candidates.remove(&record.id);
+        erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity));
+    }
+    for id in pin_candidates {
+        let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        let Ok(mut record) = decode_record(&raw, id) else {
+            continue;
+        };
+        if erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity)) {
+            rewrites.push((raw.into_owned(), record));
+        }
+    }
+    flush_rewrites_in_txn(store, txn, rewrites)
+}
+
+fn flush_rewrites_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    rewrites: Vec<(Vec<u8>, AttemptRecord)>,
+) -> Result<()> {
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
     for (before, record) in rewrites {
+        if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && record.dedupe_key.is_none()
+        {
+            let original = decode_record(&before, record.id)?;
+            super::AttemptQueue::from_store(store)
+                .delete_owned_dedupe_entries_for_record(txn, &original)?;
+        }
         let after = encode_record(&record)?;
         store
             .attempt_records
@@ -693,11 +747,12 @@ fn erase_byoa_payload(
 /// actor keeps the text. Read in the writer's transaction. A marker that cannot be read,
 /// or a payload that cannot be rewritten, leaves `record` as it was and is
 /// logged without its content: the fence never fails the write it stands in.
-pub(super) fn scrub_hard_erased_payload_in_txn(
+pub(crate) fn scrub_hard_erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
+    scrub_hard_erased_manifest_revisions_in_txn(store, txn, &mut record.manifest);
     if record.kind == TURN_ACTION_ATTEMPT_KIND {
         // A turn action whose requester bears the marker writes back no
         // slip (FIX 10668), as the pass leaves it.

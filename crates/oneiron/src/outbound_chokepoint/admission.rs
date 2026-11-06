@@ -281,11 +281,16 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         ),
     )?;
     if governance.outcome() != GateOutcome::Allow {
+        let ask_consent = governance.ask_consent().cloned();
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
         wtxn.commit().map_err(Error::from)?;
-        return Ok(gate_rejection(intent_id, decision_id, decision)
-            .held_by_outside_code_wait(&posting_gate, code_wait.is_some()));
+        let mut result = gate_rejection(intent_id, decision_id, decision)
+            .held_by_outside_code_wait(&posting_gate, code_wait.is_some());
+        if result.approval_digest.is_some() {
+            result.ask_consent = ask_consent;
+        }
+        return Ok(result);
     }
     // OF-427: the co-actor's own governance under this same writer. A
     // refusal records only its decision: the primary's Allow admitted

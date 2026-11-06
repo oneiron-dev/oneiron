@@ -496,7 +496,8 @@ impl CarriedFiles {
 /// custody plan its claim keys share, before anything is made: a missing
 /// one refuses as `body_key_custody_unavailable`, and a retired one's rows
 /// go as its erase took them. Each carried stream must be an instance the
-/// rows name. The retired instances, whose streams the restore passes over.
+/// rows name. Returns the retired instances, whose streams the restore
+/// passes over, and their digests, whose opened owner descriptors it prunes.
 ///
 /// # Errors
 ///
@@ -505,7 +506,7 @@ impl CarriedFiles {
 pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut CustodyPlan,
-) -> Result<BTreeSet<[u8; 16]>> {
+) -> Result<(BTreeSet<[u8; 16]>, BTreeSet<[u8; 32]>)> {
     replay::require(image)?;
     let rows = image
         .databases
@@ -540,7 +541,7 @@ pub(super) fn require(
         &pruned.assets,
         &pruned.digests,
     )?;
-    Ok(retired)
+    Ok((retired, pruned.digests))
 }
 
 /// What a restore lands of the responses that never decoded where they

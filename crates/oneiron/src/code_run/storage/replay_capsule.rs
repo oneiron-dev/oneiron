@@ -11,6 +11,7 @@
 
 mod admit;
 mod erase;
+mod fork_erase;
 mod spawn_erase;
 mod start_parts;
 
@@ -30,9 +31,11 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
 pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
-pub(crate) use self::erase::actor_gone_in_txn;
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
+pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::fork_erase::ForkProvenance;
+pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -49,7 +52,7 @@ pub(crate) fn code_run_replay_capsule_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<StepReplayCapsule, Named>(bytes)
 }
 
-/// Fork rows. Key: hash32(attempt receipt, skill, axis) + the row's name.
+/// Fork rows. Key: the experiment digest (opaque after erase) + the row's name.
 const FORKS: SideTable<([u8; 32], String), ForkRow, Named> =
     SideTable::new(&side_table::CODE_RUN_CONTRIBUTION_FORK);
 
@@ -58,7 +61,13 @@ const UNAVAILABLE_ROW: &str = "unavailable";
 
 /// One row of a matched pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ForkRow {
+struct ForkRow {
+    provenance: ForkProvenance,
+    value: ForkValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ForkValue {
     Fork(ContributionForkReceipt),
     Unavailable(ContributionReplayUnavailable),
 }
@@ -299,9 +308,9 @@ pub(crate) fn fork_rows_in_txn(
 ) -> Result<ForkRows> {
     let mut rows = ForkRows::default();
     for ((_, _), row) in FORKS.scan_from(&vault.store, txn, pair)? {
-        match row {
-            ForkRow::Unavailable(reason) => rows.unavailable = Some(reason),
-            ForkRow::Fork(receipt) => match receipt.treatment {
+        match row.value {
+            ForkValue::Unavailable(reason) => rows.unavailable = Some(reason),
+            ForkValue::Fork(receipt) => match receipt.treatment {
                 ForkTreatment::WithSkill => rows.with_skill = Some(receipt),
                 ForkTreatment::WithoutSkill => rows.without_skill = Some(receipt),
             },
@@ -310,24 +319,59 @@ pub(crate) fn fork_rows_in_txn(
     Ok(rows)
 }
 
-/// Writes one fork's receipt, replacing its earlier row.
+/// Scores the exact fork still kept at its live pair, or reuses its first
+/// committed score. An erase that moved it, or ran while the scorer
+/// answered, can never recreate its old row.
 pub(crate) fn put_fork(
     vault: &Vault,
     pair: &[u8; 32],
     receipt: &ContributionForkReceipt,
-) -> Result<()> {
+) -> Result<Option<ContributionForkReceipt>> {
     let key = (*pair, fork_row_name(receipt.treatment).to_owned());
-    vault.with_write_txn_grouped(|txn| FORKS.put(vault, txn, &key, &ForkRow::Fork(receipt.clone())))
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
+            return Ok(None);
+        };
+        let ForkValue::Fork(kept) = &row.value else {
+            return Ok(None);
+        };
+        let mut expected = receipt.clone();
+        expected.passed = kept.passed;
+        if *kept != expected || !row.provenance.live_in_txn(vault, txn) {
+            return Ok(None);
+        }
+        if kept.passed.is_some() {
+            return Ok(Some(kept.clone()));
+        }
+        row.value = ForkValue::Fork(receipt.clone());
+        FORKS.put(vault, txn, &key, &row)?;
+        Ok(Some(receipt.clone()))
+    })
 }
 
-/// Records why a pair is unavailable, so no later pass pays for it again.
+/// Records why a live pair is unavailable, so no later pass pays for it
+/// again. The original subjects fence a late write after their erase.
 pub(crate) fn put_unavailable(
     vault: &Vault,
     pair: &[u8; 32],
+    provenance: &ForkProvenance,
     reason: ContributionReplayUnavailable,
 ) -> Result<()> {
     let key = (*pair, UNAVAILABLE_ROW.to_owned());
-    vault.with_write_txn_grouped(|txn| FORKS.put(vault, txn, &key, &ForkRow::Unavailable(reason)))
+    vault.with_write_txn_grouped(|txn| {
+        if !provenance.live_in_txn(vault, txn) {
+            return Ok(());
+        }
+        FORKS.put(
+            vault,
+            txn,
+            &key,
+            &ForkRow {
+                provenance: provenance.clone(),
+                value: ForkValue::Unavailable(reason),
+            },
+        )
+    })
 }
 
 /// A fork's stored answer; `None` when its body is released (its capsule's

@@ -1,6 +1,8 @@
 //! Typed indexed commitment birth, observation and explicit lifecycle effects.
 mod types;
 pub use types::*;
+mod reminder;
+pub use reminder::*;
 
 use super::{Memory, MemoryError, MemoryResult};
 use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;

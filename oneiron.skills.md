@@ -367,7 +367,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question; this row does not truncate or refuse the query. Transport and embedder input-window limits remain separate. This endpoint does not apply stock JSON's body-byte ceiling; other routes keep their existing limits. Body-buffer resource admission remains separate work.
 
 #### search-text - `GET /api/search/text`
 
@@ -876,7 +876,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 
 Request body:
 
-- `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
+- `text` required: the natural-language question. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question without row truncation or refusal. The server prepends the model's query instruction and embeds it; the caller sends no vector. Transport and embedder input-window limits remain separate.
 - `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
@@ -891,7 +891,6 @@ Response:
 Refusals:
 
 - `BAD_REQUEST` (400): `text` is empty, or the body does not parse.
-- `PAYLOAD_TOO_LARGE` (413): `text` is past `[limits].retrieval_query_bytes`; the error names the field, the bound and the bytes received. A query is a question; a document belongs on the write path.
 - `EMBEDDER_UNAVAILABLE` (503): no embedder is configured, or the configured one is not serving yet. Writes still land and text search still answers; retry later, or send your own vector to `GET /api/search/vector`.
 
 Example request:

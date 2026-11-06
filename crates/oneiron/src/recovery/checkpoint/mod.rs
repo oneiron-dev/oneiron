@@ -21,6 +21,7 @@ mod artifact;
 mod authority_plane;
 mod body_bind;
 mod carried_bodies;
+mod claim_order;
 mod commitment;
 mod credential_custody;
 mod custody_head;

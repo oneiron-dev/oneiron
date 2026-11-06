@@ -17,6 +17,7 @@ use std::ops::Range;
 
 use heed::RwTxn;
 
+use super::super::super::contribution::{ContributionForkReceipt, ForkTreatment};
 use super::super::super::replay_capsule::{
     CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
@@ -24,7 +25,7 @@ use super::super::super::replay_capsule::{
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
-use super::{CAPSULES, capsule_key};
+use super::{CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, capsule_key, fork_row_name};
 use crate::batch::secret_scan::{
     SidePart, TextReplacements, admit_side_parts, admit_tracked_side_parts,
 };
@@ -565,13 +566,18 @@ fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str
 /// Stores a fork's answer as a body the original run owns, admitted as the
 /// capsule's own bodies are, in a writer that reads the capsule again first:
 /// `None`, with nothing written, once the capsule is erased or gone, or its
-/// actor is (FIX 6144).
+/// actor is (FIX 6144). Its receipt and erase provenance land in that SAME
+/// writer, so an erase always discovers a published answer (FIX 9713).
 pub(crate) fn store_fork_response(
     vault: &Vault,
     capsule: &StepReplayCapsule,
+    pair: &[u8; 32],
+    provenance: &ForkProvenance,
+    treatment: ForkTreatment,
     path: &str,
     response: &LlmResponse,
-) -> Result<Option<OutputRef>> {
+    receipt: impl Fn(OutputRef) -> ContributionForkReceipt,
+) -> Result<Option<ContributionForkReceipt>> {
     let sent = serde_json::to_vec(response)
         .map_err(|error| Error::InvalidConfig(format!("fork response: {error}")))?;
     let key = capsule_key(capsule);
@@ -583,8 +589,23 @@ pub(crate) fn store_fork_response(
         let Some(actor) = held.content.actor() else {
             return Ok(None);
         };
-        if actor_gone_in_txn(vault, wtxn, &actor) {
+        let provenance = provenance.with_actor(actor);
+        if !provenance.live_in_txn(vault, wtxn) {
             return Ok(None);
+        }
+        let fork_key = (*pair, fork_row_name(treatment).to_owned());
+        if let Some(row) = FORKS.get(&vault.store, wtxn, &fork_key)? {
+            let ForkValue::Fork(kept) = row.value else {
+                return Ok(None);
+            };
+            // A concurrent generator already published this side. Keep its
+            // actual body discoverable instead of replacing its owner row.
+            let mut expected = receipt(kept.response);
+            expected.receipt.clone_from(&kept.receipt);
+            expected.response_path.clone_from(&kept.response_path);
+            expected.passed = kept.passed;
+            expected.generated_at = kept.generated_at;
+            return Ok((expected == kept).then_some(kept));
         }
         let key_bytes = CAPSULES.key_bytes(&key);
         let mut parts = [SidePart::Body(sent.clone())];
@@ -595,9 +616,19 @@ pub(crate) fn store_fork_response(
             sent.clone()
         };
         spill.holds(&[bytes.len()])?;
-        Ok(Some(
-            spill.publish_in_txn(vault, wtxn, held.run, path, &bytes)?,
-        ))
+        let body = spill.publish_in_txn(vault, wtxn, held.run, path, &bytes)?;
+        let receipt = receipt(body);
+        let key = (*pair, fork_row_name(receipt.treatment).to_owned());
+        FORKS.put(
+            vault,
+            wtxn,
+            &key,
+            &ForkRow {
+                provenance: provenance.clone(),
+                value: ForkValue::Fork(receipt.clone()),
+            },
+        )?;
+        Ok(Some(receipt))
     })
 }
 

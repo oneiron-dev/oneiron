@@ -174,6 +174,8 @@ impl ModelRuntime {
         };
         // V2-R3: the next vault lock's bound and the status read this.
         worker_host::snapshot_policy(&config.snapshots);
+        // I1 = C: whether published sessions prepare their next turn's tail.
+        worker_host::prepare_policy(config.sessions);
         let mut status = ModelsStatus {
             // The process's supervisors for `[models.workers]` (FIX 8315).
             workers: worker_host::configure(&config.workers, &config.providers),
@@ -510,6 +512,7 @@ impl ModelRuntime {
         worker_host::refresh_devices(&mut status.devices);
         // V2-R3: sealed snapshot parking, counts and outcomes only.
         status.snapshots = worker_host::snapshot_status();
+        status.prepared_tails = worker_host::prepared_tail_status();
         status
     }
 }

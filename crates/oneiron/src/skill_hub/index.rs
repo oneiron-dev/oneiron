@@ -421,6 +421,63 @@ impl Vault {
         surface.validate()?;
         CAPABILITY.put(&self.store, wtxn, entity, surface)
     }
+
+    /// The installed holder of one hub skill alias: the loadable skill of
+    /// this `name`, or its Superseded lineage anchor, whose current bytes
+    /// one consolidation-eligible provenance claim ties to `source` (same
+    /// claim carries the alias, the matching content hash and the
+    /// eligibility). Pure vault read; only actual consumers decide Active
+    /// load. No Candidate/Quarantined/Stale lift.
+    pub(crate) fn installed_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        self.find_structured_skill_entity_in_txn(txn, |entity, record| {
+            if record.skill_id.as_str() != name {
+                return Ok(None);
+            }
+            if !crate::skill::skill_loadable(record)
+                && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
+            {
+                return Ok(None);
+            }
+            let Some(content_hash) = record.content_hash else {
+                return Ok(None);
+            };
+            let expected = content_hash.to_hex();
+            for (claim_id, body, _) in self.active_claims_for_predicate_in_txn(
+                txn,
+                &entity,
+                PREDICATE_SKILL_HUB_PROVENANCE,
+            )? {
+                let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                if hash_text != expected {
+                    continue;
+                }
+                let Some(ref_value) = map_value(&body.value, "hubRef") else {
+                    continue;
+                };
+                if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
+                    continue;
+                }
+                if !crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim_id,
+                    crate::gate::ConsolidationReader::HubDefaultPresence,
+                )? {
+                    continue;
+                }
+                return Ok(Some(entity));
+            }
+            Ok(None)
+        })
+    }
 }
 
 pub(super) fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {

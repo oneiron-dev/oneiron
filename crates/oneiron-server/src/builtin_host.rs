@@ -24,6 +24,7 @@ pub(crate) use slack_app::{
 };
 pub(crate) use webhooks::{hmac_matches, routes};
 
+use crate::config::models::ModelsConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// How often the handles are reconciled with the installed packs and
@@ -34,7 +35,7 @@ const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 /// the `[channel_endpoints]` provider APIs and the `[native_mail]` server,
 /// which every served sink on the vault sends through. Call it before any
 /// worker sends; a second install does nothing.
-pub(crate) fn install_served_transports(server: &SyncServer) {
+pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&ModelsConfig>) {
     // Config validation refused a bad endpoint at load; this only keeps a
     // host that skipped it on the public APIs.
     let endpoints = server
@@ -53,6 +54,9 @@ pub(crate) fn install_served_transports(server: &SyncServer) {
                 tracing::warn!(%error, "[native_mail] is invalid; email sends have no mail server");
             }
         }
+    }
+    if let (Some(broker), Some(models)) = (server.broker_context(), models) {
+        transports = transports.with_broker_model_listing(broker.secret_use_models(models));
     }
     server
         .vault()

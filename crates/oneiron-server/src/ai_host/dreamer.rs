@@ -792,6 +792,11 @@ impl PassExecutorFactory for ObservedFactory {
             task,
             check,
             decisions: &self.decisions,
+            coach_heal: self
+                .question_timer
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .and_then(super::coach_heal::WakeExecutor::for_server),
         })
     }
 
@@ -803,6 +808,11 @@ impl PassExecutorFactory for ObservedFactory {
         self.prepare(guard)?;
         let status = self.status.as_ref();
         let decisions = &self.decisions;
+        let coach_heal = self
+            .question_timer
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .and_then(super::coach_heal::WakeExecutor::for_server);
         let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
             (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
@@ -852,6 +862,7 @@ impl PassExecutorFactory for ObservedFactory {
                         task,
                         check,
                         decisions,
+                        coach_heal: coach_heal.clone(),
                     })
                     .collect()
             })
@@ -1074,6 +1085,7 @@ struct ObservedExecutor<'p, E> {
     check: Option<compaction_check::CheckLend<'p>>,
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
+    coach_heal: Option<super::coach_heal::WakeExecutor>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -1418,6 +1430,14 @@ pub(super) fn served_slot_model(
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.coach_heal.is_some() || self.inner.runs_coach_heals()
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -1432,7 +1452,12 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         // the nightly item, a Retry would loop every pass), but the status
         // says why instead of counting it completed (Engine 10-21, ruling a).
         let mut unserved = None;
-        let outcome = if attempt.status.payload.attempt_type
+        let outcome = if attempt.status.attempt.kind
+            == oneiron::dreamer_runner::COACH_HEAL_ATTEMPT_KIND
+            && let Some(coach) = &self.coach_heal
+        {
+            coach.execute(attempt, ctx.now_ms / 1_000).await
+        } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         {
             match self.resident {

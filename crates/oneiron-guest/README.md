@@ -39,12 +39,23 @@ after sending; the host's owned-VM shutdown/watchdog remains authoritative.
 The wire protocol is strict JSON behind a 4-byte big-endian length. `start`
 requires `source` in addition to the host's version, vm_id, tier, pids, and
 component_bytes fields. Only `foreign` and `untrusted` tiers are accepted.
+Both peers use shared `GUEST_PROTOCOL_VERSION = 3`; there is no old-wire reader.
+After component chunks, each seed arrives as `file_open` (path, byte length),
+nonempty `file_chunk` frames and `file_close`. Empty files use open/close only.
+The declared length must match exactly. Chunks write directly to fresh,
+descriptor-relative regular files; only paths and lengths remain in `Input`.
+The host keeps its exact base in anonymous spools, not whole-file buffers.
+A source file uses one request regardless of byte length. File chunks and
+source closes are not requests. A partial or malformed seed fails before any
+component executes; callers discard its scratch state.
 
 Limits: 8 MiB frames; 64 MiB components in sequential nonempty chunks; 1 MiB
-source and files; 16 MiB aggregate files; 8192 files/directories; 64 path levels;
-4096-byte virtual paths; 16384 wire requests (one slot reserved for finish).
+source text, step-result JSON and individual file chunks. Snapshot and proposed
+files have no whole-file wire size bound. Canonical path/tree checks remain in
+the shared sandbox contract, including 4096-byte virtual paths. Source and
+outbound request budgets are 16384 (outbound reserves result and finish slots).
 Host calls have a 16383-call ceiling and cumulative read/random output is
-limited to 16 MiB. The merged workspace is also bounded to 16 MiB / 8192 files.
+limited to 16 MiB; whole-file `read-file` still refuses above 1 MiB.
 The runtime caps each store to one 64 MiB memory, eight tables, 10000 table
 elements, 32 instances, and 100000000 fuel. The host wall-clock watchdog bounds
 compilation, credential I/O, and VM execution.
@@ -63,18 +74,31 @@ operation and destination allowlists. The only successful guest response is
 No credential material, host error text, headers, or reflected response body
 enters component memory.
 
-The agent validates every proposal before applying it to its scratch overlay.
-It accepts three kinds: `file-write` (a whole file), `file-delete` (an existing
-seeded file) and `file-rename` (an existing seeded file to a new path). Each
-path carries at most one effect. Only canonical workspace regular files are
-allowed. Descriptor-relative paths refuse symlinks, hard links, special files,
-traversal, duplicates, conflicting file/directory paths, and excess data. The
-agent applies only the writes to the overlay, enumerates the resulting tree,
-and fails the step if any seeded file is missing from it (a deletion travels
-only as a proposal). It then
-sends each delete and rename to the host as its own frame, followed by every
-changed whole file as a write frame. Claim-candidate proposals fail the entire
-step with `Error::UnsupportedClaimCandidate`.
+The agent validates each proposed path against the seeded shape before sending
+it to the host. Typed `proposal-open`, `proposal-chunk` and `proposal-close`
+imports stream a proposed file to the host; returned `file-delete` and
+`file-rename` deltas name existing seeded files. Each path carries at most one
+effect. Only canonical workspace regular files are allowed. Descriptor-relative
+paths refuse symlinks, hard links and special files; tree rules refuse traversal,
+duplicates and conflicting file/directory paths. Proposals do not mutate the
+seeded workspace or the original host tree. Claim-candidate proposals fail the
+entire step with `Error::UnsupportedClaimCandidate`.
+
+Each outbound `write_chunk` waits for a successful `receipt` before sending the
+next chunk, without spending a logical request or host-call slot. If a host
+proposal append reaches the existing typed disk floor, that chunk instead
+receives `failure` with the native `SANDBOX_PROPOSAL_DISK_FLOOR` code and the
+original detail. The existing proposal-chunk reply returns that reason to the
+component and poisons the run, even if the component catches the error. Other
+transport failures keep their existing generic errors. The host drops the open
+and pending proposals before waiting for one terminal frame under the original
+execution deadline/cancellation, then returns the original typed floor error;
+it does not dispatch that frame or publish any proposals.
+
+Deploying this wire change requires matching rebuilt guest executables/rootfs
+images and artifact pins for both Firecracker and fenced-container agents, plus
+release contract metadata for protocol v3. Existing release pins still describe
+their older engine revision; no replacement artifact is published here.
 
 ## Local conformance tools (not VM or JavaScript evidence)
 
@@ -97,8 +121,9 @@ oneiron-guest --localtest-socket /absolute/host.sock /absolute/empty-workspace
 ```
 
 A host test must bind/listen before invoking the executable. The executable
-connects, sends hello, and uses the same start/component/file/ready and
-credential/write/finish exchange as production. The workspace must be private,
+connects, sends hello, and uses the same
+start/component/file_open/file_chunk/file_close/ready and
+credential/write_open/write_chunk/write_close/finish exchange as production. The workspace must be private,
 empty, absolute, and have no symlink ancestors. This mode is explicitly refused
 as PID 1 or uid 0. It uses copied scratch files, not mounts, privilege drop or KVM.
 

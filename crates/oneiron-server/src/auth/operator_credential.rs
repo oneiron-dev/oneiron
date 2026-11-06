@@ -88,6 +88,7 @@ pub(crate) fn operator_slip_claims(
         invitation_ref: None,
         delegation: None,
         comm: None,
+        trusted_contact: None,
     }
 }
 
@@ -107,6 +108,7 @@ fn is_operator_class(slip: &CapabilitySlip) -> bool {
         && claims.grant_ref.is_none()
         && claims.invitation_ref.is_none()
         && claims.delegation.is_none()
+        && claims.trusted_contact.is_none()
 }
 
 /// The operator credential `token` is, presented at `path` on a

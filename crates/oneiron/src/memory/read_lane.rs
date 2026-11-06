@@ -453,6 +453,32 @@ impl Memory<'_> {
         }
     }
 
+    /// A resolved live id as `get_entity` serves it, with admission, its
+    /// narrowing receipt and the native view in the caller's snapshot.
+    /// Prepare `lane` and persist its grant clock before opening `txn`.
+    pub(crate) fn get_entity_in_txn(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let ScopedReadResult { value, receipt } =
+            lane.read_named_projected_in_txn(txn, &[PointRead::id(id)], None, |txn, slots| {
+                let view = match slots.into_iter().next() {
+                    Some(Ok(Some(row))) => {
+                        Ok(self.slot_view_in(lane, txn, row, ReadMode::Live, false)?)
+                    }
+                    Some(Err(refusal)) => Err(refusal),
+                    _ => Ok(None),
+                };
+                Ok::<NamedView, MemoryError>(view)
+            })?;
+        match value {
+            Err(refusal) => Err(MemoryError::from(refusal).with_read_receipt(receipt)),
+            Ok(value) => Ok(ScopedReadResult { value, receipt }),
+        }
+    }
+
     /// [`Self::get_entity`] as a collection read serves it, for an internal
     /// probe or listing that skips, answers `None` or judges `false` on a row
     /// it cannot read: a row a legal order keeps from use reads as absent
@@ -567,8 +593,8 @@ impl Memory<'_> {
             }
         });
         // A repo file's bytes read masked but at the owner's own door (FIX 7608).
-        let body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
-        let mut body = decode_body_json(&body);
+        let stored_body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
+        let mut body = decode_body_json(&stored_body);
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).
         if let Some(value) = &mut body
@@ -580,6 +606,11 @@ impl Memory<'_> {
                 value,
             )?;
             keys.mask_json(value);
+        }
+        if row.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+            && let Some(value) = &mut body
+        {
+            super::message_parts::withhold_modified_reasoning_parts(&stored_body, value);
         }
         Ok(Some(EntityView {
             id_hex: row.id.to_hex(),

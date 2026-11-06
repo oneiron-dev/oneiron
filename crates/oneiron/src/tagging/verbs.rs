@@ -617,7 +617,8 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<TaggingStatusView>> {
         let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
         let vault = self.vault();
-        let config = vault.config.tagging.as_ref();
+        let tagging = vault.tagging_marker_config();
+        let config = tagging.as_ref();
         let marker = vault.tagging_marker(&turn)?;
         let traces = vault.tagging_trace_history(Some(&turn))?;
         let tags = vault.turn_tags(&turn)?;

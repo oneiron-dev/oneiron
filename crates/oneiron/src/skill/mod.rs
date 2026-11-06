@@ -29,7 +29,7 @@ mod tests;
 
 pub(crate) use self::call::{
     AnswerMemory, erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
-    execute_callable_skill_cancellable, matches_shape,
+    execute_callable_skill_cancellable, matches_shape, skill_callable_case_accepts_masked,
 };
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
@@ -45,7 +45,7 @@ pub use self::identity::{
 pub(crate) use self::invocation::SkillInvocations;
 pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
-    pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
+    pin_loaded_in_txn, pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
