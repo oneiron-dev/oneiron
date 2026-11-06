@@ -21,6 +21,7 @@
 //! by digest, page count and format bound before it is returned.
 
 mod inspect;
+mod native;
 
 pub use inspect::{PdfInspectionError, inspect_pdf_region_until};
 
@@ -244,7 +245,7 @@ impl HostedSealer<'_> {
             .spec(&self.settings.organ)
             .is_none_or(|spec| spec.tier != OrganTier::FirstParty)
         {
-            return Ok(None);
+            return self.prepare_esign_pdf_native(original, request, chain, trail);
         }
         // Each field row of this item, validated engine-side: the port's
         // burn takes its fields and values as-is.
@@ -369,7 +370,9 @@ impl HostedSealer<'_> {
         measure_asks(self.vault, &handlers.asked());
         let (reply, outcome) = called?;
         if measure.tier != Some(OrganTier::FirstParty) {
-            return Ok(None);
+            drop(outcome);
+            drop(reply);
+            return self.prepare_esign_pdf_native(original, request, chain, trail);
         }
         let (original_sha256, audit_chain_sha256, original_pages, appendix_pages) =
             match from_value(&reply)? {
