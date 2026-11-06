@@ -182,18 +182,18 @@ impl BudgetState {
     }
 
     /// Row indices whose selector matches this call, in resolved order.
-    pub(super) fn matched_rows(&self, purpose: Option<&CallPurpose>) -> Vec<u16> {
+    pub(super) fn matched_rows(&self, purpose: Option<&CallPurpose>) -> Vec<usize> {
         self.policy
             .rows()
             .iter()
             .enumerate()
             .filter(|(_, row)| row.selector().matches(purpose, self.actor))
-            .filter_map(|(index, _)| u16::try_from(index).ok())
+            .map(|(index, _)| index)
             .collect()
     }
 
     /// Caps are conjunctive: a matching call must fit every matched cap.
-    pub(super) fn matched_cap_denies(&self, matched_rows: &[u16], reserve_units: u64) -> bool {
+    pub(super) fn matched_cap_denies(&self, matched_rows: &[usize], reserve_units: u64) -> bool {
         matched_rows.iter().any(|&row_index| {
             let Some(cap_units) = self
                 .policy_row(row_index)
@@ -215,7 +215,7 @@ impl BudgetState {
     /// remainder to the shared slice. An unmatched floor is never touched.
     pub(super) fn allocate_floors(
         &self,
-        matched_rows: &[u16],
+        matched_rows: &[usize],
         reserve_units: u64,
     ) -> (Vec<FloorAllocation>, u64) {
         let mut allocations = Vec::new();
@@ -253,12 +253,12 @@ impl BudgetState {
     ) {
         self.reserved_units = self.reserved_units.saturating_add(reserve_units);
         for &row_index in &allocation.matched_rows {
-            if let Some(tally) = self.row_tallies.get_mut(usize::from(row_index)) {
+            if let Some(tally) = self.row_tallies.get_mut(row_index) {
                 tally.reserved_units = tally.reserved_units.saturating_add(reserve_units);
             }
         }
         for floor in &allocation.floor_allocations {
-            if let Some(tally) = self.row_tallies.get_mut(usize::from(floor.row_index)) {
+            if let Some(tally) = self.row_tallies.get_mut(floor.row_index) {
                 tally.floor_reserved_units = tally.floor_reserved_units.saturating_add(floor.units);
             }
         }
@@ -278,12 +278,12 @@ impl BudgetState {
         self.shared_slice_units().saturating_add(overdraft)
     }
 
-    pub(super) fn policy_row(&self, row_index: u16) -> Option<&BudgetPolicyRow> {
-        self.policy.rows().get(usize::from(row_index))
+    pub(super) fn policy_row(&self, row_index: usize) -> Option<&BudgetPolicyRow> {
+        self.policy.rows().get(row_index)
     }
 
-    pub(super) fn row_tally(&self, row_index: u16) -> Option<&BudgetRowTally> {
-        self.row_tallies.get(usize::from(row_index))
+    pub(super) fn row_tally(&self, row_index: usize) -> Option<&BudgetRowTally> {
+        self.row_tallies.get(row_index)
     }
 
     pub(super) fn metered_admission(&mut self, lease: BudgetLease) -> BudgetAdmission {
