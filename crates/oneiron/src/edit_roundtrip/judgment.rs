@@ -95,13 +95,13 @@ impl SheetAnswerBundle {
     /// Fail closed before passing untrusted answer positions or values to the
     /// session; the same check runs at Keep against a public proposal.
     pub(crate) fn ops(&self) -> Result<Vec<EditOp>> {
-        self.checked_op_count()?;
+        self.checked_op_count(None)?;
         let mut ops = Vec::new();
         self.append_ops(&mut ops, None)?;
         Ok(ops)
     }
 
-    fn checked_op_count(&self) -> Result<usize> {
+    fn checked_op_count(&self, resources: Option<&Resources>) -> Result<usize> {
         fn invalid() -> Error {
             Error::Artifact(ArtifactError::InvalidEditManifest(
                 "invalid typed sheet answer bundle",
@@ -117,7 +117,6 @@ impl SheetAnswerBundle {
         {
             return Err(invalid());
         }
-        let mut seen = BTreeSet::new();
         let mut count = 0;
         for answer in &self.answers {
             let cell = answer.cell;
@@ -125,7 +124,6 @@ impl SheetAnswerBundle {
                 || cell.col > self.range.end.col
                 || cell.row < self.range.start.row
                 || cell.row > self.range.end.row
-                || !seen.insert((cell.row, cell.col))
                 || answer.decision.receipt.evidence_versions.is_empty()
                 || matches!(answer.before, Some(CellValue::Formula { .. }))
                 || crate::llm::decision::questions::validate_unit_decision(
@@ -146,6 +144,33 @@ impl SheetAnswerBundle {
             }
         }
         if count == 0 {
+            return Err(invalid());
+        }
+        let mut backing = resources.map(Resources::hold);
+        let len = self.answers.len();
+        if let Some(backing) = backing.as_mut() {
+            backing
+                .take_len::<(u32, u32)>(len)
+                .map_err(crate::office_body::machine_memory_refused)?;
+        }
+        let mut cells = Vec::new();
+        cells.try_reserve_exact(len).map_err(|error| {
+            Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        if cells.capacity() > len {
+            if let Some(backing) = backing.as_mut() {
+                backing
+                    .take_len::<(u32, u32)>(cells.capacity() - len)
+                    .map_err(crate::office_body::machine_memory_refused)?;
+            }
+        }
+        cells.extend(
+            self.answers
+                .iter()
+                .map(|answer| (answer.cell.row, answer.cell.col)),
+        );
+        cells.sort_unstable();
+        if cells.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid());
         }
         Ok(count)
@@ -241,7 +266,7 @@ impl Vault {
         run_ref: &str,
         resources: &Resources,
     ) -> Result<EditOutcome> {
-        let count = bundle.checked_op_count()?;
+        let count = bundle.checked_op_count(Some(resources))?;
         let mut plan_backing = resources.hold();
         plan_backing
             .take_len::<EditOp>(count)
