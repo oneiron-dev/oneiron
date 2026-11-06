@@ -109,6 +109,7 @@ impl Vault {
             CallerLocality::OnDevice,
             include_secrets,
             reader,
+            true,
             |_| Ok::<_, Error>(()),
             sink,
         )?;
@@ -171,6 +172,7 @@ impl Vault {
         let (_, mut receipt) = self.export_okf_with_admission(
             CallerLocality::OnDevice,
             reader,
+            true,
             |_| Ok::<_, Error>(()),
             sink,
         )?;
@@ -179,10 +181,13 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// `owner_export` as [`Self::export_whole_vault_with_admission`] takes
+    /// it.
     pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
         reader: WriteActor,
+        owner_export: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -192,7 +197,7 @@ impl Vault {
             ExportCut::Okf,
             false,
             reader,
-            true,
+            owner_export,
             admit,
             sink,
         )
@@ -210,11 +215,17 @@ impl Vault {
     /// its machine is judged by that machine's own world read settings (mesh
     /// PR2b), for the notices and the custody values that may not leave.
     /// `reader` is whose diary reads the export makes (OF-490).
+    /// `owner_export` false (an export a code run calls, FIX 9591) follows
+    /// the world settings as before the ruling: no row of a world they
+    /// withhold from `destination`, no run's results or vault-wide row off
+    /// this device, and no notice.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn export_whole_vault_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
         include_secrets: bool,
         reader: WriteActor,
+        owner_export: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -224,7 +235,7 @@ impl Vault {
             ExportCut::Archive,
             include_secrets,
             reader,
-            true,
+            owner_export,
             admit,
             sink,
         )
@@ -251,8 +262,8 @@ impl Vault {
 
     /// `owner_export`: the owner's own whole-vault or OKF export (owner
     /// ruling 1-EXPORT = B), whose rows his recipient choice keeps none of;
-    /// false for a removal's records archive, which the world settings
-    /// judge as before.
+    /// false for a removal's records archive and for an export a code run
+    /// calls, which the world settings judge as before.
     #[allow(clippy::too_many_arguments)]
     fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,

@@ -346,6 +346,14 @@ pub(crate) async fn with_calling_origin<F: std::future::Future>(
         .await
 }
 
+/// Whether a code run is calling the door in flight: [`with_calling_origin`]
+/// bound its host origin, as the run's own dispatch does for each of its
+/// verb calls and never a request. A whole-vault export a code run calls
+/// follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591).
+pub(crate) fn in_code_run() -> bool {
+    CALLING_ORIGIN.try_with(|_| ()).is_ok()
+}
+
 /// Runs `call` with its writes made for the leased run `run_writes` names,
 /// lending no origin to its handles (FIX 10748): an action's verb row writes
 /// as its own caller, and only the derivations it leaves are the run's.

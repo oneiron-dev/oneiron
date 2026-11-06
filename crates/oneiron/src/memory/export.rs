@@ -48,6 +48,13 @@ pub struct ExportOptions {
     /// unassigned: no recipient named.
     #[serde(default)]
     pub secrets_recipient: Option<EntityId>,
+    /// Whether a code run calls this export: set by the host's run dispatch
+    /// alone, never by a request. Such an export follows the world settings
+    /// as it did before owner ruling 1-EXPORT = B (FIX 9591): it carries no
+    /// row of a world they withhold from its destination and names none.
+    /// The owner's own call keeps every world.
+    #[serde(skip)]
+    pub in_code_run: bool,
 }
 
 /// How a server hands one export over: in its reply, or as a transfer the
@@ -736,15 +743,21 @@ fn render_export_to<W: Read + Write + Seek>(
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let exporter = reader.entity_ref();
+    // The owner's own export carries every world (owner ruling 1-EXPORT =
+    // B); one a code run calls follows the world settings.
+    let owner_export = !opts.in_code_run;
     let (mut sink, mut export) = match name {
         EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
             destination,
             include_secrets,
             reader,
+            owner_export,
             admit,
             sink,
         )?,
-        EXPORT_TARGET_OKF => vault.export_okf_with_admission(destination, reader, admit, sink)?,
+        EXPORT_TARGET_OKF => {
+            vault.export_okf_with_admission(destination, reader, owner_export, admit, sink)?
+        }
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),
