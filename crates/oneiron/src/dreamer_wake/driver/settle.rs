@@ -53,6 +53,7 @@ impl DreamerWakeDriver<'_> {
                     &step_hashes,
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
+                self.log_attempt_completed(admitted);
                 self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
                 report.completed += 1;
             }
@@ -122,7 +123,7 @@ impl DreamerWakeDriver<'_> {
                 resume_point,
                 hand_off,
             } => {
-                let spent_reserve_units = self.land_attempt(
+                self.land_attempt(
                     admitted,
                     LandingRequest {
                         reserve_units,
@@ -130,18 +131,9 @@ impl DreamerWakeDriver<'_> {
                         resume_point,
                         hand_off,
                     },
+                    completed_units,
                     input.now,
                 )?;
-                // Ordinary work AND the bounded landing spend come out of
-                // the same reservation: both are units this attempt really
-                // consumed, so the wake ledger settles the sum rather than
-                // refunding work that happened.
-                self.store.settle_budget(SettleDreamerBudget {
-                    budget_id: line.clone(),
-                    child_attempt: attempt_id,
-                    actual_units: completed_units.saturating_add(spent_reserve_units),
-                    now: input.now,
-                })?;
                 self.log_attempt_outcome(admitted, "landed", None, None, "settled", "none");
                 // A designed landing leaves a durable resume point, exactly
                 // like a deadline-cut park — never a `Done` milestone,

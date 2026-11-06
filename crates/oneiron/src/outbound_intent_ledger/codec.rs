@@ -4,10 +4,10 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use super::store::validate_record;
+use super::store::{validate_accounting, validate_record};
 use super::types::{
-    INTENT_LEDGER_SCHEMA_VERSION, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult,
-    IntentState, OutboundAuthorizationBinding, RecordedOutboundOutcome,
+    CallAccounting, INTENT_LEDGER_SCHEMA_VERSION, IntentLedgerError, IntentLedgerRecord,
+    IntentLedgerResult, IntentState, OutboundAuthorizationBinding, RecordedOutboundOutcome,
 };
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -576,4 +576,101 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
         ));
     }
     Ok(record)
+}
+
+/// A call's accounting and state as a checkpoint keeps them outside the
+/// call's compartment (KS7-5, FIX 12117): a MessagePack map of exactly the
+/// record's `budget_accounting`, `recorded_outcome`, `delivery_uncertain`,
+/// `state`, `created_ms` and `updated_ms` entries, each once and read as the
+/// record codec reads it, under the record's own accounting rules.
+///
+/// # Errors
+///
+/// [`IntentLedgerError::InvalidRecord`] for any other shape.
+pub(super) fn decode_call_accounting(raw: &[u8]) -> IntentLedgerResult<CallAccounting> {
+    let mut cursor = Cursor::new(raw);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        IntentLedgerError::InvalidRecord("outbound call accounting MessagePack decode failed")
+    })?;
+    if cursor.position() != raw.len() as u64 {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound call accounting has trailing bytes",
+        ));
+    }
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound call accounting must be a MessagePack map",
+        ));
+    };
+    let mut budget_accounting = None;
+    let mut recorded_outcome = None;
+    let mut delivery_uncertain = None;
+    let mut state = None;
+    let mut created_ms = None;
+    let mut updated_ms = None;
+    for (entry_key, value) in entries {
+        let entry_key = entry_key.as_str().ok_or(IntentLedgerError::InvalidRecord(
+            "outbound call accounting keys must be strings",
+        ))?;
+        let repeated = match entry_key {
+            KEY_BUDGET_ACCOUNTING => budget_accounting
+                .replace(decode_budget_accounting(&value)?)
+                .is_some(),
+            KEY_RECORDED_OUTCOME => recorded_outcome
+                .replace(decode_recorded_outcome(&value)?)
+                .is_some(),
+            KEY_DELIVERY_UNCERTAIN => delivery_uncertain
+                .replace(value.as_bool().ok_or(IntentLedgerError::InvalidRecord(
+                    "outbound call accounting delivery_uncertain must be boolean",
+                ))?)
+                .is_some(),
+            KEY_STATE => state
+                .replace(
+                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
+                        "outbound call accounting state must be a string",
+                    ))?)
+                    .ok_or(IntentLedgerError::InvalidRecord(
+                        "unknown outbound call accounting state",
+                    ))?,
+                )
+                .is_some(),
+            KEY_CREATED_MS => created_ms.replace(expect_u64(&value)?).is_some(),
+            KEY_UPDATED_MS => updated_ms.replace(expect_u64(&value)?).is_some(),
+            _ => {
+                return Err(IntentLedgerError::InvalidRecord(
+                    "outbound call accounting key is not pinned",
+                ));
+            }
+        };
+        if repeated {
+            return Err(IntentLedgerError::InvalidRecord(
+                "duplicate outbound call accounting key",
+            ));
+        }
+    }
+    let accounting = CallAccounting {
+        budget_accounting: required(
+            budget_accounting,
+            "missing outbound call accounting budget_accounting",
+        )?,
+        recorded_outcome: required(
+            recorded_outcome,
+            "missing outbound call accounting recorded_outcome",
+        )?,
+        delivery_uncertain: required(
+            delivery_uncertain,
+            "missing outbound call accounting delivery_uncertain",
+        )?,
+        state: required(state, "missing outbound call accounting state")?,
+        created_ms: required(created_ms, "missing outbound call accounting created_ms")?,
+        updated_ms: required(updated_ms, "missing outbound call accounting updated_ms")?,
+    };
+    validate_accounting(
+        &accounting.budget_accounting,
+        accounting.state,
+        accounting.recorded_outcome,
+        accounting.created_ms,
+        accounting.updated_ms,
+    )?;
+    Ok(accounting)
 }

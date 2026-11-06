@@ -37,7 +37,8 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
+    WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -302,10 +303,12 @@ impl EngineNativeExecutor<'_> {
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    // A cancelled root fails the step: the bridge rows it
-                    // left stay recorded, and no wait it reached hides that.
+                    // A cancelled root fails the step. Its real wait still
+                    // joins the checkpoint for a later valid lease, but never
+                    // turns this cancelled entry into a Waiting success.
+                    let cancelled = cancel.is_cancelled();
                     let callable_rows = host.result_rows();
-                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
+                    let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     let bound = host.bound;
@@ -322,12 +325,14 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
                             repairs.healed(),
                             config,
                         )?
+                        && !cancelled
                     {
                         checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
@@ -366,6 +371,7 @@ impl EngineNativeExecutor<'_> {
                     captured,
                     bound,
                     receipts,
+                    host.context_capture,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -409,6 +415,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -536,7 +543,8 @@ impl EngineNativeExecutor<'_> {
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
-
+            let (end, context) =
+                self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),
@@ -552,13 +560,18 @@ impl EngineNativeExecutor<'_> {
                     &step_result,
                     implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
+                    end,
                 )?,
                 config
                     .determinism
                     .frozen_unix_ms
                     .saturating_add(completed_steps),
-            )?;
-            record.step_checkpoints.push(checkpoint);
+            )?
+            .ending_at(end.bridge_end);
+            let bridge_end = record.bridge_calls.len();
+            record
+                .step_checkpoints
+                .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
@@ -577,6 +590,7 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
+                    &context,
                 ) {
                 Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                     tracing::warn!(
@@ -589,6 +603,7 @@ impl EngineNativeExecutor<'_> {
                             repairs.healed().then_some(&config.model),
                             &host.receipts,
                             parked.as_ref(),
+                            &context,
                         )?
                 }
                 result => result?,

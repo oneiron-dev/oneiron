@@ -156,6 +156,11 @@ pub enum SweepWork {
         /// Artifacts whose comments could not be moved; each is tried again.
         failed: u64,
     },
+    DrafterCorpora {
+        /// Training examples past the bound, corpus directories and stray
+        /// files removed.
+        removed: u64,
+    },
 }
 
 impl SweepWork {
@@ -212,6 +217,7 @@ impl SweepWork {
                 dropped,
             } => rebuilt == 0 && failed == 0 && dropped == 0,
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
+            Self::DrafterCorpora { removed } => removed == 0,
         }
     }
 }

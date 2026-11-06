@@ -1,7 +1,8 @@
 # Your vault: where it lives, backups, restore, export, and one-act approvals
 
-Everything here works with no model configured. Each action has a CLI command and, for a
-running server, a route under `/v1/owner`. The CLI commands read the same config as
+Everything here works with no model configured. Each action has a CLI command. Except for
+notes-to-Files conversion, each also has a running-server route under `/v1/owner`.
+The CLI commands read the same config as
 `oneiron serve` (`--config FILE`, `--vault-path DIR`, `ONEIRON_*`). Commands that open the
 vault need the server stopped, because one process holds a vault at a time. Two commands
 also work while `serve` runs: `restore --rehearse`, which never opens the vault, and
@@ -71,6 +72,25 @@ has none; a rehearsal or a restore on this device unlocks it from that wrap, and
 host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
 The install that takes a backup signs it, and a restore checks that signature first. While any
 legal hold stands, no backup is pruned, whatever `keep` says.
+
+An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps the whole
+canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
+use a separate automatic selection. When an entity's known world dependencies are all resolved
+to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
+and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
+known Off worlds' window snapshots and durable window updates. Shared document proposals keep
+their other owners' fragments. Authority-log rows and non-payload links stay intact.
+
+This is partial world selection, not a guarantee that an Off world's every byte is absent.
+Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
+queued or mixed carriers and exterior custody publication still need their own world
+projection. The read setting **One machine** alone does not exclude a sealed backup.
+
+Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
+Content and custody positions must match exactly. A whole-vault artifact can satisfy an
+automatic idle-backup duty at that same position, keeping its original mark; an automatic mark
+never certifies a whole-vault backup. Reusing an artifact copies or publishes nothing new.
+Old marker formats read as changed; there is no marker migration or old-format reader.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment, or with the owner's backup setting (below):
@@ -319,6 +339,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
+| `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -770,6 +791,21 @@ default list, and a list, even an empty one, replaces it.
 files one holds, and `oneiron files detach <folder>` stops every rescan from reading
 it again (a folder that is gone is detached by the name it was attached by; its notes
 stay).
+
+`oneiron files convert <folder>` changes a folder already attached as notes into a
+Files source in one owner act. Its include patterns, note kind and source attribution
+stay. The notes already imported, their history and their links stay where they are;
+they are not moved into the Files world. The conversion clears only the old rescan
+ledger and replaces the source placement in the same transaction. It then runs the
+ordinary Files rescan, which creates Files copies under that source's own identity.
+A first rescan that reports an error does not undo the conversion; `oneiron files
+rescan <folder>` retries it. A missing source or one already attached as Files is not
+converted, and its ledger is unchanged.
+
+Conversion uses the Files default exclusions. `--exclude <pattern>` adds to them;
+`--no-default-exclude` drops the defaults, just as for attach. The command requires a
+stopped vault. There is no running-server conversion verb in this slice; the existing
+attach, rescan and detach verbs keep their behavior.
 
 ## Approve an import in one act
 
@@ -1563,6 +1599,17 @@ exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
 can therefore be shown as waiting or filling while the old index still serves;
 answering the offer does not mean that its new binding is already applied.
 
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
@@ -2139,6 +2186,12 @@ an owner pin replaces the spawn call's own seed, and the call's own pin always s
 row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
 width is passed over for the next row, and a budget only ever narrows the caller's budget.
 
+An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
+seed, for its inherited project and placed task type. Its launch preview reads the same setting;
+actual admission records and reserves under that cap through the normal spend path. An explicit
+budget always stands. Planned launches, workflows and reader loans keep their existing handling.
+The setting supplies a cap, not funds, and does not change the identity of a retried request.
+
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
 oneiron learning-settings list --key health.loop.repeats
@@ -2201,6 +2254,25 @@ room turn, or when it comes from a credential that binds no principal or read ke
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
 with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
+
+## Pairing code guesses
+
+A pairing code is short enough to type, so `POST /v1/core/pairing/redeem` counts each client
+address's redemptions. An address may make five that no success answers. After that it waits
+before its next code is read: one second, then twice as long after each try, up to an hour.
+While it waits the door answers `429 TOO_MANY_ATTEMPTS` with `Retry-After`. A success, or an
+hour with no redemption from the address, starts it over. Every address counts alike, loopback
+and paired mesh machines too, and no address ever waits for another, so a stranger cannot block
+your own pairing. Behind a managed host's supervisor or relay the server sees no caller's own
+address, so it counts nothing there; the managed edge bounds those callers. A restart forgets the
+count. Change the rows in `[limits]`:
+
+```toml
+[limits]
+pairing_redeem_free_failures = 5          # redemptions an address makes before it waits
+pairing_redeem_wait_ceiling_ms = 3600000  # the longest wait
+pairing_redeem_quiet_ms = 3600000         # no redemption this long starts the address over
+```
 
 ## Live agent runs
 

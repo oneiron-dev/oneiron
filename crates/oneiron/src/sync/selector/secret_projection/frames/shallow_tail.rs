@@ -1,4 +1,4 @@
-//! Rebuild held retained operations without changing a shallow snapshot's root.
+//! Rebuild held retained operations with an unchanged root or exact frontier retarget.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +17,7 @@ use crate::store::Store;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 
 impl SyncSecretProjection {
-    /// Rebuild only retained-tail holds with an unchanged, independently readable root.
+    /// Rebuild retained holds, preserving the root except for the same held frontier write.
     /// Any unsupported shape keeps the caller's original whole-blob hold.
     pub(super) fn admit_held_shallow_snapshot<'a>(
         &self,
@@ -30,9 +30,7 @@ impl SyncSecretProjection {
             return None;
         }
         let parts = parts_of(doc)?;
-        let root_atoms = self.clean_shallow_root(store, context, &parts)?;
-        let original_root =
-            root_snapshot(&parts.skeleton.shallow, &parts.atoms, &parts.skeleton.roots)?;
+        let root_plan = self.shallow_root_plan(store, context, &parts)?;
         let Parts {
             mut skeleton,
             mut atoms,
@@ -117,7 +115,14 @@ impl SyncSecretProjection {
                         return None;
                     }
                     let atom = op.value?;
-                    if root_atoms.contains(&atom) || !held_atoms.insert(atom) {
+                    let frontier = root_plan.held.as_ref().is_some_and(|held| {
+                        held.atom == atom
+                            && held.peer == change.peer
+                            && held.counter == change.counter + index as Counter
+                            && held.lamport == change.lamport + index as Lamport
+                            && held.key == op.key
+                    });
+                    if (root_plan.atoms.contains(&atom) && !frontier) || !held_atoms.insert(atom) {
                         return None;
                     }
                     op.root = causality_index;
@@ -132,7 +137,7 @@ impl SyncSecretProjection {
                             return None;
                         };
                         let changed_value = old_value != value;
-                        if root_atoms.contains(&id) && (op.key != *key || changed_value) {
+                        if root_plan.atoms.contains(&id) && (op.key != *key || changed_value) {
                             return None;
                         }
                         if changed_value {
@@ -147,6 +152,27 @@ impl SyncSecretProjection {
         }
         if !operations.is_empty() || held_atoms.len() != translated.held.len() {
             return None;
+        }
+        if let Some(held) = &root_plan.held {
+            if !held_atoms.contains(&held.atom) {
+                return None;
+            }
+            let shallow = skeleton.shallow.as_mut()?;
+            let winner = shallow.winners.get_mut(held.winner)?;
+            if winner.root as usize != rows
+                || winner.key != held.key
+                || winner.peer != held.peer
+                || winner.lamport != held.lamport
+                || winner.value != Some(held.atom)
+            {
+                return None;
+            }
+            winner.root = causality_index;
+            winner.key = HELD_EDIT_CAUSALITY_KEY.to_string();
+            winner.value = None;
+            if !shallow.maps.contains(&causality_index) {
+                shallow.maps.push(causality_index);
+            }
         }
         recompute_latest(&mut skeleton);
         if !skeleton.latest_maps.contains(&causality_index) {
@@ -174,7 +200,7 @@ impl SyncSecretProjection {
         }
         let check_doc = LoroDoc::from_snapshot(&joined.bytes).ok()?;
         let mut check_parts = parts_of(&check_doc)?;
-        if original_root
+        if root_plan.expected
             != root_snapshot(
                 &check_parts.skeleton.shallow,
                 &check_parts.atoms,
@@ -206,29 +232,37 @@ impl SyncSecretProjection {
         ))
     }
 
-    /// Judge each shallow winner using its own root, key and payload.
-    fn clean_shallow_root(
+    /// Judge each original winner by its own key and payload, not another atom's site.
+    fn shallow_root_plan(
         &self,
         store: &Store,
         context: Option<&LoroDoc>,
         parts: &Parts,
-    ) -> Option<BTreeSet<AtomId>> {
+    ) -> Option<ShallowRootPlan> {
         let shallow = parts.skeleton.shallow.as_ref()?;
         let atoms: BTreeMap<_, _> = parts
             .atoms
             .iter()
             .map(|atom| (atom.id, &atom.payload))
             .collect();
-        let mut root_atoms = BTreeSet::new();
-        for winner in &shallow.winners {
-            if self.source_key(&winner.key).is_some() {
-                return None;
-            }
+        let mut plan = ShallowRootPlan {
+            atoms: BTreeSet::new(),
+            held: None,
+            expected: root_snapshot(&parts.skeleton.shallow, &parts.atoms, &parts.skeleton.roots)?,
+        };
+        for (index, winner) in shallow.winners.iter().enumerate() {
+            let aliased = self.source_key(&winner.key).is_some();
             let Some(atom) = winner.value else {
+                if aliased {
+                    return None;
+                }
                 continue;
             };
-            root_atoms.insert(atom);
+            plan.atoms.insert(atom);
             if parts.skeleton.roots.get(winner.root as usize)? != ROWS {
+                if aliased {
+                    return None;
+                }
                 continue;
             }
             let id = crate::entity_id::EntityId::from_hex(&winner.key).ok()?;
@@ -241,12 +275,116 @@ impl SyncSecretProjection {
                 .source_row(&id, carrier.as_deref().unwrap_or(raw))
                 .ok()?
             {
-                InboundRow::Ordinary => self.unread_row(store, context, &id).ok()?,
-                InboundRow::Source { .. } | InboundRow::Held(_) => return None,
+                InboundRow::Ordinary if !aliased => self.unread_row(store, context, &id).ok()?,
+                InboundRow::Held(_) => {
+                    let &[(peer, counter)] = shallow.frontiers.as_slice() else {
+                        return None;
+                    };
+                    let (change, offset, op) =
+                        parts.skeleton.changes.iter().find_map(|change| {
+                            (change.peer == peer)
+                                .then(|| {
+                                    change.ops.iter().enumerate().find_map(|(offset, op)| {
+                                        (change.counter + offset as Counter == counter)
+                                            .then_some((change, offset, op))
+                                    })
+                                })
+                                .flatten()
+                        })?;
+                    if plan.held.is_some()
+                        || winner.peer != peer
+                        || winner.lamport != change.lamport + offset as Lamport
+                        || op.root != winner.root
+                        || op.key != winner.key
+                        || op.value != Some(atom)
+                        || shallow
+                            .winners
+                            .iter()
+                            .filter(|other| other.value == Some(atom))
+                            .count()
+                            != 1
+                        || parts
+                            .skeleton
+                            .changes
+                            .iter()
+                            .flat_map(|change| &change.ops)
+                            .filter(|other| other.root == winner.root && other.key == winner.key)
+                            .count()
+                            != 1
+                    {
+                        return None;
+                    }
+                    plan.held = Some(HeldRoot {
+                        winner: index,
+                        atom,
+                        peer,
+                        counter,
+                        lamport: winner.lamport,
+                        key: winner.key.clone(),
+                    });
+                }
+                InboundRow::Ordinary | InboundRow::Source { .. } => return None,
             }
         }
-        Some(root_atoms)
+        if let Some(held) = &plan.held {
+            if parts
+                .skeleton
+                .changes
+                .iter()
+                .flat_map(|change| &change.ops)
+                .any(|op| {
+                    parts
+                        .skeleton
+                        .roots
+                        .get(op.root as usize)
+                        .is_some_and(|name| name == HELD_EDIT_CAUSALITY_MAP)
+                        && op.key == HELD_EDIT_CAUSALITY_KEY
+                })
+            {
+                return None;
+            }
+            let old = plan
+                .expected
+                .winners
+                .remove(&(ROWS.to_string(), held.key.clone()))?;
+            if old.0 != held.peer
+                || old.1 != held.lamport
+                || old.2.is_none()
+                || plan
+                    .expected
+                    .winners
+                    .insert(
+                        (
+                            HELD_EDIT_CAUSALITY_MAP.to_string(),
+                            HELD_EDIT_CAUSALITY_KEY.to_string(),
+                        ),
+                        (held.peer, held.lamport, None),
+                    )
+                    .is_some()
+            {
+                return None;
+            }
+            plan.expected
+                .maps
+                .insert(HELD_EDIT_CAUSALITY_MAP.to_string());
+        }
+        Some(plan)
     }
+}
+
+struct ShallowRootPlan {
+    atoms: BTreeSet<AtomId>,
+    held: Option<HeldRoot>,
+    expected: RootSnapshot,
+}
+
+struct HeldRoot {
+    winner: usize,
+    atom: AtomId,
+    peer: PeerID,
+    counter: Counter,
+    lamport: Lamport,
+    key: String,
 }
 
 /// Recompute every group after held retargets and possibly coalescing key rewrites.

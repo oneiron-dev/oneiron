@@ -136,11 +136,15 @@ impl Metrics {
             State::Unresolved(_) => return None,
             _ => style.indent.value.unwrap_or(0),
         };
-        let typeface = match style.typeface.value.as_deref() {
-            Some("+mj-lt") => theme.major,
-            Some("+mn-lt") | None => theme.minor,
-            Some(name) => Some(name),
-        };
+        let typeface =
+            style
+                .resolved_typeface
+                .as_deref()
+                .or_else(|| match style.typeface.value.as_deref() {
+                    Some("+mj-lt") => theme.major,
+                    Some("+mn-lt") | None => theme.minor,
+                    Some(name) => Some(name),
+                });
         let bold = style.bold.value.unwrap_or(false);
         let italic = style.italic.value.unwrap_or(false);
         Some(Self {

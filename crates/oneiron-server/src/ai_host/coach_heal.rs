@@ -60,13 +60,6 @@ pub(super) fn coach_dial(server: &SyncServer, coach: Option<&HeldLadder>) -> Dec
     }
 }
 
-/// The host's wording of the route question; the state carries the case or
-/// the report.
-const WORDING: &str = "Which fix does this agent need so its work can go on? \
-    Choose skill_edit when the skill it ran is wrong, prompt_inject when it needs \
-    a nudge and a fresh start from before it failed, environment when a tool, a \
-    grant or a connector it needs is missing or broken, and person when none of \
-    these fits or a person must look.";
 const TICK: Duration = Duration::from_secs(5);
 /// How long after a finished catch-up scan the next one starts from the
 /// start, so a Grant minted later re-runs its NoGrant pairs (FIX 7031).
@@ -208,7 +201,7 @@ pub(super) fn run_one(
         principal,
         dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
-        wording: WORDING.to_owned(),
+        wording: server.ai.dreamer_wording().coach_heal_route().to_owned(),
         budget: DECIDE_BUDGET,
     };
     // A case's or a report's `skill_edit` heal drafts its revision on the
