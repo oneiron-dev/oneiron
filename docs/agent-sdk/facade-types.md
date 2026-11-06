@@ -2488,7 +2488,7 @@ export type ChatCompletionRememberError = { code: string; message: string }
 /** `oneiron::verbs::proxy::ChatCompletionRemembered` */
 export type ChatCompletionRemembered = { claim: string; approval: string } | { error: ChatCompletionRememberError }
 /** `oneiron::verbs::proxy::ChatCompletionMemory` */
-export type ChatCompletionMemory = { injected: boolean; remembered: ChatCompletionRemembered }
+export type ChatCompletionMemory = { injected: boolean; remembered: ChatCompletionRemembered; recall_skipped?: string | null }
 /** `oneiron::verbs::proxy::ChatCompletionResponse` */
 export type ChatCompletionResponse = { id: string; object: ChatCompletionObject; created: number; model: string; choices: ChatCompletionChoice[]; usage: ChatCompletionUsage; oneiron: ChatCompletionMemory }
 /** `oneiron::verbs::proxy::ProxyConnectorAdmitRequest` */
