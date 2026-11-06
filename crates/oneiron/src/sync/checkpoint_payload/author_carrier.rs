@@ -27,7 +27,10 @@ const ATTRIBUTED: &str = "author_attribution.actor";
 pub(super) fn entry(id: EntityId, value: &[u8]) -> Option<Placement> {
     let author = author_carrier_actor(value)?;
     let no_one = with_actor(value, |actor| WriteActor::new(id, actor.actor_class())).ok()?;
-    let back = with_actor(&no_one, |actor| WriteActor::new(author, actor.actor_class())).ok()?;
+    let back = with_actor(&no_one, |actor| {
+        WriteActor::new(author, actor.actor_class())
+    })
+    .ok()?;
     if back != value {
         return None;
     }
@@ -57,9 +60,10 @@ pub(super) fn fill(
     }
     match opened {
         [] => Ok(None),
-        [(field, actor)] if *field == ATTRIBUTED => {
-            with_actor(placeholder, |held| WriteActor::new(*actor, held.actor_class())).map(Some)
-        }
+        [(field, actor)] if *field == ATTRIBUTED => with_actor(placeholder, |held| {
+            WriteActor::new(*actor, held.actor_class())
+        })
+        .map(Some),
         _ => Err(bad_part()),
     }
 }
