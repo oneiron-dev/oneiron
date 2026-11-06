@@ -10935,6 +10935,41 @@ async fn vault_members_accept(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_members_accept_with_credential(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.accept_with_credential")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.accept_with_credential", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.members.accept_with_credential", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_accept_with_credential(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_members_decline(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40693,6 +40728,9 @@ async fn call_verb_row(
             Box::pin(vault_members_invitations(server, call, input)).await
         }
         "vault.members.accept" => Box::pin(vault_members_accept(server, call, input)).await,
+        "vault.members.accept_with_credential" => {
+            Box::pin(vault_members_accept_with_credential(server, call, input)).await
+        }
         "vault.members.decline" => Box::pin(vault_members_decline(server, call, input)).await,
         "vault.members.withdraw_invitation" => {
             Box::pin(vault_members_withdraw_invitation(server, call, input)).await

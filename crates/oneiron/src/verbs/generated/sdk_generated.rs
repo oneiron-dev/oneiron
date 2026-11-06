@@ -1799,6 +1799,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.accept_with_credential",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+                >(),
+            ),
+            (
                 "vault.members.decline",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedInvitationRequest,
@@ -13346,6 +13352,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.accept_with_credential" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.decline" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20868,6 +20881,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.accept" => {
             let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
         }
+        "vault.members.accept_with_credential" => {
+            let _input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+                decode(value.clone())?;
+        }
         "vault.members.decline" => {
             let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
         }
@@ -24780,6 +24797,10 @@ pub fn invoke(
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
         "vault.members.invitations" => encode(vault_members_invitations(memory, decode(value)?)?),
         "vault.members.accept" => encode(vault_members_accept(memory, decode(value)?)?),
+        "vault.members.accept_with_credential" => encode(vault_members_accept_with_credential(
+            memory,
+            decode(value)?,
+        )?),
         "vault.members.decline" => encode(vault_members_decline(memory, decode(value)?)?),
         "vault.members.withdraw_invitation" => {
             encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
@@ -29708,6 +29729,12 @@ pub fn vault_members_accept(
         &memory.embedded_owner("vault.members.accept")?,
         input,
     )
+}
+pub fn vault_members_accept_with_credential(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedInvitationAcceptedWithCredential> {
+    crate::task_verb::sdk::accept_shared_invitation_with_credential_embedded(memory, input)
 }
 pub fn vault_members_decline(
     memory: &Memory<'_>,
