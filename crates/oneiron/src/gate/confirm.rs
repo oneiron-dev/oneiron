@@ -674,11 +674,21 @@ pub(crate) fn claim_critical_confirm_settled_in_txn(
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<bool> {
-    if crate::store::owner_answer_obligation_in(store, txn, claim_id)?.is_some() {
+    claim_critical_confirm_settled_observed_in_txn(store, txn, claim_id, &mut None)
+}
+
+pub(crate) fn claim_critical_confirm_settled_observed_in_txn(
+    store: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    observer: &mut Option<&mut crate::ports::StaleReadObserver<'_>>,
+) -> Result<bool> {
+    if crate::store::owner_answer_obligation_observed_in(store, txn, claim_id, observer)?.is_some()
+    {
         return Ok(false);
     }
     Ok(
-        !crate::store::pending_gate_consent_in(store, txn, claim_id)?
+        !crate::store::pending_gate_consent_observed_in(store, txn, claim_id, observer)?
             .is_some_and(|row| pending_row_holds_critical_confirm(&row)),
     )
 }
