@@ -24,23 +24,15 @@ use std::collections::{HashMap, HashSet};
 /// and the materializer lock ended, they are logged in it and committed
 /// before this returns, and nothing else of the attempt is (FIX 2433). With
 /// none, the parent aborts too.
-pub(crate) fn preflight_canonical_recovery(
-    vault: &Vault,
-    materializer: &Materializer,
-    snapshot: &CanonicalSnapshot,
-    doc: &LoroDoc,
-) -> Result<()> {
-    preflight_canonical_recovery_with_source(vault, materializer, snapshot, doc, None)
-}
-
-pub(crate) fn preflight_canonical_recovery_with_source(
+/// The source is the same immutable snapshot whose canonical validation groups
+/// completed before rebuild. The rebuilt document is checked independently below.
+pub(crate) fn preflight_validated_canonical_recovery_with_source(
     vault: &Vault,
     materializer: &Materializer,
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     source: Option<&crate::recovery::StoreCapturedCanonical>,
 ) -> Result<()> {
-    snapshot.validate()?;
     let analyzer = vault
         .analyzer
         .manifest()
