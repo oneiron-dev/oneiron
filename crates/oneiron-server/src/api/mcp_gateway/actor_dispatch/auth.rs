@@ -130,13 +130,41 @@ pub(in crate::api::mcp_gateway) fn registry_actor(
     auth: &crate::auth::CoreAuth,
     now: u64,
 ) -> Result<McpResolvedActor, McpConnectorActorResolutionError> {
+    registry_actor_reading_ceiling(registry, server, credential, auth, now)
+        .map_err(|refused| refused.error)
+}
+
+/// Why [`registry_actor_reading_ceiling`] found no registration: the
+/// resolution error, and whether a read of the actor ceiling failed on the
+/// way. A ceiling the store could not read is not proof the ceiling is
+/// gone (FIX 4606).
+pub(in crate::api::mcp_gateway) struct RegistryRefusal {
+    pub(in crate::api::mcp_gateway) error: McpConnectorActorResolutionError,
+    pub(in crate::api::mcp_gateway) ceiling_unread: bool,
+}
+
+/// [`registry_actor`], also saying whether a read of the actor ceiling
+/// failed. A parked run's recovery tells a ceiling the store could not read
+/// from one it read as absent, so a passing store fault never refuses the
+/// run for good (FIX 4606); an ingress call refuses both alike.
+pub(in crate::api::mcp_gateway) fn registry_actor_reading_ceiling(
+    registry: &mut crate::mcp::McpConnectorActorRegistry,
+    server: &SyncServer,
+    credential: &str,
+    auth: &crate::auth::CoreAuth,
+    now: u64,
+) -> Result<McpResolvedActor, RegistryRefusal> {
+    let ceiling_unread = std::cell::Cell::new(false);
     let ceiling_exists = |actor_class: &str, actor_ref: &str| {
         server
             .vault
             .gate_actor_ceiling_exists(actor_class, actor_ref)
-            .unwrap_or(false)
+            .unwrap_or_else(|_| {
+                ceiling_unread.set(true);
+                false
+            })
     };
-    match registry.resolve(credential, now, ceiling_exists) {
+    let resolved = match registry.resolve(credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)
             if crate::api::pairing::register_live_paired_mcp(
                 &mut *registry,
@@ -148,7 +176,11 @@ pub(in crate::api::mcp_gateway) fn registry_actor(
             registry.resolve(credential, now, ceiling_exists)
         }
         resolved => resolved,
-    }
+    };
+    resolved.map_err(|error| RegistryRefusal {
+        error,
+        ceiling_unread: ceiling_unread.get(),
+    })
 }
 
 /// The call `auth`, the instrument a call verified, makes through `actor`,
