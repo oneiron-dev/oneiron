@@ -42,3 +42,8 @@ This additional usage is absent for a saved-response recovery, a memo hit, a
 successful checkpoint, and failures after the checkpoint commits. It does not
 change error types, messages or recovery, and it is not a payment receipt. Original
 financial obligations and atomic exactly-once settlement remain separate work.
+
+The same extraction tally also records prior corrective usage carried by a
+`SpentLlm` or `SpentFallback` error. Those errors return before a response is
+checkpointed. Their own usage is counted once; the original refusal and error
+text stay unchanged. Metered turn-program accounting is not changed.
