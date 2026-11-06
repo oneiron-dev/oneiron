@@ -12,7 +12,6 @@
 //! worksheet keeps every other element and attribute in place
 //! (docengine:fidelity).
 
-use super::read::decode_escapes;
 use super::{
     Book, Result, SML, XlsxArea, XlsxLock, cell_ref, drop_attribute, encode_escapes, parse,
     refused, string_item,
@@ -20,7 +19,7 @@ use super::{
 use crate::edit::xml::{Splice, insert_end, replace_text, set_attribute, splice};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Limits;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The formula kinds whose `ref` spans cells that hold its results without
 /// a formula of their own: an array formula (a dynamic array's spill
@@ -76,11 +75,11 @@ pub fn write_cached_values(
     let copied_sheets: BTreeMap<String, &String> = copy
         .worksheets
         .iter()
-        .map(|(name, part)| (decode_escapes(name), part))
+        .map(|(name, part)| (sheet_name_key(name), part))
         .collect();
     let mut formula_count = 0;
     for (name, part) in sheets {
-        let Some(copied) = copied_sheets.get(&decode_escapes(&name)).copied() else {
+        let Some(copied) = copied_sheets.get(&sheet_name_key(&name)).copied() else {
             continue;
         };
         let bytes = book
@@ -96,9 +95,19 @@ pub fn write_cached_values(
         // stale or missing cells under a stamp that says the workbook was
         // recalculated, so the whole fallback stands down instead and the
         // workbook keeps today's fullCalcOnLoad mark (review #6434).
-        if array_extents(&tree)? != array_extents(&parse(&copy.package, copied)?)? {
+        let extents = array_extents(&tree)?;
+        let copy_tree = parse(&copy.package, copied)?;
+        if extents != array_extents(&copy_tree)? {
             return Err(refused(
                 "an array formula's result range changed in the recalculated copy",
+            ));
+        }
+        // A result the copy holds inside an array's range where the original
+        // has no cell element would be lost the same way; this patch writes
+        // values into cells that exist and inserts none, so it stands down.
+        if copy.unplaced_array_result(&copy_tree, &extents, &cell_addresses(&tree)?) {
+            return Err(refused(
+                "an array formula's result has no cell in the original worksheet",
             ));
         }
         let values = copy.cached_values(copied, &cells)?;
@@ -147,6 +156,55 @@ fn reads_location(formula: &str) -> bool {
             called && !joined
         })
     })
+}
+
+/// A sheet name as the application reads it, for matching names across two
+/// packages: each `_xHHHH_` escape is one UTF-16 code unit, so an escaped
+/// surrogate pair decodes to its one character (review #6434). A name whose
+/// units do not form valid UTF-16 matches by its own text.
+fn sheet_name_key(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut units: Vec<u16> = Vec::with_capacity(name.len());
+    let mut at = 0;
+    while at < name.len() {
+        let escape = bytes.get(at..at + 7).filter(|run| {
+            run[0] == b'_'
+                && run[1] == b'x'
+                && run[6] == b'_'
+                && run[2..6].iter().all(u8::is_ascii_hexdigit)
+        });
+        if let Some(run) = escape
+            && let Ok(unit) =
+                u16::from_str_radix(std::str::from_utf8(&run[2..6]).unwrap_or("0"), 16)
+        {
+            units.push(unit);
+            at += 7;
+            continue;
+        }
+        let Some(c) = name[at..].chars().next() else {
+            break;
+        };
+        let mut buffer = [0u16; 2];
+        units.extend_from_slice(c.encode_utf16(&mut buffer));
+        at += c.len_utf8();
+    }
+    String::from_utf16(&units).unwrap_or_else(|_| name.to_owned())
+}
+
+/// The address (column, row) of every cell element of worksheet `tree`.
+fn cell_addresses(tree: &XmlTree) -> Result<BTreeSet<(u32, u32)>> {
+    let mut present = BTreeSet::new();
+    let Some((data, _)) = tree.child(0, SML, "sheetData")? else {
+        return Ok(present);
+    };
+    for (row, _) in tree.children(data).filter(|(_, node)| node.is(SML, "row")) {
+        for (_, cell) in tree.children(row).filter(|(_, node)| node.is(SML, "c")) {
+            if let Some(at) = cell.attr("r").and_then(cell_ref) {
+                present.insert(at);
+            }
+        }
+    }
+    Ok(present)
 }
 
 /// `formula` with the inside of each string literal and quoted name replaced
@@ -268,6 +326,34 @@ fn formula_cells(tree: &XmlTree) -> Result<BTreeMap<(u32, u32), usize>> {
 }
 
 impl Book {
+    /// Whether this recalculated copy's worksheet `tree` caches a value inside
+    /// one of the original's array ranges `extents` at an address `present`
+    /// does not hold: a result the original has no cell element for.
+    fn unplaced_array_result(
+        &self,
+        tree: &XmlTree,
+        extents: &BTreeMap<(u32, u32), ((u32, u32), (u32, u32))>,
+        present: &BTreeSet<(u32, u32)>,
+    ) -> bool {
+        let Ok(Some((data, _))) = tree.child(0, SML, "sheetData") else {
+            return false;
+        };
+        let inside = |at: (u32, u32)| {
+            extents.values().any(|(first, last)| {
+                (first.0..=last.0).contains(&at.0) && (first.1..=last.1).contains(&at.1)
+            })
+        };
+        tree.children(data)
+            .filter(|(_, node)| node.is(SML, "row"))
+            .flat_map(|(row, _)| tree.children(row).filter(|(_, node)| node.is(SML, "c")))
+            .any(|(index, cell)| {
+                cell.attr("r")
+                    .and_then(cell_ref)
+                    .is_some_and(|at| inside(at) && !present.contains(&at))
+                    && self.cached(tree, index).is_some()
+            })
+    }
+
     /// The values this recalculated copy's worksheet `part` caches at the
     /// cells `wanted` names, by (column, row). A cell with no value, or one
     /// of a type the original's cell cannot take, has none.
