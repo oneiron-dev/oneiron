@@ -47,6 +47,22 @@ native admission after that slot may still fail. Memo recovery starts no generat
 a schema correction uses a new logical generation, while a transport retry reuses the
 same one. Receipt counts and successful-response counts do not establish that boundary.
 
+The optional durable port checks a caller's logical-generation admission only after
+memo recovery and the native request and schema preflights. Each schema correction
+checks it again, while transport retries reuse that attempt's lease and logical
+start. A denied first start returns a typed cut without usage. A denied correction
+keeps the actual answered, settled prefix, including an actual zero report; it
+never turns that prefix into a provider error, a fallback, or a memoized answer.
+Lease-admitted observations and request captures remain separate from provider
+bytes and logical-generation admission.
+
+The optional scoped generated entry carries that same context through the first
+generation and the native captured stronger-provider close. Generated-backend usage
+stays in the caller's spend inventory; native stronger-provider settlements stay in
+the caller's receipt inventory even on a later error. Neither inventory alone proves
+complete usage. These ports do not connect the Arc's actual pace counter or enable
+its stronger reads by themselves.
+
 Settlement inventories also do not establish complete token measurement. Missing usage
 stays unknown; billed reservations and currency charges are not actual token counts.
 Reading a settlement never authorizes settling the model permit a second time.
