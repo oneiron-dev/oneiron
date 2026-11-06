@@ -35835,7 +35835,7 @@ fn invoke_vault_artifacts_proposals(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_artifacts_proposals(memory, decode(value)?)?)
+    pending_proposal_output::list(vault_artifacts_proposals(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_artifacts_waits(
@@ -35940,7 +35940,7 @@ fn invoke_vault_artifacts_propose_output(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_artifacts_propose_output(memory, decode(value)?)?)
+    pending_proposal_output::view(vault_artifacts_propose_output(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_artifacts_keep(

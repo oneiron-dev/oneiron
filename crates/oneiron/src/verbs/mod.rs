@@ -60,6 +60,7 @@ mod off_record_runs;
 mod outbound_call_erase;
 mod outbox_diverged;
 mod pack_preview;
+mod pending_proposal_output;
 mod persona;
 mod proxy;
 mod receipts_page;
