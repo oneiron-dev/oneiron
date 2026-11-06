@@ -13340,7 +13340,7 @@
      "path": "src/channel_identity_provider/gmail/http.rs",
      "purpose": "Production Gmail send wire: one POST to `users.messages.send` (OF-374)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -21509,6 +21509,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 9,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 3,
@@ -38382,7 +38383,7 @@
      "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -39167,7 +39168,7 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 7,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -39185,6 +39186,23 @@
       "crate-vis": 4,
       "fn": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyGrantExtension",
+      "PolicyGrantMapEntry",
+      "PolicyGrantValue",
+      "PolicyScopedGrantRow"
+     ],
+     "path": "src/gate/policy_manifest_doors/scoped_grants.rs",
+     "purpose": "Typed access to the manifest's existing scoped-grant rows",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -40075,6 +40093,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/value_encoding.rs",
+     "purpose": "Value-preserving encoding for policy manifest rewrites",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -52183,13 +52211,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -52617,7 +52645,7 @@
      "path": "src/note/pin_index.rs",
      "purpose": "Exact citation dependency indexes shared by sync and featureless erasure",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -76753,7 +76781,17 @@
      "path": "src/sync/client/window_pads.rs",
      "purpose": "The device's side of the window pad envelope (KS-5, FIX 7107)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/window_pads/deferred.rs",
+     "purpose": "A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -79187,7 +79225,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -79482,7 +79520,7 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -79604,7 +79642,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 24,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
@@ -79681,7 +79719,7 @@
      "path": "src/sync/window/replacement.rs",
      "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -91412,7 +91450,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 195,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92147,7 +92185,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 359,
+     "files": 360,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92359,7 +92397,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6500,
+   "source_files": 6503,
    "test_files": 895
   },
   "oneiron-android": {
@@ -143680,6 +143718,9 @@
       "PolicyCriticality",
       "PolicyEnforcementAction",
       "PolicyEnforcementVoice",
+      "PolicyGrantExtension",
+      "PolicyGrantMapEntry",
+      "PolicyGrantValue",
       "PolicyHedgeBucket",
       "PolicyHelpRouting",
       "PolicyManifest",
@@ -143704,6 +143745,7 @@
       "PolicyRowReceipt",
       "PolicyRowScope",
       "PolicyRule",
+      "PolicyScopedGrantRow",
       "PolicySensitivity",
       "PolicySignature",
       "PolicySkipReason",
@@ -145368,8 +145410,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1136,
-      "struct": 3439
+      "enum": 1137,
+      "struct": 3442
      }
     },
     {
