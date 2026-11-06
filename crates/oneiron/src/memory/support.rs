@@ -92,8 +92,8 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
-    /// The current request's actual peer and user agent, for signing audit
-    /// records only; never identity or authority.
+    /// Actual request or same-connection upgrade observations, for signing
+    /// audit records only; never identity or authority.
     pub(super) signing_request_transport: Option<SigningRequestTransport>,
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
@@ -148,10 +148,11 @@ pub struct Memory<'v> {
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
 }
 
-/// The actual transport metadata a host observed on one signing request.
+/// Actual transport metadata from a host's request or socket upgrade.
 /// This is audit context, never signer identity or authority. It is not
-/// serialized or saved for a later request; an absent peer stays absent.
-#[derive(Clone)]
+/// serialized; a socket uses only its own upgrade observations and an
+/// absent peer stays absent.
+#[derive(Clone, Debug)]
 pub struct SigningRequestTransport {
     peer_ip: Option<std::net::IpAddr>,
     user_agent: Option<String>,

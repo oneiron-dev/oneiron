@@ -122,3 +122,14 @@ If no ordinary run exists, it carries the first field's explicit run properties.
 The outcome names the actual typed fields removed by that rebuild. Expected-text
 checks, grid/merge checks, first-match table selection and the retained/cut paths
 are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
+
+The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
+`src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
+Decoration or comment range/reference marker in one carrier at its original
+inline position and status, instead of consuming it into the old text's deletion.
+Normal markers stay current, and prior inserted/deleted markers keep their own
+revision. Rejection restores the original current range; acceptance collapses removed old
+text before the inserted replacement. No marker identity is duplicated or
+inferred from replacement prose. The same predicate now serves marker presence,
+stripping and this carrier. Native wire/schema versions and marker-free
+replacement semantics are unchanged; no Word-runtime comparison is claimed.

@@ -98,7 +98,7 @@ fn stamp_body(
 
 /// Whether the stored record `id` is bound to a thread (FIX 2951): a room
 /// thread's opaque reply is, though its body names no DAG kind.
-fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(super) fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(
         match crate::vault::live_entity_row_in_txn(&vault.store, txn, id)? {
             crate::vault::LiveEntityRow::Live { body, .. } => {
@@ -597,7 +597,7 @@ impl Vault {
         })
     }
 
-    /// Local HEAD; legacy conversations migrate before the first read.
+    /// Local HEAD; a received DAG initializes its local branch before the first read.
     pub fn head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
         Ok(self
             .main_line(
@@ -612,8 +612,8 @@ impl Vault {
 
     /// The local HEAD as it stands, the pointer read alone: no migration,
     /// no write transaction and no canonical-chain walk, where
-    /// [`Self::head`] migrates a legacy conversation first and reads its
-    /// main line. `None` for a conversation that has adopted no HEAD
+    /// [`Self::head`] initializes a received DAG's local branch first and reads
+    /// its main line. `None` for a conversation that has adopted no HEAD
     /// (FIX 10367).
     ///
     /// # Errors

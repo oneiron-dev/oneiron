@@ -30,6 +30,7 @@ pub(super) async fn stop_serving(
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }
+    server.stop_shared_envs().await;
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
