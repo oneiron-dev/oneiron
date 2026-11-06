@@ -2,7 +2,8 @@
 
 The bound batch router can project an explicitly born LastTouch with a
 noncanonical world, facet, project, native sensitivity band from 0 through 3,
-native relationship scope, or validated native CLAIM `sess` tag.
+native relationship scope, validated native CLAIM `sess` tag, or native
+`scope.principal` audience.
 The original Put, ClaimOf edge and native
 birth still land through their existing gates before its source is created in
 the same writer. The source freezes the actual admitted native position; it
@@ -12,8 +13,13 @@ supported forms are a single numeric sensitivity map, a single map using the
 native spelling `public`, `private`, `internal`, `sensitive` or `restricted`, an
 absent scope, or an empty map. Missing and empty scopes retain the existing
 unstamped band of 2. Each form stays distinct for exact-context matching;
-`private` and `internal` share band 1 but do not share a slot. A `sess` tag keeps
-its exact parsed string and must pass the same native nonempty, non-whitespace
+`private` and `internal` share band 1 but do not share a slot. A single native
+`principal` entry may accompany a sensitivity entry or stand alone. Its id is
+exactly the CLAIM parser's binary 16-byte id. Its original map position is
+retained, so a principal before sensitivity and one after it do not share a
+comparison slot. A principal-only map retains the native unstamped band of 2.
+No opaque sibling or duplicate selector is admitted by this source path.
+A `sess` tag keeps its exact parsed string and must pass the same native nonempty, non-whitespace
 validation as a CLAIM. It is comparison data, not a session grant or an overlay
 view id. Duplicate stamps, additional opaque keys and other unsupported births
 keep their full native raw path. No-birth inputs still
@@ -23,15 +29,20 @@ does not change the original row or its stamp.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
-`TouchAsserted`, canonical base-world touches included, carries the eight-element
+`TouchAsserted`, canonical base-world touches included, carries the nine-element
 tuple: world id, facet id, project id, native sensitivity band, a 32-byte
 admitted-origin digest, a scope-form code, the frozen native relationship
-scope (`all`, an empty set, or a set of relationship ids), and the exact native
-session tag (`nil` when absent, otherwise its validated string). Codes 0 through 7 mean numeric,
+scope (`all`, an empty set, or a set of relationship ids), the exact native
+session tag (`nil` when absent, otherwise its validated string), and the native
+principal (`nil` when absent, otherwise its original map index and binary
+16-byte id). A principal-only map uses empty-map form and index 0; one beside
+sensitivity uses index 0 or 1. An absent scope cannot carry a principal.
+Codes 0 through 7 mean numeric,
 public, private, internal, sensitive, restricted, absent, and empty-map scope,
 respectively. The strict decoder checks the native band against that form.
-The scope form, native relationship-scope transcript, and session-tag presence
-and bytes are also bound into the source id. `original_head` and
+The scope form, native relationship-scope transcript, session-tag presence
+and bytes, and principal presence, map index and id bytes are also bound into
+the source id. `original_head` and
 `source_position` must be present together. There is no old-format reader or migration. All born source ids use
 `COMM_BORN_TOUCH_EVENT` with the same typed position and origin binding.
 
@@ -58,7 +69,11 @@ retain their live Scope check. Frozen ids are requirements, not authority.
 
 Reader-side source code now carries the actual current original CLAIM's full
 row from the same content view and transaction into the existing audience
-predicate, under the same credential and held authority. Its private-thread,
+predicate, under the same credential and held authority. That same serving
+credential's native principal comparator must admit both the current original
+CLAIM's principal and the frozen source's principal. Missing principals retain
+the native comparator's ordinary behavior; neither id is a grant. Changing an
+original's principal does not release the source's frozen requirement. Its private-thread,
 own-entry, world, room and peer checks remain conjuncts of the touch's own
 checks. The original must be a live CLAIM, so that forwarding cannot enter
 another scoped-touch source edge.

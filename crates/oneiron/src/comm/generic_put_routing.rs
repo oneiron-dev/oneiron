@@ -325,7 +325,7 @@ fn take_batch_puts_in_txn(
                     else {
                         continue;
                     };
-                    let Some(scope_form) =
+                    let Some((scope_form, principal)) =
                         crate::write_envelope::communication_record::ScopedTouchScopeForm::from_scope(
                             body.scope.as_ref(),
                         )
@@ -338,6 +338,7 @@ fn take_batch_puts_in_txn(
                         sensitivity,
                         &body.rel,
                         body.session_tag.as_deref(),
+                        principal.as_ref(),
                     )
                     .map_err(source_event_error)?
                 } else {
