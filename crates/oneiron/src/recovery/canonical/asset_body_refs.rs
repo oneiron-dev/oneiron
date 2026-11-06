@@ -82,17 +82,71 @@ fn bound(_: &CanonicalSnapshot, _: EntityId, _: &[u8]) -> bool {
     true
 }
 
-impl CanonicalSnapshot {
-    /// Each reference names a canonical id once, in id order, and binds the
-    /// exact carrier the snapshot holds for that id.
-    pub(in crate::recovery) fn validate_asset_body_refs(&self) -> Result<()> {
-        crate::recovery::validation::strict(self.asset_body_refs.iter().map(|row| row.id))?;
-        for row in &self.asset_body_refs {
-            if !bound(self, id(row.id)?, &row.value) {
+/// Owned resumable validation of the window's asset body references: the
+/// same strict-then-bind checks as the whole validator, a page at a time
+/// over the same immutable snapshot. The strict pass pages id order with
+/// the existing `strict` over the carried previous id chained with the
+/// page, so no prefix is rechecked; the bind pass pages `id`/`bound` only
+/// after every order check passed.
+#[derive(Default)]
+pub(super) struct AssetBodyRefsValidation {
+    stage: AssetBodyRefsStage,
+    strict_next: usize,
+    strict_prev: Option<[u8; 16]>,
+    bound_next: usize,
+}
+
+#[derive(Default)]
+enum AssetBodyRefsStage {
+    #[default]
+    Strict,
+    Bound,
+}
+
+impl AssetBodyRefsValidation {
+    /// Validates one page; `true` once both passes passed.
+    pub(super) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> Result<bool> {
+        let rows = &snapshot.asset_body_refs;
+        let page = max_rows.max(1);
+        if matches!(self.stage, AssetBodyRefsStage::Strict) {
+            let end = self.strict_next.saturating_add(page).min(rows.len());
+            crate::recovery::validation::strict(
+                self.strict_prev
+                    .into_iter()
+                    .chain(rows[self.strict_next..end].iter().map(|row| row.id)),
+            )?;
+            if end > self.strict_next {
+                self.strict_prev = Some(rows[end - 1].id);
+            }
+            self.strict_next = end;
+            if self.strict_next < rows.len() {
+                return Ok(false);
+            }
+            self.stage = AssetBodyRefsStage::Bound;
+            if self.bound_next < rows.len() {
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        let end = self.bound_next.saturating_add(page).min(rows.len());
+        for row in &rows[self.bound_next..end] {
+            if !bound(snapshot, id(row.id)?, &row.value) {
                 return Err(invalid("asset body reference outside the window"));
             }
         }
-        Ok(())
+        self.bound_next = end;
+        Ok(self.bound_next >= rows.len())
+    }
+
+    pub(super) fn position(&self) -> String {
+        match self.stage {
+            AssetBodyRefsStage::Strict => format!("strict {}", self.strict_next),
+            AssetBodyRefsStage::Bound => format!("bound {}", self.bound_next),
+        }
     }
 }
 

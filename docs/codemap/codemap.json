@@ -3602,7 +3602,7 @@
      "path": "src/authority/checkpoint_image/replay.rs",
      "purpose": "An image's replay evidence (OF-469, FIX 3007): the fold state at each covered row off the frontier, as the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -34561,7 +34561,7 @@
      "path": "src/embed/session_media.rs",
      "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -60868,7 +60868,7 @@
      "path": "src/recovery/canonical/asset_body_refs.rs",
      "purpose": "The by-reference ASSET body references a window carries (FIX 5489), through canonical capture and rebuild",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -62166,7 +62166,17 @@
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/validation/documents.rs",
+     "purpose": "Ordered NOTE document row checks over one immutable canonical snapshot",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -91768,7 +91778,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92267,7 +92277,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6491,
+   "source_files": 6492,
    "test_files": 895
   },
   "oneiron-android": {
@@ -136987,7 +136997,7 @@
      "path": "src/session_overlay/overlay/repo_projection.rs",
      "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
