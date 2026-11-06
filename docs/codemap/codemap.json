@@ -7800,7 +7800,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Core half of `batch::secret_scan::container`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -7923,7 +7923,7 @@
      "path": "src/batch/secret_scan/lift_history/mod.rs",
      "purpose": "The historical lift sweep (OF-067; ARCH-0069 #mask-on-write)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 8,
       "re-export": 1,
@@ -8098,7 +8098,7 @@
      "path": "src/batch/secret_scan/mask/known_marks.rs",
      "purpose": "A file's marks for the values custody came to know after it was stored (FIX 2781)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -8148,7 +8148,7 @@
      "path": "src/batch/secret_scan/mask/retained_repo/read.rs",
      "purpose": "The masked copy a reader gets of a marked retained repository blob (FIX 7608 slice 2a)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -73414,14 +73414,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/known_value_index.rs",
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -92295,7 +92295,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 168,
+   "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6494,
    "test_files": 895
