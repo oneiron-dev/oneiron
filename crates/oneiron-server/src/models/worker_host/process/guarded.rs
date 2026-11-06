@@ -144,7 +144,11 @@ pub(crate) async fn spawn(
         return Err(io::Error::other(exit.description));
     }
     worker.native = native;
-    if let Some(record) = slot.lock().unwrap_or_else(|poison| poison.into_inner()).as_mut() {
+    if let Some(record) = slot
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .as_mut()
+    {
         record.native_peer = Some(worker.native_peer());
     }
     let worker = Arc::new(worker);

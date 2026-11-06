@@ -8,19 +8,28 @@
 //! the caller's deadline leaves the work pending where it stands, never run
 //! without a turn, never refused and never reported Healthy.
 //!
-//! What must hold of the whole runs whole: the artifact's validation, the
-//! preflight that admits every row in one aborted transaction, the NOTE
-//! workflow plan, the equivalence of the recaptured window, and the manifest,
-//! published last and only once every page is done. The rebuild, the
-//! forward replay and the per-row checks after it run a page at a time, with
-//! the replay's cross-pass ledgers kept from page to page.
+//! Artifact validation yields between its ordered groups over one immutable
+//! source. Manifest/order rows, window rows, NOTE and generic document rows,
+//! their indexes and asset body reference checks use the existing row page
+//! size. Expected-container construction, each row's nested history/body
+//! checks, retained-parent and workflow checks, other groups, encoding and
+//! hashing still run whole.
+//! Aborted-transaction preflight, the NOTE workflow plan and the final snapshot
+//! comparison also run whole. Recapture yields between structural stages while
+//! retaining one store read view. The
+//! rebuild, forward replay and per-row checks run a page at a time, with
+//! replay's cross-pass ledgers kept between pages. The manifest is published
+//! last, only after all work completes.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use loro::LoroDoc;
 
-use super::canonical::{CanonicalSnapshot, RebuildAt, invalid, rebuild_page, rebuild_start};
+use super::canonical::{
+    CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
+    RebuildAt, invalid, rebuild_page, rebuild_start,
+};
 use super::ladder::{
     PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt, verify_page,
 };
@@ -34,7 +43,7 @@ use crate::{EntityId, Vault};
 /// The phase a recovery stands in, in the order it runs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecoveryPhase {
-    /// The artifact as this vault recovers it, validated whole.
+    /// The artifact as this vault recovers it, one group or window-row page per turn.
     Validate,
     /// The fresh window, a page of rows at a time.
     Rebuild,
@@ -42,7 +51,7 @@ pub(crate) enum RecoveryPhase {
     Preflight,
     /// The forward replay, a page of rows at a time.
     Replay,
-    /// The per-row checks, a page at a time, and the equivalence, whole.
+    /// Paged row checks, staged recapture and a whole snapshot comparison.
     Verify,
     /// The repaired manifest, published last.
     Publish,
@@ -77,11 +86,14 @@ pub(crate) struct RecoveryWork {
     source: CanonicalSnapshot,
     digest: [u8; 32],
     phase: RecoveryPhase,
+    validation: Option<CanonicalValidation>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
     prepared: Option<PreparedRecovery>,
     forward: Option<ForwardRun>,
     verified: usize,
+    /// In-progress structural recapture (FIX 10316 partial), if any.
+    capture: Option<CanonicalCapture>,
 }
 
 impl RecoveryWork {
@@ -98,11 +110,13 @@ impl RecoveryWork {
             source: snapshot.clone(),
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
+            validation: None,
             doc: None,
             rebuilt: RebuildAt::default(),
             prepared: None,
             forward: None,
             verified: 0,
+            capture: None,
         }
     }
 
@@ -122,7 +136,11 @@ impl RecoveryWork {
             let Ok(turn) = self.turn(vault, deadline) else {
                 return Ok(RecoveryProgress::Pending(self.cursor()));
             };
-            self.page(vault, materializer)?;
+            let result = self.page(vault, materializer);
+            if result.is_err() && self.phase == RecoveryPhase::Validate {
+                self.validation = None;
+            }
+            result?;
             drop(turn);
             if self.phase != RecoveryPhase::Complete
                 && deadline.is_some_and(|deadline| Instant::now() >= deadline)
@@ -154,6 +172,10 @@ impl RecoveryWork {
     /// Where the work stands.
     pub(crate) fn cursor(&self) -> RecoveryCursor {
         let next_key = match self.phase {
+            RecoveryPhase::Validate => self
+                .validation
+                .as_ref()
+                .map(|validation| format!("validate {}", validation.position())),
             RecoveryPhase::Rebuild => Some(self.rebuilt.position()),
             RecoveryPhase::Replay => self.forward.as_ref().map(|forward| {
                 let (pass, key) = forward.position();
@@ -193,10 +215,22 @@ impl RecoveryWork {
                 // too (FIX 3878): the recovery checks, installs and compares
                 // only that form. Full domain validation precedes quarantine
                 // and every durable write.
-                self.source = self.source.with_actors_erased_here(vault)?;
-                let encoded = self.source.encode()?;
+                if self.validation.is_none() {
+                    self.source = self.source.with_actors_erased_here(vault)?;
+                }
+                if !self
+                    .validation
+                    .get_or_insert_with(CanonicalValidation::default)
+                    .advance(&self.source, page)?
+                {
+                    return Ok(());
+                }
+                let encoded = self
+                    .source
+                    .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
                 limit(encoded.len(), self.budget.max_bytes)?;
                 self.digest = *blake3::hash(&encoded).as_bytes();
+                self.validation = None;
                 self.doc = Some(rebuild_start());
                 self.phase = RecoveryPhase::Rebuild;
             }
@@ -237,7 +271,14 @@ impl RecoveryWork {
                     .prepared
                     .as_ref()
                     .ok_or_else(|| invalid("recovery verify"))?;
-                if verify_page(vault, prepared, &self.source, &mut self.verified, page)? {
+                if verify_page(
+                    vault,
+                    prepared,
+                    &self.source,
+                    &mut self.verified,
+                    page,
+                    &mut self.capture,
+                )? {
                     self.phase = RecoveryPhase::Publish;
                 }
             }
