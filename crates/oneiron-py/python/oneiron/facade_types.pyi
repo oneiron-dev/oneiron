@@ -12176,6 +12176,7 @@ class ArtifactView(TypedDict):
 class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
+    path: NotRequired[str | None]
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
@@ -12198,7 +12199,14 @@ class AnnotationLocatorText(TypedDict):
     format: Literal["text"]
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText
+class AnnotationLocatorCode(TypedDict):
+    format: Literal["code"]
+    commit: str
+    path: str
+    file_hash: str
+    char_start: int
+    char_end: int
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
