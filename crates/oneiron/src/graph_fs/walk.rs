@@ -11,7 +11,10 @@
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{LinePosition, join_graph_path, page_lines};
+use super::coreutils_text::{
+    LinePosition, checkpoint, copy_text_parts, copy_utf8_field, join_graph_path_with_reader,
+    page_grep_lines,
+};
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
 
@@ -62,73 +65,149 @@ struct WalkFrame {
     passed: usize,
 }
 
-impl SealedPosition for WalkPosition {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![WALK_POSITION_FORMAT, u8::from(self.root_done)];
+impl WalkPosition {
+    fn to_bytes(
+        &self,
+        reader: &crate::batch::secret_scan::ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        append_position_bytes(
+            &mut bytes,
+            &[WALK_POSITION_FORMAT, u8::from(self.root_done)],
+            reader,
+            scan_bytes,
+        )?;
         match &self.lines {
             Some((path, lines)) => {
-                bytes.push(1);
-                put_field(&mut bytes, path.as_bytes());
-                put_field(&mut bytes, &lines.to_bytes());
+                append_position_bytes(&mut bytes, &[1], reader, scan_bytes)?;
+                put_field(&mut bytes, path.as_bytes(), reader, scan_bytes)?;
+                put_field(&mut bytes, &lines.to_bytes(), reader, scan_bytes)?;
             }
-            None => bytes.push(0),
+            None => append_position_bytes(&mut bytes, &[0], reader, scan_bytes)?,
         }
         for frame in &self.frames {
-            put_field(&mut bytes, frame.name.as_bytes());
-            put_optional(&mut bytes, frame.page.as_deref().map(str::as_bytes));
-            bytes.extend_from_slice(&(frame.passed as u64).to_be_bytes());
+            put_field(&mut bytes, frame.name.as_bytes(), reader, scan_bytes)?;
+            put_optional(
+                &mut bytes,
+                frame.page.as_deref().map(str::as_bytes),
+                reader,
+                scan_bytes,
+            )?;
+            append_position_bytes(
+                &mut bytes,
+                &(frame.passed as u64).to_be_bytes(),
+                reader,
+                scan_bytes,
+            )?;
         }
-        bytes
+        Ok(bytes)
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    fn from_bytes(
+        bytes: &[u8],
+        reader: &crate::batch::secret_scan::ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Option<Self>> {
         let mut fields = Fields(bytes);
-        if fields.take::<1>()? != [WALK_POSITION_FORMAT] {
-            return None;
+        if fields.take::<1>() != Some([WALK_POSITION_FORMAT]) {
+            return Ok(None);
         }
-        let root_done = match fields.take::<1>()? {
-            [0] => false,
-            [1] => true,
-            _ => return None,
+        let root_done = match fields.take::<1>() {
+            Some([0]) => false,
+            Some([1]) => true,
+            _ => return Ok(None),
         };
-        let lines = match fields.take::<1>()? {
-            [0] => None,
-            [1] => {
-                let path = String::from_utf8(fields.field()?.to_vec()).ok()?;
-                Some((path, LinePosition::from_bytes(fields.field()?)?))
+        let lines = match fields.take::<1>() {
+            Some([0]) => None,
+            Some([1]) => {
+                let Some(path) = fields.field() else {
+                    return Ok(None);
+                };
+                let Some(path) = copy_utf8_field(path, reader, scan_bytes)? else {
+                    return Ok(None);
+                };
+                let Some(lines) = fields.field().and_then(LinePosition::from_bytes) else {
+                    return Ok(None);
+                };
+                Some((path, lines))
             }
-            _ => return None,
+            _ => return Ok(None),
         };
         let mut frames = Vec::new();
         while !fields.0.is_empty() {
-            let name = String::from_utf8(fields.field()?.to_vec()).ok()?;
-            let page = match fields.optional()? {
-                Some(page) => Some(String::from_utf8(page.to_vec()).ok()?),
-                None => None,
+            let Some(name) = fields.field() else {
+                return Ok(None);
             };
-            let passed = usize::try_from(u64::from_be_bytes(fields.take::<8>()?)).ok()?;
+            let Some(name) = copy_utf8_field(name, reader, scan_bytes)? else {
+                return Ok(None);
+            };
+            let page = match fields.optional() {
+                Some(Some(page)) => {
+                    let Some(page) = copy_utf8_field(page, reader, scan_bytes)? else {
+                        return Ok(None);
+                    };
+                    Some(page)
+                }
+                Some(None) => None,
+                None => return Ok(None),
+            };
+            let Some(passed) = fields.take::<8>() else {
+                return Ok(None);
+            };
+            let Ok(passed) = usize::try_from(u64::from_be_bytes(passed)) else {
+                return Ok(None);
+            };
             frames.push(WalkFrame { name, page, passed });
         }
-        Some(Self {
+        Ok(Some(Self {
             root_done,
             frames,
             lines,
-        })
+        }))
     }
 }
 
-fn put_field(bytes: &mut Vec<u8>, field: &[u8]) {
-    bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
-    bytes.extend_from_slice(field);
+fn append_position_bytes(
+    bytes: &mut Vec<u8>,
+    field: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
+    for chunk in field.chunks(scan_bytes.max(char::MAX.len_utf8())) {
+        checkpoint(reader)?;
+        bytes.extend_from_slice(chunk);
+    }
+    Ok(())
 }
 
-fn put_optional(bytes: &mut Vec<u8>, field: Option<&[u8]>) {
+fn put_field(
+    bytes: &mut Vec<u8>,
+    field: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
+    append_position_bytes(
+        bytes,
+        &(field.len() as u32).to_be_bytes(),
+        reader,
+        scan_bytes,
+    )?;
+    append_position_bytes(bytes, field, reader, scan_bytes)
+}
+
+fn put_optional(
+    bytes: &mut Vec<u8>,
+    field: Option<&[u8]>,
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
     match field {
         Some(field) => {
-            bytes.push(1);
-            put_field(bytes, field);
+            append_position_bytes(bytes, &[1], reader, scan_bytes)?;
+            put_field(bytes, field, reader, scan_bytes)
         }
-        None => bytes.push(0),
+        None => append_position_bytes(bytes, &[0], reader, scan_bytes),
     }
 }
 
@@ -172,8 +251,14 @@ struct Walk {
 }
 
 impl GraphFsResolver<'_, '_> {
-    pub(super) fn find_walk(&self, path: &str, cursor: Option<&str>) -> Result<WalkOutput> {
-        self.walk(path, true, WalkVerb::Find, &format!("find {path}"), cursor)
+    pub(super) fn find_walk(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<WalkOutput> {
+        let listing = copy_text_parts(&["find ", path], reader, self.options.page_byte_cap)?;
+        self.walk(path, true, WalkVerb::Find, &listing, cursor, reader)
     }
 
     pub(super) fn grep_walk(
@@ -182,15 +267,22 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         recursive: bool,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
         let flag = if recursive { " -r" } else { "" };
-        let listing = format!("grep{flag} {}:{pattern} {path}", pattern.len());
+        let prefix = format!("grep{flag} {}:", pattern.len());
+        let listing = copy_text_parts(
+            &[&prefix, pattern, " ", path],
+            reader,
+            self.options.page_byte_cap,
+        )?;
         self.walk(
             path,
             recursive,
             WalkVerb::Grep { pattern },
             &listing,
             cursor,
+            reader,
         )
     }
 
@@ -205,18 +297,35 @@ impl GraphFsResolver<'_, '_> {
         verb: WalkVerb<'_>,
         listing: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
-        let scope = self.cursor_scope(listing);
-        let mut at: WalkPosition = scope.open(cursor)?.unwrap_or_default();
+        let scope = self.cursor_scope_with(listing, || checkpoint(reader))?;
+        let mut at = scope
+            .open_with(
+                cursor,
+                self.options.page_byte_cap.max(char::MAX.len_utf8()),
+                || checkpoint(reader),
+                |bytes| WalkPosition::from_bytes(bytes, reader, self.options.page_byte_cap),
+            )?
+            .unwrap_or_default();
         let mut walk = Walk {
             out: CommandOutputBuilder::new(self.options),
             total: 0,
             receipt: None,
         };
-        let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk)?;
+        let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk, reader)?;
         Ok(WalkOutput {
             bytes: walk.out.into_bytes(),
-            next_cursor: cut.then(|| scope.seal(&at)),
+            next_cursor: cut
+                .then(|| {
+                    let position = at.to_bytes(reader, self.options.page_byte_cap)?;
+                    scope.seal_bytes_with(
+                        &position,
+                        self.options.page_byte_cap.max(char::MAX.len_utf8()),
+                        || checkpoint(reader),
+                    )
+                })
+                .transpose()?,
             total: walk.total,
             receipt: walk.receipt,
         })
@@ -231,15 +340,21 @@ impl GraphFsResolver<'_, '_> {
         verb: WalkVerb<'_>,
         at: &mut WalkPosition,
         walk: &mut Walk,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<bool> {
         let mut steps = 0;
         if !at.root_done {
-            if !self.coreutils_path_visible(root)? {
+            if !self.coreutils_path_visible(root, reader)? {
                 return Ok(false);
             }
             let lines = lines_of(&mut at.lines, root);
-            if let Visited::Cut(lines) = self.visit(verb, root, false, lines, walk)? {
-                at.lines = lines.map(|lines| (root.to_owned(), lines));
+            if let Visited::Cut(lines) = self.visit(verb, root, false, lines, walk, reader)? {
+                at.lines = lines
+                    .map(|lines| {
+                        copy_text_parts(&[root], reader, self.options.page_byte_cap)
+                            .map(|path| (path, lines))
+                    })
+                    .transpose()?;
                 return Ok(true);
             }
             if !recursive {
@@ -255,8 +370,9 @@ impl GraphFsResolver<'_, '_> {
             // The entry the last page ended inside: finished first, whatever
             // came into its listing before it since.
             steps += 1;
-            if self.coreutils_path_visible(&path)?
-                && let Visited::Cut(lines) = self.visit(verb, &path, false, Some(lines), walk)?
+            if self.coreutils_path_visible(&path, reader)?
+                && let Visited::Cut(lines) =
+                    self.visit(verb, &path, false, Some(lines), walk, reader)?
             {
                 at.lines = lines.map(|lines| (path, lines));
                 return Ok(true);
@@ -265,8 +381,13 @@ impl GraphFsResolver<'_, '_> {
         let mut dirs: Vec<String> = Vec::with_capacity(at.frames.len());
         for frame in &at.frames {
             let dir = match dirs.last() {
-                Some(parent) => join_graph_path(parent, &frame.name),
-                None => root.to_owned(),
+                Some(parent) => join_graph_path_with_reader(
+                    parent,
+                    &frame.name,
+                    reader,
+                    self.options.page_byte_cap,
+                )?,
+                None => copy_text_parts(&[root], reader, self.options.page_byte_cap)?,
             };
             dirs.push(dir);
         }
@@ -281,7 +402,11 @@ impl GraphFsResolver<'_, '_> {
                 Some(read) => read,
                 None => {
                     steps += 1;
-                    let page = self.readdir(&dirs[depth], at.frames[depth].page.as_deref())?;
+                    let page = self.readdir_with_reader(
+                        &dirs[depth],
+                        at.frames[depth].page.as_deref(),
+                        reader,
+                    )?;
                     if let Some(read) = page.read_receipt() {
                         fold_receipt(&mut walk.receipt, read.clone());
                     }
@@ -293,8 +418,14 @@ impl GraphFsResolver<'_, '_> {
                 .get(index)
                 .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
                 .cloned();
-            let after = page.entry_cursor(index).map(str::to_owned);
-            let next_page = page.next_cursor().map(str::to_owned);
+            let after = page
+                .entry_cursor(index)
+                .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                .transpose()?;
+            let next_page = page
+                .next_cursor()
+                .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                .transpose()?;
             pages[depth] = Some((page, index));
             let Some(entry) = entry else {
                 // This page is walked: on to the listing's next page, or back up.
@@ -311,10 +442,15 @@ impl GraphFsResolver<'_, '_> {
                 continue;
             };
             steps += 1;
-            let child = join_graph_path(&dirs[depth], entry.name());
+            let child = join_graph_path_with_reader(
+                &dirs[depth],
+                entry.name(),
+                reader,
+                self.options.page_byte_cap,
+            )?;
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
-            if self.coreutils_path_visible(&child)? {
-                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, None, walk)? {
+            if self.coreutils_path_visible(&child, reader)? {
+                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, None, walk, reader)? {
                     // The next page finishes this entry, then goes on after
                     // it: the frame passes it now, and a directory's own
                     // frame opens, so its tree still follows it.
@@ -322,7 +458,11 @@ impl GraphFsResolver<'_, '_> {
                         pass(&mut at.frames[depth], &mut pages[depth], after);
                         if is_dir {
                             at.frames.push(WalkFrame {
-                                name: entry.name().to_owned(),
+                                name: copy_text_parts(
+                                    &[entry.name()],
+                                    reader,
+                                    self.options.page_byte_cap,
+                                )?,
                                 page: None,
                                 passed: 0,
                             });
@@ -334,7 +474,7 @@ impl GraphFsResolver<'_, '_> {
                 if is_dir {
                     pass(&mut at.frames[depth], &mut pages[depth], after);
                     at.frames.push(WalkFrame {
-                        name: entry.name().to_owned(),
+                        name: copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?,
                         page: None,
                         passed: 0,
                     });
@@ -355,13 +495,12 @@ impl GraphFsResolver<'_, '_> {
         is_dir: bool,
         lines: Option<LinePosition>,
         walk: &mut Walk,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Visited> {
         match verb {
             WalkVerb::Find => {
-                let mut line = path.to_owned();
-                line.push('\n');
                 let from = lines.map_or(0, |lines| lines.printed);
-                match walk.out.push_line(&line, from) {
+                match walk.out.push_line_parts(&[path, "\n"], from) {
                     None => {
                         walk.total += 1;
                         Ok(Visited::Done)
@@ -371,20 +510,23 @@ impl GraphFsResolver<'_, '_> {
             }
             WalkVerb::Grep { .. } if is_dir => Ok(Visited::Done),
             WalkVerb::Grep { pattern } => {
-                let read = self.read_file(path)?;
+                let read = self.read_file_with_reader(path, reader)?;
                 if let Some(receipt) = read.receipt {
                     fold_receipt(&mut walk.receipt, receipt);
                 }
                 let Some(file) = read.value else {
                     return Ok(Visited::Done);
                 };
-                let (matched, next) = page_lines(
+                let (matched, next) = page_grep_lines(
                     file.bytes(),
                     lines.unwrap_or_default(),
                     &mut walk.out,
                     usize::MAX,
-                    |line| line.contains(pattern).then(|| format!("{path}:{line}\n")),
-                );
+                    reader,
+                    self.options.page_byte_cap,
+                    pattern,
+                    path,
+                )?;
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))
             }
@@ -392,8 +534,6 @@ impl GraphFsResolver<'_, '_> {
     }
 }
 
-/// The lines to resume in the walk root at `path`: the saved ones, when they
-/// belong to it.
 fn lines_of(saved: &mut Option<(String, LinePosition)>, path: &str) -> Option<LinePosition> {
     saved
         .take()

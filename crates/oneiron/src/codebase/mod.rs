@@ -24,7 +24,8 @@ pub use self::ingest::{
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
 };
 pub(crate) use self::ingest::{
-    read_asset_blob_in_txn, read_asset_blob_sighted_in_txn, validate_project_id,
+    read_asset_blob_in_txn, read_asset_blob_sighted_in_txn,
+    read_asset_blob_sighted_in_txn_with_reader, validate_project_id,
 };
 pub(crate) use self::instructions::code_instruction_handles_in;
 pub use self::instructions::{CODE_INSTRUCTION_FILE_NAMES, CodeInstructionHandle};

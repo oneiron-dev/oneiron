@@ -1,5 +1,6 @@
 pub mod export;
 pub(crate) mod secret_scan;
+pub use self::secret_scan::{ReadPacing, read_cooperatively};
 
 mod actor_content;
 mod agent_definition_create;

@@ -16,8 +16,9 @@ impl GraphFsResolver<'_, '_> {
         &self,
         path: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
-        self.listdir_claims_by_id_with_fetch(path, cursor, GRAPH_FS_MAX_PAGE_ENTRIES)
+        self.listdir_claims_by_id_with_fetch(path, cursor, GRAPH_FS_MAX_PAGE_ENTRIES, reader)
     }
 
     pub(super) fn listdir_claims_by_id_with_fetch(
@@ -25,9 +26,10 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         cursor: Option<&str>,
         fetch: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
         let vault = self.scoped_read.vault();
-        self.claim_id_page(path, cursor, fetch, |after, limit| {
+        self.claim_id_page(path, cursor, fetch, reader, |after, limit| {
             let ids = vault.entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
             let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
             Ok(IdScanPage { ids, resume_after })
@@ -39,20 +41,27 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         subject: &EntityId,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
         if !self.scoped_read.is_entity_readable(subject)? {
-            return Ok(empty_page(path, self.options.mount));
+            return empty_page(path, self.options, reader);
         }
         let vault = self.scoped_read.vault();
-        self.claim_id_page(path, cursor, GRAPH_FS_MAX_PAGE_ENTRIES, |after, limit| {
-            vault.sources_page(
-                subject,
-                EdgeKind::ClaimOf,
-                Some(ENTITY_TYPE_CLAIM),
-                after,
-                limit,
-            )
-        })
+        self.claim_id_page(
+            path,
+            cursor,
+            GRAPH_FS_MAX_PAGE_ENTRIES,
+            reader,
+            |after, limit| {
+                vault.sources_page(
+                    subject,
+                    EdgeKind::ClaimOf,
+                    Some(ENTITY_TYPE_CLAIM),
+                    after,
+                    limit,
+                )
+            },
+        )
     }
 
     /// One page of the claims `ids_after` names in id order, of those this
@@ -63,17 +72,18 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         cursor: Option<&str>,
         fetch: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
         ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<IdScanPage>,
     ) -> Result<GraphFsPage> {
         let scope = self.cursor_scope(path);
         let after: Option<EntityId> = scope.open(cursor)?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_listed = after;
         let mut receipt = self.scoped_read.read_receipt(None, 0)?;
         let run = self.device_admitted_run(after, fetch, ids_after)?;
         for id in &run.ids {
-            if self.read_live_into(*id, &mut receipt)?.is_none() {
+            if self.read_live_into(*id, &mut receipt, reader)?.is_none() {
                 continue;
             }
             let entry = GraphFsEntry::file(id.to_hex(), None);
@@ -86,7 +96,9 @@ impl GraphFsResolver<'_, '_> {
         if next_cursor.is_none() {
             next_cursor = run.resume_after.map(|id| scope.seal(&id));
         }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
+        Ok(builder
+            .finish(next_cursor, reader)?
+            .with_read_receipt(receipt))
     }
 
     /// Up to `fetch` ids `ids_after` names after `after`. On this device the

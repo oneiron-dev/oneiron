@@ -18,14 +18,11 @@
 use heed::RoTxn;
 use zeroize::Zeroizing;
 
-use super::super::super::container::{
-    Stop, masked_retained_repo_copy, walk_retained_repo_members,
-    walk_retained_repo_members_with_hidden,
-};
+use super::super::super::container::{ContainerReader, Stop};
 use super::super::super::lift_history::{LiftFamily, owner_kept_in_txn};
 use super::super::known_marks::known_leaf_hits;
 use super::super::offset;
-use super::validate_retained_repo_copy;
+use super::validate_retained_repo_copy_with_reader;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -77,7 +74,11 @@ impl<'a> RepoKnownCheck<'a> {
 
     /// Each place a known value takes in `bytes`, its own and each member's,
     /// read the retained repository way, as far as the walk reads.
-    fn places(&self, bytes: &[u8]) -> Result<Vec<(Vec<MemberStep>, (u64, u64))>> {
+    fn places(
+        &self,
+        bytes: &[u8],
+        reader: &ContainerReader,
+    ) -> Result<Vec<(Vec<MemberStep>, (u64, u64))>> {
         if self.owner_kept {
             return Ok(Vec::new());
         }
@@ -95,7 +96,7 @@ impl<'a> RepoKnownCheck<'a> {
         };
         // A container no reader here reads is checked as far as it reads,
         // as the sweep marks it: its sealed bytes show a reader nothing more.
-        match walk_retained_repo_members(bytes, &mut visit) {
+        match reader.walk_retained_repo_members(bytes, &mut visit) {
             Ok(()) | Err(Stop::Refuse(_)) => Ok(found),
             Err(Stop::Fail(error)) => Err(error),
         }
@@ -111,7 +112,7 @@ impl<'a> RepoKnownCheck<'a> {
     ///
     /// # Errors
     /// A walk failure.
-    pub(crate) fn reads_known(&self, bytes: &[u8]) -> Result<bool> {
+    pub(crate) fn reads_known(&self, bytes: &[u8], reader: &ContainerReader) -> Result<bool> {
         if self.owner_kept {
             return Ok(false);
         }
@@ -128,7 +129,7 @@ impl<'a> RepoKnownCheck<'a> {
             Err(Stop::Refuse("known value"))
         };
         // A container no reader here reads shows a reader nothing more.
-        match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
+        match reader.walk_retained_repo_members_with_hidden(bytes, &mut visit) {
             Ok(()) | Err(Stop::Refuse(_)) => Ok(hit),
             Err(Stop::Fail(error)) => Err(error),
         }
@@ -145,9 +146,10 @@ pub(crate) fn retained_repo_known_places(
     bytes: &[u8],
     check: &RepoKnownCheck<'_>,
     places: &KeyPlaces,
+    reader: &ContainerReader,
 ) -> Result<KeyPlaces> {
     let mut joined = places.clone();
-    for (path, span) in check.places(bytes)? {
+    for (path, span) in check.places(bytes, reader)? {
         join_place(&mut joined, &path, span);
     }
     Ok(joined)
@@ -192,19 +194,29 @@ pub(crate) fn project_marked_retained_repo_blob(
     places: &KeyPlaces,
     check: Option<&RepoKnownCheck<'_>>,
 ) -> Option<Vec<u8>> {
+    project_marked_retained_repo_blob_with_reader(bytes, places, &ContainerReader::default(), check)
+}
+
+/// The same marked and known-value projection using one read's container schedule.
+pub(crate) fn project_marked_retained_repo_blob_with_reader(
+    bytes: &[u8],
+    places: &KeyPlaces,
+    reader: &ContainerReader,
+    check: Option<&RepoKnownCheck<'_>>,
+) -> Option<Vec<u8>> {
     if places.is_empty() {
         return None;
     }
-    let mut copy = match masked_retained_repo_copy(bytes, places) {
+    let mut copy = match reader.masked_retained_repo_copy(bytes, places) {
         Ok(copy) => Zeroizing::new(copy),
         Err(Stop::Refuse(_) | Stop::Fail(_)) => return None,
     };
-    match validate_retained_repo_copy(&copy) {
+    match validate_retained_repo_copy_with_reader(&copy, reader) {
         Ok(None) => {}
         Ok(Some(_)) | Err(_) => return None,
     }
     if let Some(check) = check {
-        match check.reads_known(&copy) {
+        match check.reads_known(&copy, reader) {
             Ok(false) => {}
             Ok(true) | Err(_) => return None,
         }

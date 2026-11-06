@@ -3,6 +3,10 @@
 //! Child modules own masking, container handling, lift history and read-release rules.
 
 mod container;
+mod cooperative;
+
+pub use self::cooperative::read_cooperatively;
+pub use oneiron_store::batch::secret_scan::container::ReadPacing;
 mod lift_history;
 mod mask;
 mod message_parts;
@@ -16,8 +20,9 @@ use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
-    RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    live_content_hit, masked_copy, scan_text_content, served_masked_copy, tree_rebuilt_copy,
+    ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
+    is_sealed, live_content_hit, masked_copy, scan_text_content, served_masked_copy,
+    tree_rebuilt_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -40,7 +45,8 @@ pub(crate) use self::mask::carrier::{
 pub(super) use self::mask::{mask_batch_ops, mask_batch_ops_for_record_document};
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::{
-    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+    RepoKnownCheck, project_marked_retained_repo_blob,
+    project_marked_retained_repo_blob_with_reader, retained_repo_known_places,
 };
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,

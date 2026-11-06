@@ -115,12 +115,28 @@ impl CursorScope {
 
     /// The position a token sealed, if this scope sealed it.
     pub fn open<P: SealedPosition>(&self, token: Option<&str>) -> Result<Option<P>> {
+        self.open_with(
+            token,
+            usize::MAX,
+            || Ok(()),
+            |bytes| Ok(P::from_bytes(bytes)),
+        )
+    }
+
+    /// Authenticates the token before running a fallible position decoder.
+    pub fn open_with<P>(
+        &self,
+        token: Option<&str>,
+        quantum: usize,
+        mut checkpoint: impl FnMut() -> Result<()>,
+        decode: impl FnOnce(&[u8]) -> Result<Option<P>>,
+    ) -> Result<Option<P>> {
         token
             .map(|token| {
-                self.open_bytes(token)
-                    .as_deref()
-                    .and_then(P::from_bytes)
-                    .ok_or_else(invalid_cursor)
+                let bytes = self
+                    .open_bytes_with(token, quantum, &mut checkpoint)?
+                    .ok_or_else(invalid_cursor)?;
+                decode(&bytes)?.ok_or_else(invalid_cursor)
             })
             .transpose()
     }
@@ -130,55 +146,143 @@ impl CursorScope {
     /// stream keyed by that tag. Two tokens never compare equal, even for one
     /// position, so comparing them says nothing about where a walk stopped.
     pub fn seal_bytes(&self, position: &[u8]) -> String {
+        self.seal_bytes_with(position, usize::MAX, || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    pub fn seal_bytes_with(
+        &self,
+        position: &[u8],
+        quantum: usize,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<String> {
+        let quantum = quantum.max(1);
+        checkpoint()?;
         let mut nonce = [0; SEALED_NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
-        let tag = self.tag(&nonce, position);
+        let tag = self.tag_with(&nonce, position, quantum, &mut checkpoint)?;
         let mut token = nonce.to_vec();
         token.extend_from_slice(&tag);
-        token.extend_from_slice(position);
-        self.xor_stream(&tag, &mut token[SEALED_NONCE_LEN + SEALED_TAG_LEN..]);
-        bytes_to_hex_lower(&token)
+        for chunk in position.chunks(quantum) {
+            checkpoint()?;
+            token.extend_from_slice(chunk);
+        }
+        self.xor_stream_with(
+            &tag,
+            &mut token[SEALED_NONCE_LEN + SEALED_TAG_LEN..],
+            quantum,
+            &mut checkpoint,
+        )?;
+        let mut encoded = String::new();
+        for chunk in token.chunks((quantum / 2).max(1)) {
+            checkpoint()?;
+            encoded.push_str(&bytes_to_hex_lower(chunk));
+        }
+        Ok(encoded)
     }
 
     pub fn open_bytes(&self, token: &str) -> Option<Vec<u8>> {
-        if !token.len().is_multiple_of(2) || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return None;
+        self.open_bytes_with(token, usize::MAX, || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    pub fn open_bytes_with(
+        &self,
+        token: &str,
+        quantum: usize,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<Option<Vec<u8>>> {
+        let quantum = quantum.max(1);
+        checkpoint()?;
+        if !token.len().is_multiple_of(2) {
+            return Ok(None);
         }
-        let bytes = (0..token.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
-            .collect::<Option<Vec<u8>>>()?;
-        let (nonce, rest) = bytes.split_first_chunk::<SEALED_NONCE_LEN>()?;
-        let (tag, sealed) = rest.split_first_chunk::<SEALED_TAG_LEN>()?;
-        let mut position = sealed.to_vec();
-        self.xor_stream(tag, &mut position);
-        let expected = self.tag(nonce, &position);
+        let mut bytes = Vec::new();
+        for chunk in token.as_bytes().chunks(quantum.max(2) / 2 * 2) {
+            checkpoint()?;
+            if !chunk.iter().all(|byte| byte.is_ascii_hexdigit()) {
+                return Ok(None);
+            }
+            for pair in chunk.chunks_exact(2) {
+                let Some(byte) = std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                else {
+                    return Ok(None);
+                };
+                bytes.push(byte);
+            }
+        }
+        let Some((nonce, rest)) = bytes.split_first_chunk::<SEALED_NONCE_LEN>() else {
+            return Ok(None);
+        };
+        let Some((tag, sealed)) = rest.split_first_chunk::<SEALED_TAG_LEN>() else {
+            return Ok(None);
+        };
+        let mut position = Vec::new();
+        for chunk in sealed.chunks(quantum) {
+            checkpoint()?;
+            position.extend_from_slice(chunk);
+        }
+        self.xor_stream_with(tag, &mut position, quantum, &mut checkpoint)?;
+        let expected = self.tag_with(nonce, &position, quantum, &mut checkpoint)?;
         let mismatch = expected
             .iter()
             .zip(tag)
             .fold(0, |acc, (left, right)| acc | (left ^ right));
-        (mismatch == 0).then_some(position)
+        Ok((mismatch == 0).then_some(position))
     }
 
     pub fn tag(&self, nonce: &[u8], position: &[u8]) -> [u8; SEALED_TAG_LEN] {
+        self.tag_with(nonce, position, usize::MAX, &mut || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    fn tag_with(
+        &self,
+        nonce: &[u8],
+        position: &[u8],
+        quantum: usize,
+        checkpoint: &mut impl FnMut() -> Result<()>,
+    ) -> Result<[u8; SEALED_TAG_LEN]> {
         let mut hasher = blake3::Hasher::new_keyed(&self.0);
         hasher.update(b"tag");
         hasher.update(nonce);
-        hasher.update(position);
+        for chunk in position.chunks(quantum.max(1)) {
+            checkpoint()?;
+            hasher.update(chunk);
+        }
         let mut tag = [0; SEALED_TAG_LEN];
         tag.copy_from_slice(&hasher.finalize().as_bytes()[..SEALED_TAG_LEN]);
-        tag
+        Ok(tag)
     }
 
     pub fn xor_stream(&self, tag: &[u8], bytes: &mut [u8]) {
+        self.xor_stream_with(tag, bytes, usize::MAX, &mut || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    fn xor_stream_with(
+        &self,
+        tag: &[u8],
+        bytes: &mut [u8],
+        quantum: usize,
+        checkpoint: &mut impl FnMut() -> Result<()>,
+    ) -> Result<()> {
         let mut hasher = blake3::Hasher::new_keyed(&self.0);
         hasher.update(b"stream");
         hasher.update(tag);
-        let mut stream = vec![0; bytes.len()];
-        hasher.finalize_xof().fill(&mut stream);
-        for (byte, key) in bytes.iter_mut().zip(stream) {
-            *byte ^= key;
+        let mut output = hasher.finalize_xof();
+        let mut stream = Vec::new();
+        for chunk in bytes.chunks_mut(quantum.max(1)) {
+            checkpoint()?;
+            stream.resize(chunk.len(), 0);
+            output.fill(&mut stream);
+            for (byte, key) in chunk.iter_mut().zip(&stream) {
+                *byte ^= key;
+            }
         }
+        Ok(())
     }
 }
 

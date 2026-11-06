@@ -3,13 +3,14 @@
 
 pub(crate) use oneiron_store::graph_fs::snapshot::*;
 
+use super::coreutils_text::{checkpoint, copy_text_parts, copy_utf8_field};
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 use super::paging::{PageBuilder, SealedPosition};
 use super::readdir::GraphFsFileRead;
 use crate::claim::ScopedRead;
-use crate::codebase::read_asset_blob_sighted_in_txn;
+use crate::codebase::read_asset_blob_sighted_in_txn_with_reader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::PointRead;
@@ -83,16 +84,31 @@ impl GraphFsResolver<'_, '_> {
 
     /// Binds a public continuation even when the underlying coreutil uses a
     /// byte offset or a fixed-directory name internally.
-    pub(crate) fn open_public_cursor(
+    pub(crate) fn open_public_cursor_with_reader(
         &self,
         call: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<String>> {
-        self.cursor_scope(call).open(cursor)
+        let scope = self.cursor_scope_with(call, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| copy_utf8_field(bytes, reader, quantum),
+        )
     }
 
-    pub(crate) fn seal_public_cursor(&self, call: &str, cursor: &str) -> String {
-        self.cursor_scope(call).seal(&cursor.to_owned())
+    pub(crate) fn seal_public_cursor_with_reader(
+        &self,
+        call: &str,
+        cursor: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<String> {
+        let scope = self.cursor_scope_with(call, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        scope.seal_bytes_with(cursor.as_bytes(), quantum, || checkpoint(reader))
     }
 
     /// Imported file states share their snapshot's recorded transaction
@@ -123,44 +139,97 @@ impl GraphFsResolver<'_, '_> {
         Ok(read.value)
     }
 
-    pub(super) fn snapshot_visible(&self, path: &str) -> Result<bool> {
+    pub(super) fn snapshot_visible(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<bool> {
         let Some(_) = self.snapshot else {
             return Ok(true);
         };
         if path == "/" {
             return self
-                .snapshot_entries(path)
+                .snapshot_entries(path, reader)
                 .map(|entries| !entries.is_empty());
         }
-        if self.snapshot_file(path)?.value.is_some() {
+        if self
+            .snapshot_file_with_reader(path, reader)?
+            .value
+            .is_some()
+        {
             return Ok(true);
         }
-        self.snapshot_entries(path)
+        self.snapshot_entries(path, reader)
             .map(|entries| !entries.is_empty())
     }
 
-    pub(super) fn snapshot_readdir(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let entries = self.snapshot_entries(path)?;
-        let scope = self.cursor_scope(&format!("snapshot readdir {path}"));
-        let after: Option<String> = scope.open(cursor)?;
-        let mut page = PageBuilder::new(path, self.options);
-        let mut last = None;
+    pub(super) fn snapshot_readdir(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
+        let entries = self.snapshot_entries(path, reader)?;
+        let listing = copy_text_parts(
+            &["snapshot readdir ", path],
+            reader,
+            self.options.page_byte_cap,
+        )?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let after: Option<String> = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| copy_utf8_field(bytes, reader, quantum),
+        )?;
+        let mut page = PageBuilder::new(path, self.options, reader)?;
+        let mut last: Option<String> = None;
         let mut next = None;
         for entry in entries {
             if after.as_deref().is_some_and(|after| entry.name() <= after) {
                 continue;
             }
-            let after = scope.seal(&entry.name().to_owned());
-            if !page.try_push_after(entry.clone(), after) {
-                next = last.as_ref().map(|last| scope.seal(last));
+            let after =
+                scope.seal_bytes_with(entry.name().as_bytes(), quantum, || checkpoint(reader))?;
+            let copied_entry = GraphFsEntry {
+                name: copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?,
+                kind: entry.kind,
+                target: entry
+                    .target
+                    .as_deref()
+                    .map(|target| copy_text_parts(&[target], reader, self.options.page_byte_cap))
+                    .transpose()?,
+                cursor: entry
+                    .cursor
+                    .as_deref()
+                    .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                    .transpose()?,
+                byte_len: entry.byte_len,
+            };
+            if !page.try_push_after(copied_entry, after) {
+                next = last
+                    .as_ref()
+                    .map(|last| {
+                        scope.seal_bytes_with(last.as_bytes(), quantum, || checkpoint(reader))
+                    })
+                    .transpose()?;
                 break;
             }
-            last = Some(entry.name().to_owned());
+            last = Some(copy_text_parts(
+                &[entry.name()],
+                reader,
+                self.options.page_byte_cap,
+            )?);
         }
-        Ok(page.finish(next))
+        page.finish(next, reader)
     }
 
-    fn snapshot_entries(&self, path: &str) -> Result<Vec<GraphFsEntry>> {
+    fn snapshot_entries(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Vec<GraphFsEntry>> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         self.scoped_read
             .read_projected_opaque(
@@ -188,10 +257,15 @@ impl GraphFsResolver<'_, '_> {
                     let prefix = if path == "/" {
                         String::new()
                     } else {
-                        format!("{}/", path.trim_start_matches('/'))
+                        copy_text_parts(
+                            &[path.trim_start_matches('/'), "/"],
+                            reader,
+                            self.options.page_byte_cap,
+                        )?
                     };
                     let mut entries = BTreeMap::new();
                     for file in &snapshot.files {
+                        checkpoint(reader)?;
                         if withheld.contains(&file.path) {
                             continue;
                         }
@@ -206,12 +280,15 @@ impl GraphFsResolver<'_, '_> {
                             Some((name, _)) => (name, true),
                             None => (rest, false),
                         };
+                        let entry_name =
+                            copy_text_parts(&[name], reader, self.options.page_byte_cap)?;
                         let entry = if directory {
-                            GraphFsEntry::directory(name)
+                            GraphFsEntry::directory(entry_name)
                         } else {
-                            GraphFsEntry::file(name, usize::try_from(file.size_bytes).ok())
+                            GraphFsEntry::file(entry_name, usize::try_from(file.size_bytes).ok())
                         };
-                        entries.insert(name.to_owned(), entry);
+                        let key = copy_text_parts(&[name], reader, self.options.page_byte_cap)?;
+                        entries.insert(key, entry);
                     }
                     Ok(entries.into_values().collect())
                 },
@@ -220,6 +297,14 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub(super) fn snapshot_file(&self, path: &str) -> Result<GraphFsFileRead> {
+        self.snapshot_file_with_reader(path, &crate::batch::secret_scan::ContainerReader::default())
+    }
+
+    pub(super) fn snapshot_file_with_reader(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsFileRead> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         let read = self.scoped_read.read_projected_opaque(
             &[PointRead::id(repo)],
@@ -240,7 +325,15 @@ impl GraphFsResolver<'_, '_> {
                     return Err(Error::EntityNotFound);
                 }
                 let relative = path.trim_start_matches('/');
-                let Some(file) = snapshot.files.iter().find(|file| file.path == relative) else {
+                let mut selected = None;
+                for candidate in &snapshot.files {
+                    checkpoint(reader)?;
+                    if candidate.path == relative {
+                        selected = Some(candidate);
+                        break;
+                    }
+                }
+                let Some(file) = selected else {
                     return Ok(None);
                 };
                 let vault = self.scoped_read.vault();
@@ -260,16 +353,20 @@ impl GraphFsResolver<'_, '_> {
                 let marked = if owner {
                     None
                 } else {
-                    vault.repo_marked_asset_copy_in_txn(txn, &file.content_hash)?
+                    vault.repo_marked_asset_copy_in_txn_with_reader(
+                        txn,
+                        &file.content_hash,
+                        reader,
+                    )?
                 };
                 Ok(Some(GraphFsFile {
-                    path: path.to_owned(),
+                    path: copy_text_parts(&[path], reader, self.options.page_byte_cap)?,
                     mount: self.options.mount,
                     // A body kept in its ASSET's file is masked as it is
                     // read, as the hosted door reads it (FIX 6557).
                     bytes: match marked {
                         Some(copy) => copy.into_bytes(),
-                        None => read_asset_blob_sighted_in_txn(
+                        None => read_asset_blob_sighted_in_txn_with_reader(
                             vault,
                             txn,
                             &file.content_hash,
@@ -278,6 +375,7 @@ impl GraphFsResolver<'_, '_> {
                             } else {
                                 crate::file_secret_marks::SecretSight::Masked
                             },
+                            reader,
                         )?,
                     },
                 }))

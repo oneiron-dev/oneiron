@@ -930,7 +930,11 @@ def mcp_input_dispatch(row):
         if 'mcp_served' in row:
             # The rows the verb reads by name: a continuation of its result is released only while they may leave.
             body += f'served.extend({row["mcp_served"]});\n'
-        if takes_task_decisions(row):
+        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls', 'graph_fs.find', 'graph_fs.readdir'):
+            body += (f'let (output, listed) = Box::pin(mcp_graph_fs_bytes(server, actor, surface, input, move |memory, input, pacing| memory.{method}_with_pacing(input, pacing))).await?;\n'
+                     'served.extend(listed);\n'
+                     'let output = output.map_err(mcp_facade_error)?;\n')
+        elif takes_task_decisions(row):
             # Its hooks stay here; the typed row alone crosses to the worker.
             body += (f'let (output, listed) = Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
                      '// Derived from the rows its reads listed, on a refusal too.\n'
@@ -1481,6 +1485,12 @@ def facade_dispatch(facade_rows):
                     &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
                 ).into())
             }\n'''
+            continue
+        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls', 'graph_fs.find', 'graph_fs.readdir'):
+            dispatch += f"""async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{
+                super::graph_fs_doors::graph_fs_bytes(server, call, input, {json.dumps(name)}, move |memory, input, pacing| memory.{method}_with_pacing(input, pacing)).await
+            }}
+"""
             continue
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into

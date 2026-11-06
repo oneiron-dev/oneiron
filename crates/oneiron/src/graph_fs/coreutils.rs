@@ -13,15 +13,19 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, Retrieva
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
+use super::coreutils_text::{
+    HeadPosition, checkpoint, copy_text_parts, literal_grep_pattern, page_head_lines, text_counts,
+};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
 };
 
-use super::readdir::{normalize_path, parse_entity_id, path_components, sealed_is_absent};
+use super::readdir::{
+    normalize_path_with_reader, parse_entity_id, path_components_with_reader, sealed_is_absent,
+};
 
-use super::paging::{CommandOutputBuilder, TemporalCursor};
+use super::paging::{CommandOutputBuilder, SealedPosition, TemporalCursor};
 
 impl GraphFsResolver<'_, '_> {
     pub fn grep(
@@ -31,15 +35,32 @@ impl GraphFsResolver<'_, '_> {
         recursive: bool,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.grep_with_reader(
+            pattern,
+            path,
+            recursive,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn grep_with_reader(
+        &self,
+        pattern: &str,
+        path: &str,
+        recursive: bool,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if let Some(literal) = literal_grep_pattern(pattern)
             && recursive
             && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let page = self.grep_claims_pushdown(literal, &normalized, cursor)?;
+            let page = self.grep_claims_pushdown(literal, &normalized, cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,
@@ -54,7 +75,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let walk = self.grep_walk(pattern, &normalized, recursive, cursor)?;
+        let walk = self.grep_walk(pattern, &normalized, recursive, cursor, reader)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Grep,
             started,
@@ -75,14 +96,29 @@ impl GraphFsResolver<'_, '_> {
         sort_by_time: bool,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.ls_with_reader(
+            path,
+            sort_by_time,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn ls_with_reader(
+        &self,
+        path: &str,
+        sort_by_time: bool,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if sort_by_time
             && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
+            let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Ls,
                 started,
@@ -97,7 +133,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let page = self.readdir(&normalized, cursor)?;
+        let page = self.readdir_with_reader(&normalized, cursor, reader)?;
         let mut out = CommandOutputBuilder::new(self.options);
         let mut last_name = None;
         for entry in page.entries() {
@@ -136,13 +172,28 @@ impl GraphFsResolver<'_, '_> {
         newer_than: Option<u64>,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.find_with_reader(
+            path,
+            newer_than,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn find_with_reader(
+        &self,
+        path: &str,
+        newer_than: Option<u64>,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if let Some(newer_than) = newer_than {
             if self.snapshot.is_some() {
                 let walk = if self.snapshot_newer_than(newer_than)? {
-                    Some(self.find_walk(&normalized, cursor)?)
+                    Some(self.find_walk(&normalized, cursor, reader)?)
                 } else {
                     None
                 };
@@ -164,7 +215,7 @@ impl GraphFsResolver<'_, '_> {
                 );
             }
             let (bytes, next_cursor, total) =
-                self.find_newer_pushdown(&normalized, newer_than, cursor)?;
+                self.find_newer_pushdown(&normalized, newer_than, cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Find,
                 started,
@@ -179,7 +230,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let walk = self.find_walk(&normalized, cursor)?;
+        let walk = self.find_walk(&normalized, cursor, reader)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Find,
             started,
@@ -195,11 +246,24 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub fn cat(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsCommandOutput> {
+        self.cat_with_reader(
+            path,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn cat_with_reader(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let offset = parse_byte_cursor(cursor)?;
         let mut next_cursor = None;
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         let bytes = if let Some(file) = &read.value {
             let bytes = file.bytes();
             let start = offset.min(bytes.len());
@@ -242,27 +306,60 @@ impl GraphFsResolver<'_, '_> {
         lines: usize,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.head_with_reader(
+            path,
+            lines,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn head_with_reader(
+        &self,
+        path: &str,
+        lines: usize,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let scope = self.cursor_scope(&format!("head -n {lines} {path}"));
-        let from: HeadPosition = scope.open(cursor)?.unwrap_or_default();
+        let prefix = format!("head -n {lines} ");
+        let listing = copy_text_parts(&[&prefix, path], reader, self.options.page_byte_cap)?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let from: HeadPosition = scope
+            .open_with(
+                cursor,
+                quantum,
+                || checkpoint(reader),
+                |bytes| Ok(HeadPosition::from_bytes(bytes)),
+            )?
+            .unwrap_or_default();
         let mut out = CommandOutputBuilder::new(self.options);
         let mut next_cursor = None;
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         if let Some(file) = &read.value {
-            let (finished, next) = page_lines(
+            let (finished, next) = page_head_lines(
                 file.bytes(),
                 from.lines,
                 &mut out,
                 lines.saturating_sub(from.printed),
-                |line| Some(format!("{line}\n")),
-            );
-            next_cursor = next.map(|at| {
-                scope.seal(&HeadPosition {
-                    lines: at,
-                    printed: from.printed + finished,
+                reader,
+                self.options.page_byte_cap,
+            )?;
+            next_cursor = next
+                .map(|at| {
+                    scope.seal_bytes_with(
+                        &HeadPosition {
+                            lines: at,
+                            printed: from.printed + finished,
+                        }
+                        .to_bytes(),
+                        quantum,
+                        || checkpoint(reader),
+                    )
                 })
-            });
+                .transpose()?;
         }
         let total = out.entries();
         self.finish_coreutils_command(
@@ -280,13 +377,19 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub fn wc(&self, path: &str) -> Result<GraphFsCommandOutput> {
+        self.wc_with_reader(path, &crate::batch::secret_scan::ContainerReader::default())
+    }
+
+    pub(crate) fn wc_with_reader(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         let bytes = if let Some(file) = &read.value {
-            let text = String::from_utf8_lossy(file.bytes());
-            let lines = text.lines().count();
-            let words = text.split_whitespace().count();
+            let (lines, words) = text_counts(file.bytes(), reader, self.options.page_byte_cap)?;
             format!("{lines} {words} {} {path}\n", file.bytes().len()).into_bytes()
         } else {
             format!("0 0 0 {path}\n").into_bytes()
@@ -308,18 +411,26 @@ impl GraphFsResolver<'_, '_> {
     fn ls_claims_by_time_pushdown(
         &self,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        self.ls_claims_by_time_pushdown_with_scan_cap(cursor, GRAPH_FS_MAX_SCAN_ROWS)
+        self.ls_claims_by_time_pushdown_with_scan_cap(cursor, GRAPH_FS_MAX_SCAN_ROWS, reader)
     }
 
     pub(super) fn ls_claims_by_time_pushdown_with_scan_cap(
         &self,
         cursor: Option<&str>,
         max_scan_rows: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let scope = self.cursor_scope("ls -t /claims");
-        let cursor = scope.open::<TemporalCursor>(cursor)?;
+        let scope = self.cursor_scope_with("ls -t /claims", || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let cursor = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| Ok(TemporalCursor::from_bytes(bytes)),
+        )?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -338,7 +449,12 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal(&cursor)),
+                    next_cursor
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -362,7 +478,12 @@ impl GraphFsResolver<'_, '_> {
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal(&cursor)),
+                    last_emitted
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -377,8 +498,15 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         newer_than: u64,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        self.find_newer_pushdown_with_scan_cap(path, newer_than, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+        self.find_newer_pushdown_with_scan_cap(
+            path,
+            newer_than,
+            cursor,
+            GRAPH_FS_MAX_SCAN_ROWS,
+            reader,
+        )
     }
 
     pub(super) fn find_newer_pushdown_with_scan_cap(
@@ -387,10 +515,19 @@ impl GraphFsResolver<'_, '_> {
         newer_than: u64,
         cursor: Option<&str>,
         max_scan_rows: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let scope = self.cursor_scope(&format!("find -newer {newer_than} {path}"));
-        let cursor = scope.open::<TemporalCursor>(cursor)?;
+        let prefix = format!("find -newer {newer_than} ");
+        let listing = copy_text_parts(&[&prefix, path], reader, self.options.page_byte_cap)?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let cursor = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| Ok(TemporalCursor::from_bytes(bytes)),
+        )?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -413,7 +550,12 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal(&cursor)),
+                    next_cursor
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -426,13 +568,20 @@ impl GraphFsResolver<'_, '_> {
             if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))? {
                 continue;
             }
-            let Some(line) = self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id)? else {
+            let Some(line) =
+                self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id, reader)?
+            else {
                 continue;
             };
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal(&cursor)),
+                    last_emitted
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -447,6 +596,7 @@ impl GraphFsResolver<'_, '_> {
         rtxn: &heed::RoTxn<'_>,
         path: &str,
         id: &EntityId,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<String>> {
         let entity_type = self.entity_type_in(rtxn, id)?;
         let is_claim = entity_type == Some(ENTITY_TYPE_CLAIM);
@@ -461,17 +611,25 @@ impl GraphFsResolver<'_, '_> {
             "/claims" | "/claims/by-id" if is_claim => format!("/claims/{}", id.to_hex()),
             "/entities" => format!("/entities/{}", id.to_hex()),
             path if path.starts_with("/entities/") && path.ends_with(&id.to_hex()) => {
-                path.to_owned()
+                copy_text_parts(&[path], reader, self.options.page_byte_cap)?
             }
             _ => return Ok(None),
         };
-        Ok(Some(format!("{output}\n")))
+        Ok(Some(copy_text_parts(
+            &[&output, "\n"],
+            reader,
+            self.options.page_byte_cap,
+        )?))
     }
 
-    pub(super) fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
-        let components = path_components(path)?;
+    pub(super) fn coreutils_path_visible(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<bool> {
+        let components = path_components_with_reader(path, reader, self.options.page_byte_cap)?;
         if self.snapshot.is_some() {
-            return self.snapshot_visible(path);
+            return self.snapshot_visible(path, reader);
         }
         match components.as_slice() {
             ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),

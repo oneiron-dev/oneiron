@@ -12,10 +12,13 @@
 //! back writes the value it stands for again, and one that deletes the
 //! handle removes the secret.
 
+mod key_sort;
+
 use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::container::{ContainerReader, ReadProgress, withheld};
 use super::super::shapes::HANDLE_OPEN;
 use super::super::write_payload_hit;
 use super::{Masker, put_file_marks_in_txn};
@@ -294,20 +297,103 @@ impl LiftedKeys {
         txn: &RoTxn<'_>,
         texts: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<Self> {
-        let mut keys = Vec::new();
+        Self::of_in_txn_paced(store, txn, texts, None)
+    }
+
+    /// [`Self::of_in_txn`] with the caller's reader checked while collecting keys.
+    pub(crate) fn of_in_txn_with_reader(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        texts: impl IntoIterator<Item = impl AsRef<str>>,
+        reader: &ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Self> {
+        Self::of_in_txn_paced(store, txn, texts, Some((reader, scan_bytes)))
+    }
+
+    fn of_in_txn_paced(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        texts: impl IntoIterator<Item = impl AsRef<str>>,
+        reader: Option<(&ContainerReader, usize)>,
+    ) -> Result<Self> {
+        let mut keys: Vec<(String, String)> = Vec::new();
         for text in texts {
             let text = text.as_ref();
-            let hash = blake3::hash(text.as_bytes());
+            let hash = if let Some((reader, _)) = reader {
+                reader
+                    .pacing
+                    .checkpoint(ReadProgress::Member)
+                    .map_err(withheld)?;
+                let mut hash = blake3::Hasher::new();
+                for chunk in text.as_bytes().chunks(blake3::CHUNK_LEN) {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                    hash.update(chunk);
+                }
+                hash.finalize()
+            } else {
+                blake3::hash(text.as_bytes())
+            };
             let Some(file) = masked_file_in_txn(store, txn, hash.as_bytes())? else {
                 continue;
             };
             for key in &file.keys {
+                if let Some((reader, _)) = reader {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                }
                 let value = usize::try_from(key.start)
                     .ok()
                     .zip(usize::try_from(key.end).ok())
                     .and_then(|(start, end)| text.get(start..end))
                     .ok_or(Error::CorruptedIndex("a lifted text's key span"))?;
-                if value.is_empty() || keys.iter().any(|(held, _)| held == value) {
+                if value.is_empty() {
+                    continue;
+                }
+                let mut duplicate = false;
+                for (held, _) in &keys {
+                    if let Some((reader, _)) = reader {
+                        reader
+                            .pacing
+                            .checkpoint(ReadProgress::Member)
+                            .map_err(withheld)?;
+                    }
+                    let equal = if let Some((reader, scan_bytes)) = reader {
+                        if held.len() != value.len() {
+                            false
+                        } else {
+                            let scan_bytes = scan_bytes.max(1);
+                            let mut equal = true;
+                            for (held, value) in held
+                                .as_bytes()
+                                .chunks(scan_bytes)
+                                .zip(value.as_bytes().chunks(scan_bytes))
+                            {
+                                reader
+                                    .pacing
+                                    .checkpoint(ReadProgress::Member)
+                                    .map_err(withheld)?;
+                                if held != value {
+                                    equal = false;
+                                    break;
+                                }
+                            }
+                            equal
+                        }
+                    } else {
+                        held == value
+                    };
+                    if equal {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate {
                     continue;
                 }
                 let handle = store
@@ -319,7 +405,11 @@ impl LiftedKeys {
                 keys.push((value.to_owned(), format!("{HANDLE_OPEN}{handle}]")));
             }
         }
-        keys.sort_by_key(|(value, _)| std::cmp::Reverse(value.len()));
+        if let Some((reader, _)) = reader {
+            key_sort::sort_keys(&mut keys, reader)?;
+        } else {
+            keys.sort_by_key(|(value, _)| std::cmp::Reverse(value.len()));
+        }
         Ok(Self(keys))
     }
 
@@ -349,6 +439,29 @@ impl LiftedKeys {
     /// handle. `None` when it holds none.
     pub(crate) fn masked(&self, text: &str) -> Option<String> {
         swapped(text, self.0.iter().map(|(value, tag)| (value, tag)))
+    }
+
+    /// [`Self::masked`] with the caller's reader checked before each key.
+    pub(crate) fn masked_with_reader(
+        &self,
+        text: &str,
+        reader: &ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Option<String>> {
+        let mut out: Option<String> = None;
+        for (value, tag) in &self.0 {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
+            let current = out.as_deref().unwrap_or(text);
+            if let Some(masked) =
+                replace_nonempty_with_reader(current, value, tag, reader, scan_bytes)?
+            {
+                out = Some(masked);
+            }
+        }
+        Ok(out)
     }
 
     /// `text`, a writer's new text for the carrier, with each handle back as
@@ -514,6 +627,65 @@ impl MaskedText {
 }
 
 /// Where [`str::replace`] replaces `value` in `text`, in characters.
+fn replace_nonempty_with_reader(
+    text: &str,
+    value: &str,
+    tag: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<Option<String>> {
+    let mut out = None;
+    let mut position = 0;
+    while let Some(offset) = crate::graph_fs::find_literal(
+        &text.as_bytes()[position..],
+        value,
+        scan_bytes.max(1),
+        || {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)
+        },
+    )? {
+        reader
+            .pacing
+            .checkpoint(ReadProgress::Member)
+            .map_err(withheld)?;
+        let start = position + offset;
+        let output = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        push_masked_part(output, &text[position..start], reader, scan_bytes)?;
+        push_masked_part(output, tag, reader, scan_bytes)?;
+        position = start + value.len();
+    }
+    if let Some(output) = &mut out {
+        push_masked_part(output, &text[position..], reader, scan_bytes)?;
+    }
+    Ok(out)
+}
+
+fn push_masked_part(
+    out: &mut String,
+    text: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let mut start = 0;
+    while start < text.len() {
+        reader
+            .pacing
+            .checkpoint(ReadProgress::Member)
+            .map_err(withheld)?;
+        let mut end = start.saturating_add(quantum).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&text[start..end]);
+        start = end;
+    }
+    Ok(())
+}
+
 fn char_matches(text: &str, value: &str) -> Vec<Range<usize>> {
     let len = value.chars().count();
     let (mut found, mut chars, mut last) = (Vec::new(), 0, 0);

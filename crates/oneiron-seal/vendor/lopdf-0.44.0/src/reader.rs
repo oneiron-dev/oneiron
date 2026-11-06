@@ -827,6 +827,9 @@ impl Reader<'_> {
         }
         self.document.xref_start = xref_start;
 
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Xref { offset: xref_start })?;
+        }
         let (mut xref, mut trailer) = parser::xref_and_trailer(&self.buffer[xref_start..], &self)?;
 
         // Read previous Xrefs of linearized or incremental updated document.
@@ -841,6 +844,9 @@ impl Reader<'_> {
                 return Err(Error::Xref(XrefError::PrevStart));
             }
 
+            if let Some(admission) = self.decode_admission.as_deref() {
+                admission.checkpoint(decode_admission::ReadProgress::Xref { offset: prev as usize })?;
+            }
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
             crate::admitted::xref::merge_admitted(
                 &mut xref,
@@ -1191,13 +1197,11 @@ impl Reader<'_> {
 
         #[cfg(feature = "rayon")]
         {
-            self.document.objects = self
-                .document
-                .reference_table
-                .entries
-                .par_iter()
-                .filter_map(entries_filter_map)
-                .collect();
+            self.document.objects = if self.decode_admission.as_deref().is_some_and(|a| a.sequential()) {
+                self.document.reference_table.entries.iter().filter_map(entries_filter_map).collect()
+            } else {
+                self.document.reference_table.entries.par_iter().filter_map(entries_filter_map).collect()
+            };
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -1234,6 +1238,9 @@ impl Reader<'_> {
     }
 
     fn read_stream_content(&mut self, object_id: ObjectId) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Stream { id: object_id })?;
+        }
         let length = self.get_stream_length(object_id)?;
         let stream = self
             .document
@@ -1417,6 +1424,9 @@ impl Reader<'_> {
     }
 
     fn extract_raw_object(&mut self, offset: usize) -> Result<(ObjectId, Vec<u8>)> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Object { id: None, offset })?;
+        }
         if offset > self.buffer.len() {
             return Err(Error::InvalidOffset(offset));
         }
@@ -1491,6 +1501,9 @@ impl Reader<'_> {
     fn read_object(
         &self, offset: usize, expected_id: Option<ObjectId>, already_seen: &mut HashSet<ObjectId>,
     ) -> Result<(ObjectId, Object)> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            admission.checkpoint(decode_admission::ReadProgress::Object { id: expected_id, offset })?;
+        }
         if offset > self.buffer.len() {
             return Err(Error::InvalidOffset(offset));
         }

@@ -40,6 +40,7 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use oneiron_authority::federation::Sensitivity;
+use oneiron_store::batch::secret_scan::container::{ReadProgress, withheld};
 
 /// The band a file with keys in it carries.
 pub(crate) const MASKED_FILE_BAND: Sensitivity = Sensitivity::Restricted;
@@ -90,12 +91,59 @@ impl MaskedFile {
         places
     }
 
+    /// [`Self::places`] with the caller's reader checked while collecting spans.
+    fn places_with_reader(
+        &self,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<KeyPlaces> {
+        let spans = |keys: &[KeySpan]| -> Result<Vec<(u64, u64)>> {
+            keys.iter()
+                .map(|key| {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                    Ok((key.start, key.end))
+                })
+                .collect()
+        };
+        let mut places = Vec::with_capacity(self.members.len() + 1);
+        if !self.keys.is_empty() {
+            places.push((Vec::new(), spans(&self.keys)?));
+        }
+        for member in &self.members {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
+            let mut path = Vec::with_capacity(member.path.len());
+            for step in &member.path {
+                reader
+                    .pacing
+                    .checkpoint(ReadProgress::Member)
+                    .map_err(withheld)?;
+                path.push(*step);
+            }
+            places.push((path, spans(&member.keys)?));
+        }
+        Ok(places)
+    }
+
     /// Each place's handle texts, in [`Self::places`]' order (FIX 7944): a
     /// key's custody record's handle, `[secret sc12]`.
-    fn place_handles(&self, store: &Store, txn: &RoTxn<'_>) -> Result<PlaceHandles> {
+    fn place_handles(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<PlaceHandles> {
         let texts = |keys: &[KeySpan]| -> Result<Vec<Option<String>>> {
             keys.iter()
                 .map(|key| {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
                     Ok(store
                         .port_short_id_reference(txn, &key.custody)?
                         .map(|(handle, _)| super::known_value_index::handle_text(&handle)))
@@ -107,6 +155,10 @@ impl MaskedFile {
             handles.push(texts(&self.keys)?);
         }
         for member in &self.members {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
             handles.push(texts(&member.keys)?);
         }
         Ok(handles)
@@ -204,6 +256,39 @@ pub(crate) fn sighted_bytes_in_txn(
     digest: Option<&[u8; 32]>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
+    sighted_bytes_in_txn_with_reader(
+        store,
+        txn,
+        bytes,
+        digest,
+        sight,
+        &crate::batch::secret_scan::ContainerReader::default(),
+    )
+}
+
+fn hash_bytes_with_reader(
+    bytes: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<blake3::Hash> {
+    let mut hash = blake3::Hasher::new();
+    for chunk in bytes.chunks(blake3::CHUNK_LEN) {
+        reader
+            .pacing
+            .checkpoint(ReadProgress::Member)
+            .map_err(withheld)?;
+        hash.update(chunk);
+    }
+    Ok(hash.finalize())
+}
+
+pub(crate) fn sighted_bytes_in_txn_with_reader(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
+    sight: SecretSight,
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<Vec<u8>> {
     use crate::batch::secret_scan;
     if sight != SecretSight::Masked {
         return Ok(bytes);
@@ -211,12 +296,12 @@ pub(crate) fn sighted_bytes_in_txn(
     let hash = match digest {
         Some(digest) => {
             debug_assert!(
-                blake3::hash(&bytes).as_bytes() == digest,
+                hash_bytes_with_reader(&bytes, reader)?.as_bytes() == digest,
                 "a caller's digest names other bytes"
             );
             *digest
         }
-        None => *blake3::hash(&bytes).as_bytes(),
+        None => *hash_bytes_with_reader(&bytes, reader)?.as_bytes(),
     };
     let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
         // Bytes that lead as no container are none to the walk, so none is
@@ -227,13 +312,13 @@ pub(crate) fn sighted_bytes_in_txn(
         }
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
-        if secret_scan::is_sealed(&bytes, digest) {
+        if reader.is_sealed(&bytes, digest) {
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        let Some(reason) = secret_scan::write_tree_hit(&bytes, digest) else {
+        let Some(reason) = reader.write_tree_hit(&bytes, digest) else {
             return Ok(bytes);
         };
         // A key in what a reader shows is refused either way: the rebuild
@@ -241,24 +326,25 @@ pub(crate) fn sighted_bytes_in_txn(
         // refused here, before the rebuild pays for the same answer (FIX
         // 12280). Only the refusal's timing changes; a key no live member
         // holds reads no hit here and takes the rebuild below unchanged.
-        if secret_scan::live_content_hit(&bytes, digest).is_some() {
+        if reader.live_content_hit(&bytes, digest).is_some() {
             return Err(masked_copy_withheld(reason));
         }
         // A key only in the bytes no reader shows is gone from the copy
         // rebuilt through the whole tree, which leaves them out at every
         // level as a marked file's copy does: that copy is served once the
         // write door's scan reads it clean (FIX 11553, 12268, 12279).
-        let Some(copy) = secret_scan::tree_rebuilt_copy(&bytes, digest) else {
+        let Some(copy) = reader.tree_rebuilt_copy(&bytes, digest) else {
             return Err(masked_copy_withheld(reason));
         };
-        if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+        if let Some(reason) = reader.write_tree_hit(&copy, None) {
             return Err(masked_copy_withheld(reason));
         }
         return Ok(copy);
     };
-    let handles = file.place_handles(store, txn)?;
-    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles, digest)?;
-    if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+    let handles = file.place_handles(store, txn, reader)?;
+    let copy =
+        reader.served_masked_copy(&bytes, &file.places_with_reader(reader)?, &handles, digest)?;
+    if let Some(reason) = reader.write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)

@@ -10,7 +10,7 @@ use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::ClaimReadStatus;
 use crate::graph_fs::{
     GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsEntryKind,
-    GraphFsOptions, GraphFsResolver,
+    GraphFsOptions, GraphFsResolver, checkpoint, copy_text_parts, copy_utf8_field,
 };
 
 impl GraphFsMountRequest {
@@ -41,29 +41,50 @@ fn call_key(verb: &str, parameters: impl serde::Serialize) -> MemoryResult<Strin
         .map_err(|_| MemoryError::bad_request("graph-fs parameters did not encode"))
 }
 
+fn base64_output(
+    bytes: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> MemoryResult<String> {
+    // Non-final chunks contain complete three-byte base64 groups.
+    let quantum = (scan_bytes / 3).max(1) * 3;
+    let mut output = String::new();
+    for chunk in bytes.chunks(quantum) {
+        checkpoint(reader)?;
+        base64::engine::general_purpose::STANDARD.encode_string(chunk, &mut output);
+    }
+    Ok(output)
+}
+
 fn output(
     tree: &GraphFsResolver<'_, '_>,
     request: &GraphFsMountRequest,
     path: String,
     call: &str,
     result: GraphFsCommandOutput,
-) -> GraphFsOutput {
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> MemoryResult<GraphFsOutput> {
     let next_cursor = result
         .next_cursor()
-        .map(|cursor| tree.seal_public_cursor(call, cursor));
+        .map(|cursor| tree.seal_public_cursor_with_reader(call, cursor, reader))
+        .transpose()?;
     let plan = match result.decision() {
         GraphFsCoreutilsDecision::Pushdown => GraphFsPlan::Pushdown,
         GraphFsCoreutilsDecision::Walk => GraphFsPlan::Walk,
     };
     let read_receipt = result.read_receipt().cloned();
-    let (output, encoding) = match String::from_utf8(result.into_bytes()) {
-        Ok(text) => (text, GraphFsEncoding::Utf8),
-        Err(bytes) => (
-            base64::engine::general_purpose::STANDARD.encode(bytes.into_bytes()),
-            GraphFsEncoding::Base64,
-        ),
+    let scan_bytes = request.options().page_byte_cap();
+    let (output, encoding) = {
+        let bytes = result.into_bytes();
+        match copy_utf8_field(&bytes, reader, scan_bytes)? {
+            Some(text) => (text, GraphFsEncoding::Utf8),
+            None => (
+                base64_output(&bytes, reader, scan_bytes)?,
+                GraphFsEncoding::Base64,
+            ),
+        }
     };
-    GraphFsOutput {
+    Ok(GraphFsOutput {
         mount: descriptor(tree, request),
         path,
         output,
@@ -71,7 +92,7 @@ fn output(
         next_cursor,
         plan,
         read_receipt,
-    }
+    })
 }
 
 impl Memory<'_> {
@@ -89,37 +110,70 @@ impl Memory<'_> {
         &self,
         input: GraphFsPathRequest,
     ) -> MemoryResult<GraphFsDirectoryView> {
+        self.graph_fs_readdir_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same directory read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_readdir_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsDirectoryView> {
+        self.graph_fs_readdir_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_readdir_with_reader(
+        &self,
+        input: GraphFsPathRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsDirectoryView> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree =
-            self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
+        let options = input.mount.options();
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, options)?;
         let call = call_key("graph_fs.readdir", &input.path)?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let page = tree.readdir(&input.path, cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let page = tree.readdir_with_reader(&input.path, cursor.as_deref(), reader)?;
         let entries = page
             .entries()
             .iter()
-            .map(|entry| GraphFsEntryView {
-                name: entry.name().to_owned(),
-                kind: match entry.kind() {
-                    GraphFsEntryKind::Directory => GraphFsKind::Directory,
-                    GraphFsEntryKind::File => GraphFsKind::File,
-                    GraphFsEntryKind::Symlink => GraphFsKind::Symlink,
-                    GraphFsEntryKind::Cursor => GraphFsKind::Cursor,
-                },
-                target: entry.target().map(str::to_owned),
-                cursor: entry
-                    .cursor_token()
-                    .map(|cursor| tree.seal_public_cursor(&call, cursor)),
-                byte_len: entry.byte_len(),
+            .map(|entry| {
+                checkpoint(reader)?;
+                Ok(GraphFsEntryView {
+                    name: copy_text_parts(&[entry.name()], reader, options.page_byte_cap())?,
+                    kind: match entry.kind() {
+                        GraphFsEntryKind::Directory => GraphFsKind::Directory,
+                        GraphFsEntryKind::File => GraphFsKind::File,
+                        GraphFsEntryKind::Symlink => GraphFsKind::Symlink,
+                        GraphFsEntryKind::Cursor => GraphFsKind::Cursor,
+                    },
+                    target: entry
+                        .target()
+                        .map(|target| copy_text_parts(&[target], reader, options.page_byte_cap()))
+                        .transpose()?,
+                    cursor: entry
+                        .cursor_token()
+                        .map(|cursor| tree.seal_public_cursor_with_reader(&call, cursor, reader))
+                        .transpose()?,
+                    byte_len: entry.byte_len(),
+                })
             })
-            .collect();
+            .collect::<MemoryResult<Vec<_>>>()?;
         Ok(GraphFsDirectoryView {
             mount: descriptor(&tree, &input.mount),
-            path: page.path().to_owned(),
+            path: copy_text_parts(&[page.path()], reader, options.page_byte_cap())?,
             entries,
             next_cursor: page
                 .next_cursor()
-                .map(|cursor| tree.seal_public_cursor(&call, cursor)),
+                .map(|cursor| tree.seal_public_cursor_with_reader(&call, cursor, reader))
+                .transpose()?,
             read_receipt: page.read_receipt().cloned(),
         })
     }
@@ -128,18 +182,62 @@ impl Memory<'_> {
         self.graph_fs_bytes(input, "graph_fs.read_file")
     }
 
+    /// The same file read, with cooperative container-mask checkpoints.
+    /// Pacing carries no authority and changes no mount or cursor selection.
+    pub fn graph_fs_read_file_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            "graph_fs.read_file",
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
     pub fn graph_fs_cat(&self, input: GraphFsPathRequest) -> MemoryResult<GraphFsOutput> {
         self.graph_fs_bytes(input, "graph_fs.cat")
     }
 
+    /// The same cat read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_cat_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            "graph_fs.cat",
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
     fn graph_fs_bytes(&self, input: GraphFsPathRequest, verb: &str) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_bytes_with_reader(
+            input,
+            verb,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    fn graph_fs_bytes_with_reader(
+        &self,
+        input: GraphFsPathRequest,
+        verb: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key(verb, &input.path)?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.cat(&input.path, cursor.as_deref())?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let result = tree.cat_with_reader(&input.path, cursor.as_deref(), reader)?;
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_read_link(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsLinkView> {
@@ -154,26 +252,102 @@ impl Memory<'_> {
     }
 
     pub fn graph_fs_ls(&self, input: GraphFsLsRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_ls_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same directory listing, with cooperative container-mask checkpoints.
+    pub fn graph_fs_ls_with_pacing(
+        &self,
+        input: GraphFsLsRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_ls_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_ls_with_reader(
+        &self,
+        input: GraphFsLsRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.ls", (&input.path, input.by_time))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.ls(&input.path, input.by_time, cursor.as_deref())?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let result = tree.ls_with_reader(&input.path, input.by_time, cursor.as_deref(), reader)?;
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_find(&self, input: GraphFsFindRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_find_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same file search, with cooperative container-mask checkpoints.
+    pub fn graph_fs_find_with_pacing(
+        &self,
+        input: GraphFsFindRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_find_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_find_with_reader(
+        &self,
+        input: GraphFsFindRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.find", (&input.path, input.newer_than))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.find(&input.path, input.newer_than, cursor.as_deref())?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let result =
+            tree.find_with_reader(&input.path, input.newer_than, cursor.as_deref(), reader)?;
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_grep(&self, input: GraphFsGrepRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_grep_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same grep read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_grep_with_pacing(
+        &self,
+        input: GraphFsGrepRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_grep_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_grep_with_reader(
+        &self,
+        input: GraphFsGrepRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         if input.pattern.is_empty() {
             return Err(MemoryError::bad_request("grep needs a pattern"));
         }
@@ -184,33 +358,84 @@ impl Memory<'_> {
             "graph_fs.grep",
             (&input.path, &input.pattern, input.recursive),
         )?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.grep(
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let result = tree.grep_with_reader(
             &input.pattern,
             &input.path,
             input.recursive,
             cursor.as_deref(),
+            reader,
         )?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_head(&self, input: GraphFsHeadRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_head_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same head read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_head_with_pacing(
+        &self,
+        input: GraphFsHeadRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_head_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_head_with_reader(
+        &self,
+        input: GraphFsHeadRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let lines = input.lines.unwrap_or(10);
         let call = call_key("graph_fs.head", (&input.path, lines))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.head(&input.path, lines, cursor.as_deref())?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let result = tree.head_with_reader(&input.path, lines, cursor.as_deref(), reader)?;
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_wc(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_wc_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same word count, with cooperative container-mask checkpoints.
+    pub fn graph_fs_wc_with_pacing(
+        &self,
+        input: GraphFsLinkRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_wc_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_wc_with_reader(
+        &self,
+        input: GraphFsLinkRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.wc", &input.path)?;
-        let result = tree.wc(&input.path)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        let result = tree.wc_with_reader(&input.path, reader)?;
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 }
