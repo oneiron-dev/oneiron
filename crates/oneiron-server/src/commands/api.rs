@@ -29,6 +29,7 @@ use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::task_verb::sdk::AgentVerb;
+use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::cli::{ApiArgs, ApiCommand};
 
@@ -476,7 +477,7 @@ pub(super) fn curl_config_with_binding(
             "binding proof is empty or contains a control character; nothing was sent"
         );
         let escaped = binding.replace('\\', "\\\\").replace('"', "\\\"");
-        config.push_str(&format!("header = \"x-oneiron-binding: {escaped}\"\n"));
+        config.push_str(&format!("header = \"{BINDING_HEADER}: {escaped}\"\n"));
     }
     Ok(config)
 }

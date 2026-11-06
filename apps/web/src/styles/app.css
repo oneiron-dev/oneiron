@@ -1,0 +1,20 @@
+@import 'tailwindcss' source('../');
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/* the scaffold's base colours are gone: Safelight owns the material
+   (its tokens follow the system theme and flip as one). tailwind stays
+   only for the two scaffold components (catch boundary, not-found). */
+@layer base {
+  .using-mouse * {
+    outline: none !important;
+  }
+}

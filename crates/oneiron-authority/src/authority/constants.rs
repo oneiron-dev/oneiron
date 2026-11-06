@@ -146,6 +146,14 @@ pub const SLIP_KEY_COMM: &str = "comm";
 /// only on an owner device's renewal, so every other mint's wire form is
 /// unchanged.
 pub const SLIP_KEY_RENEWS: &str = "renews";
+/// A trusted-contact slip's signed binding (FIX 4325), after the renews key.
+/// Present only on a contact-bound mint, so every other slip's wire form is
+/// unchanged.
+pub const SLIP_KEY_TRUSTED_CONTACT: &str = "trusted_contact";
+/// A seat-child slip's signed claim binding (FIX 10624), after the
+/// trusted-contact key. Present only on a seat-child mint, so every other
+/// slip's wire form is unchanged.
+pub const SLIP_KEY_SEAT_CLAIM: &str = "seat_claim";
 pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
 pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";
@@ -160,6 +168,18 @@ pub const SLIP_DELEGATION_KEYS: [&str; 5] = [
     DELEGATION_KEY_OWNER_REF,
     DELEGATION_KEY_APPROVED_AT,
     DELEGATION_KEY_WALL_EXPIRES_AT,
+];
+pub const TRUSTED_CONTACT_KEY_PERSON: &str = "person";
+pub const TRUSTED_CONTACT_KEY_VERSION: &str = "version";
+pub const SLIP_TRUSTED_CONTACT_KEYS: [&str; 2] =
+    [TRUSTED_CONTACT_KEY_PERSON, TRUSTED_CONTACT_KEY_VERSION];
+pub const SEAT_CLAIM_KEY_ATTEMPT: &str = "attempt";
+pub const SEAT_CLAIM_KEY_LEASE_OWNER: &str = "lease_owner";
+pub const SEAT_CLAIM_KEY_ATTEMPT_COUNT: &str = "attempt_count";
+pub const SLIP_SEAT_CLAIM_KEYS: [&str; 3] = [
+    SEAT_CLAIM_KEY_ATTEMPT,
+    SEAT_CLAIM_KEY_LEASE_OWNER,
+    SEAT_CLAIM_KEY_ATTEMPT_COUNT,
 ];
 pub const SLIP_MINT_KEYS: [&str; 17] = [
     OP_KEY_KIND,

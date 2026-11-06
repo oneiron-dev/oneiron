@@ -11,8 +11,9 @@
 //! PeerID is the writer of an operation, never an owner of what it wrote.
 //!
 //! KS7-3b also asks which keys may stand plaintext in a skeleton
-//! ([`key_refusal`]) and how a split value takes its opened actors back
-//! ([`root_fill`]).
+//! ([`key_refusal`]), which of the others it withholds in an atom of their
+//! own ([`withheld_key`], FIX 10279), and how a split value or key takes its
+//! opened actors back ([`root_fill`], [`key_fill`]).
 
 use loro::LoroValue;
 
@@ -22,7 +23,9 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, bad_part};
+use crate::ports::checkpoint::EntityRowPlacement;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
+use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, Unresolved, bad_part};
 use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
@@ -98,10 +101,18 @@ pub(crate) fn root_entry(
     match root {
         "entities" => entity.map_or_else(undecodable, |id| entity_row(id, value, owners)),
         "edges" => match parse_edge_key(key) {
-            Some((source, EdgeKind::AuthoredBy, _)) => Placement::unclassified(
-                Some(OwnerRef::entity(&source)),
-                SyncUnclassified::ActorSplit(AUTHORED_BY),
-            ),
+            // An authored_by edge is its source's: the actor it names rides
+            // in its withheld key alone (FIX 10279, `withheld_key`), so the
+            // edge goes with that actor. Its value must be the kind's own
+            // layout, which holds no actor.
+            Some((source, EdgeKind::AuthoredBy, actor))
+                if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key
+                    && crate::edge::decode_edge_value_for_kind(EdgeKind::AuthoredBy, value)
+                        .is_ok() =>
+            {
+                Placement::owned(OwnerRef::entity(&source), Vec::new())
+            }
+            Some((_, EdgeKind::AuthoredBy, _)) => undecodable(),
             // Any other edge holds while both its ends do.
             Some((source, _, target)) => {
                 structure(vec![OwnerRef::entity(&source), OwnerRef::entity(&target)])
@@ -147,16 +158,42 @@ pub(crate) fn root_entry(
     }
 }
 
-/// An entity's row bytes, placed by its kind as the registry places it.
+/// An entity's row bytes, placed by its kind as the registry places it. A
+/// CLAIM or a NOTE is placed from its own bytes, as its getter places the
+/// row (FIX 10279): an ordinary CLAIM and a NOTE that names no one are their
+/// tree's, a dreamer step's CLAIM is the response client's, and an origin
+/// CLAIM or a NOTE core with a live author stays whole, named.
 pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     let owner = OwnerRef::entity(&id);
-    let kind =
-        EntityMetadataHeader::parse(value).map(|header| owners.entity_kind(header.entity_type));
+    let header = EntityMetadataHeader::parse(value);
+    if header
+        .as_ref()
+        .is_some_and(|header| [ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE].contains(&header.entity_type))
+    {
+        return match crate::ports::checkpoint::entity_row_placement(value) {
+            EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
+            EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            EntityRowPlacement::Unclassified(reason) => {
+                Placement::unclassified(Some(owner), unclassified(reason))
+            }
+        };
+    }
+    let kind = header.map(|header| owners.entity_kind(header.entity_type));
     match kind {
         Some(KindPlacement::Owner) => Placement::owned(owner, Vec::new()),
         Some(KindPlacement::Other(client)) => Placement::Dispatched(client),
         Some(KindPlacement::Unclassified(reason)) => Placement::unclassified(Some(owner), reason),
         None => Placement::unclassified(Some(owner), SyncUnclassified::Undecodable),
+    }
+}
+
+/// The sync reason for a row the getter's rule leaves whole.
+fn unclassified(reason: Unresolved) -> SyncUnclassified {
+    match reason {
+        Unresolved::Undecodable => SyncUnclassified::Undecodable,
+        Unresolved::UnknownKind => SyncUnclassified::UnknownKind,
+        Unresolved::NoOwner | Unresolved::SharedOwners => SyncUnclassified::NoOwner,
+        Unresolved::ActorSplit(why) => SyncUnclassified::ActorSplit(why),
     }
 }
 
@@ -212,6 +249,120 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
     }
 }
 
+/// The field a withheld key's actor fills.
+const KEY_ACTOR: &str = "actor";
+
+/// A window map key the skeleton withholds in an atom of its own: its
+/// rightful holders and, for a key that names an actor, that actor split
+/// out of it.
+pub(super) struct WithheldKey {
+    pub(super) holders: Vec<super::Holder>,
+    pub(super) split: Option<super::ValueSplit>,
+}
+
+/// How the skeleton withholds `key` of the window root map `root`, a key
+/// that may not stand plaintext (FIX 10279, FIX 10278): an authored_by
+/// edge's key is its source's, the actor it names split out, so the key, and
+/// the edge with it, goes with that actor; a whole document pin's key, the
+/// digest of the pin naming no one, is its citer's, held while the message
+/// it quotes is, as the pin is. `None` for every other key: a part's digest
+/// is withheld under its manifests' holders ([`withheld_part_key`]), a
+/// custody digest beside its client's copy ([`withheld_client_key`]), and any
+/// other keeps its window whole as [`key_refusal`] names.
+pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
+    match root {
+        "edges" => {
+            let (source, kind, actor) = parse_edge_key(key)?;
+            if !matches!(kind, EdgeKind::AuthoredBy)
+                || format_edge_key(&source, kind, &actor) != key
+            {
+                return None;
+            }
+            let stem = key.strip_suffix(actor.to_hex().as_str())?;
+            Some(WithheldKey {
+                holders: vec![super::Holder::new(OwnerRef::entity(&source), Vec::new())],
+                split: Some(super::ValueSplit {
+                    no_one: stem.as_bytes().to_vec(),
+                    actors: vec![(KEY_ACTOR.to_owned(), actor)],
+                }),
+            })
+        }
+        DOCUMENT_PINS_MAP if !is_part_key(key) => {
+            let (message, citation) = crate::room_codec::document_pins::key_ids(key)?;
+            Some(WithheldKey {
+                holders: vec![super::Holder::new(
+                    OwnerRef::entity(&citation),
+                    vec![OwnerRef::entity(&message)],
+                )],
+                split: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Whether the skeleton withholds `key` of `root` as a part's digest (FIX
+/// 10278): a part of a parted window value, filed under its digest. Its key
+/// goes with every holder a manifest names the part for
+/// ([`super::parts::PartHolders`]), as its value does; the digest itself
+/// names no one.
+pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
+    is_part_key(key)
+        && matches!(
+            root,
+            ROOM_TURNS_MAP
+                | ROOM_FACTS_MAP
+                | DOCUMENT_PINS_MAP
+                | MESSAGE_DOCS_MAP
+                | REPO_MANIFESTS_MAP
+        )
+}
+
+/// The client the skeleton withholds `key` of `root` for, beside that
+/// client's copy of its value (FIX 10278): a protected input, a witness part
+/// or a sealed copy in the custody map is filed under a digest of it, and the
+/// credential client's copy holds both. `None` for every other key.
+pub(super) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+    (root == CUSTODY_MAP
+        && matches!(
+            crate::sync::custody::checkpoint::key_class(key),
+            KeyClass::Digest
+        ))
+    .then_some(OtherClient::Credential)
+}
+
+/// The key `no_one`, a split of a withheld key of `root`, with each of
+/// `opened` back: `None` when the actor it names did not open. A field the
+/// family does not spell, or a key that is not its family's in its one
+/// spelling, refuses.
+pub(super) fn key_fill(
+    root: &str,
+    no_one: &[u8],
+    opened: &[(&str, EntityId)],
+) -> Result<Option<String>> {
+    match root {
+        "edges" => {
+            let stem = std::str::from_utf8(no_one).map_err(|_| bad_part())?;
+            let actor = match opened {
+                [] => return Ok(None),
+                [(KEY_ACTOR, actor)] => *actor,
+                _ => return Err(bad_part()),
+            };
+            let key = format!("{stem}{}", actor.to_hex());
+            match parse_edge_key(&key) {
+                Some((source, EdgeKind::AuthoredBy, target))
+                    if target == actor
+                        && format_edge_key(&source, EdgeKind::AuthoredBy, &target) == key =>
+                {
+                    Ok(Some(key))
+                }
+                _ => Err(bad_part()),
+            }
+        }
+        _ => Err(bad_part()),
+    }
+}
+
 /// A key that is an id in its one canonical spelling.
 fn id_key(key: &str) -> KeyClass {
     if named(key).is_some() {
@@ -223,18 +374,21 @@ fn id_key(key: &str) -> KeyClass {
 
 /// The value `no_one`, a split of the value under `key` in `root`, with
 /// each of `opened` (a field and its actor) back: `None` when its family
-/// drops it for an actor that did not open. A field the family does not
-/// spell refuses.
+/// drops it for an actor that did not open. `holes` is every field the
+/// split took out, opened or not: a family that drops what did not open
+/// tells it from what the stored value already named no one in (FIX 10282).
+/// A field the family does not spell refuses.
 pub(super) fn root_fill(
     root: &str,
     key: &str,
     no_one: &[u8],
     opened: &[(&str, EntityId)],
+    holes: &std::collections::BTreeSet<&str>,
 ) -> Result<Option<Vec<u8>>> {
     match root {
         ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::fill(no_one, opened),
         "head_move_receipts" | "note_forks" | "note_proposals" => {
-            crate::sync::note::checkpoint::fill(root, no_one, opened)
+            crate::sync::note::checkpoint::fill(root, no_one, opened, holes)
         }
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::fill(no_one, opened),
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::fill(key, no_one, opened),

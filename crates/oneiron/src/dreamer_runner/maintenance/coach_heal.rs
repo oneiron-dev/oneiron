@@ -27,8 +27,11 @@ use super::coach_diagnostic::{
     COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, COACH_ISSUE_RESOLUTION_PREDICATE, ProducerFixDraft,
     ProducerTarget,
 };
+pub use super::coach_environment::{CoachEnvironmentDraft, EnvironmentGrantTarget};
+use super::coach_prompt_repair;
+pub use super::coach_prompt_repair::CoachPromptDraft;
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
-use super::proposals;
+use super::{coach_environment, proposals};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::blocked::{BlockedReceipt, read_blocked_receipt};
 use crate::dreamer_runner::{
@@ -173,6 +176,21 @@ impl HealDecisions<'_> {
 /// data for the author, never an instruction, and never picks the skill:
 /// the engine chose it before the author is asked.
 pub trait CoachHealAuthor {
+    /// Optionally drafts exact prompt bytes for the engine's recorded case.
+    /// A host supplies its own configured author; the default keeps today's
+    /// route-only heal. Neither a draft nor its artifact authorizes injection.
+    ///
+    /// # Errors
+    ///
+    /// An author error leaves the heal route-only, as a declined draft does.
+    fn draft_prompt(
+        &self,
+        _case: &HealerCase,
+        _cause: &HealEvidenceContext,
+    ) -> Result<Option<CoachPromptDraft>> {
+        Ok(None)
+    }
+
     /// Drafts the revision `brief` supports, reading `cause` as data.
     ///
     /// # Errors
@@ -199,6 +217,19 @@ pub trait CoachHealAuthor {
         target: &ProducerTarget,
         cause: &HealEvidenceContext,
     ) -> Result<ProducerFixDraft>;
+
+    /// Proposes grant-environment repair DATA for a failed case. Targets are
+    /// actual native grants of its agent, including terminal terms, not proof
+    /// that a grant caused the failure or permission to change it. Returning
+    /// `None` leaves the heal route-only; the default host is unchanged.
+    fn draft_environment(
+        &self,
+        _case: &HealerCase,
+        _targets: &[EnvironmentGrantTarget],
+        _cause: &HealEvidenceContext,
+    ) -> Result<Option<CoachEnvironmentDraft>> {
+        Ok(None)
+    }
 }
 
 /// What one Issues run did.
@@ -294,7 +325,9 @@ impl Vault {
     /// skill, aimed at that cause too, landed as a gated candidate with the
     /// heal; a draft that went stale before the heal's write files the heal
     /// route-only, saying why (FIX 2497). A replay returns the heal already
-    /// filed. Returns the proposal.
+    /// filed. A host's optional prompt author can supply a Proposed prompt
+    /// artifact beside a case's prompt-inject heal; it never resumes the run.
+    /// Returns the proposal.
     pub fn run_coach_heal(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -348,6 +381,9 @@ impl Vault {
             "untrusted_cause_context": cause.value(),
         });
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
+        let prompt_repair = (route == HealRoute::PromptInject)
+            .then(|| coach_prompt_repair::draft(&case, &cause, author));
+        let mut environment_repair = None;
         let repair = match route {
             HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
                 &case,
@@ -357,7 +393,11 @@ impl Vault {
                 attempt.status.attempt.id,
                 now,
             )?),
-            HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
+            HealRoute::Environment => {
+                environment_repair = Some(coach_environment::draft(self, &case, &cause, author)?);
+                None
+            }
+            HealRoute::PromptInject | HealRoute::Person => None,
         };
         let mut value = json!({
             "case": case_ref,
@@ -396,6 +436,14 @@ impl Vault {
                 )?
             {
                 value["repair"] = stale;
+            }
+            if let Some(repair) = &environment_repair {
+                value["repair"] =
+                    coach_environment::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
+            }
+            if let Some(repair) = &prompt_repair {
+                value["repair"] =
+                    coach_prompt_repair::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
             }
             let proposal = proposals::emit_in_txn(
                 self,

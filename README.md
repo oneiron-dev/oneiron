@@ -114,11 +114,24 @@ published package or release binary. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 
+## Web frontend
+
+The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
+with its complete Git history from `oneiron-dev/oneiron-web`. It includes the
+TanStack Start console/workbench and its existing Tauri desktop shell. The UI
+still uses fixtures and is not connected to an engine; moving it does not enable
+vault operations or change its design.
+
+Run its Bun commands from `apps/web`. Its Tauri package keeps its own Cargo
+workspace and lockfile, separate from the engine workspace and the existing
+macOS menu-bar app. See the [frontend README](./apps/web/README.md) for its setup
+and current runtime boundaries.
+
 ## Crates
 
 This table lists selected crates, not the whole workspace. The
 [code map](./docs/CODEMAP.md) has a row for each engine crate under `crates/` and links
-to its modules and source files. It does not cover the macOS app.
+to its modules and source files. It does not cover the applications under `apps/`.
 
 | Crate | Role |
 |-------|------|

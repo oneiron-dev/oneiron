@@ -302,10 +302,12 @@ impl EngineNativeExecutor<'_> {
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    // A cancelled root fails the step: the bridge rows it
-                    // left stay recorded, and no wait it reached hides that.
+                    // A cancelled root fails the step. Its real wait still
+                    // joins the checkpoint for a later valid lease, but never
+                    // turns this cancelled entry into a Waiting success.
+                    let cancelled = cancel.is_cancelled();
                     let callable_rows = host.result_rows();
-                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
+                    let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     let bound = host.bound;
@@ -328,6 +330,7 @@ impl EngineNativeExecutor<'_> {
                             repairs.healed(),
                             config,
                         )?
+                        && !cancelled
                     {
                         checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
@@ -382,7 +385,7 @@ impl EngineNativeExecutor<'_> {
             // store; none is held whole here.
             let step_bodies = host
                 .take_streamed()
-                .into_step_bodies(&self.storage, &step_outcome)
+                .into_step_bodies(&self.storage, record.run_id, &step_outcome)
                 .map_err(Into::into)
                 .and_then(|bodies| {
                     validate_runtime_outputs(&record, completed_steps, &bodies.files)
