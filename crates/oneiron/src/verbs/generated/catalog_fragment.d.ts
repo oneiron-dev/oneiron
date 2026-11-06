@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1300 code-mode rows (1260 host rows, 40 run rows), 4588 declarations.
-// Replies: 1114 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1308 code-mode rows (1268 host rows, 40 run rows), 4611 declarations.
+// Replies: 1121 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 115; unread shapes: none.
+// Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -87,6 +87,19 @@ declare namespace Sdk {
   type ScratchpadAppendRequest = { session_id: string; text: string; mark?: ScratchpadRecallMark | null; pin?: boolean };
   type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sealed_prior?: EntityId | null };
   type ScratchpadSealRequest = { session_id: string };
+  type FoldBaseline = { total: number; counts?: Record<string, number> };
+  type SectionFold = { note?: string | null; keep?: EntityId[]; baseline?: FoldBaseline | null; section_baselines?: Record<string, FoldBaseline> };
+  type BoardActorClass = "human" | "agent" | "system";
+  type BoardWhoFilter = { kind: "mine" } | { kind: "actor"; actor: EntityId } | { kind: "class"; class: BoardActorClass } | { kind: "group"; group: EntityId };
+  type SectionFilter = { who?: BoardWhoFilter | null; status?: string[] };
+  type SectionLayout = { share_pct?: number | null; fold?: SectionFold | null; filter?: SectionFilter | null };
+  type BoardLayout = { sections?: Record<string, SectionLayout> };
+  type BoardLayoutState = { live: BoardLayout; pending?: BoardLayout | null; owner_override?: BoardLayout };
+  type BoardFoldRequest = { section: string; note?: string | null; keep?: EntityId[] };
+  type BoardSectionRequest = { section: string };
+  type BoardSizeRequest = { section: string; share_pct?: number | null };
+  type BoardFilterRequest = { section: string; filter?: SectionFilter | null };
+  type BoardReplaceRequest = { layout: BoardLayout };
   type DiaryEntryRequest = { content: string; kind?: string | null };
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
@@ -3797,6 +3810,16 @@ declare namespace Sdk {
   type ProductivityRole = "task" | "goal" | "milestone" | "habit" | "habit_checkin";
   type ProductivityNode = { task_ref: string; id_hex: string; parent_ref?: string | null; depth: number; role: ProductivityRole; label?: string | null; current_streak?: number | null; longest_streak?: number | null };
   type ProductivityTree = { root_ref: string; nodes: ProductivityNode[] };
+  type AgUiObservationKind = "action" | "failure" | "repair" | "outcome";
+  type AgUiCustomMapping = { name: string; kind: AgUiObservationKind; id?: string | null; thread_id?: string | null; run_id?: string | null; tool_call_id?: string | null; failure_id?: string | null; repair_id?: string | null; outcome?: string | null };
+  type AgUiFileImport = { claim_ref?: string | null; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; jsonl: string };
+  type AgUiFileReceipt = { claim_ref: string; source_hash: string; event_count: number };
+  type AgUiFileReadInput = { claim_ref: string; source_hash: string };
+  type AgUiAppObservation = { ordinal: number; name: string; kind: AgUiObservationKind; id?: string | null; thread_id?: string | null; run_id?: string | null; tool_call_id?: string | null; failure_id?: string | null; repair_id?: string | null; outcome?: unknown | null };
+  type AgUiRepairLinkStatus = "linked" | "missing_link" | "ambiguous_link" | "namespace_mismatch" | "missing_outcome";
+  type AgUiRepairLink = { outcome_ordinal: number; repair_ordinal?: number | null; failure_ordinal?: number | null; status: AgUiRepairLinkStatus };
+  type AgUiFileView = { claim_ref: string; source_hash: string; capture_actor_ref: string; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; jsonl: string; event_count: number; observations: AgUiAppObservation[]; repair_links: AgUiRepairLink[] };
+  type AgUiFileRead = { source?: AgUiFileView | null; receipt: ScopedReadReceipt };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
   type DocumentKind = "document" | "template";
@@ -4813,6 +4836,20 @@ declare namespace self {
       /** Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only. */
       file(input: Sdk.BillingAccountFiling): Promise<Sdk.FiledBillingAccount | null | StoredResult>;
     };
+  };
+  const board: {
+    /** Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn. */
+    filter(input: Sdk.BoardFilterRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
+    /** Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn. */
+    fold(input: Sdk.BoardFoldRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
+    /** The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies. */
+    layout(input: Sdk.EmptyRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
+    /** Replaces the whole layout the bound actor's next turn applies to its context board. */
+    replace(input: Sdk.BoardReplaceRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
+    /** Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn. */
+    size(input: Sdk.BoardSizeRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
+    /** Unfolds one section of the bound actor's context board; applies at the next turn. */
+    unfold(input: Sdk.BoardSectionRequest): Promise<Sdk.BoardLayoutState | StoredResult>;
   };
   const browser: {
     /** Runs one batched browser program for a subgoal; type, fill and expect take a secret by handle; a stop names its stop_cause; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry. */
@@ -6447,6 +6484,14 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
     lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
+  };
+  ingest: {
+    ag_ui: {
+      /** The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent. */
+      import(input: Sdk.AgUiFileImport): Promise<Sdk.AgUiFileReceipt | StoredResult>;
+      /** Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission. */
+      read(input: Sdk.AgUiFileReadInput): Promise<Sdk.AgUiFileRead | StoredResult>;
+    };
   };
   inspection: {
     /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */

@@ -3,6 +3,8 @@
 pub mod agent_knowledge_format;
 pub mod archive_types;
 pub mod bundle_types;
+pub mod credential_filter;
+pub mod export_authority;
 pub mod export_manifest;
 #[cfg(feature = "sync")]
 pub mod foreign_stage;

@@ -2959,6 +2959,14 @@ export class Oneiron {
       /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
       tree: (input: Facade.ProductivityTreeRequest): Facade.ScopedReadResult<Facade.ProductivityTree | null> => this.#call(() => this.#client.vaultProductivityTree(input) as Facade.ScopedReadResult<Facade.ProductivityTree | null>),
     },
+    ingest: {
+      ag_ui: {
+        /** The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent. */
+        import: (input: Facade.AgUiFileImport): Facade.AgUiFileReceipt => this.#call(() => this.#client.vaultIngestAgUiImport(input) as Facade.AgUiFileReceipt),
+        /** Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission. */
+        read: (input: Facade.AgUiFileReadInput): Facade.AgUiFileRead => this.#call(() => this.#client.vaultIngestAgUiRead(input) as Facade.AgUiFileRead),
+      },
+    },
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
@@ -3300,6 +3308,20 @@ export class Oneiron {
       subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
       /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
       unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
+    },
+    board: {
+      /** The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies. */
+      layout: (input: Facade.EmptyRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardLayout(input) as Facade.BoardLayoutState),
+      /** Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn. */
+      fold: (input: Facade.BoardFoldRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardFold(input) as Facade.BoardLayoutState),
+      /** Unfolds one section of the bound actor's context board; applies at the next turn. */
+      unfold: (input: Facade.BoardSectionRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardUnfold(input) as Facade.BoardLayoutState),
+      /** Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn. */
+      size: (input: Facade.BoardSizeRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardSize(input) as Facade.BoardLayoutState),
+      /** Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn. */
+      filter: (input: Facade.BoardFilterRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardFilter(input) as Facade.BoardLayoutState),
+      /** Replaces the whole layout the bound actor's next turn applies to its context board. */
+      replace: (input: Facade.BoardReplaceRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardReplace(input) as Facade.BoardLayoutState),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
