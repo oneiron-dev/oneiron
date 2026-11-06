@@ -36,10 +36,11 @@ struct BackendManifest {
     command: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum BackendTransport {
     Http1Stdio,
+    Http1Loopback { address: std::net::SocketAddr },
 }
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
@@ -314,7 +315,6 @@ fn stage(
     let manifest: BackendManifest = serde_json::from_slice(&bytes).map_err(|error| {
         oneiron::Error::InvalidConfig(format!("artifact backend manifest: {error}"))
     })?;
-    let BackendTransport::Http1Stdio = manifest.transport;
     if manifest.command.is_empty() || manifest.command[0].is_empty() {
         return Err(oneiron::Error::InvalidConfig(
             "artifact backend command is empty".into(),
@@ -322,6 +322,7 @@ fn stage(
     }
     let source = fs::canonicalize(source)?;
     Ok(Some(runtime::StagedBackend {
+        transport: manifest.transport,
         identity,
         directory,
         source,
