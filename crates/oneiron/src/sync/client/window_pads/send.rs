@@ -12,6 +12,56 @@ use crate::embed::home_vectors::{HomeClaimDelivery, PreparedHomeClaimSend};
 use crate::sync::transport::{TransportError, WindowPadBinding, WindowPadKind};
 use crate::sync::window::PreparedWindowPads;
 
+/// A response frame and its original optional-copy evidence travel together.
+/// The required bytes can be inspected without turning serialized copies into a grant.
+pub struct PreparedSyncFrame {
+    frame: Vec<u8>,
+    release: Option<WindowClaimCopyRelease>,
+}
+
+impl PreparedSyncFrame {
+    /// Required bytes only. An optional-only continuation has no required bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        let required = self
+            .release
+            .as_ref()
+            .map_or(self.frame.len(), |release| release.required_prefix());
+        &self.frame[..required]
+    }
+
+    /// Takes required bytes only; an optional-only continuation returns empty.
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        if let Some(release) = &mut self.release {
+            release.stage(&mut self.frame);
+        }
+        self.frame
+    }
+
+    pub(crate) fn for_policy(&self) -> &[u8] {
+        &self.frame
+    }
+
+    pub(crate) fn release(mut self, vault: &Vault, peer: PeerMachine) -> Option<Vec<u8>> {
+        if let Some(release) = &mut self.release {
+            release.stage(&mut self.frame);
+            release.recheck(vault, peer);
+            if release.retained() {
+                self.frame.extend_from_slice(&release.suffix);
+            }
+        }
+        (!self.frame.is_empty()).then_some(self.frame)
+    }
+}
+
+impl From<Vec<u8>> for PreparedSyncFrame {
+    fn from(frame: Vec<u8>) -> Self {
+        Self {
+            frame,
+            release: None,
+        }
+    }
+}
+
 struct WindowClaimCopies {
     window: String,
     payload: Vec<u8>,
@@ -118,6 +168,27 @@ pub(crate) struct PreparedWindowClaimSend {
 }
 
 impl SyncClient {
+    pub(crate) fn prepared_window_reply(
+        &self,
+        window: &str,
+        payload: &[u8],
+        context: &LoroDoc,
+    ) -> Result<Vec<PreparedSyncFrame>, TransportError> {
+        let prepared = self.prepare_window_send(window, payload, Some(context))?;
+        let prepared = self.prepare_window_claim_send(
+            prepared,
+            window,
+            crate::sync::transport::window_sub_tags::UPDATE,
+            Some(context),
+        );
+        let (frames, _, releases) = prepared.send_frames(self, None, payload, false)?;
+        Ok(frames
+            .into_iter()
+            .zip(releases)
+            .map(|(frame, release)| PreparedSyncFrame { frame, release })
+            .collect())
+    }
+
     pub(crate) fn prepare_window_claim_send(
         &self,
         prepared: PreparedWindowPads,

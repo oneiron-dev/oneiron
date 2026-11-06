@@ -431,10 +431,10 @@ impl SyncConnection {
                     // earlier frame waits on the socket.
                     for resp in responses
                         .into_iter()
-                        .filter(|frame| !client.frame_withheld(frame))
+                        .filter(|frame| !client.frame_withheld(frame.for_policy()))
                     {
                         write
-                            .send(Message::Binary(resp.into()))
+                            .send_prepared(resp)
                             .await
                             .map_err(|e| format!("Send response failed: {e}"))?;
                     }
@@ -464,10 +464,10 @@ impl SyncConnection {
                                 // earlier frame waits on the socket.
                                 for resp in responses
                                     .into_iter()
-                                    .filter(|frame| !client.frame_withheld(frame))
+                                    .filter(|frame| !client.frame_withheld(frame.for_policy()))
                                 {
                                     write
-                                        .send(Message::Binary(resp.into()))
+                                        .send_prepared(resp)
                                         .await
                                         .map_err(|e| format!("Send response failed: {e}"))?;
                                 }
