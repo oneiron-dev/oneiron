@@ -75,7 +75,8 @@ pub(crate) struct StepStartBody {
     /// The resolved teaching the run's provider work was produced under.
     pub(crate) prompt_fingerprint: String,
     /// The run's epochs and fold ledger as they stood at this start, inside
-    /// its prefix (FIX 4198): what a continuation from it inherits.
+    /// its prefix (FIX 4198): what a continuation from it inherits. It holds
+    /// no epoch's digest and no fold's words (FIX 928, FIX 18694).
     pub(crate) compaction: StartCompaction,
 }
 

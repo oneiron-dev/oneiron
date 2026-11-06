@@ -439,6 +439,7 @@ fn admitted_start(
         soft_steps: start.soft_steps,
         prompt_fingerprint: start.prompt_fingerprint.to_owned(),
         // FIX 4198: the run's compaction at this cut, read in this writer.
+        // It holds no epoch's digest and no fold's words (FIX 18694).
         compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
