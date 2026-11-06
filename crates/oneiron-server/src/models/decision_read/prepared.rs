@@ -2,7 +2,7 @@
 
 use super::{
     DecisionReader, FatalLlmError, LabelReadGenerationOutcome, LabelReadRequest, LabelReadout,
-    LlmResult, ReadRelease, RetryableLlmError, prompt_of, refused,
+    LlmResult, ReadRelease, RetryableLlmError, WorkPhysical, prompt_of, refused,
 };
 
 pub(super) struct PreparedDecisionRead<'reader, 'request> {
@@ -40,6 +40,7 @@ impl<'reader, 'request> PreparedDecisionRead<'reader, 'request> {
 
     pub(super) fn read(
         self,
+        physical: Option<WorkPhysical>,
         release: Option<ReadRelease<'_>>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
@@ -47,6 +48,7 @@ impl<'reader, 'request> PreparedDecisionRead<'reader, 'request> {
             &self.prompts,
             self.questions,
             self.work_until,
+            physical,
             release,
             admit_next,
         )
@@ -59,6 +61,7 @@ impl DecisionReader {
         prompts: &[String],
         questions: &[LabelReadout<'_>],
         work_until: Option<std::time::Instant>,
+        physical: Option<WorkPhysical>,
         release: Option<ReadRelease<'_>>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
@@ -66,7 +69,7 @@ impl DecisionReader {
         let read = async {
             let _worker = reader.hold_worker().await?;
             reader
-                .read_pack(prompts, questions, release, admit_next)
+                .read_pack(prompts, questions, physical, release, admit_next)
                 .await
         };
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
@@ -195,6 +198,7 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
             &self.prompts,
             self.questions,
             work_until,
+            lease.work_context().map(|context| context.physical),
             may_send.map(|_| (&release as oneiron::llm::DispatchRelease<'_>, lease)),
             admit_next,
         )

@@ -39,7 +39,7 @@ use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied,
+    CallOutcome, KeyCustody, OfferBinding, PaidConnector, Payer, RunAdmission, RunCall, RunDenied,
     RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_place,
 };
 use oneiron::llm::{HostInferenceBinding, Segment, SegmentClock, SegmentKind, SegmentManifest};
@@ -214,12 +214,24 @@ pub struct OfferLadder {
 /// paid. Budget rules keep reading the offer directly; this value only
 /// annotates host work and receipts.
 fn physical_for(binding: &OfferBinding) -> WorkPhysical {
-    let free_route = match binding.locality {
+    physical_for_host(&binding.locality, &binding.payer, &binding.custody)
+}
+
+pub(crate) fn physical_for_paid(binding: &PaidConnector) -> WorkPhysical {
+    physical_for_host(&binding.locality, &binding.payer, &binding.custody)
+}
+
+fn physical_for_host(
+    locality: &ModelLocality,
+    payer: &Payer,
+    custody: &KeyCustody,
+) -> WorkPhysical {
+    let free_route = match locality {
         ModelLocality::OnDevice => true,
-        ModelLocality::OwnServer => binding.custody == KeyCustody::Keyless,
+        ModelLocality::OwnServer => custody == &KeyCustody::Keyless,
         ModelLocality::ThirdParty => false,
     };
-    if binding.payer == Payer::Local && free_route {
+    if payer == &Payer::Local && free_route {
         WorkPhysical::KeylessOwnServer
     } else {
         WorkPhysical::Paid

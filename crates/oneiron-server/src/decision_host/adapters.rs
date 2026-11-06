@@ -52,6 +52,9 @@ impl DecisionReadGate for HouseGate {
             .map_err(|_| refused("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
+        let mut context = run.work_context();
+        context.physical = crate::models::physical_for_paid(&self.connector);
+        permit.lease().attach_work_context(context);
         let gated = read(permit.lease());
         let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
@@ -122,6 +125,9 @@ impl DecisionReadGate for RunHouseGate<'_> {
             self.run
                 .dispatch_paid(permit.lease(), &self.gate.connector)
                 .map_err(|_| refused("refused at dispatch"))?;
+            let mut context = self.run.work_context();
+            context.physical = crate::models::physical_for_paid(&self.gate.connector);
+            permit.lease().attach_work_context(context);
             let gated = read(permit.lease());
             let unread = oneiron::llm::LlmUsage::zero();
             // A read that went out and failed keeps its reservation as spend.

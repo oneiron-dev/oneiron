@@ -33,6 +33,7 @@ use crate::config::models::{BigReply, BigSettings};
 use crate::models::ModelRuntime;
 
 mod captured;
+mod cost;
 mod joint;
 mod note;
 mod route;
@@ -441,6 +442,7 @@ fn abstained() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 

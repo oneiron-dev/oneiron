@@ -5,6 +5,8 @@
 
 use std::sync::{Arc, OnceLock, Weak};
 
+use oneiron::llm::LlmUsage;
+use oneiron::llm::registry::catalog_usage_cost;
 use oneiron::{ModelId, Vault};
 
 use super::DecisionReadDoor;
@@ -32,18 +34,14 @@ impl DecisionReadDoor {
 }
 
 impl ReaderHost {
-    /// What `model` costs per thousand units it reads, from its registry row's input price
-    /// per million, as a durable generated read prices its model (FIX 11305); none when the
-    /// vault is gone, the row names no price, or the price names no currency (FIX 11778:
-    /// unknown never prices).
-    pub(super) fn cost_per_thousand(&self, model: &ModelId) -> Option<f64> {
+    /// The catalog-priced token cost per thousand logical readings of one question,
+    /// including its retries. Missing prices or currency stay unknown (FIX 11778).
+    pub(super) fn cost_per_thousand(&self, model: &ModelId, usage: &LlmUsage) -> Option<f64> {
         let vault = self.vault.upgrade()?;
         let row = vault.model_registry_row(model).ok().flatten()?;
         let cost = row.catalog.cost.as_ref()?;
-        if cost.currency.is_none() {
-            return None;
-        }
-        let per_million: f64 = cost.input_per_million.parse().ok()?;
-        (per_million.is_finite() && per_million >= 0.0).then(|| per_million / 1_000.0)
+        cost.currency.as_ref()?;
+        let per_thousand = catalog_usage_cost(cost, usage).ok()? * 1_000.0;
+        per_thousand.is_finite().then_some(per_thousand)
     }
 }
