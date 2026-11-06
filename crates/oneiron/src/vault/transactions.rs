@@ -28,10 +28,13 @@ pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
 /// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
-/// reservation: only the delete doors write them. Nor a federation world's
+/// reservation: only the delete doors write them. Nor the owner's discard of a
+/// world copy, its marks or a BASE window's projection floor: only the
+/// discard and its projection write them (FIX 14534). Nor a federation world's
 /// registration or stale stamp: only the registration and the stale sweep
 /// write them. Nor a peer-origin digest: only the peer import records what it
-/// brought.
+/// brought. Nor the record of which machine wrote a MESSAGE row: only the put
+/// that stages the row writes it (FIX 12113).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -49,6 +52,11 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
             "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
+    if key.starts_with("it:proposer-scope:") {
+        return Err(Error::InvalidConfig(
+            "identity-topology proposer handles are written only by the proposal writer".to_owned(),
+        ));
+    }
     if [
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
@@ -60,6 +68,18 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     {
         return Err(Error::InvalidConfig(
             "deletion fences, markers and topology reservations are written only by the delete doors"
+                .to_owned(),
+        ));
+    }
+    if [
+        crate::side_table::SYNC_DISCARDED_WORLD_ROW.prefix,
+        crate::side_table::SYNC_BASE_WINDOW_DISCARD.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "the owner's discard marks and projection floors are written only by the discard"
                 .to_owned(),
         ));
     }
@@ -77,6 +97,14 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     {
         return Err(Error::InvalidConfig(
             "peer-origin digests are written only by the peer import".to_owned(),
+        ));
+    }
+    if key
+        .as_bytes()
+        .starts_with(crate::side_table::SYNC_MESSAGE_WRITER.prefix)
+    {
+        return Err(Error::InvalidConfig(
+            "MESSAGE writer records are written only by the put that stages the row".to_owned(),
         ));
     }
     Ok(())

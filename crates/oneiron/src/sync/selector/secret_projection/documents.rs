@@ -32,17 +32,16 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
 use super::rows::HeldEdit;
-use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
+use super::{GENERATION_CONTEXT, SyncSecretProjection};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext};
+use crate::origin::secret_projection::copy_id::copy_id;
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
-use crate::origin::secret_projection::index::{
-    RepoIndexCopyKind, RepoIndexMarks, RepoMarkGenerationCache,
-};
+use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks};
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
@@ -105,13 +104,13 @@ impl TextCopy {
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
             blob,
-            stamp: super::UNREAD_STAMP,
+            stamp: SyncSecretProjection::unread_stamp(),
         }
     }
 
     /// Whether this is [`Self::sealed`]: no edit of it can be translated.
     fn unread(&self) -> bool {
-        self.stamp == super::UNREAD_STAMP
+        SyncSecretProjection::stamp_is_unread(&self.stamp)
     }
 }
 
@@ -371,6 +370,36 @@ pub(crate) fn document_copy_in_txn(
     }))
 }
 
+/// Owner settlement of a retained copy lineage (FIX12419, document-only).
+pub(crate) mod settlement;
+
+/// The shipped visible diff of `submitted`, a peer's text of `copy`, onto
+/// `text`: pure, no store read. Both the import writer and the
+/// owner-settlement review call it, same semantics.
+fn copy_diff_result(
+    text: &str,
+    copy: &TextCopy,
+    submitted: &str,
+) -> Result<RepoProjectionDiffResult> {
+    if submitted == copy.copy {
+        Ok(RepoProjectionDiffResult::Unchanged)
+    } else if copy.copy.is_empty() && text.is_empty() {
+        // An empty text holds nothing to mask: the peer's text is the text.
+        Ok(RepoProjectionDiffResult::Applied(
+            submitted.as_bytes().to_vec(),
+        ))
+    } else {
+        let projected = match &copy.places {
+            Some(places) => RepoProjectedFileCopy::Masked {
+                copy: copy.copy.as_bytes(),
+                places,
+            },
+            None => RepoProjectedFileCopy::Opaque,
+        };
+        apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())
+    }
+}
+
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
@@ -418,21 +447,7 @@ where
         bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
-        let result = if submitted == copy.copy {
-            RepoProjectionDiffResult::Unchanged
-        } else if copy.copy.is_empty() && text.is_empty() {
-            // An empty text holds nothing to mask: the peer's text is the text.
-            RepoProjectionDiffResult::Applied(submitted.as_bytes().to_vec())
-        } else {
-            let projected = match &copy.places {
-                Some(places) => RepoProjectedFileCopy::Masked {
-                    copy: copy.copy.as_bytes(),
-                    places,
-                },
-                None => RepoProjectedFileCopy::Opaque,
-            };
-            apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())?
-        };
+        let result = copy_diff_result(&text, &copy, &submitted)?;
         let landed = match result {
             RepoProjectionDiffResult::Unchanged => None,
             RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
@@ -711,15 +726,9 @@ pub(crate) fn with_copy_generation_in_txn(
     txn: &RoTxn<'_>,
     frontier: [u8; 32],
 ) -> Result<[u8; 32]> {
-    // One copy generation per mark generation (FIX 10736): the marked
-    // blobs are projected again only when the marks move.
-    static GENERATIONS: RepoMarkGenerationCache<Option<[u8; 32]>> = RepoMarkGenerationCache::new();
-    let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
-    let generation = *GENERATIONS.get_or_make(vault, marks.generation()?, || {
-        let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
-        Ok((!projection.is_empty())
-            .then(|| projection.generation(projection.sources.keys().copied())))
-    })?;
+    let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
+    let generation =
+        (!projection.is_empty()).then(|| projection.generation(projection.source_ids().copied()));
     let Some(generation) = generation else {
         return Ok(frontier);
     };

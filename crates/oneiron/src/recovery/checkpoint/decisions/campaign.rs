@@ -46,7 +46,7 @@ impl Decision for CampaignCompliance {
             }
             let txn = vault.store.env.read_txn()?;
             let store = &vault.store;
-            addresses.extend(crate::comm::comm_party_keys_in_txn(store, &txn)?);
+            addresses.extend(store.record_hooks.comm_party_keys_in_txn(store, &txn)?);
             vault.for_each_claim_with_predicate_in_txn(
                 &txn,
                 PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,

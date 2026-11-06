@@ -112,6 +112,7 @@ fn write(vault: &Vault, txn: &mut heed::RwTxn<'_>, issue: &ReportIssue) -> Resul
                 end: u64::MAX,
             },
             learned_at: vault.store.clock.now_recorded_at(),
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,

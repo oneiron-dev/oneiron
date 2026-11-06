@@ -142,6 +142,14 @@ impl<'p, E> TurnProgramExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -154,6 +162,17 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
             Some(runtime) => run_program(runtime, self.shared, attempt, ctx).await,
             None => hold(ctx, &attempt.status.attempt, ProgramHold::Unbound),
         }
+    }
+
+    /// A window holds plain Micro partitions only, never a turn program, so
+    /// it goes to the inner executor whole: the trait's serial default here
+    /// ran every window of the host's wrapped executor one partition after
+    /// another (FIX 12487 windows, Dreamer proof run 4).
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
     }
 
     async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {

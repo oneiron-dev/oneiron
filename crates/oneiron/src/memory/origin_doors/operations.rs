@@ -46,6 +46,7 @@ impl Memory<'_> {
         let writer = origin_authority_writer(input.writer.as_deref(), host)?;
         let authority = self.vault.set_served_origin_authority_as_owner(
             owner,
+            self.owner_surface(),
             &input.repo,
             input.expected_epoch,
             input.residence,

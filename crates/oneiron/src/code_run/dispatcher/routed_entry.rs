@@ -26,13 +26,18 @@ impl HostSelfDispatcher<'_> {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when `run` is not the run this dispatcher is
-    /// bound to; the route's own read errors.
+    /// bound to or its existing record has unknown determinism; the route's
+    /// own read errors.
     pub fn recorded_determinism(&self, run: EntityId) -> Result<Option<CodeRunDeterminism>> {
         self.require_bound_run(run)?;
-        Ok(self
-            .storage
+        self.storage
             .get_code_run_replay_record(&run)?
-            .map(|record| record.determinism))
+            .map(|record| {
+                record.determinism.ok_or_else(|| {
+                    Error::InvalidConfig("code run has unknown determinism".to_owned())
+                })
+            })
+            .transpose()
     }
 
     /// The receipt of the seat `run`'s model calls are bound to, read on

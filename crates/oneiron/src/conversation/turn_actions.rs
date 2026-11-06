@@ -101,6 +101,9 @@ pub struct TurnActionLine {
     /// `User` or `Companion`.
     pub author: WitnessAuthor,
     pub text: String,
+    /// The selected TURN and MESSAGE behind this line; unknown if either
+    /// identity did not read from the same transcript page.
+    pub sources: Option<Vec<EntityId>>,
 }
 
 /// What a host needs to run one queued action, read again as its requester
@@ -114,6 +117,9 @@ pub struct TurnActionContext {
     pub history: Vec<TurnActionLine>,
     /// What the user turn says.
     pub user_text: String,
+    /// The selected user lines' TURN and MESSAGE rows, from the same walk.
+    /// `None` when any of their identities was unknown.
+    pub user_sources: Option<Vec<EntityId>>,
     /// What the reply says now: exactly its saved text.
     pub saved: String,
 }
@@ -586,7 +592,7 @@ impl Memory<'_> {
         let turn = walk
             .turn
             .ok_or_else(|| MemoryError::not_found("turn not found"))?;
-        let (user_turn, user_text) = walk
+        let (user_turn, user_text, user_sources) = walk
             .user
             .ok_or_else(|| invalid_state("no user turn comes before this turn"))?;
         // The turn's one generated MESSAGE: a companion reply a stream wrote.
@@ -644,6 +650,7 @@ impl Memory<'_> {
                 agent,
                 history: walk.history.into(),
                 user_text,
+                user_sources,
                 saved: reply.text.clone(),
             },
         })
@@ -688,6 +695,7 @@ impl Memory<'_> {
                     walk.turn = Some(turn);
                     return Ok(walk);
                 }
+                let turn_source = EntityId::from_hex(&turn.id).ok();
                 let lines: Vec<TurnActionLine> = turn
                     .messages
                     .iter()
@@ -697,6 +705,9 @@ impl Memory<'_> {
                             TurnActionLine {
                                 author,
                                 text: message.text.clone(),
+                                sources: turn_source
+                                    .zip(EntityId::from_hex(&message.id).ok())
+                                    .map(|(turn, message)| vec![turn, message]),
                             }
                         })
                     })
@@ -711,11 +722,18 @@ impl Memory<'_> {
                     continue;
                 }
                 let text = user.join("\n\n");
+                let user_sources = lines
+                    .iter()
+                    .filter(|line| line.author == WitnessAuthor::User)
+                    .try_fold(Vec::new(), |mut rows, line| {
+                        rows.extend_from_slice(line.sources.as_deref()?);
+                        Some(rows)
+                    });
                 walk.history.extend(std::mem::replace(&mut since, lines));
                 while walk.history.len() > history {
                     walk.history.pop_front();
                 }
-                walk.user = Some((EntityId::from_hex(&turn.id)?, text));
+                walk.user = Some((EntityId::from_hex(&turn.id)?, text, user_sources));
             }
             match page.next {
                 Some(next) => after = Some(next),
@@ -728,6 +746,6 @@ impl Memory<'_> {
 /// What [`Memory::walk_to_turn`] found.
 struct Walk {
     turn: Option<crate::memory::TranscriptTurn>,
-    user: Option<(EntityId, String)>,
+    user: Option<(EntityId, String, Option<Vec<EntityId>>)>,
     history: VecDeque<TurnActionLine>,
 }

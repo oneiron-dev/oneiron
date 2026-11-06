@@ -4,8 +4,8 @@
 //! parks its run on a code consent wait, minted beside the held call in the
 //! same writer. The wait binds the exact pending effect: its run and write
 //! site, the frozen bytes' digest, the original caller and its instrument,
-//! the governing key, grant and manifest. It asks the vault's owner one TASK
-//! question with canon's confirm trio.
+//! the governing key, grant and manifest. It asks every live vault owner one
+//! shared TASK question with canon's confirm trio.
 //!
 //! The owner's answer is its own fact: authenticated from any surface the
 //! owner is authenticated on, revalidated in the answering writer, bound to
@@ -42,7 +42,8 @@ pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub use self::host::CodeConsentEffectHost;
 pub(crate) use self::replay::{
     CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
-    seal_parked_code_consent_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
+    consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
+    verify_parked_code_consent,
 };
 pub(crate) use self::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,

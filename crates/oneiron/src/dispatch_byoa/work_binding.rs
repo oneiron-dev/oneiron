@@ -21,7 +21,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, AttemptState};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
+};
 use crate::checkout::CheckoutId;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
@@ -334,17 +336,17 @@ pub(super) fn capture_seat_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     policy: &RunnerSeatPolicy,
-    receipt: &ByoaTerminalReceipt,
+    attempt: &AttemptRecord,
     fallback: usize,
 ) -> ByoaResult<Option<usize>> {
-    let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
+    let Some(work) = decode_byoa_record(attempt)?.work else {
         return Ok(Some(fallback));
     };
     let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
     let Some(head) = head_hop(vault, txn, binding)? else {
         return Ok(Some(fallback));
     };
-    if head.attempt != *receipt.attempt.id.as_bytes() {
+    if head.attempt != *attempt.id.as_bytes() {
         return Ok(Some(fallback));
     }
     remap_seat(policy, &head, fallback)
@@ -355,16 +357,16 @@ pub(super) fn capture_seat_in_txn(
 pub(super) fn capture_hop_seat_quota_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    receipt: &ByoaTerminalReceipt,
+    attempt: &AttemptRecord,
 ) -> ByoaResult<(usize, [u8; 16])> {
-    let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
+    let Some(work) = decode_byoa_record(attempt)?.work else {
         return Err(Error::InvariantViolation("capture hop seat/quota missing").into());
     };
     let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
     let Some(head) = head_hop(vault, txn, binding)? else {
         return Err(Error::InvariantViolation("capture hop seat/quota missing").into());
     };
-    if head.attempt != *receipt.attempt.id.as_bytes() {
+    if head.attempt != *attempt.id.as_bytes() {
         return Err(Error::InvariantViolation("capture hop seat/quota changed").into());
     }
     Ok((seat_index(head.seat), head.quota))

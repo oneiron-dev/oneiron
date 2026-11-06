@@ -7,9 +7,11 @@
 //! did not open taken out (FIX 6376). Once the image's rows are in, each
 //! opened bundle lands through its getter's or carrier's restore, and each
 //! unavailable call through the ledger's own sink
-//! ([`restore_opened_in_txn`]). An owner that did not open was erased since
-//! the cut, and the restore carries it beside the source's erasures
-//! ([`OpenedPayload::carry_erasures`]).
+//! ([`restore_opened_in_txn`]). Each window the payload split is joined from
+//! its carrier in the image and the copies that opened, before anything is
+//! made, and its rows and markers land with the bundles (FIX 10277). An
+//! owner that did not open was erased since the cut, and the restore carries
+//! it beside the source's erasures ([`OpenedPayload::carry_erasures`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,7 +31,7 @@ use crate::recovery::checkpoint::artifact::SealedPayload;
 use crate::recovery::checkpoint::image::CheckpointImage;
 use crate::side_table;
 use crate::store::checkpoint_payload::rows::{
-    OpenedOwnerRows, OwnerRef, RowDb, RowLocator, RowPart, read_actor_parts,
+    OpenedOwnerRows, OwnerRef, RowDb, RowLocator, RowPart, read_actor_parts, restore_row_in_txn,
 };
 use crate::store::checkpoint_payload::{CompartmentAccess, Subtype, compartment_access};
 use crate::store::{CustodyPlan, Store};
@@ -42,9 +44,13 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
     /// The owners whose compartments the payload holds that did not open:
     /// every part they hold up drops.
     unopened: BTreeSet<OwnerRef>,
-    /// The image's unavailable-call rows (FIX 6260), which land through the
-    /// ledger's own sink.
-    unavailable_calls: Vec<(RowLocator, Vec<u8>)>,
+    /// The image's unavailable-call rows (FIX 6260) and call accounting rows
+    /// (KS7-5, FIX 12117), which land through the ledger's own sinks once
+    /// the bundles are in.
+    call_rows: Vec<(RowLocator, Vec<u8>)>,
+    /// Each split window's rows, joined from its carrier and the copies that
+    /// opened, with the markers its join asks (FIX 10277).
+    window_rows: Vec<(RowLocator, Vec<u8>)>,
 }
 
 /// Opens `sealed`, the payload an artifact carries apart from its image,
@@ -64,6 +70,10 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     image: &mut CheckpointImage,
 ) -> std::result::Result<Option<OpenedPayload>, Rejected> {
     let Some(mut sealed) = sealed else {
+        // A split window's rows ride only in a payload's compartments.
+        if !image.window_carriers.is_empty() {
+            return Err(crate::store::checkpoint_payload::rows::bad_part().into());
+        }
         return Ok(None);
     };
     let required = sealed.section.required()?;
@@ -93,16 +103,22 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         let plain = open_bundle(&vault, &sealed.section, index, &bytes, key)?;
         match role {
             BundleRole::Actors => actor_parts.extend(read_actor_parts(&plain)?),
-            BundleRole::Content(_) | BundleRole::Carrier(_) => contents.push((role, plain)),
+            BundleRole::Content(_) | BundleRole::Carrier(_) | BundleRole::Window => {
+                contents.push((role, plain));
+            }
         }
     }
     let mut bundles = Vec::with_capacity(contents.len());
+    let mut windows = Vec::new();
     for (role, plain) in contents {
-        bundles.push((
-            role,
-            opened_content(&plain, &actor_parts, unopened.clone())?,
-        ));
+        let opened = opened_content(&plain, &actor_parts, unopened.clone())?;
+        if role == BundleRole::Window {
+            windows.push(opened);
+        } else {
+            bundles.push((role, opened));
+        }
     }
+    let window_rows = join_windows(&image.window_carriers, &windows, &unopened)?;
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
         tracing::info!(
@@ -115,20 +131,55 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     Ok(Some(OpenedPayload {
         bundles,
         unopened,
-        unavailable_calls: take_unavailable_calls(image),
+        call_rows: take_call_rows(image),
+        window_rows,
     }))
 }
 
-/// Takes the image's unavailable-call rows (FIX 6260) out of its rows, to
-/// land through the ledger's own sink.
-fn take_unavailable_calls(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u8>)> {
-    let prefix = side_table::OUTBOUND_INTENT_UNAVAILABLE.prefix;
+/// Each split window's rows and markers, joined from its carrier in
+/// `records` and the copies `windows`, the opened window bundles, hold
+/// (FIX 10277). A copy whose owner, or an owner it holds only while, is in
+/// `unopened` is erased; a window whose values none opened keeps its
+/// history with them erased.
+#[cfg(feature = "sync")]
+fn join_windows(
+    records: &[super::WindowCarrierRecord],
+    windows: &[OpenedOwnerRows],
+    unopened: &BTreeSet<OwnerRef>,
+) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    if records.is_empty() {
+        return Ok(Vec::new());
+    }
+    super::sync::restore_window_carriers(records, windows, unopened)
+}
+
+/// A build without sync joins no window: a payload that split one refuses.
+#[cfg(not(feature = "sync"))]
+fn join_windows(
+    records: &[super::WindowCarrierRecord],
+    _windows: &[OpenedOwnerRows],
+    _unopened: &BTreeSet<OwnerRef>,
+) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    if records.is_empty() {
+        Ok(Vec::new())
+    } else {
+        Err(crate::store::checkpoint_payload::rows::bad_part())
+    }
+}
+
+/// Takes the image's unavailable-call rows (FIX 6260) and call accounting
+/// rows (FIX 12117) out of its rows, to land through the ledger's own sinks.
+fn take_call_rows(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u8>)> {
+    let prefixes = [
+        side_table::OUTBOUND_INTENT_UNAVAILABLE.prefix,
+        side_table::OUTBOUND_INTENT_ACCOUNTING.prefix,
+    ];
     let Some(rows) = image.databases.get_mut("vault_meta") else {
         return Vec::new();
     };
     let mut taken = Vec::new();
     rows.retain(|(key, value)| {
-        if !key.starts_with(prefix) {
+        if !prefixes.iter().any(|prefix| key.starts_with(prefix)) {
             return true;
         }
         taken.push((
@@ -141,27 +192,68 @@ fn take_unavailable_calls(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u
 }
 
 impl OpenedPayload {
+    /// Marks opened MESSAGE results before their rewritten lengths are budgeted.
+    pub(in crate::recovery::checkpoint) fn retire_message_results(
+        &mut self,
+        digests: &BTreeSet<[u8; 32]>,
+    ) -> Result<()> {
+        if digests.is_empty() {
+            return Ok(());
+        }
+        for (role, opened) in &mut self.bundles {
+            if *role != BundleRole::Content(Getter::Entities) {
+                continue;
+            }
+            for part in &mut opened.rows {
+                let RowPart::Exact { at, value } = part else {
+                    continue;
+                };
+                if at.db != RowDb::Entities
+                    || opened.dependencies.iter().any(|dependency| {
+                        dependency.at == *at && opened.unavailable.contains(&dependency.on)
+                    })
+                {
+                    continue;
+                }
+                crate::memory::retire_message_result_in_row(value, digests)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The entity rows the opened entity bundles land, in key order, that
-    /// no unopened owner holds up: a restore checks each as it checks the
-    /// image's, and stages its type index.
-    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
+    /// no unopened owner holds up: each exact row, and each actor-keyed one
+    /// (an author carrier, FIX 17143) whose actor opened. A restore checks
+    /// each as it checks the image's, and stages its type index.
+    ///
+    /// # Errors
+    ///
+    /// An actor part that does not read as the row it names.
+    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut rows = Vec::new();
+        let entities = self
             .bundles
             .iter()
-            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities))
-            .flat_map(|(_, opened)| {
-                opened.rows.iter().filter_map(|part| match part {
-                    RowPart::Exact { at, value }
-                        if at.db == RowDb::Entities && !held_up(opened, at) =>
-                    {
-                        Some((at.key.clone(), value.clone()))
+            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities));
+        for (_, opened) in entities {
+            for part in &opened.rows {
+                let at = part.at();
+                if at.db != RowDb::Entities || held_up(opened, at) {
+                    continue;
+                }
+                match part {
+                    RowPart::Exact { value, .. } => rows.push((at.key.clone(), value.clone())),
+                    RowPart::ActorKeyed { .. } => {
+                        if let Some((row, value)) = opened.actor_keyed_row(at)? {
+                            rows.push((row.key, value));
+                        }
                     }
-                    _ => None,
-                })
-            })
-            .collect();
+                    RowPart::NoActor { .. } => {}
+                }
+            }
+        }
         rows.sort();
-        rows
+        Ok(rows)
     }
 
     /// `erased`, the ids a restore's source erased, with every entity
@@ -212,8 +304,9 @@ impl OpenedPayload {
             }
         }
         rows.extend(
-            self.unavailable_calls
+            self.call_rows
                 .iter()
+                .chain(&self.window_rows)
                 .map(|(at, value)| (len(&at.key), len(value))),
         );
         rows
@@ -228,10 +321,11 @@ fn held_up(opened: &OpenedOwnerRows, at: &RowLocator) -> bool {
         .any(|dependency| dependency.at == *at && opened.unavailable.contains(&dependency.on))
 }
 
-/// Lands `opened` in `txn`, the restore's image write, once the image's rows
-/// are in: each content bundle through its getter's restore, each carrier
-/// bundle through KS7-3's port, and each unavailable call through the
-/// ledger's own sink (FIX 6260). How many parts an unopened owner held up.
+/// Lands every bundle once the image's rows are in. Only blob versions
+/// missing their actor part wait for the authenticated landing continuation:
+/// its native claim reads need all history/custody rows and the type index.
+/// Unavailable calls (FIX 6260) and the accounting of calls that did not
+/// open (FIX 12117) still land through the ledger's own sinks, last.
 ///
 /// # Errors
 ///
@@ -240,28 +334,63 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedPayload,
-) -> Result<usize> {
+    retired_digests: &BTreeSet<[u8; 32]>,
+) -> Result<Vec<OpenedOwnerRows>> {
     #[cfg(feature = "sync")]
     let carriers = SyncCarriers::new(store);
     #[cfg(not(feature = "sync"))]
     let carriers = Deferred;
-    let mut dropped = 0;
+    let mut blob_artifacts = Vec::new();
     for (role, rows) in opened.bundles {
-        let restored = match role {
-            BundleRole::Content(getter) => getter.restore_in_txn(store, txn, rows)?,
-            BundleRole::Carrier(carrier) => carriers.restore_in_txn(txn, carrier, rows)?,
+        match role {
+            BundleRole::Content(Getter::ProvenanceBody) => {
+                crate::provenance::body::checkpoint::restore_pruned_in_txn(
+                    store,
+                    txn,
+                    rows,
+                    retired_digests,
+                )?;
+            }
+            BundleRole::Content(Getter::BlobArtifact) => {
+                if let Some(deferred) =
+                    crate::blob_artifact::checkpoint::restore_or_defer_in_txn(store, txn, rows)?
+                {
+                    blob_artifacts.push(deferred);
+                }
+            }
+            BundleRole::Content(getter) => {
+                getter.restore_in_txn(store, txn, rows)?;
+            }
+            BundleRole::Carrier(carrier) => {
+                carriers.restore_in_txn(txn, carrier, rows)?;
+            }
             BundleRole::Actors => {
                 return Err(Error::InvariantViolation(
                     "an actor bundle lands through its owners' content",
                 ));
             }
-        };
-        dropped += restored.dropped.len();
+            BundleRole::Window => {
+                return Err(Error::InvariantViolation(
+                    "a window bundle lands through its window's carrier",
+                ));
+            }
+        }
     }
-    for (at, value) in &opened.unavailable_calls {
-        crate::outbound_intent_ledger::checkpoint::restore_unavailable_in_txn(
+    // Each split window's rows and markers, joined before anything was made
+    // (FIX 10277).
+    for (at, value) in &opened.window_rows {
+        restore_row_in_txn(store, txn, at, value)?;
+    }
+    // After every bundle, so a call whose record came back keeps no
+    // accounting row (FIX 12117).
+    for (at, value) in &opened.call_rows {
+        if !crate::outbound_intent_ledger::checkpoint::restore_unavailable_in_txn(
             store, txn, at, value,
-        )?;
+        )? {
+            crate::outbound_intent_ledger::checkpoint::restore_accounting_in_txn(
+                store, txn, at, value,
+            )?;
+        }
     }
-    Ok(dropped)
+    Ok(blob_artifacts)
 }

@@ -48,9 +48,8 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
-use oneiron::learning::TypeRef;
 use oneiron::llm::run_admission::forget_work_parent;
-use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
+use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::task_verb::RunnerDoneAnswer;
 use tokio::sync::{Notify, broadcast, watch};
 
@@ -267,6 +266,9 @@ fn pump_once(
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
+        // Existing wakes and the existing slow recheck also revisit native
+        // hook waits. This hint never authorizes the retained verb body.
+        recheck |= dispatcher.resume_workflow_tool(*root, now_secs())?;
         // A notice a crash or a refusal left owed goes out first.
         recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
         loop {
@@ -280,8 +282,8 @@ fn pump_once(
             let mut retryable = false;
             let mut held = None;
             let mut parked = false;
-            let mut confession = None;
-            let progress = dispatcher.run_workflow_step_output(
+            let mut hook_wait = false;
+            let progress = dispatcher.run_workflow_step_output_with_confession(
                 *root,
                 LEASE_OWNER,
                 now_secs(),
@@ -297,7 +299,13 @@ fn pump_once(
                     // any model call: paused with its checkpoint, the steps
                     // already done keep their saved results, and the owner is
                     // owed a notice. A hold is not a failure and not retried.
-                    if let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)? {
+                    let continuation = dispatcher.workflow_tool_checkpoint(&step.attempt)?;
+                    let answer_ready = continuation
+                        .as_ref()
+                        .is_some_and(|saved| saved.transcript.answer.is_some());
+                    if !answer_ready
+                        && let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)?
+                    {
                         let read = dispatcher.spend_read(&scope)?;
                         let now = now_secs();
                         let reason = format!("workflow spend cap under scope {scope}");
@@ -330,10 +338,22 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context);
+                    // FIX 15648: the workflow's wrapper carries the TASK it
+                    // realizes (its leaves carry no backlink), so a leaf of a
+                    // TASK-bound workflow opens as a task wake.
+                    let woken = AttemptQueue::new(vault)
+                        .get(*root)
+                        .ok()
+                        .flatten()
+                        .and_then(|wrapper| wrapper.task_ref)
+                        .or_else(|| step.attempt.task_ref.clone())
+                        .map(|_| oneiron::context_board::TurnWake::Task);
+                    let ran = runner.run(runtime, vault, step, context, continuation, woken);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
-                    bind_attribution(vault, step.attempt.id);
+                    if !matches!(&ran, Err(fault) if fault.hook_wait) {
+                        bind_attribution(vault, step.attempt.id);
+                    }
                     match ran {
                         Ok(output) => {
                             // The try completed: no retry follows it, and no
@@ -352,19 +372,14 @@ fn pump_once(
                                 Some(confessed) => confessed,
                                 None => output.objectives.into_iter().map(unanswered).collect(),
                             };
-                            confession = step
-                                .input
-                                .target
-                                .agent_definition_ref()
-                                .ok()
-                                .filter(|_| !objectives.is_empty())
-                                .map(|subject| AttemptConfession {
-                                    attempt: step.attempt.id,
-                                    subject,
-                                    type_ref: TypeRef::from(&step.input.type_ref),
-                                    objectives,
-                                });
-                            Ok(output.bytes)
+                            Ok((output.bytes, objectives))
+                        }
+                        // The admitted transcript and its Hook pause are
+                        // already durable. This is a real wait, not a failed
+                        // tool/model result or a try for the failure ladder.
+                        Err(fault) if fault.hook_wait => {
+                            hook_wait = true;
+                            Err(fault.error)
                         }
                         // The meter ran out inside the model call: held as
                         // at the boundary, from the checkpoint before the
@@ -424,20 +439,16 @@ fn pump_once(
                 match &progress {
                     Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
-                    Err(_) if held.is_some() || parked => {}
+                    Err(_) if held.is_some() || parked || hook_wait => {}
                     Err(error) => {
                         status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
                     }
                 }
             });
-            // A leaf that completed durably is sealed, and so stays in the
-            // random-audit pool, even when advancing its wrapper did not
-            // (FIX 9466).
-            if let Some(confession) = confession
-                && leaf_completed(vault, confession.attempt)
-            {
-                seal(vault, &confession);
+            if hook_wait {
+                recheck = true;
+                break;
             }
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
@@ -614,15 +625,6 @@ fn ask_project_questions(
                 return;
             }
         }
-    }
-}
-
-/// Seals the leaf that just completed with its confession. A refusal (the
-/// leaf did not settle with a result and an executor, or the confession
-/// does not hold) is logged; the completed work stands.
-fn seal(vault: &Vault, confession: &AttemptConfession) {
-    if let Err(error) = vault.record_attempt_confession(confession, now_secs()) {
-        tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
     }
 }
 

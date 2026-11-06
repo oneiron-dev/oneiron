@@ -76,6 +76,20 @@ impl SharedActionExecutor {
         self.registry
             .execute_agent_with_owner(vault, actor, principal, call, owner, surface)
     }
+    /// A public fold whose outer boundary already ran its pre chain. The
+    /// registry keeps the ordinary action admission, lease and replay path.
+    pub fn execute_pre_hooked_fold(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        binding: ActionHostBinding<'_>,
+        pre: oneiron::code_run::actions::PreHookedFold,
+    ) -> Result<ActionDispatch> {
+        self.registry
+            .execute_pre_hooked_fold(vault, actor, principal, call, binding, pre)
+    }
     /// One call from either caller, a person's app button or an agent's call,
     /// as the host's credential binds it.
     pub fn execute_call(
