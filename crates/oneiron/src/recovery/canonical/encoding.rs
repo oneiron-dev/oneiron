@@ -6,8 +6,8 @@ use serde::{Serialize, Serializer as _};
 use super::{
     BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalAssetBodyRef,
     CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalDocument, CanonicalEntity,
-    CanonicalHeadMove, CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn,
-    CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone,
+    CanonicalEntityDocument, CanonicalHeadMove, CanonicalPinCarrier, CanonicalRoomFact,
+    CanonicalRoomTurn, CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -79,8 +79,8 @@ impl CanonicalEncoding {
             ("retained_claim_worlds", &Rows(retained_claim_worlds, false)),
             ("base_edges", &ByteRows(base_edges, false)),
             ("tombstones", &ByteRows(tombstones, false)),
-            ("doc_snapshots", &Documents(doc_snapshots)),
-            ("entity_documents", &Rows(entity_documents, false)),
+            ("doc_snapshots", &TextRows(doc_snapshots)),
+            ("entity_documents", &TextRows(entity_documents)),
             ("document_heads", &Rows(document_heads, false)),
             ("head_move_receipts", &ByteRows(head_move_receipts, false)),
             ("note_forks", &Rows(note_forks, false)),
@@ -171,9 +171,125 @@ impl<T: Serialize> Field for Rows<'_, T> {
     }
 }
 
-struct Documents<'a>(&'a [CanonicalDocument]);
+trait TextRow {
+    fn text(&self) -> &str;
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()>;
+    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()>;
+}
 
-impl Field for Documents<'_> {
+impl TextRow for CanonicalDocument {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalDocument {
+            entity_id,
+            head,
+            text: _,
+            title: _,
+            birth_actor: _,
+            birth_at: _,
+            authorship: _,
+        } = self;
+        write_struct_header(out, "CanonicalDocument", 7)?;
+        write_named(out, "entity_id")?;
+        write_named(out, entity_id)?;
+        write_named(out, "head")?;
+        write_named(out, head)?;
+        write_named(out, "text")
+    }
+
+    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalDocument {
+            entity_id: _,
+            head: _,
+            text: _,
+            title,
+            birth_actor,
+            birth_at,
+            authorship,
+        } = self;
+        write_named(out, "title")?;
+        write_named(out, title)?;
+        write_named(out, "birth_actor")?;
+        write_named(out, birth_actor)?;
+        write_named(out, "birth_at")?;
+        write_named(out, birth_at)?;
+        write_named(out, "authorship")?;
+        write_named(out, authorship)
+    }
+}
+
+impl TextRow for CanonicalEntityDocument {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalEntityDocument {
+            entity_id,
+            document_id,
+            field,
+            text: _,
+            native_skill_state: _,
+            metadata: _,
+            summary_meta,
+            record_fields: _,
+            birth_actor: _,
+            birth_at: _,
+            history,
+        } = self;
+        let fields = 9 + usize::from(!summary_meta.is_empty()) + usize::from(history.is_some());
+        write_struct_header(out, "CanonicalEntityDocument", fields)?;
+        write_named(out, "entity_id")?;
+        write_named(out, entity_id)?;
+        write_named(out, "document_id")?;
+        write_named(out, document_id)?;
+        write_named(out, "field")?;
+        write_named(out, field)?;
+        write_named(out, "text")
+    }
+
+    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalEntityDocument {
+            entity_id: _,
+            document_id: _,
+            field: _,
+            text: _,
+            native_skill_state,
+            metadata,
+            summary_meta,
+            record_fields,
+            birth_actor,
+            birth_at,
+            history,
+        } = self;
+        write_named(out, "native_skill_state")?;
+        write_named(out, native_skill_state)?;
+        write_named(out, "metadata")?;
+        write_named(out, metadata)?;
+        if !summary_meta.is_empty() {
+            write_named(out, "summary_meta")?;
+            write_named(out, summary_meta)?;
+        }
+        write_named(out, "record_fields")?;
+        write_named(out, record_fields)?;
+        write_named(out, "birth_actor")?;
+        write_named(out, birth_actor)?;
+        write_named(out, "birth_at")?;
+        write_named(out, birth_at)?;
+        if history.is_some() {
+            write_named(out, "history")?;
+            write_named(out, history)?;
+        }
+        Ok(())
+    }
+}
+
+struct TextRows<'a, T>(&'a [T]);
+
+impl<T: TextRow> Field for TextRows<'_, T> {
     fn present(&self) -> bool {
         true
     }
@@ -184,15 +300,8 @@ impl Field for Documents<'_> {
             *row = Some(RowCursor::default());
             return Ok(self.0.is_empty());
         };
-        let CanonicalDocument {
-            entity_id,
-            head,
-            text,
-            title,
-            birth_actor,
-            birth_at,
-            authorship,
-        } = &self.0[cursor.next];
+        let value = &self.0[cursor.next];
+        let text = value.text();
         if let Some(next) = cursor.bytes.as_mut() {
             if *next < text.len() {
                 let end = next.saturating_add(blake3::CHUNK_LEN).min(text.len());
@@ -201,24 +310,12 @@ impl Field for Documents<'_> {
                 *next = end;
                 return Ok(false);
             }
-            write_named(out, "title")?;
-            write_named(out, title)?;
-            write_named(out, "birth_actor")?;
-            write_named(out, birth_actor)?;
-            write_named(out, "birth_at")?;
-            write_named(out, birth_at)?;
-            write_named(out, "authorship")?;
-            write_named(out, authorship)?;
+            value.write_suffix(out)?;
             cursor.next += 1;
             cursor.bytes = None;
             return Ok(cursor.next == self.0.len());
         }
-        write_struct_header(out, "CanonicalDocument", 7)?;
-        write_named(out, "entity_id")?;
-        write_named(out, entity_id)?;
-        write_named(out, "head")?;
-        write_named(out, head)?;
-        write_named(out, "text")?;
+        value.write_prefix(out)?;
         rmp::encode::write_str_len(&mut *out, text.len() as u32).map_err(|_| out.refusal())?;
         if !text.is_empty() {
             out.reserve_write(text.len()).map_err(|_| out.refusal())?;
