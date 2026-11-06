@@ -340,9 +340,13 @@ MEMORIES ids and after each extension with capability hits and named board rows.
 The vector stays charged while the session lock is awaited and while the read set
 observes those ids. It drops after the original observation block, before its
 holder. Errors and cancellation also drop the ids before the holder. The read
-set's own point-read vector, decoded rows, retained maps and the later replay
-vectors are separate allocations; allocation and reallocation peaks are not
-covered by this post-allocation holder.
+set's own point-read vector has a distinct local holder on the same memory line.
+Its capacity callback runs after the original id-only collection and before the
+first row read, so a read failure drops the vector before releasing its holder.
+The ordinary read-set method and its other callers keep their behavior. Decoded
+rows, successor-read vectors, retained maps and later replay vectors remain
+separate allocations. Allocation and reallocation peaks are not covered by these
+post-allocation holders.
 
 
 ## Chat capture buffer custody

@@ -820,9 +820,12 @@ async fn hydrate_inner(
     delivered.extend(parts.named.iter().copied());
     retain_delivered_rows(&mut delivered_storage, &delivered);
     let mut rider_key = None;
+    let mut row_read_storage = server.memory.empty_lease();
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads
-            .observe_rows(&read, &delivered)
+            .observe_rows_with_read_capacity(&read, &delivered, |bytes| {
+                row_read_storage.materialized(0, bytes);
+            })
             .map_err(|error| super::core_engine_error("board read set failed", error))?;
         // The tier each MEMORIES row rode, and its hook, for an explain read.
         for row in response.memories.iter().flat_map(|memories| &memories.rows) {
@@ -846,6 +849,7 @@ async fn hydrate_inner(
             reads.acknowledge(&changed_line);
         }
     }
+    drop(row_read_storage);
     drop(delivered);
     drop(delivered_storage);
     // The rows this board was derived from, kept beside a keyed replay of it.
