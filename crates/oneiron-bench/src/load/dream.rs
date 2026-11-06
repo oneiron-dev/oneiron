@@ -7,7 +7,8 @@
 //! (and with `--notes` upserts its saved notes as claims), then ends the
 //! sitting: the end enqueues one Meso round, a partition attempt per
 //! conversation (`session_lifecycle.rs`). An agent recalls on a fixed rhythm
-//! before, during and 30 s after the round. The report says whether the
+//! before, during and 30 s after the round, and twenty times more once the
+//! Dreamer stays still, if it does inside the round's bound. The report says whether the
 //! round's write landed, whether a recall built from a landed claim's own
 //! words finds it, whether the round ended inside the stated bound, how many
 //! Loro SnapshotAt exports each pass made, and the ms of each stage (from the
@@ -55,9 +56,6 @@ const BASELINE: usize = 20;
 const QUERY_CAP: usize = 40;
 /// How long the recall loop runs past the cycle's end.
 const AFTER: Duration = Duration::from_secs(30);
-/// Between the sitting's open and the first write: the driver applies the
-/// hint off the request.
-const OPEN_SETTLE: Duration = Duration::from_secs(2);
 /// An activity hint this often while seeding keeps the sitting open.
 const ACTIVITY_EVERY: Duration = Duration::from_secs(60);
 
@@ -378,8 +376,14 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
     let reader = Agent::new(&http, base, &run.credentials[1], skew)?;
     let ready = cycle::dreamer_ready(&seeder, &http, base)?;
     say(&format!("dreamer {}; opening the sitting", ready.state));
+    let mut tail = Tail::new(run.vault.dir.join(LOG_NAME));
+    let mut scan = Scan::default();
     cycle::hint(&seeder, &http, base, "open")?;
-    std::thread::sleep(OPEN_SETTLE);
+    // The driver applies the hint off the request, after any pass in
+    // flight; a TURN witnessed before that joins no sitting.
+    if !cycle::await_open(&mut tail, &mut scan, run.origin) {
+        say("no sitting open line; seeding anyway");
+    }
     let seeded = seed(run, &seeder, &http);
     say(&format!(
         "seeded {} witness and {} claim writes in {:.1} s",
@@ -396,8 +400,6 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
         })
         .collect::<Vec<_>>();
     let baseline_seconds = baseline_started.elapsed().as_secs_f64();
-    let mut tail = Tail::new(run.vault.dir.join(LOG_NAME));
-    let mut scan = Scan::default();
     let ran = cycle_with_recalls(run, &seeder, &reader, &http, &mut tail, &mut scan);
     scan.read(&mut tail, run.origin);
     let mut landed = proof::landed_from_stages(&scan, ran.t0_ms);
@@ -415,6 +417,31 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
     }
     say(&format!("proof: {} landed claims ({source})", landed.len()));
     let tried = proof::prove(&seeder, &landed);
+    // The recalls after a still Dreamer, inside the cycle's own bound.
+    let t0 = run.origin + Duration::from_secs_f64(ran.t0_ms / 1000.0);
+    let still = cycle::await_still(
+        &seeder,
+        &http,
+        base,
+        &mut tail,
+        &mut scan,
+        run.origin,
+        t0 + run.plan.cycle_timeout,
+    );
+    say(&format!(
+        "dreamer still: {} after {:.0} ms",
+        still.reached, still.waited_ms
+    ));
+    let after_still = still.reached.then(|| {
+        let started = Instant::now();
+        let samples = (0..BASELINE)
+            .map(|k| {
+                let (ms, answer) = cycle::recall(&reader, &run.queries[k % run.queries.len()]);
+                sample(ms, answer)
+            })
+            .collect::<Vec<_>>();
+        Summary::of(&samples, started.elapsed().as_secs_f64())
+    });
     let status_after = cycle::status(&seeder, &http, base).ok();
     Ok(report(&Measured {
         run,
@@ -426,6 +453,8 @@ fn measure(run: &Run<'_>) -> Result<Value, String> {
         source,
         tried: &tried,
         status_after,
+        still: &still,
+        after_still,
     }))
 }
 

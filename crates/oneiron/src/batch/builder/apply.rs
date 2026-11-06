@@ -182,6 +182,7 @@ impl BatchBuilder<'_> {
             .with_births(std::mem::take(&mut self.births))
             .with_asset_files(std::mem::take(&mut self.asset_files))
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
+            .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
         let deferred =
             if matches!(lane, crate::core_write::CoreWriteLaneRef::Read(_)) && !gated.is_empty() {
