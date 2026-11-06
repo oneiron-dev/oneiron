@@ -4674,6 +4674,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/membership_execution.rs",
+     "purpose": "The signed record of a shared-vault membership change no host issuer could sign (FIX 12335, Engine 13:13…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -4929,6 +4939,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/pact_openings.rs",
+     "purpose": "This install's live check of each pact's scope commitment (FIX 11730)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/past_grant_standing.rs",
      "purpose": "Prior signed owner-agent standing for main-log WorldPrivacy acts (FIX 4703)",
      "surface": {
@@ -4982,7 +5002,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -6026,7 +6046,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -21707,7 +21727,7 @@
       "const": 9,
       "crate-vis": 1,
       "fn": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3,
       "trait": 1
      }
@@ -21724,6 +21744,20 @@
       "const": 2,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoogleAuthorizationCode",
+      "GoogleAuthorizationGrant"
+     ],
+     "path": "src/connector_key/setup/google_code.rs",
+     "purpose": "Google's code exchange, called with values held inside admitted credential doors",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -32468,7 +32502,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -37303,13 +37337,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 6,
       "re-export": 2
      }
@@ -37343,6 +37377,16 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/membership/pending_execution.rs",
+     "purpose": "A membership change no host issuer could sign (FIX 12335, Engine 13:13 call A)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -60609,7 +60653,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityAuditEventKind",
@@ -60617,7 +60661,8 @@
       "AuthorityAuditPage",
       "AuthorityAuditQuery",
       "AuthorityAuditRow",
-      "ColdAuthorityAuditRow"
+      "ColdAuthorityAuditRow",
+      "PendingMembershipExecutionRow"
      ],
      "path": "src/receipt/authority_audit.rs",
      "purpose": "OF-224: the dated consent/authority audit, a renderer-neutral projection of the stored AUTHORITY_LOG",
@@ -60625,7 +60670,7 @@
       "const": 4,
       "enum": 2,
       "fn": 2,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -62073,7 +62118,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/handover.rs",
-     "purpose": "A checkpoint restore across a shared-vault owner handover (FIX 5765): the exact rows a valid `OwnerHandover`…",
+     "purpose": "A checkpoint restore across a shared-vault owner handover (FIX 5765): the exact rows a valid…",
      "surface": {
       "crate-vis": 10
      }
@@ -65320,7 +65365,7 @@
      "path": "src/secret_custody/holder_export.rs",
      "purpose": "The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -65335,13 +65380,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/holder_export/part_signature.rs",
+     "purpose": "The holder's signature of each numbered part an export secret copy rides in (FIX 12373; Engine 13:54 call A)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/holder_export/relay.rs",
      "purpose": "An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -73040,7 +73095,7 @@
      "path": "src/store/grant_scope_custody.rs",
      "purpose": "A federation grant's scope opening keys (FIX 7907, 7958, L04's half): the secret each pact epoch's scope…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -76076,9 +76131,9 @@
      "purpose": "One socket's by-reference body transfers (FIX 5489), both directions",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -76585,7 +76640,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/inbound/window_sync.rs",
@@ -78003,7 +78058,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 12,
       "struct": 1
      }
@@ -78220,7 +78275,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnDevicePositionImport"
@@ -78228,7 +78283,7 @@
      "path": "src/sync/origin_positions/import.rs",
      "purpose": "Exact optional position operations of one successful own-device import",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 12,
       "fn": 2,
       "struct": 1
      }
@@ -89877,7 +89932,7 @@
      "path": "src/world_keys/owner_work/result.rs",
      "purpose": "The executor's signed result for one request, and the receipt door that reads where a request stands",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -91204,7 +91259,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 255,
+     "files": 257,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91491,7 +91546,7 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91764,7 +91819,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92228,7 +92283,7 @@
     "receipt": {
      "files": 42,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
@@ -92331,7 +92386,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92730,9 +92785,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 165,
+   "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6532,
+   "source_files": 6537,
    "test_files": 895
   },
   "oneiron-android": {
@@ -92894,7 +92949,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 103,
+      "const": 105,
       "re-export": 1,
       "type": 1
      }
@@ -93125,13 +93180,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MembershipExecution",
+      "MembershipExecutionCause",
+      "MembershipHandover"
+     ],
+     "path": "src/authority/membership_execution.rs",
+     "purpose": "A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 36
+      "re-export": 37
      }
     },
     {
@@ -93791,7 +93864,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93856,7 +93929,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 62,
+   "source_files": 63,
    "test_files": 1
   },
   "oneiron-base": {
@@ -111719,7 +111792,7 @@
      "path": "src/ai_host/status.rs",
      "purpose": "Live state of the server's background AI work, shared between the workers that change it and the routes that…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 4,
       "struct": 5
      }
@@ -112040,6 +112113,16 @@
      "purpose": "What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/turn_wake.rs",
+     "purpose": "One turn-wake worker per vault (FIX 14873)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -117514,6 +117597,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/pack_routes/gmail_exchange.rs",
+     "purpose": "Owner-admitted Google authorization codes enter only through credential custody",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/pack_routes/hook_proposals.rs",
      "purpose": "`/v1/owner/packs/hooks/proposals`: an agent's hook that asks wider than its own ceiling (ARCH-0080 §10…",
      "surface": {
@@ -122964,7 +123057,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/handler/window_sync.rs",
@@ -123148,6 +123241,7 @@
      "path": "src/lib.rs",
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
+      "const": 1,
       "fn": 3,
       "mod": 24,
       "re-export": 2
@@ -130012,14 +130106,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 122,
+     "files": 123,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 691,
+     "files": 692,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130537,9 +130631,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1645,
+   "source_files": 1647,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134053,7 +134147,7 @@
      "surface": {
       "const": 11,
       "enum": 4,
-      "fn": 32,
+      "fn": 33,
       "struct": 4
      }
     },
@@ -144084,6 +144178,7 @@
       "PendingActStarted",
       "PendingAuthorityAct",
       "PendingEmbedderBinding",
+      "PendingMembershipExecutionRow",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -145837,7 +145932,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1137,
-      "struct": 3442
+      "struct": 3443
      }
     },
     {
