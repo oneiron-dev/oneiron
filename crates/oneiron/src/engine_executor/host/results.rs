@@ -227,9 +227,24 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_with(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let input_rows = self.result_rows();
+        self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -244,7 +259,6 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let input_rows = self.result_rows();
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
         if !inherit.is_empty() {
@@ -322,7 +336,7 @@ impl RecordingJsHost<'_, '_> {
         {
             return Ok(Err(result_refusal("outside_delegated_range")));
         }
-        if found.child_source && !self.gated_write.reader_job_live()? {
+        if found.child_source && !self.observe_reader_job_live()? {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
         // A scoped child's read of its own result or a finding stops at its
@@ -370,8 +384,10 @@ impl RecordingJsHost<'_, '_> {
     /// What `reference` names for a read by this run: its own result first,
     /// then a reader child's source (a scoped child's lent inputs, each by
     /// its name or handle, FIX 7507), then a finding of one of its children.
+    /// The step's replay context keeps the findings the lookup read (FIX
+    /// 6352).
     pub(super) fn resolve_for_read(
-        &self,
+        &mut self,
         storage: &ExecutorStorage<'_>,
         reference: &JsResultRef,
     ) -> Result<Option<ResolvedResult>> {
@@ -431,10 +447,7 @@ impl RecordingJsHost<'_, '_> {
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);
         };
-        let Some(finding) = storage
-            .reader_finding(self.run_id, handle)?
-            .and_then(|job| job.finding)
-        else {
+        let Some(finding) = self.observe_settled_finding(storage, handle)? else {
             return Ok(None);
         };
         let Some(output) = recorded_output(storage, finding.owner, &finding.path, &finding.handle)?
@@ -468,24 +481,10 @@ impl RecordingJsHost<'_, '_> {
                 let mut card = card?;
                 // A whole fold result's card says what the fold covered, as
                 // its store's did: this step's receipt, or its committed one.
-                if read.range().is_none() {
-                    let output = read.output();
-                    let occurrence =
-                        OccurrenceRef::new(read.owner(), &output.path, &output.handle)?;
-                    let staged = self
-                        .receipts
-                        .iter()
-                        .find(|held| held.folded.occurrence == occurrence.occurrence)
-                        .cloned();
-                    let receipt = match staged {
-                        Some(receipt) => Some(receipt),
-                        None => storage.code_run_reader_fold(read.owner(), &output.path)?,
-                    };
-                    if let Some(receipt) =
-                        receipt.filter(|receipt| receipt.folded.handle == output.handle)
-                    {
-                        card["receipt"] = receipt.card();
-                    }
+                if read.range().is_none()
+                    && let Some(receipt) = self.whole_fold_receipt(storage, &read)?
+                {
+                    card["receipt"] = receipt.card();
                 }
                 json!({ "output": card })
             }
