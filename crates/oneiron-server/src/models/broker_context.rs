@@ -10,6 +10,7 @@
 //! bearer or a default header.
 mod secret_use;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,8 +21,12 @@ use oneiron_llm_systemone::{
 };
 use zeroize::Zeroizing;
 
-use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key};
+use super::broker::{
+    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key_released,
+    open_with_key,
+};
 use super::http::is_cloud_node;
+use super::seat_model::{SeatModelProvider, seat_model_providers};
 use crate::config::ServeConfig;
 use crate::config::models::{BrokerConfig, ModelsConfig};
 
@@ -42,6 +47,9 @@ struct Inner {
     site: Result<BrokerSite, String>,
     /// The serve runtime, which a blocking caller's sends run on.
     runtime: tokio::runtime::Handle,
+    /// The `[models]` providers a seat's model door may send through (FIX
+    /// 15702), by name, as serve resolved them.
+    seat_providers: BTreeMap<String, SeatModelProvider>,
 }
 
 /// A provider's answer through the broker: its status, and its body with the
@@ -70,7 +78,12 @@ impl BrokerContext {
             .as_ref()
             .map_or_else(BrokerConfig::default, |models| models.broker.clone());
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(vault)));
-        Some(Self::new(keys, &broker, timeout, runtime))
+        let seat_providers = config
+            .models
+            .as_ref()
+            .map(seat_model_providers)
+            .unwrap_or_default();
+        Some(Self::build(keys, &broker, timeout, runtime, seat_providers))
     }
 
     /// The context over the door `keys` for the `[models]` providers alone,
@@ -92,6 +105,16 @@ impl BrokerContext {
         timeout: Duration,
         runtime: tokio::runtime::Handle,
     ) -> Self {
+        Self::build(keys, broker, timeout, runtime, BTreeMap::new())
+    }
+
+    fn build(
+        keys: Arc<dyn KeyDoor>,
+        broker: &BrokerConfig,
+        timeout: Duration,
+        runtime: tokio::runtime::Handle,
+        seat_providers: BTreeMap<String, SeatModelProvider>,
+    ) -> Self {
         let site = BrokerSite::with_timeout(broker, timeout).map_err(|error| error.to_string());
         if let Err(error) = &site {
             tracing::warn!(%error, "no credential broker for the vault's secret keys");
@@ -101,6 +124,7 @@ impl BrokerContext {
                 keys,
                 site,
                 runtime,
+                seat_providers,
             }),
         }
     }
@@ -113,6 +137,13 @@ impl BrokerContext {
     /// The custody door this context reads its keys at.
     pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
         &self.inner.keys
+    }
+
+    /// The provider named `name` a seat's model door may send through (FIX
+    /// 15702): a `key_secret` provider speaking OpenAI chat or Anthropic
+    /// Messages.
+    pub(crate) fn seat_model_provider(&self, name: &str) -> Option<&SeatModelProvider> {
+        self.inner.seat_providers.get(name)
     }
 
     fn client(&self, wait: Duration) -> LlmResult<oneiron_broker::BrokerClient> {
@@ -156,18 +187,69 @@ impl BrokerContext {
         body: &[u8],
         wait: Duration,
     ) -> LlmResult<BrokerAnswer> {
+        self.send_with_keys(&self.inner.keys, secret, header, body, wait, None, None)
+            .await
+    }
+
+    /// [`Self::send`] with the key read at `keys`, a door scoped to one
+    /// caller (a seat's model door, FIX 15702), over this context's broker.
+    /// `release`, when given, runs after the key is read and before the
+    /// broker sends: an admitted call's permit starts there (slice 3), and
+    /// `lease` counts the physical attempt.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one broker call's request, its key door and its release"
+    )]
+    pub(crate) async fn send_with_keys(
+        &self,
+        keys: &Arc<dyn KeyDoor>,
+        secret: &str,
+        header: &CallHeader,
+        body: &[u8],
+        wait: Duration,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+        lease: Option<&BudgetLease>,
+    ) -> LlmResult<BrokerAnswer> {
         header
             .check(body)
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
         // The reply timeout runs a frame past `wait`, so the broker answers
         // `Timeout` before the daemon gives up (FIX 8559).
         let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
-        let reply = call_with_key(&client, &self.inner.keys, secret, header, body).await?;
+        let reply =
+            call_with_key_released(&client, keys, secret, header, body, release, lease).await?;
         let (status, _) = answered(reply.outcome)?;
         Ok(BrokerAnswer {
             status,
             body: reply.body,
         })
+    }
+
+    /// Opens the one streamed call `header` checks, with the key read at
+    /// `keys` (a seat's model door, FIX 15702 slice 2), and leaves its reply
+    /// to the caller: its outcome, then its body as the broker clears it.
+    /// The request is checked before the broker is reached and the key read;
+    /// the whole reply must end within `wait`. `release` and `lease` are as
+    /// [`Self::send_with_keys`] takes them.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one broker call's request, its key door and its release"
+    )]
+    pub(crate) async fn open_with_keys(
+        &self,
+        keys: &Arc<dyn KeyDoor>,
+        secret: &str,
+        header: &CallHeader,
+        body: &[u8],
+        wait: Duration,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+        lease: Option<&BudgetLease>,
+    ) -> LlmResult<oneiron_broker::BrokerStream> {
+        header
+            .check(body)
+            .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
+        open_with_key(&client, keys, secret, header, body, release, lease).await
     }
 
     /// [`Self::send`] for a blocking caller, run on the serve runtime: from

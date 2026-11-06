@@ -12,6 +12,7 @@ mod ask;
 mod call_scope;
 mod chain;
 mod credential;
+mod paced;
 mod plain_resume;
 mod record;
 mod redact;
@@ -41,6 +42,10 @@ pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
     VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+};
+pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
+pub(crate) use paced::{
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
