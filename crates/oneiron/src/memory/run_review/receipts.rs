@@ -1,6 +1,11 @@
 //! FIX 4727: each reviewed run's settlement projects into `vault.receipts`
-//! as the common `ProposalOutcome` kind. Its time and actor are the owner
-//! decision the settlement recorded; its fields are the settlement's own.
+//! as the common `ProposalOutcome` kind, one receipt per settled change. Its
+//! time and actor are the owner decision the settlement recorded.
+//!
+//! Each change's receipt names that change's own row as its trigger, so the
+//! credential and off-device screens judge every member on its own row: a
+//! reader sees the outcome of each change it may read, and nothing of the
+//! others, not even how many there are.
 use std::collections::BTreeMap;
 
 use super::{RunChangeVerdict, SETTLEMENTS};
@@ -14,13 +19,12 @@ const FIELD_RUN_REF: &str = "run_ref";
 const FIELD_REVERT_HANDLE: &str = "revert_handle";
 /// The owner decision the settlement recorded, as `gate:<id>`.
 const FIELD_DECISION_REF: &str = "decision_ref";
-/// How many changes the settlement names, and how many of them landed.
-const FIELD_CHANGE_COUNT: &str = "change_count";
-const FIELD_LANDED_COUNT: &str = "landed_count";
+/// The settled change, as the review named it.
+const FIELD_CHANGE_REF: &str = "change_ref";
 
-/// Every run settlement the query matches, read in its own transaction.
-/// A settlement whose owner decision no longer reads names no time or
-/// actor, and projects nothing.
+/// Every run settlement change the query matches, read in its own
+/// transaction. A settlement whose owner decision no longer reads names no
+/// time or actor, and projects nothing.
 ///
 /// # Errors
 /// A store failure.
@@ -50,56 +54,52 @@ pub(crate) fn run_settlement_receipts(
         let Some(record) = vault.store.gate_decision_in_txn(&rtxn, decision)? else {
             continue;
         };
-        let landed = settlement
-            .changes
-            .iter()
-            .filter(|change| change.verdict == RunChangeVerdict::Landed)
-            .count();
-        // A credential-bound reader sees the settlement through a row it
-        // settles: the first member that names one. A settlement of external
-        // effects alone keeps its owner decision, which no credential reads.
-        let trigger = stored
-            .changes
-            .iter()
-            .find_map(|change| change.member.rows().ok()?.first().copied())
-            .map_or_else(
-                || settlement.receipt.clone(),
-                |row| format!("run_change:{}", row.to_hex()),
-            );
-        let fields = BTreeMap::from([
-            (FIELD_RUN_REF.to_owned(), format!("run:{run}")),
-            (FIELD_DECISION_REF.to_owned(), settlement.receipt.clone()),
-            (
-                FIELD_REVERT_HANDLE.to_owned(),
-                settlement.revert_handle.clone(),
-            ),
-            (
-                FIELD_CHANGE_COUNT.to_owned(),
-                settlement.changes.len().to_string(),
-            ),
-            (FIELD_LANDED_COUNT.to_owned(), landed.to_string()),
-        ]);
-        let receipt = ReceiptRecord {
-            receipt_id: format!("proposal_outcome:run:{run}"),
-            receipt_kind: ReceiptKind::ProposalOutcome,
-            occurred_at: record.created_at,
-            actor: record.actor_ref.clone(),
-            on_behalf_of: None,
-            outcome: verdict_word(settlement.verdict).to_owned(),
-            job_ref: Some(run.clone()),
-            trigger_ref: Some(trigger),
-            policy_trace: Vec::new(),
-            fields,
-        };
-        if query.matches(&receipt) {
-            out.push(receipt);
+        for (index, change) in stored.changes.iter().enumerate() {
+            // A change that names no row (an external effect) keeps its
+            // owner decision as its trigger, which no credential reads.
+            let trigger = change
+                .member
+                .rows()
+                .ok()
+                .and_then(|rows| rows.first().copied())
+                .map_or_else(
+                    || settlement.receipt.clone(),
+                    |row| format!("run_change:{}", row.to_hex()),
+                );
+            let fields = BTreeMap::from([
+                (FIELD_RUN_REF.to_owned(), format!("run:{run}")),
+                (FIELD_DECISION_REF.to_owned(), settlement.receipt.clone()),
+                (
+                    FIELD_REVERT_HANDLE.to_owned(),
+                    settlement.revert_handle.clone(),
+                ),
+                (
+                    FIELD_CHANGE_REF.to_owned(),
+                    change.member.change().to_owned(),
+                ),
+            ]);
+            let receipt = ReceiptRecord {
+                receipt_id: format!("proposal_outcome:run:{run}:{index}"),
+                receipt_kind: ReceiptKind::ProposalOutcome,
+                occurred_at: record.created_at,
+                actor: record.actor_ref.clone(),
+                on_behalf_of: None,
+                outcome: verdict_word(change.verdict).to_owned(),
+                job_ref: Some(run.clone()),
+                trigger_ref: Some(trigger),
+                policy_trace: Vec::new(),
+                fields,
+            };
+            if query.matches(&receipt) {
+                out.push(receipt);
+            }
         }
     }
     count.finish(vault);
     Ok(out)
 }
 
-/// The settlement's verdict as its wire word.
+/// A change's verdict as its wire word.
 const fn verdict_word(verdict: RunChangeVerdict) -> &'static str {
     match verdict {
         RunChangeVerdict::Landed => "landed",
