@@ -90,12 +90,14 @@ pub(crate) fn lfs_chunk_owners_in_txn(
     Ok(rows)
 }
 
-/// Whether a stored row is an LFS chunk that no published object holds yet.
-/// A chunk lands as an ASSET before its object is read whole and published,
-/// so every generic reader takes such a chunk as absent; the LFS store reads
-/// it through its own door. An owner is its upload's journal row until it
-/// publishes and a GC row once refused, cancelled or deleted; an owner in
-/// neither is a live object's.
+/// Whether a stored row is an LFS chunk that no published object holds yet,
+/// or one a marked object's install stored past the batch door's scan,
+/// marked over its bytes (FIX 9034). A chunk lands as an ASSET before its
+/// object is read whole and published, so every generic reader takes such a
+/// chunk as absent; the LFS store reads it through its own door, which reads
+/// its object's mark. An owner is its upload's journal row until it publishes
+/// and a GC row once refused, cancelled or deleted; an owner in neither is a
+/// live object's.
 pub(crate) fn unpublished_lfs_chunk_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -108,6 +110,17 @@ pub(crate) fn unpublished_lfs_chunk_in_txn(
     let Some(hash) = chunks::CHUNK_MARKS.get(store, txn, id)? else {
         return Ok(false);
     };
+    if crate::secret_record::carrier_mark_in_txn(
+        store,
+        txn,
+        &side_table::ORIGIN_LFS_CHUNK_MARK,
+        id.as_bytes(),
+        &hash,
+    )?
+    .is_some()
+    {
+        return Ok(true);
+    }
     for row in chunks::CHUNK_REFS.iter_from(store, txn, hash.as_slice())? {
         let ((_, owner), ()) = row?;
         if !JOURNAL.contains(store, txn, &owner)? && !GC.contains(store, txn, &owner)? {
@@ -194,11 +207,19 @@ impl Vault {
                     .is_some();
                 if !referenced {
                     let id = chunks::chunk_id(hash)?;
-                    let (_, had_vector, had_graph, neighbors) =
-                        crate::batch::deindex_entity(&self.store, txn, &id)?;
+                    let (_, had_vector, had_graph, neighbors) = crate::batch::deindex_entity(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        txn,
+                        &id,
+                    )?;
                     graph |= had_graph;
                     vector |= had_vector;
-                    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(&self.store, txn, &id, &neighbors)?;
+                    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(
+                        &self.store,
+                        txn,
+                        &id,
+                        &neighbors,
+                    )?;
                     // Keep the small internal-byte marker: stale sync imports must
                     // not promote a retired chunk into the generic metadata plane.
                 }

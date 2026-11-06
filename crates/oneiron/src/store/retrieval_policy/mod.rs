@@ -20,6 +20,18 @@ pub enum RetrievalPolicyAction {
     Abstain = 5,
 }
 
+impl RetrievalPolicyAction {
+    pub(crate) const fn state_tag(self) -> u8 {
+        match self {
+            Self::Search => RetrievalState::ACTION_SEARCH,
+            Self::Expand => RetrievalState::ACTION_EXPAND,
+            Self::WidenTemporal => RetrievalState::ACTION_WIDEN_TEMPORAL,
+            Self::Stop => RetrievalState::ACTION_STOP,
+            Self::Abstain => RetrievalState::ACTION_ABSTAIN,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyIdentity {
     pub user: EntityId,

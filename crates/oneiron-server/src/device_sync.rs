@@ -44,6 +44,8 @@
 
 use std::sync::Arc;
 
+use oneiron::world_keys::DeviceSyncStart;
+
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -57,15 +59,19 @@ mod catalog;
 mod dial;
 mod enrolment;
 mod freeze;
+mod host;
 mod removal_delivery;
 #[cfg(feature = "mesh")]
 mod renewal;
 #[cfg(feature = "mesh")]
 mod route;
+#[cfg(feature = "mesh")]
+mod url;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
 pub(crate) use freeze::ReapFreeze;
+use host::Host;
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -86,7 +92,7 @@ impl DeviceSyncHost {
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
-        Self::open_logged(server, dial, mesh, ReapFreeze::never()).await
+        Self::open_logged(Host::Served(server), dial, mesh, ReapFreeze::never()).await
     }
 
     /// [`Self::start`] on a managed vault, under its reap `freeze`: the
@@ -106,18 +112,46 @@ impl DeviceSyncHost {
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
                  the next serve"
             );
+            server
+                .vault
+                .record_device_sync_start(DeviceSyncStart::FrozenForReap);
             return None;
         };
-        Self::open_logged(server, dial, mesh, freeze).await
+        Self::open_logged(Host::Served(server), dial, mesh, freeze).await
     }
 
     /// What this machine dials, its enrolment looked for where `source`
     /// says, or `None` with the one line that says why.
     fn dial(server: &SyncServer, config: &ServeConfig, source: EnrolmentSource) -> Option<Dial> {
-        match Dial::resolve(server, config, source) {
-            Ok(dial) => dial,
+        Self::dial_result(&server.vault, Dial::resolve(server, config, source))
+    }
+
+    #[cfg(feature = "mesh")]
+    fn dial_for_vault(
+        vault: &Arc<oneiron::Vault>,
+        config: &ServeConfig,
+        source: EnrolmentSource,
+    ) -> Option<Dial> {
+        Self::dial_result(vault, Dial::resolve_for_vault(vault, config, source))
+    }
+
+    fn dial_result(vault: &oneiron::Vault, result: anyhow::Result<Option<Dial>>) -> Option<Dial> {
+        match result {
+            Ok(Some(dial)) => {
+                if let Err(error) = vault.record_configured_device_residence(
+                    oneiron::sync::SyncClientConfig::default().residence_mode,
+                ) {
+                    tracing::warn!(%error, "device sync residence could not be recorded");
+                }
+                Some(dial)
+            }
+            Ok(None) => {
+                vault.record_device_sync_start(DeviceSyncStart::NotConfigured);
+                None
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                vault.record_device_sync_start(DeviceSyncStart::ConfigurationFailed);
                 None
             }
         }
@@ -128,7 +162,7 @@ impl DeviceSyncHost {
     /// connection's batches and writes (FIX 12036) and each archive import
     /// (FIX 11796).
     async fn open_logged(
-        server: &Arc<SyncServer>,
+        host: Host<'_>,
         dial: Dial,
         mesh: Option<&MeshHost>,
         freeze: ReapFreeze,
@@ -136,11 +170,18 @@ impl DeviceSyncHost {
         // The receiver runs whether or not the link opens (FIX 3396), its
         // imports admitted under the same freeze as the connection (FIX 12038),
         // and those the freeze refused taken in again at its thaw (FIX 12154).
-        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, freeze.clone());
-        match open(server, dial, mesh, freeze).await {
-            Ok(host) => Some(host.with_removal(removal)),
+        let vault = Arc::clone(host.vault());
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &vault, freeze.clone());
+        match open(host, dial, mesh, freeze).await {
+            Ok(host) => {
+                vault.record_device_sync_start(DeviceSyncStart::Started);
+                Some(host.with_removal(removal))
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                vault.record_device_sync_start(DeviceSyncStart::OpenFailed {
+                    archive_receiver_running: removal.is_some(),
+                });
                 removal.map(Self::receiving)
             }
         }
@@ -186,7 +227,7 @@ fn dials(config: &ServeConfig, vault: &oneiron::Vault, source: EnrolmentSource) 
 
 #[cfg(not(feature = "mesh"))]
 async fn open(
-    _server: &Arc<SyncServer>,
+    _host: Host<'_>,
     _dial: Dial,
     _mesh: Option<&MeshHost>,
     _freeze: ReapFreeze,
@@ -199,7 +240,7 @@ async fn open(
 /// starts holds an admission of `freeze` (FIX 12036).
 #[cfg(feature = "mesh")]
 async fn open(
-    server: &Arc<SyncServer>,
+    host: Host<'_>,
     dial: Dial,
     mesh: Option<&MeshHost>,
     freeze: ReapFreeze,
@@ -218,10 +259,10 @@ async fn open(
         always_on,
         primary,
     } = dial;
-    let vault = Arc::clone(&server.vault);
-    let macro_ready = server.ai.dreamer_runs();
+    let vault = Arc::clone(host.vault());
+    let candidacy = host.candidacy(always_on, primary);
     let (machine, paired) = tokio::task::spawn_blocking(move || {
-        declare_candidacy(&vault, home_node, always_on, primary, macro_ready)?;
+        declare_candidacy(&vault, home_node, candidacy)?;
         standing(&vault, home, enrolled)
     })
     .await??;
@@ -241,46 +282,37 @@ async fn open(
             .as_ref()
             .map(oneiron::sync::HomeNodeTopology::home_route)
     };
-    let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
+    let resolve = route::resolver(Arc::clone(host.vault()), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
+    let mesh_dialer = match mesh {
+        Some(mesh) => Some(
+            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>,
+        ),
+        None => url::dialer(&url)?,
+    };
     let link = Link {
         freeze: freeze.clone(),
-        windows: Arc::clone(&server.reassert_manager),
+        windows: host.windows(),
         topology,
         url,
         worlds,
-        mesh_dialer: mesh.map(|mesh| {
-            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>
-        }),
+        mesh_dialer,
         pin,
         machine,
-        always_on,
-        primary,
-        macro_ready,
+        candidacy,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(
         &link.url,
         credential_file,
-        Arc::clone(&server.vault),
+        Arc::clone(host.vault()),
         link.mesh_dialer.clone(),
         moves,
     );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };
-    let catalog = mesh.map(|mesh| {
-        catalog::MeshCatalog::new(
-            Arc::clone(&server.vault),
-            mesh.transport(),
-            server
-                .ai
-                .models()
-                .mesh_routes(&server.vault, mesh.transport()),
-            server.model_budgets.mesh_staging(),
-            freeze.admission(),
-        )
-    });
+    let catalog = host.catalog(mesh, &freeze);
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog
@@ -319,8 +351,14 @@ struct Link {
     /// This machine: each connection registers under it, so the owner's
     /// residence rows reach this machine through it (FIX 531).
     machine: oneiron::EntityId,
-    /// This machine's MACRO home candidacy as open declared it: an authority
-    /// catch-up that took rows declares it again (FIX 5572).
+    /// Served hosts re-declare their candidacy after authority catch-up.
+    /// An app-only device never declares itself as a home candidate.
+    candidacy: Option<Candidacy>,
+}
+
+#[cfg(feature = "mesh")]
+#[derive(Clone, Copy)]
+struct Candidacy {
     always_on: bool,
     primary: bool,
     macro_ready: bool,
@@ -422,9 +460,7 @@ impl Link {
                         home.to_owned(),
                         statuses.clone(),
                         Arc::clone(self.windows.vault()),
-                        self.always_on,
-                        self.primary,
-                        self.macro_ready,
+                        self.candidacy,
                         self.freeze.admission(),
                     ),
                 );
@@ -522,9 +558,7 @@ fn observer(
     home: String,
     statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
     vault: Arc<oneiron::Vault>,
-    always_on: bool,
-    primary: bool,
-    macro_ready: bool,
+    candidacy: Option<Candidacy>,
     admit: crate::server::HousekeepingAdmission,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
@@ -535,6 +569,9 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            let Some(candidacy) = candidacy else {
+                return;
+            };
             let Some(admitted) = admit() else {
                 tracing::debug!(%home, "home candidacy left as it was: the vault is frozen");
                 return;
@@ -542,7 +579,12 @@ fn observer(
             let vault = Arc::clone(&vault);
             tokio::task::spawn_blocking(move || {
                 let _admitted = admitted;
-                crate::home_candidacy::declare(&vault, always_on, primary, macro_ready);
+                crate::home_candidacy::declare(
+                    &vault,
+                    candidacy.always_on,
+                    candidacy.primary,
+                    candidacy.macro_ready,
+                );
             });
         }
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
@@ -586,16 +628,21 @@ const fn home_candidate(node: u64) -> oneiron::DreamerHomeNodeCandidate {
 fn declare_candidacy(
     vault: &oneiron::Vault,
     home_node: Option<u64>,
-    always_on: bool,
-    primary: bool,
-    macro_ready: bool,
+    candidacy: Option<Candidacy>,
 ) -> anyhow::Result<()> {
     let store = oneiron::DreamerRunnerStore::new(vault);
     anyhow::ensure!(
         home_node != Some(store.local_home_node_candidate(true, true, false)?.node_id),
         "home_node_id is this machine's own sync node id"
     );
-    crate::home_candidacy::declare(vault, always_on, primary, macro_ready);
+    if let Some(candidacy) = candidacy {
+        crate::home_candidacy::declare(
+            vault,
+            candidacy.always_on,
+            candidacy.primary,
+            candidacy.macro_ready,
+        );
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());

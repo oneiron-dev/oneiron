@@ -1,3 +1,6 @@
+//! TASK creation rate limits against the actor's policy ceiling.
+//! Entry [`task_create_owner`]; enforced by `create_facade` before admission.
+//! Owned by `task_verb`; ceilings resolve in `gate`, never here.
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

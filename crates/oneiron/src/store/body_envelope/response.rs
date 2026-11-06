@@ -27,6 +27,7 @@
 //!   its holders: one holder's erase owes its retirement to the final
 //!   holder's release ([`shared_wait`], FIX 6588).
 
+pub(super) mod owners;
 mod replay;
 mod shared_wait;
 
@@ -39,8 +40,9 @@ use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::self_heal::blocked_reports::blocked_capture_owners_in_txn;
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
-use crate::store::{ManifestDbs, MediaKey, Store};
+use crate::store::{ManifestDbs, MediaKey, Store, StoreAttemptOperations, StoreVoiceBankResponse};
 pub(crate) use shared_wait::{response_owed_to_all_in_txn, settle_shared_response_in_txn};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -236,11 +238,11 @@ pub(crate) enum ResponseFamily {
     /// their centroid, carried whole and owned by every member; a retired
     /// cluster leaves nothing.
     ReportCluster,
-    /// A typed question's copies of one judgment answer (FIX 9918, 11236):
-    /// its answer row, carried whole and owned by the answer claim, its
-    /// unit and its receipt's principal; its outcome labels and closed
-    /// window, owned by the answer claim alone. A retired copy leaves
-    /// nothing, as the owner's erase deletes it live.
+    /// A typed question's copies of one judgment answer (FIX 9918, 11236,
+    /// 11237), carried whole. At bind time, decoded labels and windows
+    /// join their answer's claim, unit and receipt principal; opaque or
+    /// orphan copies keep their claim alone. Existing unchanged bindings
+    /// keep their prior owners. A retired copy leaves nothing.
     TypedQuestion,
 }
 
@@ -279,7 +281,7 @@ impl ResponseFamily {
                     .then_some(Self::WaitSettled)
             })
             .or_else(|| {
-                crate::voice_identity::ref_bank::voice_bank_row(key).then_some(Self::VoiceBank)
+                crate::store::voice_bank_response::voice_bank_row(key).then_some(Self::VoiceBank)
             }),
             ResponseDb::Entities => EntityMetadataHeader::parse(value)
                 .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
@@ -341,7 +343,13 @@ impl ResponseFamily {
     /// text), a decoded one, or, for a row its family recognizes that does
     /// not decode or whose stub does not encode, an opaque one (FIX 6227,
     /// 9390). A clip's raw bytes always carry: it bears no marker.
-    pub(crate) fn scan(self, key: &[u8], value: &[u8]) -> ResponseScan {
+    pub(crate) fn scan(
+        self,
+        operations: &dyn StoreAttemptOperations,
+        voice: &dyn StoreVoiceBankResponse,
+        key: &[u8],
+        value: &[u8],
+    ) -> ResponseScan {
         // An opaque response's erased form holds nothing.
         if self != Self::MediaPart && is_opaque_erased(value) {
             return ResponseScan::NotResponse;
@@ -366,28 +374,48 @@ impl ResponseFamily {
             Self::WaitDelivery | Self::WaitSettled => {
                 crate::store::executor_wait_delivery::wait_reply_scan(value)
             }
-            Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
+            Self::AttemptPayload => {
+                crate::store::attempt_payload_response::attempt_payload_scan(operations, key, value)
+            }
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::store::query_memos::memo_carriage(value),
-            Self::CentroidEvidence => crate::store::centroid_evidence::centroid_evidence_carriage(value),
+            Self::CentroidEvidence => {
+                crate::store::centroid_evidence::centroid_evidence_carriage(value)
+            }
             Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
             Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
-            Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
+            Self::VoiceBank => voice.voice_bank_scan(key, value),
             Self::TypedQuestion => {
                 crate::llm::decision::questions::typed_question_carriage(key, value)
             }
         }
     }
 
-    /// Whether a checkpoint's payload placement gives the row `key` to the
-    /// response client (FIX 9179): it holds a response, or the erased form
-    /// one leaves (the explicit marker, a wait's erased reply). Any other
-    /// row of a mixed family stays where its family is classed.
-    pub(crate) fn placed_as_response(self, key: &[u8], value: &[u8]) -> bool {
-        is_opaque_erased(value)
-            || self.scan(key, value) != ResponseScan::NotResponse
-            || (matches!(self, Self::WaitDelivery | Self::WaitSettled)
-                && crate::store::executor_wait_delivery::wait_reply_erased(value))
+    /// Whether a mixed attempt/wait row carries a response for checkpoint payload
+    /// placement (FIX 9179): a queue row or a wait index row the response client
+    /// takes, by the same family and scan the census reads (a response, the erased
+    /// marker, a wait's erased reply). Any other family is not a mixed family.
+    pub(crate) fn mixed_response_placed_as_response(
+        operations: &dyn StoreAttemptOperations,
+        db: ResponseDb,
+        key: &[u8],
+        value: &[u8],
+    ) -> bool {
+        match Self::of_row(db, key, value) {
+            Some(ResponseFamily::AttemptPayload) => {
+                is_opaque_erased(value)
+                    || crate::store::attempt_payload_response::attempt_payload_scan(
+                        operations, key, value,
+                    ) != ResponseScan::NotResponse
+            }
+            Some(ResponseFamily::WaitDelivery | ResponseFamily::WaitSettled) => {
+                is_opaque_erased(value)
+                    || crate::store::executor_wait_delivery::wait_reply_scan(value)
+                        != ResponseScan::NotResponse
+                    || crate::store::executor_wait_delivery::wait_reply_erased(value)
+            }
+            _ => false,
+        }
     }
 
     /// Who owns the opaque response in the row `key`, as far as its key
@@ -421,7 +449,9 @@ impl ResponseFamily {
             return Ok(ResponseOwners::Partial(owners));
         }
         if self == Self::VoiceBank {
-            return crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value);
+            return store
+                .voice_bank_response
+                .voice_bank_owners(store, txn, key, value);
         }
         if self == Self::MessageReplyAssertions {
             return Ok(crate::memory::reply_assertions_opaque_owners(key, value));
@@ -457,24 +487,31 @@ impl ResponseFamily {
             Self::Http => Ok(crate::store::http_owners(value)),
             Self::InvocationClaim => Ok(crate::store::invocation_claim_owners(value)),
             Self::MediaJob => Ok(crate::store::media_job_owners(value)),
-            Self::BlockedCapture => Ok(crate::self_heal::blocked_reports::blocked_capture_owners(
-                key, value,
-            )),
+            Self::BlockedCapture => blocked_capture_owners_in_txn(store, txn, key, value),
             Self::WaitDelivery => crate::code_run::wait_delivery_owners(store, txn, key),
             Self::WaitSettled => {
                 crate::store::executor_wait_delivery::wait_settled_owners(store, txn, key)
             }
-            Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
+            Self::AttemptPayload => Ok(
+                crate::store::attempt_payload_response::attempt_payload_owners(
+                    store.attempt_operations,
+                    key,
+                    value,
+                ),
+            ),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::store::query_memos::memo_owners(value)),
-            Self::CentroidEvidence => Ok(crate::store::centroid_evidence::centroid_evidence_owners(value)),
+            Self::CentroidEvidence => Ok(
+                crate::store::centroid_evidence::centroid_evidence_owners(value),
+            ),
             Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
             Self::ReportCluster => Ok(crate::feedback::intake::report_cluster_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
-                let owners =
-                    crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)?;
+                let owners = store
+                    .voice_bank_response
+                    .voice_bank_owners(store, txn, key, value)?;
                 if !owners.proved() {
                     tracing::warn!(
                         "a voice bank row is bound under the owners the bank proves; the rest \
@@ -494,9 +531,11 @@ impl ResponseFamily {
                     .map(|row| crate::store::media_job_owners(&row))
                     .unwrap_or_default())
             }
-            Self::TypedQuestion => Ok(crate::llm::decision::questions::typed_question_owners(
-                key, value,
-            )),
+            Self::TypedQuestion => {
+                crate::llm::decision::questions::typed_question_copy_owners_in_txn(
+                    store, txn, key, value,
+                )
+            }
         }
     }
 
@@ -562,11 +601,12 @@ impl ResponseFamily {
     /// Storage errors.
     pub(crate) fn retire_in_txn(
         self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         wtxn: &mut RwTxn<'_>,
         key: &[u8],
         carriage: &ResponseCarriage,
     ) -> Result<()> {
+        let store = write.store;
         let kept = || {
             carriage
                 .stub
@@ -577,7 +617,7 @@ impl ResponseFamily {
                 ))
         };
         match self {
-            Self::StepClaim => crate::llm::retire_step_claim_in_txn(store, wtxn, key),
+            Self::StepClaim => crate::llm::retire_step_claim_in_txn(write, wtxn, key),
             Self::ProgramStep
             | Self::StepState
             | Self::Replay

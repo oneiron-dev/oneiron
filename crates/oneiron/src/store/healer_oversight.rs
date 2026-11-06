@@ -328,7 +328,8 @@ impl Vault {
     pub fn emit_healer_oversight(&self, now: u64) -> Result<Vec<OversightReceipt>> {
         self.prepare_install_signing()?;
         self.with_write_txn_grouped(|txn| {
-            let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, txn)?;
+            let identity =
+                crate::store::install_identity::ensure_device_identity_in_txn(self, txn)?;
             let mut counts = OversightCounts {
                 vault_device: identity.client_id,
                 observed_at: now,

@@ -942,8 +942,9 @@ pub(crate) fn note_assignment_in_txn(
     release_in_txn(store, txn, &queued)
 }
 
-/// Records a fresh owed chunk as a projection round and its turns' current
-/// words as taken, in its enqueue transaction (FIX 12246): the same
+/// Records a fresh owed chunk as a projection round and its turns'
+/// snapshot-frozen words as taken, in its enqueue transaction (FIX
+/// 12246; frozen readings FIX 12544): the same
 /// assignment-time record `hold_in_txn` makes, so erasing or demoting one
 /// pending chunk member retires the round and puts its surviving turns
 /// back to be read again. A member demoted while a mate is legally held
@@ -956,6 +957,7 @@ pub(crate) fn take_chunk_words_in_txn(
     kind: &str,
     dedupe_key: &str,
     turns: &[EntityId],
+    frozen: &BTreeMap<EntityId, ([u8; 32], [u8; 32])>,
 ) -> Result<()> {
     // Each member is live (its words read here), gone (erased, deleted,
     // or otherwise withdrawn: no promotion brings its words back), or
@@ -1050,10 +1052,21 @@ pub(crate) fn take_chunk_words_in_txn(
             // Away words are not here to take: the rounds link stays, so
             // a later erase or retire finds the round, but no digest is
             // stamped for words this replica does not hold.
-        } else if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
-            let reading = reading(&statements);
-            given.taken = Some(reading);
-            stamped.push((*turn, reading));
+        } else if let Some((reading, partition)) = frozen.get(turn)
+            && reading_current_in_txn(vault, txn, turn, *reading)?
+            && crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, turn)?
+                == Some(*partition)
+        {
+            // Only the frozen reading is stamped, and only while the
+            // turn still reads as frozen in its frozen partition (FIX
+            // 12544): a republication or same-text scope move since the
+            // wake's snapshot keeps its own reset and re-enters through
+            // the usual doors. Members with no frozen entry (their text
+            // refused at the snapshot) take the rounds link only, like
+            // away members; both run as the chunk's originals, whose
+            // completion stamp covers them.
+            given.taken = Some(*reading);
+            stamped.push((*turn, *reading));
         }
         GIVEN.put(&vault.store, txn, turn, &given)?;
     }

@@ -68,9 +68,9 @@ use crate::vault::Vault;
 pub(crate) const REDIRECT_TABLE_META_PREFIX: &[u8] = b"redirect:v1:";
 
 pub(crate) use crate::store::identity_redirect_rows::{
-    REDIRECT, REDIRECT_ROW_VERSION, SHELL_EDGE_KINDS, RedirectRow, decode_redirect_row,
-    encode_redirect_row, forget_deleted_in_txn, redirect_row_exists_in_txn,
-    redirect_row_in_txn, table_inbound_shells_in_txn,
+    REDIRECT, REDIRECT_ROW_VERSION, RedirectRow, SHELL_EDGE_KINDS, decode_redirect_row,
+    encode_redirect_row, forget_deleted_in_txn, redirect_row_exists_in_txn, redirect_row_in_txn,
+    table_inbound_shells_in_txn,
 };
 
 pub use crate::deletion::REDIRECT_CARRIER_CLASS;
@@ -79,10 +79,6 @@ pub use crate::deletion::REDIRECT_CARRIER_CLASS;
 /// makes a cycle a typed error; this bound additionally keeps a pathological
 /// (forged, or corruption-induced) chain from consuming unbounded stack.
 const MAX_REDIRECT_CHAIN_DEPTH: usize = 64;
-
-
-
-
 
 /// The redirect row `entity` MUST have, derived from engine-authored truth
 /// alone: the canonical shell edges first (D11 — they are the structural
@@ -167,12 +163,6 @@ pub(crate) fn maintain_redirect_projection_in_txn(
     Ok(())
 }
 
-
-
-
-
-
-
 /// Walks `id` through the projection into its head set, accumulating into
 /// `heads`.
 ///
@@ -219,9 +209,6 @@ fn resolve_into_in_txn(
 /// walk: it resolves to the EMPTY head set, so it can never point at an
 /// erased head. The one arm the edges structurally cannot witness is also
 /// the one arm an inbound walk has nothing to ask them about.
-
-
-
 
 /// The append-only type-76 ledger inverted: `head -> the shells the fold
 /// still binds to it`.
@@ -286,12 +273,6 @@ fn ledger_inbound_shells_in_txn(
     }
     Ok(inbound)
 }
-
-
-
-
-
-
 
 /// Every entity one of `shells` points at, directly or through a chain: the
 /// forward twin of [`inbound_redirect_shells_in_txn`], read through the same

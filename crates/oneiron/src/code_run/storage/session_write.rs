@@ -13,11 +13,22 @@
 //! takes exactly the writes and checkpoints it took before, receipt and all.
 //! The write's own rows, the run's checkpoints and every other row stay
 //! budgeted as before (Engine 10-19 15:1x).
+//!
+//! A verb's answer on the receipt also keeps the caller's view of it (FIX
+//! 5426). The post chain runs over the staged answer after the segment
+//! commits, and a post hook may change what the caller reads. So the
+//! segment marks the view pending, and the post chain's view, or none when
+//! no hook changed it, settles the receipt after. A resumed step answers
+//! the kept view and never runs the write's hooks again; a receipt still
+//! pending, whose post chain never settled, answers its output withheld.
 
 use std::cell::Cell;
 
+use rmpv::Value;
+
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord};
-use crate::code_run::types::{SelfAgentVerbCall, SelfCall, SelfDispatchOutcome};
+use crate::code_run::types::{AgentVerbAnswer, SelfAgentVerbCall, SelfCall, SelfDispatchOutcome};
+use crate::entity_id::EntityId;
 use crate::session_overlay::{JournalEntry, OverlayKeyspace};
 use crate::{Error, Result};
 
@@ -67,7 +78,12 @@ impl SessionBinding<'_> {
                             0,
                             0,
                         )
-                        .map(|row| answered.bridge_calls.push(row)),
+                        .map(|mut row| {
+                            if matches!(outcome, SelfDispatchOutcome::AgentVerb(_)) {
+                                set_caller_view(&mut row.outcome, Value::Nil);
+                            }
+                            answered.bridge_calls.push(row);
+                        }),
                     )?;
                     // The receipt's row is the write's bookkeeping, past
                     // the room's budget: a replay record row in
@@ -86,5 +102,95 @@ impl SessionBinding<'_> {
             Err(error) if unkept.get() => Err(error),
             Err(error) => Ok(Err(error)),
         }
+    }
+
+    /// Settles the caller's view on the receipt `receipt` keeps for `call`:
+    /// its first row becomes `answer`, with every hook's disposition, and
+    /// `view`, the caller's reply when a post hook changed it. One segment
+    /// of the run's captured route; the receipt row stays bookkeeping.
+    ///
+    /// # Errors
+    ///
+    /// A receipt that is gone or holds no row, the route's refusal and
+    /// storage errors. The receipt then stays pending.
+    pub(crate) fn settle_session_write_view(
+        &self,
+        receipt: EntityId,
+        call: &SelfAgentVerbCall,
+        answer: &AgentVerbAnswer,
+        view: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        let mut row = CodeRunBridgeCall::record(
+            0,
+            &SelfCall::AgentVerb(call.clone()),
+            &SelfDispatchOutcome::AgentVerb(answer.clone()),
+            0,
+            0,
+        )?;
+        if let Some(view) = view {
+            set_caller_view(&mut row.outcome, Value::from(view.to_string()));
+        }
+        self.session
+            .overlay_write_routed(&self.route, |wtxn, _apply| {
+                let store = self.session.read_view()?;
+                let Some(mut record) = REPLAY_RECORDS.get(&store, wtxn, &receipt)? else {
+                    return Err(Error::InvariantViolation("a room write's receipt is gone"));
+                };
+                let Some(first) = record.bridge_calls.first_mut() else {
+                    return Err(Error::InvariantViolation(
+                        "a room write's receipt holds no row",
+                    ));
+                };
+                *first = row;
+                REPLAY_RECORDS.put(&store, wtxn, &receipt, &record)
+            })
+    }
+}
+
+/// What a kept room write's receipt says its caller read.
+pub(crate) enum KeptCallerView {
+    /// The answer as kept: no hook changed it, or it is no room write's.
+    Unchanged,
+    /// Its post chain never settled: the caller reads its output withheld.
+    Pending,
+    /// The caller's reply, as a post hook changed it.
+    Changed(serde_json::Value),
+}
+
+/// The caller's view a receipt row's `outcome` keeps.
+///
+/// # Errors
+///
+/// A kept view that does not decode.
+pub(crate) fn kept_caller_view(outcome: &Value) -> Result<KeptCallerView> {
+    let Value::Map(entries) = outcome else {
+        return Ok(KeptCallerView::Unchanged);
+    };
+    let kept = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(CALLER_VIEW))
+        .map(|(_, view)| view);
+    match kept {
+        None => Ok(KeptCallerView::Unchanged),
+        Some(Value::Nil) => Ok(KeptCallerView::Pending),
+        Some(view) => view
+            .as_str()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .map(KeptCallerView::Changed)
+            .ok_or(Error::InvariantViolation(
+                "a room write's kept caller view does not decode",
+            )),
+    }
+}
+
+/// The outcome key a room write's caller view rides under on its receipt:
+/// nil while pending, else the caller's reply as JSON text.
+const CALLER_VIEW: &str = "caller_view";
+
+/// Sets `outcome`'s caller view to `view`, replacing any it holds.
+fn set_caller_view(outcome: &mut Value, view: Value) {
+    if let Value::Map(entries) = outcome {
+        entries.retain(|(key, _)| key.as_str() != Some(CALLER_VIEW));
+        entries.push((Value::from(CALLER_VIEW), view));
     }
 }

@@ -24,5 +24,4 @@ pub(crate) fn validate_rebuild_vector(
     Ok(id)
 }
 
-
 const ERR_VECTOR_KEY: &str = "vector key";

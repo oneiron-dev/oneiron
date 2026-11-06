@@ -5,7 +5,8 @@ use crate::edit_settle::records::{SettleConsent, SettleOutcomeKind, SettlementRe
 use crate::write_envelope::WriteActor;
 
 /// The ledger record of a native output's settle: `version` the version it
-/// became, `replaced` the head that version replaced.
+/// became, `replaced` the head that version replaced, `grant_ref` the
+/// standing grant the txn's settle check covered it under, if any.
 pub(super) fn output_record(
     row: &PendingRow,
     outcome: SettleOutcomeKind,
@@ -15,6 +16,7 @@ pub(super) fn output_record(
         Option<&crate::blob_artifact::BlobArtifactVersion>,
         Option<u64>,
     ),
+    grant_ref: Option<String>,
 ) -> SettlementRecord {
     let report = match &row.body {
         PendingBody::Output { report, .. } => report.as_bytes(),
@@ -26,6 +28,7 @@ pub(super) fn output_record(
         settled_at,
         actor_ref: Some(actor.entity_ref().to_hex()),
         brief_ref: consent.brief_ref().map(str::to_owned),
+        grant_ref,
         before_version: version.and(replaced),
         version: version.map(|version| version.version),
         content_hash: version.map(|version| version.content_hash),

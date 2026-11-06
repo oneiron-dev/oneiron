@@ -13,6 +13,8 @@ both bindings and their export-census tests in one change.
 - `vault.commitments.fulfill`
 - `vault.commitments.release`
 - `vault.commitments.supersede`
+- `vault.commitments.reminder_route.get`
+- `vault.commitments.reminder_route.set`
 - `fetch`
 - `crawl`
 - `report`
@@ -25,6 +27,12 @@ both bindings and their export-census tests in one change.
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
+- `self.board.layout`
+- `self.board.fold`
+- `self.board.unfold`
+- `self.board.size`
+- `self.board.filter`
+- `self.board.replace`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
@@ -216,6 +224,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
+- `vault.proactivity.digest`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
 - `vault.inbox.groups.resolve`
@@ -248,6 +257,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.fork`
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
+- `vault.skills.fit.set`
+- `vault.skills.advisory_ask.set`
 - `vault.skills.permissions.approve`
 - `vault.skills.optimize.start`
 - `vault.skills.optimize.result`
@@ -365,6 +376,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.baseline`
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
+- `vault.sync.quarantine.held_edits`
+- `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`
 - `vault.federation.burst.review`
@@ -417,6 +430,7 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.discard`
 - `vault.off_record.recall`
 - `vault.off_record.notes.create`
+- `vault.off_record.artifacts.save`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
 - `self.off_record.results.list`
@@ -435,6 +449,7 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
+- `vault.outbound_calls.request.erase`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`
@@ -469,6 +484,12 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.drafters.list`
+- `vault.drafters.list_as`
+- `vault.drafters.status`
+- `vault.drafters.policy.set`
+- `vault.drafters.revert`
+- `vault.drafters.revert_as`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -1031,6 +1052,8 @@ both bindings and their export-census tests in one change.
 - `vault.habits.checkin`
 - `vault.productivity.create`
 - `vault.productivity.tree`
+- `vault.ingest.ag_ui.import`
+- `vault.ingest.ag_ui.read`
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`
@@ -1193,3 +1216,18 @@ both bindings and their export-census tests in one change.
 - `vault.custody.members.drain.commit`
 - `vault.custody.members.drain.folder`
 - `vault.custody.members.reenrol`
+- `vault.mail.pack.install`
+- `vault.mail.sources.connect`
+- `vault.mail.sources.list`
+- `vault.mail.sources.settings.set`
+- `vault.mail.sources.members.set`
+- `vault.mail.sources.audience_events`
+- `vault.mail.threads.share`
+- `vault.mail.threads.unshare`
+- `vault.mail.compliance.setting`
+- `vault.mail.compliance.set`
+- `vault.mail.compliance.log`
+- `vault.mail.sources.sync_status`
+- `vault.mail.inbox`
+- `vault.mail.threads.read`
+- `vault.mail.compliance.search`

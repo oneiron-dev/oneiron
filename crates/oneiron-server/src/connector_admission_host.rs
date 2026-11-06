@@ -19,8 +19,9 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::connector_key::qualification::{
-    ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeWrite,
-    QualificationConnection, QualificationConnector, QualificationFailure,
+    ProbeCapturedRequest, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeToolsList,
+    ProbeTraceEvent, ProbeWrite, QualificationConnection, QualificationConnector,
+    QualificationFailure,
 };
 use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
@@ -275,7 +276,7 @@ pub(crate) fn discover(
     pinned: Option<&str>,
 ) -> oneiron::Result<Discovery> {
     let mut session = Session::open(client, endpoint, auth, pinned).map_err(refused)?;
-    let tools = session.list_tools().map_err(refused)?;
+    let tools = session.list_tools(None).map_err(refused)?;
     Ok(Discovery {
         revision: std::mem::take(&mut session.revision),
         tools,
@@ -424,14 +425,16 @@ struct HttpQualificationConnection<'a> {
 }
 
 impl QualificationConnection for HttpQualificationConnection<'_> {
-    fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-        Ok(self
+    fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+        let mut requests = Vec::new();
+        let tools = self
             .session
-            .list_tools()
-            .map_err(|_| QualificationFailure::Transport)?
-            .iter()
-            .map(ListedTool::probe_tool)
-            .collect())
+            .list_tools(Some(&mut requests))
+            .map_err(|_| QualificationFailure::Transport)?;
+        Ok(ProbeToolsList {
+            tools: tools.iter().map(ListedTool::probe_tool).collect(),
+            requests,
+        })
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
@@ -660,7 +663,10 @@ impl<'a> Session<'a> {
     /// Every `tools/list` page, in the connector's order, however many it
     /// lists (FIX 8196). Each page has its own timeout; only a cursor the
     /// connector already gave, which would page forever, is refused.
-    fn list_tools(&self) -> Result<Vec<ListedTool>, &'static str> {
+    fn list_tools(
+        &self,
+        mut requests: Option<&mut Vec<ProbeCapturedRequest>>,
+    ) -> Result<Vec<ListedTool>, &'static str> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
         let mut seen = std::collections::BTreeSet::new();
@@ -668,12 +674,30 @@ impl<'a> Session<'a> {
             let params = cursor
                 .take()
                 .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
-            let result = self.rpc(
-                &format!("tools/list:{page}"),
-                "tools/list",
-                params,
-                HANDSHAKE_TIMEOUT,
-            )?;
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": format!("tools/list:{page}"),
+                "method": "tools/list",
+                "params": params,
+            });
+            let built = self.build(&body, HANDSHAKE_TIMEOUT)?;
+            if let Some(requests) = requests.as_mut() {
+                let (request_body, request_headers) =
+                    captured(&built).map_err(|_| "a tools/list request could not be captured")?;
+                requests.push(ProbeCapturedRequest {
+                    request_body,
+                    request_headers,
+                });
+            }
+            let response = self
+                .client
+                .execute(built)
+                .map_err(|_| "the connector did not answer")?;
+            let message = self.answer(response, &body["id"])?;
+            let result = message
+                .get("result")
+                .cloned()
+                .ok_or("the connector answered with an error")?;
             let listed = result
                 .get("tools")
                 .and_then(Value::as_array)

@@ -4,6 +4,7 @@
 use crate::entity_id::EntityId;
 #[cfg(doc)]
 use crate::pipeline::WorldScope;
+use crate::store::agent_definition_codec::keys::{SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD};
 
 /// The run scope persisted with an `AgentDefinition`.
 ///
@@ -21,4 +22,14 @@ pub enum AgentScope {
     Base,
     /// This world plus base reality.
     World(EntityId),
+}
+
+impl AgentScope {
+    pub(crate) fn discriminant(&self) -> &'static str {
+        match self {
+            Self::All => SCOPE_ALL,
+            Self::Base => SCOPE_BASE,
+            Self::World(_) => SCOPE_WORLD,
+        }
+    }
 }

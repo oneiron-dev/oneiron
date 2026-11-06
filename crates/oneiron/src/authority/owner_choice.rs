@@ -237,6 +237,16 @@ pub(super) fn owner_choice_landing<P: Clone>(
 }
 
 impl<P> OwnerChoiceState<P> {
+    /// The values of `target`'s live choices: what its next choice
+    /// supersedes (an origin cut's epoch floor, FIX 15740).
+    pub(super) fn live_values(&self, target: EntityId) -> impl Iterator<Item = &P> {
+        self.frontiers
+            .get(&target)
+            .into_iter()
+            .flat_map(|frontier| frontier.live.values())
+            .filter_map(|choice| choice.settings.choice.as_ref())
+    }
+
     /// Whether no choice of the kind was ever folded: a register an image
     /// need not carry (FIX 4624).
     pub(super) fn is_empty(&self) -> bool {

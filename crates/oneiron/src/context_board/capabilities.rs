@@ -86,7 +86,7 @@ impl SkillsSection {
     }
 
     pub fn board_section(&self) -> Result<BoardSection, BoardFrameError> {
-        BoardSection::new(
+        Ok(BoardSection::new(
             "SKILLS",
             vec![self.loaded.clone()],
             self.found.clone(),
@@ -95,8 +95,46 @@ impl SkillsSection {
                 pinned: false,
                 shed_rank: Some(ShedRank::CapabilityDiscovery),
             },
-        )
+        )?
+        .with_fold_summary(
+            super::layout::FoldSummary::total(self.found.len()).count("found", self.found.len()),
+        ))
     }
+}
+
+/// The SKILLS section [`SkillsSection::board_section`] built, as a board
+/// that rides in two parts carries it (I1 = C): its pinned `loaded:` line
+/// alone, which reads the session and no new message and never sheds, and
+/// its `found` rows alone, which the message's capability channel found and
+/// which shed first; `None` for the second when it found nothing.
+pub fn split_skills_section(
+    section: &BoardSection,
+) -> Result<(BoardSection, Option<BoardSection>), BoardFrameError> {
+    let loaded = BoardSection::new(
+        section.name(),
+        section.pinned_rows().to_vec(),
+        Vec::new(),
+        Vec::new(),
+        SectionPolicy {
+            pinned: true,
+            shed_rank: None,
+        },
+    )?;
+    let found = (!section.detail_rows().is_empty())
+        .then(|| {
+            BoardSection::new(
+                section.name(),
+                Vec::new(),
+                section.detail_rows().to_vec(),
+                Vec::new(),
+                SectionPolicy {
+                    pinned: false,
+                    shed_rank: Some(ShedRank::CapabilityDiscovery),
+                },
+            )
+        })
+        .transpose()?;
+    Ok((loaded, found))
 }
 
 /// The hits SKILLS lists as found, in hit order: skills and agent

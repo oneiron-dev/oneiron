@@ -104,6 +104,7 @@ pub use executor::*;
 pub(crate) use extracted_people::pin_lineage_origin_in_txn;
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
+pub(crate) use partition::PartitionAudience;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
@@ -140,7 +141,7 @@ pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
 };
-pub(crate) use running_buckets::running_bucket_set_in_txn;
+pub(crate) use running_buckets::{delete_running_buckets_in_txn, running_bucket_set_in_txn};
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{
     ScopeSummaryEvidence, arc_evidence_in_txn, editor_source_pins_in_txn, note_source_pins_in_txn,

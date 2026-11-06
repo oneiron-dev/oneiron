@@ -8,10 +8,11 @@
 
 use std::collections::BTreeSet;
 
-use super::mining::{line_substitutions, substitution_pair};
+use super::mining::{line_substitutions, reconstructed_line_ranges, substitution_pair};
 use super::model::Substitution;
 use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment, HunkRange};
 use crate::edit_distance::{RetainedProposal, TextRead};
+use crate::entity_id::EntityId;
 
 /// The retained ranges of the substitutions one changed hunk made, at the
 /// miner's own extraction granularity: each recorded change whose extracted
@@ -57,6 +58,43 @@ pub(in crate::edit_distance) fn hunk_substitution_ranges(
     ranges
 }
 
+/// The endpoint-position ranges of the substitutions one changed hunk made
+/// in a reconstructed re-diff (FIX 12715): each endpoint line pair whose
+/// extracted pair is one of the hunk's pairs, through the ONE shared helper
+/// [`reconstructed_line_ranges`], so the judge and the miner name the same
+/// line. Empty when the hunk makes no substitution, when the endpoints pair
+/// to nothing, or when the endpoint does not read — those hunks stay held,
+/// as before. Ranges, never the hunk's text.
+pub(in crate::edit_distance) fn reconstructed_hunk_ranges(
+    artifact: EntityId,
+    endpoint_before: &str,
+    endpoint_after: &str,
+    hunk_before: &str,
+    hunk_after: &str,
+) -> Vec<HunkRange> {
+    let hunk_pairs: Vec<Substitution> = substitution_pair(hunk_before, hunk_after)
+        .into_iter()
+        .chain(line_substitutions(hunk_before, hunk_after))
+        .collect();
+    if hunk_pairs.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges: Vec<HunkRange> =
+        reconstructed_line_ranges(artifact, endpoint_before, endpoint_after)
+            .into_iter()
+            .filter_map(|(pair, range)| {
+                if hunk_pairs.contains(&pair) {
+                    range
+                } else {
+                    None
+                }
+            })
+            .collect();
+    ranges.sort();
+    ranges.dedup();
+    ranges
+}
+
 /// The retained ranges the clear hunks of `judgment` made, or with `clear`
 /// false its unclear hunks.
 fn ranges_where(judgment: &AmendmentJudgment, clear: bool) -> BTreeSet<HunkRange> {
@@ -95,8 +133,8 @@ impl MinableHunks {
 
     /// Whether the miner may take the substitution at `range`: the whole
     /// window when no share is unclear, else only a range a clear hunk made
-    /// and no unclear hunk did. A substitution with no range — a
-    /// reconstructed re-diff's line pair — mines only with the whole window.
+    /// and no unclear hunk did. A substitution with no range — when its
+    /// text does not read — mines only with the whole window.
     pub(super) fn admits(&self, range: Option<&HunkRange>) -> bool {
         match self {
             Self::Whole => true,

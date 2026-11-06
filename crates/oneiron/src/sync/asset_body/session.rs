@@ -111,13 +111,20 @@ pub struct AssetBodyPeer<'a> {
     pub window: &'a dyn Fn(&WindowKey) -> Option<LoroDoc>,
     /// The windows this socket moves bodies for now, which a poll scans.
     pub windows: &'a dyn Fn() -> Vec<WindowKey>,
+    /// The machine this client's connection proved as its home, rechecked
+    /// as the socket's call began: a body landed through this peer came from
+    /// it, and its landing records so ([`super::home_proof`], FIX 14534).
+    /// `None` on the server's side, a federation lane and an offline bundle.
+    pub home: Option<EntityId>,
 }
 
 /// Runs `f` over the peer a sync client over `manager` is, on `lane`: its
-/// vault, its lease vault, and the live documents its manager holds.
+/// vault, its lease vault, the live documents its manager holds, and `home`,
+/// the machine it proved as its home ([`AssetBodyPeer::home`]).
 pub(crate) fn with_manager_peer<T>(
     manager: &WindowManager,
     lane: AssetBodyLane,
+    home: Option<EntityId>,
     f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
     let window = |key: &WindowKey| manager.window(key).map(|loaded| loaded.doc.clone());
@@ -128,6 +135,7 @@ pub(crate) fn with_manager_peer<T>(
         materializer: manager.materializer(),
         window: &window,
         windows: &windows,
+        home,
     })
 }
 
@@ -150,6 +158,18 @@ pub(crate) fn land_carried_body(
         spool.write_at(0, bytes)?;
     }
     landing::land(peer, window, body, spool)
+}
+
+/// A verified local landing, constructed only after the native close landed
+/// this attempt's complete spool. Remote wire receipts cannot construct it.
+pub(in crate::sync) struct LocalBodyLand {
+    body: AssetBodyRef,
+}
+
+impl LocalBodyLand {
+    pub(in crate::sync) fn reference(&self) -> crate::error::Result<Vec<u8>> {
+        self.body.encode()
+    }
 }
 
 /// A body this side is owed, and when it asks for it next.
@@ -180,9 +200,63 @@ pub struct AssetBodySession {
     /// The rows a received body birthed here on a federation lane's
     /// receiving side, for the caller to release their stamps (FIX 12118).
     births: Vec<(WindowKey, EntityId)>,
+    /// Selected successful own-device imports, dropped with this connection.
+    positions: Vec<crate::sync::origin_positions::DeferredPositions>,
+    /// Native local landings already completed in this connection.
+    local_lands: HashMap<EntityId, LocalBodyLand>,
 }
 
 impl AssetBodySession {
+    /// Retains selected facts only after this socket's successful own-device
+    /// push. The opaque import keeps its original proof; a registry pointer
+    /// match binds it to the live window without keeping a strong handle.
+    pub fn retain_own_device_positions(
+        &mut self,
+        manager: &crate::sync::manager::WindowManager,
+        window: &crate::sync::window::LoadedWindow,
+        positions: crate::sync::origin_positions::OwnDevicePositionImport,
+    ) {
+        if let Some(identity) = manager.weak_window_if_same(window)
+            && let Some(positions) = positions.select_deferred(window, identity)
+        {
+            self.retain_positions(positions);
+        }
+    }
+
+    /// Retries this socket's ready live-import witnesses on its existing body
+    /// housekeeping path. Optional failures never fail a body or raw import.
+    pub fn retry_own_device_positions(&mut self, manager: &crate::sync::manager::WindowManager) {
+        self.retry_positions(manager);
+    }
+
+    pub(in crate::sync) fn retain_positions(
+        &mut self,
+        mut positions: crate::sync::origin_positions::DeferredPositions,
+    ) {
+        for landed in self.local_lands.values() {
+            if let Err(error) = positions.body_landed(landed) {
+                tracing::warn!(%error, "optional earlier local body-land positions did not wake");
+            }
+        }
+        for older in &mut self.positions {
+            older.supersede_by(&positions);
+        }
+        self.positions.retain(|positions| !positions.is_empty());
+        self.positions.push(positions);
+    }
+
+    pub(in crate::sync) fn retry_positions(
+        &mut self,
+        manager: &crate::sync::manager::WindowManager,
+    ) {
+        for positions in &mut self.positions {
+            if let Err(error) = positions.retry(manager) {
+                tracing::warn!(%error, "optional body-later origin positions did not settle");
+            }
+        }
+        self.positions.retain(|positions| !positions.is_empty());
+    }
+
     /// Owes every body `doc`, the live document of `window`, binds by
     /// reference that this side does not hold under its carrier's header,
     /// unless a tombstone or a delete here keeps the carrier from landing.
@@ -462,6 +536,15 @@ impl AssetBodySession {
             self.held.insert((body.id, body.body_blake3));
             if birth {
                 self.births.push((window.clone(), body.id));
+            }
+            if matches!(peer.lane, AssetBodyLane::OwnDevice) {
+                let landed = LocalBodyLand { body: body.clone() };
+                for positions in &mut self.positions {
+                    if let Err(error) = positions.body_landed(&landed) {
+                        tracing::warn!(%error, "optional local body-land positions did not wake");
+                    }
+                }
+                self.local_lands.insert(body.id, landed);
             }
         } else {
             self.ask_later(&window, &body);

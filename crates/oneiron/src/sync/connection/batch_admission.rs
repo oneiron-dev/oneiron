@@ -324,13 +324,20 @@ impl SyncConnection {
                 if crate::sync::machine_history::take_landed(&client.vault) {
                     machine_history_due.store(true, Ordering::Relaxed);
                 }
+                let mut left_rx = self.left.subscribe();
                 // Judged per frame: a device-only flag may turn while an
                 // earlier frame waits on the socket.
                 for resp in responses
                     .into_iter()
                     .filter(|frame| !client.frame_withheld(frame))
                 {
-                    let send_result = write.send(Message::Binary(resp.into())).await;
+                    let send_result = tokio::select! {
+                        biased;
+                        () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
+                            return Err(LoopExit::Shutdown);
+                        }
+                        result = write.send(Message::Binary(resp.into())) => result,
+                    };
                     if let Err(e) = send_result {
                         return Err(LoopExit::Disconnected(format!("Send failed: {e}")));
                     }
@@ -397,8 +404,16 @@ impl SyncConnection {
         )
         .into_result()
         .map_err(|e| LoopExit::Disconnected(e.to_string()))?;
+        let mut left_rx = self.left.subscribe();
         for frame in [proof, vv] {
-            if let Err(e) = write.send(Message::Binary(frame.into())).await {
+            let send_result = tokio::select! {
+                biased;
+                () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
+                    return Err(LoopExit::Shutdown);
+                }
+                result = write.send(Message::Binary(frame.into())) => result,
+            };
+            if let Err(e) = send_result {
                 return Err(LoopExit::Disconnected(e.to_string()));
             }
         }

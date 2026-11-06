@@ -167,7 +167,8 @@ impl Vault {
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
             && verified.witness_pact(&fold).is_ok()
-            && self.slip_refs_stand_in_txn(txn, claims, now)?)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
@@ -196,7 +197,10 @@ impl Vault {
         }
         // Its grant, invitation and delegation (OF-606) bound later frames (FIX 5952).
         match fold.slips.mints.get(id) {
-            Some(mint) => self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs()),
+            Some(mint) => Ok(
+                self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs())?
+                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?,
+            ),
             None => Ok(false),
         }
     }
@@ -272,6 +276,8 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm: None,
+            trusted_contact: None,
+            seat_claim: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -280,6 +286,7 @@ impl Vault {
             AuthorityOp::SlipMint(SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             }),
             now,
         )?;
@@ -338,6 +345,27 @@ impl Vault {
         let verified = slip.verify(host_public_key, &fold, now, challenge, signature)?;
         let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
         Ok(verified)
+    }
+    /// Verifies a contact-bound slip and its holder proof (FIX 4325): the
+    /// same host, caveat and holder checks as
+    /// [`Self::verify_capability_slip`], admitting only a contact-bound slip
+    /// and returning only the opaque [`TrustedContactCredential`]. Its naming
+    /// still stands in this snapshot; the contact's doors recheck it in
+    /// their acting transaction.
+    pub fn verify_trusted_contact_slip(
+        &self,
+        host_public_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<TrustedContactCredential> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let credential =
+            slip.verify_trusted_contact(host_public_key, &fold, now, challenge, signature)?;
+        let credential = self.admitted_trusted_contact_view_in_txn(&txn, credential, now)?;
+        Ok(credential)
     }
     /// Verify a slip and its holder-signed caveats against the logged issuing host key.
     pub fn verify_capability_slip_with_host_key(
@@ -564,11 +592,13 @@ impl Vault {
             SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             },
         )
     }
     /// [`Self::mint_slip_in_txn`] for a whole logged mint action: a renewal's
-    /// names the slip it renews (FIX 5481).
+    /// names the slip it renews (FIX 5481), and a redeemed link's names the
+    /// member who approved it (FIX 11713).
     pub(super) fn mint_slip_action_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -601,7 +631,7 @@ impl Vault {
             )],
         )?;
         let fresh = self.authority_view_readonly_in_txn(txn)?;
-        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
+        slip.verify_mint_authority(&issuer.public_key(), &fresh, now)?;
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {

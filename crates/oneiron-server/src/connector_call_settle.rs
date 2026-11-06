@@ -3,9 +3,10 @@
 //!
 //! A held call parks its code-mode run on a durable wait keyed by its call
 //! ref. Neither the gate nor the consent doors send the call or answer the
-//! wait when the owner decides; this loop does, at startup and every
-//! [`CONNECTOR_SETTLE_INTERVAL`]. Each pass lists the engine's pending calls
-//! and, on a blocking worker, resumes each one that is due: the send happens
+//! wait when the owner decides; this loop does, at startup, after a committed
+//! consent answer, and every [`CONNECTOR_SETTLE_INTERVAL`]. Each pass lists
+//! the engine's pending calls and, on a blocking worker, resumes each one
+//! that is due: the send happens
 //! there, never inside a write transaction. A terminal outcome's reply is
 //! delivered to the wait its call ref names (the run parked on it, or a
 //! caller that reads the settled wait later), and only then acknowledged, so
@@ -25,7 +26,8 @@
 //! resume runs the call's gate again, so a call that stays held is retried
 //! after a doubling delay, from [`CONNECTOR_SETTLE_INTERVAL`] up to
 //! [`CONNECTOR_SETTLE_MAX_BACKOFF`], kept in memory and reset by a restart.
-//! There is no notification of a consent answer to wake the loop sooner.
+//! A committed consent answer wakes the next admitted pass and rechecks
+//! unpaced calls against their live gate, without waiting for that backoff.
 //! A call a full count-bound budget window paces skips its backoff: it waits
 //! while the window is shut and goes in the first pass after it opens, and
 //! the pass admits again the connector event wakes such a window paced
@@ -57,6 +59,10 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// admitted is driven by the settler (FIX 11498): one pass interval, so the
 /// answer's own drive is never raced.
 const BROWSER_WAIT_DRIVE_AFTER: Duration = CONNECTOR_SETTLE_INTERVAL;
+
+/// Paced verb calls' turns one settle pass runs (FIX 8753): one per
+/// principal per round, so one pass serves many principals' heads.
+const PACED_VERB_TURNS_PER_PASS: usize = 64;
 
 /// The longest a call that stays held or undelivered waits between two of
 /// its resumes.
@@ -98,47 +104,68 @@ impl SyncServer {
     /// Starts the settler on a host with a write freeze: each pass is
     /// admitted through `admit` and holds that admission on its blocking
     /// thread through every expiry, repair, send and delivery it writes. A
-    /// refused pass settles nothing and waits its interval.
+    /// refused pass settles nothing and retains its consent recheck until
+    /// admitted; the same interval or a new consent answer retries admission.
     pub(crate) fn spawn_connector_settler_admitted(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
     ) -> tokio::task::JoinHandle<()> {
+        // Verb calls a budget window paced take their turns on this settler
+        // (FIX 8753), back through the door they came in by, whatever the
+        // hook sandbox or `--no-hooks`: the host's check runs them, under
+        // the host's wait.
+        self.vault()
+            .set_paced_verb_wait_secs(self.config.limits.paced_verb_wait_secs);
+        #[cfg(feature = "code-sandbox-wasmtime")]
+        self.vault().install_verb_ask_credential_check(Arc::new(
+            crate::credential_resume::ServerVerbAskCredentialCheck::new(
+                self,
+                tokio::runtime::Handle::current(),
+            ),
+        ));
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
 
 async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
     let mut backoffs = Backoffs::default();
+    let mut consent_recheck = false;
     loop {
-        let Some(admission) = admit() else {
-            tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL).await;
-            continue;
-        };
-        let pass = Arc::clone(&server);
-        let mut held = std::mem::take(&mut backoffs);
-        let outcome = tokio::task::spawn_blocking(move || {
-            let _admission = admission;
-            let settled =
-                settle_connector_calls(&pass, &mut held).map_err(|error| error.to_string());
-            (held, settled)
-        })
-        .await;
-        match outcome {
-            Ok((held, settled)) => {
-                backoffs = held;
-                if let Err(error) = settled {
-                    tracing::warn!(%error, "connector settle pass failed");
+        let notified = server.vault().connector_consent_wake().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if let Some(admission) = admit() {
+            let pass = Arc::clone(&server);
+            let mut held = std::mem::take(&mut backoffs);
+            let recheck = std::mem::take(&mut consent_recheck);
+            let outcome = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                let settled = settle_connector_calls(&pass, &mut held, recheck)
+                    .map_err(|error| error.to_string());
+                (held, settled)
+            })
+            .await;
+            match outcome {
+                Ok((held, settled)) => {
+                    backoffs = held;
+                    if let Err(error) = settled {
+                        tracing::warn!(%error, "connector settle pass failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(
+                        panicked = error.is_panic(),
+                        "connector settle pass ended; settler stopping"
+                    );
+                    return;
                 }
             }
-            Err(error) => {
-                tracing::error!(
-                    panicked = error.is_panic(),
-                    "connector settle pass ended; settler stopping"
-                );
-                return;
-            }
         }
-        tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL).await;
+        tokio::select! {
+            biased;
+            () = &mut notified => consent_recheck = true,
+            () = tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL) => {}
+        }
     }
 }
 
@@ -147,6 +174,7 @@ async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
 fn settle_connector_calls(
     server: &SyncServer,
     backoffs: &mut Backoffs,
+    consent_recheck: bool,
 ) -> Result<usize, IntentLedgerError> {
     let vault = server.vault();
     // Expiry first, so a call past its deadline settles in this same pass;
@@ -157,10 +185,19 @@ fn settle_connector_calls(
     if let Err(error) = vault.repair_connector_call_owner_asks() {
         tracing::warn!(%error, "connector call owner ask repair failed");
     }
+    if let Err(error) = vault.repair_connector_code_consent_asks() {
+        tracing::warn!(%error, "connector call code consent ask repair failed");
+    }
     // Connector event wakes a budget window paced are admitted again once
     // it opens (FIX 8686).
     if let Err(error) = vault.continue_paced_connector_wakes() {
         tracing::warn!(%error, "paced connector wakes not admitted");
+    }
+    // Verb calls a budget window paced take their fair turns, each through
+    // its own door and Gate again, or end unrun past their deadline (FIX
+    // 8753). Before the connector listing: none of them is a connector call.
+    if let Err(error) = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_PASS) {
+        tracing::warn!(%error, "paced verb calls wait for the next pass");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
     let pending = vault.pending_connector_calls()?;
@@ -176,17 +213,18 @@ fn settle_connector_calls(
     }
     let now = Instant::now();
     // A call a budget window paces waits for the window, and goes in the
-    // first pass after it opens, whatever its backoff (FIX 8686).
+    // first pass after it opens, whatever its backoff (FIX 8686). A committed
+    // consent answer rechecks unpaced calls without clearing their backoffs.
     let due: Vec<_> = pending
         .into_iter()
         .filter(|call| match call.paced {
             _ if call.settled => true,
             Some(shut) => !shut,
-            None => backoffs.due(call.call_ref, now),
+            None => consent_recheck || backoffs.due(call.call_ref, now),
         })
         .collect();
     if due.is_empty() {
-        return Ok(0);
+        return Ok(settle_approved_browser_waits(server));
     }
     let mut host = ServedConnectorCallHost::new(server)?;
     let deliveries = WaitDeliveries::canonical(vault);
@@ -243,6 +281,12 @@ fn settle_connector_calls(
         backoffs.0.remove(&call.call_ref);
         settled += 1;
     }
+    Ok(settled + settle_approved_browser_waits(server))
+}
+
+fn settle_approved_browser_waits(server: &SyncServer) -> usize {
+    let vault = server.vault();
+    let mut settled = 0;
     // A held browser act has no connector row, so the pass above never
     // visits it: an answered pass that failed before its admission (the
     // server stopping, a storage error) leaves it settling, and a second
@@ -273,13 +317,7 @@ fn settle_connector_calls(
         }
         Err(error) => tracing::warn!(%error, "browser code consent waits not listed"),
     }
-    Ok(settled)
+    settled
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms as now_ms;

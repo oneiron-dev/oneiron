@@ -55,3 +55,12 @@ cost, cost basis and outcome. The cost basis is `actual` when the provider repor
 `unpriced`. A row also keeps the provider's request id when the response names one. A row never
 holds the query, the URL or the results. `vault.connectors.web.usage {since_ms, limit}` reads the
 rows newest first, with their summed cost.
+
+Backend-key calls also settle on the calling run's paid-service permit (or a meter of their own).
+The same usage ledger event keeps `run.serviceCost`: raw micro-USD, `provider_reported` or
+`declared` (an estimate), and a content-free price snapshot. Its `serviceAmount` is the exact
+nano-USD conversion, with `USD` and that snapshot in `costRates`. A real reported or declared
+zero stays zero. Unknown cost keeps the service id and quantity for cloud-side pricing; it does
+not become zero. If conversion overflows, the raw fact remains with `price_overflow` and no
+money amount. This is a provider-cost record, not a wallet debit or the cloud's selling price.
+User-key and hub calls do not acquire a second paid-service permit.

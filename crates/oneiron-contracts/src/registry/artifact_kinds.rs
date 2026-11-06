@@ -4,13 +4,13 @@
 //! TypeByteFamily ranges but implement the same artifact-family contract.
 
 /// The single semantic family shared by deliverable kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ArtifactFamilyId {
     Artifact,
 }
 
 /// The registered artifact body kind. Future bodies add variants here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ArtifactFamilyKindId {
     Code,
     Blob,

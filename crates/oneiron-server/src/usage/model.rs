@@ -100,8 +100,9 @@ pub enum CacheDimension {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UnpricedReason {
-    /// The call measured no tokens: no usage block, or every count zero.
-    /// Nothing is priced, and a service quantity it reported stays on its run.
+    /// The call measured no tokens and carries no known service cost: no
+    /// usage block, or every count zero. Nothing is priced, and a service
+    /// quantity it reported stays on its run.
     NoUsage,
     /// The call measured tokens, but no rates were frozen on it at admission:
     /// no host override names its offer, and the catalog has no row or no
@@ -125,8 +126,9 @@ pub enum UnpricedReason {
     UnquotedCache { dimensions: Vec<CacheDimension> },
     /// The rates frozen on the call quote every count it measured, and its
     /// price at them does not fit in an amount (FIX 6407). The event keeps
-    /// its counts and those rates; the ledger, not the settlement, names
-    /// this when it records the call.
+    /// its counts and those rates; the ledger names this when it records
+    /// the call. A service cost whose raw micro-USD conversion overflows
+    /// retains that fact and snapshot with no money amount too.
     PriceOverflow,
 }
 
@@ -281,6 +283,47 @@ impl UsageCostInput {
         Ok(money)
     }
 }
+/// Whether one service amount was reported by its provider or estimated from
+/// the provider's declared price. Neither is a wallet debit or selling price.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageServiceCostBasis {
+    ProviderReported,
+    Declared,
+}
+
+/// One call's provider cost before conversion to the ledger's nano-USD units.
+/// The raw amount and basis survive even when that conversion overflows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageServiceCost {
+    pub micro_usd: u64,
+    pub basis: UsageServiceCostBasis,
+    pub price_table_snapshot: String,
+}
+
+impl UsageServiceCost {
+    /// One micro-USD is exactly this many ledger amount units, not a price rate.
+    const NANO_USD_PER_MICRO_USD: u64 = 1_000;
+
+    pub(crate) fn nano_usd(&self) -> Result<u64, UsageError> {
+        self.micro_usd
+            .checked_mul(Self::NANO_USD_PER_MICRO_USD)
+            .ok_or(UsageError::Overflow)
+    }
+
+    pub(crate) fn rates(&self) -> UsageCostRates {
+        UsageCostRates {
+            currency: Some("USD".to_owned()),
+            price_table_snapshot: self.price_table_snapshot.clone(),
+            input_per_million: 0,
+            output_per_million: 0,
+            cache_read_per_million: None,
+            cache_write_per_million: None,
+        }
+    }
+}
+
 /// Attribution for one admitted physical call: the serving host's own on a
 /// record its engine wrote, the poster's on a posted one (FIX 5724).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -323,6 +366,8 @@ pub struct UsageRun {
     pub unit: String,
     pub usage_reported: bool,
     pub service_quantity: Option<u64>,
+    /// Present only when this physical service call's provider cost is known.
+    pub service_cost: Option<UsageServiceCost>,
     pub allocation: Option<UsageAllocation>,
     pub settlement_refused: bool,
 }
@@ -390,6 +435,26 @@ impl UsageEvent {
             })
     }
     pub(super) fn validate(&self) -> Result<(), UsageError> {
+        let service_cost = self.run.as_ref().and_then(|run| run.service_cost.as_ref());
+        let service_overflow = if let Some(cost) = service_cost {
+            let amount = cost.nano_usd();
+            if self.event_type != UsageEventType::Service
+                || self.model.is_some()
+                || self.token_counts != UsageTokenCounts::default()
+                || self.cost_rates.as_ref() != Some(&cost.rates())
+                || self.service_amount != amount.as_ref().copied().unwrap_or(0)
+                || self.unpriced != amount.as_ref().err().map(|_| UnpricedReason::PriceOverflow)
+            {
+                return Err(UsageError::InvalidField {
+                    field: "run.serviceCost",
+                    message: "requires a service with no tokens, its USD snapshot and exact \
+                              nano-USD amount, or price_overflow when conversion does not fit",
+                });
+            }
+            amount.is_err()
+        } else {
+            false
+        };
         if self
             .cost_rates
             .as_ref()
@@ -404,9 +469,10 @@ impl UsageEvent {
         if let Some(rates) = &self.cost_rates {
             rates.validate()?;
         }
-        // Only the event's own rates establish a price overflow: they quote
-        // each measured count, and its price at them does not fit.
+        // Overflow needs the raw service conversion above, or the event's own
+        // rates quoting every measured count past what an amount holds.
         if self.unpriced == Some(UnpricedReason::PriceOverflow)
+            && !service_overflow
             && !self
                 .cost_input()
                 .is_some_and(|input| matches!(input.calculate(), Err(UsageError::Overflow)))

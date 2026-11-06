@@ -4,8 +4,8 @@
 //! (PREMISE 3), and both are validated, kept under custody and written by
 //! the same code. No proposal lands a file here.
 
-use crate::code_document::CodeOpProvenanceValidation;
 use super::*;
+use crate::code_document::CodeOpProvenanceValidation;
 use crate::memory::repo_doors::RepoRunStamp;
 use crate::repo_mutation::snapshot::RepoPinnedBase;
 

@@ -37,7 +37,9 @@ pub(crate) fn invalidate_ppr_for_edge(
     source: &EntityId,
     target: &EntityId,
 ) -> Result<()> {
-    store.ppr_cache_invalidation.invalidate_for_edge(store, txn, source, target)
+    store
+        .ppr_cache_invalidation
+        .invalidate_for_edge(store, txn, source, target)
 }
 
 pub(crate) fn invalidate_ppr_for_delete(
@@ -46,7 +48,9 @@ pub(crate) fn invalidate_ppr_for_delete(
     id: &EntityId,
     neighbors: &[EntityId],
 ) -> Result<()> {
-    store.ppr_cache_invalidation.invalidate_for_delete(store, txn, id, neighbors)
+    store
+        .ppr_cache_invalidation
+        .invalidate_for_delete(store, txn, id, neighbors)
 }
 
 pub(crate) fn purge_ppr_for_erase_in_txn(
@@ -55,5 +59,7 @@ pub(crate) fn purge_ppr_for_erase_in_txn(
     id: &EntityId,
     neighbors: &[EntityId],
 ) -> Result<()> {
-    store.ppr_cache_invalidation.purge_for_erase(store, txn, id, neighbors)
+    store
+        .ppr_cache_invalidation
+        .purge_for_erase(store, txn, id, neighbors)
 }

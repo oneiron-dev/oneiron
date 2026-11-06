@@ -7,9 +7,13 @@
 //! PowerPoint's own connection-site guides (`connsiteX<n>`, `connsiteY<n>`)
 //! and the sites that name them are redrawn at the new vertices, and a text
 //! rectangle naming a guide the write dropped spans the shape again. A site
-//! a glued connector names keeps its index, position and guides (FIX 5671),
-//! so no glued end names a site the shape no longer has. The written
-//! outline must read back as the live paths.
+//! a glued connector names keeps its index, position and guides (FIX 5671).
+//! A preset with source-defined sites keeps those sites before new vertex
+//! sites when a connector is glued to it (FIX 5726); unsupported presets keep
+//! the vertex-only conversion. The written outline must read back as the live
+//! paths.
+
+mod preset_sites;
 
 use super::LiveError;
 use super::conversion::Conversion;
@@ -473,12 +477,28 @@ pub(super) fn write(
             redraw(&bytes, &tree, (geometry, &glued), paths, &mut done)
         }
         None => {
-            let drawn = sites("a", paths, &BTreeSet::new());
+            let mut held_glue = glued.clone();
+            held_glue.extend(slide_glue(&tree, native));
+            let kept = if held_glue.is_empty() {
+                None
+            } else {
+                xml::child(&tree, properties, A, "prstGeom")
+                    .and_then(|preset| preset_sites::kept(&tree, preset))
+            };
+            let empty = BTreeSet::new();
+            let taken = kept.as_ref().map(|held| &held.names).unwrap_or(&empty);
+            let drawn = sites("a", paths, taken);
             let count = u32::try_from(drawn.len()).unwrap_or(u32::MAX);
             let site_guides: String = drawn.iter().map(|site| site.guides.as_str()).collect();
             let site_list: String = drawn.iter().map(|site| site.cxn.as_str()).collect();
+            let adjustments = kept
+                .as_ref()
+                .map(|held| format!("<a:avLst>{}</a:avLst>", held.adjustments))
+                .unwrap_or_else(|| "<a:avLst/>".to_owned());
+            let kept_guides = kept.as_ref().map_or("", |held| held.guides);
+            let kept_sites = kept.as_ref().map_or("", |held| held.connections);
             let geometry = format!(
-                r#"<a:custGeom xmlns:a="{A}"><a:avLst/><a:gdLst>{site_guides}</a:gdLst><a:ahLst/><a:cxnLst>{site_list}</a:cxnLst><a:rect l="l" t="t" r="r" b="b"/>{}</a:custGeom>"#,
+                r#"<a:custGeom xmlns:a="{A}">{adjustments}<a:gdLst>{kept_guides}{site_guides}</a:gdLst><a:ahLst/><a:cxnLst>{kept_sites}{site_list}</a:cxnLst><a:rect l="l" t="t" r="r" b="b"/>{}</a:custGeom>"#,
                 path_list("a", paths)
             );
             if count > 0 {

@@ -24,7 +24,7 @@ mod fork;
 mod head;
 mod holders;
 mod home;
-mod identity;
+use oneiron_store::key_custody::identity;
 mod kept_images;
 mod log;
 mod outbox;
@@ -86,7 +86,7 @@ pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, Pub
 pub(crate) use self::recipients::RecipientRetirement;
 pub(crate) use self::recovery::{
     CustodyRequirement, CustodyRoute, CustodySourceAt, PreparedTakeover, ROLLBACK_NOT_PROVEN,
-    TakeoverRefusal, refuse_foreign_binding, route_custody,
+    TakeoverRefusal, admit_published_host_issuer_seeds, refuse_foreign_binding, route_custody,
 };
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;

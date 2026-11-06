@@ -623,8 +623,6 @@ fn optional_fact_body_field<'a>(
     Ok(value)
 }
 
-
-
 /// Tasks an authority fact of which was refused at admission because its id
 /// was deleted here before the fact arrived. Presence-only.
 const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
@@ -737,12 +735,6 @@ pub(crate) fn restore_suppressed_in_txn(
 fn fact_suppressed() -> Error {
     Error::InvariantViolation("task authority fact suppressed")
 }
-
-
-
-
-
-
 
 impl Vault {
     /// The authority one TASK's replicated facts prove.

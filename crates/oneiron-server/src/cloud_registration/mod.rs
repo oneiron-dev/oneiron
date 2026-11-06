@@ -29,6 +29,8 @@
 mod binding;
 mod device;
 mod discovery;
+mod erase_revoke;
+mod erase_watch;
 mod http;
 mod jwt;
 mod pins;

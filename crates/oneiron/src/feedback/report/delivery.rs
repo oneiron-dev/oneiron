@@ -4,7 +4,9 @@
 //! constructor from the historical metadata its subject's pack receipt names
 //! and frozen once as wire bytes with their digest. Its send freezes the
 //! destination the owner bound and leaves through the ordinary recorded
-//! outbound spine under one logical send. Whatever cannot leave yet is a
+//! outbound spine under one logical send. An explicit owner retry after proved
+//! non-delivery prepares a new send without changing the old ledger entry.
+//! Whatever cannot leave yet is a
 //! visible hold on the issue's custody row: unresolved metadata, an unbound,
 //! unsupported or changed endpoint, or a participation switch that is off. A
 //! recorded delivery, or a send that may have landed, is never posted again.
@@ -17,6 +19,7 @@ mod metadata;
 mod owner;
 mod packet_signature;
 mod participation;
+mod retry;
 mod wire;
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +30,7 @@ pub use self::owner::{
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportPublisherBinding, ReportPublisherBindingRequest,
 };
+pub use self::retry::ReportDeliveryRetryRequest;
 pub(crate) use self::wire::received_issue_signature;
 use self::wire::{SignatureSink, signature_request, wire_body};
 use super::store;
@@ -103,8 +107,8 @@ impl ReportDeliveryKey {
         ))
     }
 
-    /// The lane's one logical send, derived from the key alone: every run
-    /// sends under the same ledger identity, and the wire sees only a hash.
+    /// The lane's initial logical send. Ordinary runs reuse the frozen send;
+    /// only an explicit owner retry after proved non-delivery replaces it.
     fn send_ref(&self) -> String {
         let hash = blake3::Hash::from(self.hash(b"oneiron.report.delivery.send.v1\0"));
         format!("report-signature:{}", hash.to_hex())
@@ -199,7 +203,7 @@ pub struct ReportFrozenSignature {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReportFrozenSend {
-    /// Where it goes, frozen from the binding at the first send.
+    /// Where it goes, frozen from the binding when this send is chosen.
     pub destination: ReportPublisherEndpoint,
     /// The logical send: receipt, intent, ledger and idempotency identity.
     pub send_ref: String,
@@ -456,6 +460,7 @@ impl Vault {
         let stored = DELIVERIES.get(&self.store, &txn, &row)?;
         drop(txn);
         let mut record = stored.unwrap_or_else(|| ReportDeliveryRecord::new(key, now));
+        let observed_send = record.send.clone();
         if record
             .outcome
             .as_ref()
@@ -517,7 +522,10 @@ impl Vault {
         // lane's hold lands on that signature in the same write: Withheld
         // while the switches hold it, Pending once released (FIX 7690).
         let withheld = matches!(record.hold, Some(ReportDeliveryHold::Withheld { .. }));
-        self.with_write_txn_grouped(|txn| {
+        let frozen = self.with_write_txn_grouped(|txn| {
+            if !retry::send_is_current_in_txn(self, txn, &record.key, &observed_send)? {
+                return Ok(false);
+            }
             if let Some(built) = built {
                 let signature = emit_issue_signature_in_txn(
                     self,
@@ -535,14 +543,22 @@ impl Vault {
             if let Some(frozen) = &record.signature {
                 record_signature_hold_in_txn(self, txn, frozen.signature, withheld)?;
             }
-            DELIVERIES.put(&self.store, txn, &row, &record)
+            DELIVERIES.put(&self.store, txn, &row, &record)?;
+            Ok(true)
         })?;
+        if !frozen {
+            let txn = self.store.env.read_txn()?;
+            return DELIVERIES.get(&self.store, &txn, &row);
+        }
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
             let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
             // The send's outcome lands on its ED-08 signature in the lane's
             // own write (FIX 7690), naming the publisher ACTOR (FIX 7829).
-            self.with_write_txn_grouped(|txn| {
+            let settled = self.with_write_txn_grouped(|txn| {
+                if !retry::send_is_current_in_txn(self, txn, &record.key, &record.send)? {
+                    return Ok(false);
+                }
                 DELIVERIES.put(&self.store, txn, &row, &record)?;
                 if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
                     record_signature_delivery_in_txn(
@@ -555,8 +571,12 @@ impl Vault {
                     )
                     .map_err(engine_error)?;
                 }
-                Ok(())
+                Ok(true)
             })?;
+            if !settled {
+                let txn = self.store.env.read_txn()?;
+                return DELIVERIES.get(&self.store, &txn, &row);
+            }
         }
         Ok(Some(record))
     }

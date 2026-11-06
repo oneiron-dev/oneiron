@@ -78,6 +78,16 @@ pub(super) fn record_media_device_in_txn(
     }
 }
 
+/// The mark beside a media row in the same read snapshot as that row.
+#[cfg(feature = "sync")]
+pub(super) fn media_provenance_in_txn(
+    store: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &([u8; 16], EntityId),
+) -> Result<Option<EmbeddingProvenance>> {
+    MEDIA_DEVICE.get(store, txn, key)
+}
+
 /// Drops the mark of the media vector under `key`, with that vector.
 pub(super) fn drop_media_device_in_txn(
     store: &impl SideTableDbs,
@@ -101,6 +111,16 @@ pub(super) fn clear_media_devices_in_txn(
 /// vector, held outside the room's byte budget as the vector is (FIX 2345).
 pub(super) fn media_device_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
     MEDIA_DEVICE.key_bytes(&(space_key(space_id), *id))
+}
+
+impl Vault {
+    pub(crate) fn embedding_provenance_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbeddingProvenance>> {
+        EMBEDDING_DEVICE.get(&self.store, txn, id)
+    }
 }
 
 impl Vault {

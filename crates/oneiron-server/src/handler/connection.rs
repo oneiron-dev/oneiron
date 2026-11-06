@@ -130,6 +130,16 @@ async fn ws_upgrade_handler(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
+    let signing_request_transport = Some(oneiron::memory::SigningRequestTransport::new(
+        extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .filter(|peer| peer.0.port() != 0)
+            .map(|peer| peer.0.ip()),
+        headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    ));
     // OF-237: on a request carrying an upgrade lifetime (an embedded
     // channel or mesh, or plain/managed serve through `upgrade_lifetime`)
     // the whole socket, hello included, lives under the server's stop,
@@ -153,6 +163,7 @@ async fn ws_upgrade_handler(
                         telemetry_actor,
                         locality,
                         machine,
+                        signing_request_transport,
                     ),
                 )
             })
@@ -256,6 +267,7 @@ enum ConnEvent {
     LeafKeys,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
+    ResidenceAnswered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
 
 /// How many verb RPCs one socket runs at once, off its loop. The loop reads
@@ -293,6 +305,7 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         | SyncMessage::LfsChunks(_)
         | SyncMessage::AssetBody { .. }
         | SyncMessage::LeafKey { .. }
+        | SyncMessage::SealedUpdate(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }

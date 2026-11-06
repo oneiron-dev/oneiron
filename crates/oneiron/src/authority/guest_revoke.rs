@@ -147,6 +147,8 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm,
+            trusted_contact: None,
+            seat_claim: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
@@ -156,7 +158,8 @@ impl Vault {
     /// A grant-bound slip (OF-232) stands only while its grant does: the
     /// FEDERATION_GRANT its claims name is live, not withdrawn, still an Ask or active Connect
     /// guest's grant for the slip's holder, and confers at `now`; or it is
-    /// the holder's own-device grant (FIX 3134), live and conferring. An Ask
+    /// the holder's own-device grant (FIX 3134), live and conferring; or an
+    /// ordinary live shared-vault membership grant (FIX 12441). An Ask
     /// guest's slip also stays inside the grant's current disclosure (FIX
     /// 7928). A slip that names no grant passes. Every slip door reads this
     /// beside the fold's revocation check.
@@ -173,11 +176,89 @@ impl Vault {
         if self.own_device_grant_stands_in_txn(txn, grant_ref, &claims.holder_ref, now)? {
             return Ok(());
         }
+        if self
+            .current_member_slip_scope_in_txn(txn, claims)?
+            .is_some()
+        {
+            return Ok(());
+        }
         let grant = self.live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)?;
         if !super::current_scope::ask_bounds_hold(&grant, claims) {
             return Err(invalid_authority());
         }
         Ok(())
+    }
+
+    /// The current full Scope of an ordinary membership-bound slip. Delegates
+    /// keep their existing parent/issuer path; own-device and guest grants keep
+    /// their existing admission. Only the exact signed grant is read.
+    pub(super) fn current_member_slip_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
+        let Some(grant_ref) = claims.grant_ref.as_deref() else {
+            return Ok(None);
+        };
+        let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Ok(None);
+        };
+        let grant = decode_federation_grant_body(&body)?;
+        if !matches!(grant.scope, FederationGrantScope::Vault { .. })
+            || grant.role == crate::federation::FederationGrantRole::Delegate
+            || crate::federation::is_own_device_grant(&grant)
+        {
+            return Ok(None);
+        }
+        if grant.member_ref.to_hex() != claims.holder_ref
+            || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
+            || WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some()
+            || !grant.confers_at(self.instant_in_txn(txn)?.secs())
+            || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Err(invalid_authority());
+        }
+        let mut scope = grant.authority_scope;
+        if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut scope.verbs
+            && (verbs.contains("read") || verbs.contains("core:read"))
+        {
+            verbs.insert("read".to_owned());
+            verbs.insert("core:read".to_owned());
+        }
+        Ok(Some(scope))
+    }
+
+    /// A Boolean recheck cannot replace a cached proof's Scope. Refuse a
+    /// membership proof that still carries any authority its grant removed.
+    pub(super) fn member_slip_scope_is_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<bool> {
+        Ok(self
+            .current_member_slip_scope_in_txn(txn, claims)?
+            .is_none_or(|current| claims.scope.is_narrowing_of(&current)))
+    }
+
+    /// Rebuild a proof-backed read key from the current membership bound in
+    /// its own snapshot, without changing the authenticated token or caveats.
+    pub(crate) fn member_bounded_slip_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: VerifiedSlip,
+    ) -> Result<VerifiedSlip> {
+        Ok(
+            match self.current_member_slip_scope_in_txn(txn, verified.claims())? {
+                Some(current) => verified.meet_scope(&current),
+                None => verified,
+            },
+        )
     }
 
     /// An Ask or active Connect guest's FEDERATION_GRANT `grant_ref` still stands for `member`
