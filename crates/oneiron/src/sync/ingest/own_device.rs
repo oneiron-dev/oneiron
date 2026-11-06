@@ -57,6 +57,11 @@ pub(crate) struct VerifiedOwnDeviceLane {
     /// The writer proof that verified, which the put records so this
     /// machine passes it on beside the row.
     proof: Vec<u8>,
+    /// The actor the row's `AuthoredBy` edge names in the window the import
+    /// landed, when it names exactly one (FIX 9600): the author a companion
+    /// row is judged by. The edge lands in a later pass than the row; the
+    /// import brought both at once.
+    authored_by: Option<EntityId>,
 }
 
 impl VerifiedOwnDeviceLane {
@@ -64,6 +69,11 @@ impl VerifiedOwnDeviceLane {
     /// when this lane vouches for another row or other bytes.
     pub(crate) fn machine_for(&self, id: &EntityId, data: &[u8]) -> Option<EntityId> {
         (self.row == *id && self.body == digest(data)).then_some(self.machine)
+    }
+
+    /// The actor this lane's row's window names as its author, if one.
+    pub(crate) fn authored_by(&self) -> Option<EntityId> {
+        self.authored_by
     }
 
     /// The writer proof of row `id` with body `data`, or `None` when this
@@ -276,10 +286,35 @@ pub(super) fn lane_in_txn(
         );
         return Ok(None);
     };
+    let authored_by = match ctx.residence {
+        Some(Residence::Quarantine(doc) | Residence::Forward { doc, .. }) => {
+            authored_by_in_window(doc, id)
+        }
+        None => None,
+    };
     Ok(Some(VerifiedOwnDeviceLane {
         machine,
         row: *id,
         body: digest(data),
         proof,
+        authored_by,
     }))
+}
+
+/// The actor the `AuthoredBy` edge of MESSAGE `id` names in `doc`, the
+/// window the import landed: `None` when no such edge is there, or when
+/// edges name more than one author.
+fn authored_by_in_window(doc: &LoroDoc, id: &EntityId) -> Option<EntityId> {
+    let mut named = None;
+    let mut several = false;
+    map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+        if let Some((source, kind, target)) = crate::sync::bridge::parse_edge_key(key)
+            && source == *id
+            && kind == crate::EdgeKind::AuthoredBy
+            && named.replace(target).is_some_and(|prior| prior != target)
+        {
+            several = true;
+        }
+    });
+    if several { None } else { named }
 }
