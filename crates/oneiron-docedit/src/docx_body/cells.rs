@@ -101,7 +101,7 @@ pub(super) fn read(
         .collect()
 }
 
-/// Current direct cell paragraphs in native story-local identity space.
+/// Current cell paragraphs in native story-local identity space.
 pub(super) fn anchor_blocks(blocks: &[TrackedBlock]) -> Vec<crate::DocxAnchorBlock> {
     let mut anchors = Vec::new();
     for tracked in blocks {
@@ -140,7 +140,56 @@ pub(super) fn anchor_blocks(blocks: &[TrackedBlock]) -> Vec<crate::DocxAnchorBlo
             }
         }
     }
+    // Keep every previously returned direct anchor ahead of new descendants.
+    for tracked in blocks {
+        if current(&tracked.status)
+            && let BlockNode::Table(table) = &tracked.block
+        {
+            append_descendant_anchor_blocks(table, false, &mut anchors);
+        }
+    }
     anchors
+}
+
+fn append_descendant_anchor_blocks(
+    table: &stemma::domain::TableNode,
+    include_direct: bool,
+    anchors: &mut Vec<crate::DocxAnchorBlock>,
+) {
+    for row in &table.rows {
+        if row
+            .tracking_status
+            .as_ref()
+            .is_some_and(|status| !current(status))
+        {
+            continue;
+        }
+        for cell in &row.cells {
+            if cell.v_merge == VerticalMerge::Continue
+                || cell
+                    .tracking_status
+                    .as_ref()
+                    .is_some_and(|status| !current(status))
+            {
+                continue;
+            }
+            for block in &cell.blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) if include_direct => {
+                        anchors.push(crate::DocxAnchorBlock {
+                            block_id: paragraph.id.to_string(),
+                            para_id: paragraph.para_id.clone(),
+                            text: current_text(paragraph),
+                        });
+                    }
+                    BlockNode::Table(nested) => {
+                        append_descendant_anchor_blocks(nested, true, anchors);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 fn current(status: &TrackingStatus) -> bool {

@@ -62,3 +62,21 @@ uses the same ancestor-status and quoted-range guards, and does not address
 vertical-merge continuation cells. Body lookup is unchanged. This native lookup
 extension does not add nested paragraphs to ParagraphAsk or live-pin inventories;
 those consumers still require their own source-qualified integration (FIX 14487).
+
+## Native nested-cell anchor inventory
+
+The native `story_anchor_blocks` inventory also includes paragraphs inside nested
+table cells of the selected story. Each entry uses that paragraph's real native
+`block_id`, optional `para_id` and current text. All previously returned top-level
+and direct-cell entries keep their order before the added descendants.
+
+The traversal retains the existing Normal/Inserted current-content rules and
+skips deleted row/cell ancestry and vertical-merge continuation cells at every
+level. It does not add a new identity or change the current-text definition.
+
+This is an anchor inventory extension only. The scoped paragraph reader, live
+body story representation, paragraph questions, annotation freshness and live-pin
+comparisons still do not carry nested paragraphs as individual units. Their
+separate integration remains open under FIX 14487. BODY anchors, projection,
+comment mutation, native parsing, and all numeric policies are unchanged; no
+compiler or Word result is claimed.
