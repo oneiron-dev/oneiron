@@ -7,9 +7,7 @@ use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
-use oneiron::prompt::{
-    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp, place_turn_context,
-};
+use oneiron::prompt::{PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp};
 use oneiron::receipt::ContextReceiptFields;
 use oneiron::task_verb::sdk::{AiReply, AiReplyL2Base, AiReplyRequest};
 use oneiron::{
@@ -152,6 +150,7 @@ async fn reply(
     // Everything the model reads beside the caller's message, in either
     // layout: what the egress check below reads.
     let outgoing = format!("{prefix}\n\n{board}");
+    let prefix_hash = blake3::hash(prefix.as_bytes()).to_hex().to_string();
     // FIX 6676: the standing block and the L2 base stay in the early system
     // text. The standing block holds for its session's epoch; the L2 base is
     // content-addressed over its subjects' admitted evidence, score-free,
@@ -169,10 +168,11 @@ async fn reply(
         PromptLayout::StableHistoryThenTurnContext => {
             let mut messages = Vec::with_capacity(3);
             if !prefix.trim().is_empty() {
-                messages.push(text_message(LlmMessageRole::System, prefix.clone()));
+                messages.push(text_message(LlmMessageRole::System, prefix));
             }
+            // Compact JSON object text is nonempty and already trimmed.
+            messages.push(text_message(LlmMessageRole::User, board));
             messages.push(text_message(LlmMessageRole::User, input.message));
-            place_turn_context(&mut messages, &[board]);
             messages
         }
     };
@@ -197,7 +197,6 @@ async fn reply(
     if route_prompt_added {
         request.messages.remove(0);
     }
-    let prefix_hash = blake3::hash(prefix.as_bytes()).to_hex().to_string();
     let stamp = PromptRecompileStamp {
         schema_version: PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION.to_owned(),
         prompt_path: String::new(),
@@ -270,16 +269,18 @@ async fn reply(
             &[],
         ));
     }
-    let reply: String = response
+    let mut text_parts = response
         .message
         .content
-        .iter()
+        .into_iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text } => Some(text),
             _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("");
+        });
+    let mut reply = text_parts.next().unwrap_or_default();
+    for text in text_parts {
+        reply.push_str(&text);
+    }
     if reply.is_empty() {
         return Err(unavailable());
     }

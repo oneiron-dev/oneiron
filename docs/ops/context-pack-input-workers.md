@@ -128,6 +128,21 @@ original request and still prepends its route prompt once. A fingerprint error
 still ends the call before any provider send. Lower ladder request clones,
 prompt strings and independent JSON values remain outside this custody slice.
 
+In the stable-history layout, the prefix hash is computed before the owned
+prefix string moves into its system message. The compact dynamic JSON object
+also moves directly into the context user message before the caller's original
+user message. The previous single-block placement trimmed this already-trimmed,
+nonempty object and copied it; the message text and order remain the same.
+The independent dynamic JSON value, outgoing egress string, early-system copy
+and lower request clones remain outside this local buffer transfer.
+
+After the provider answers and the original credential-live check passes,
+`ai.reply` consumes the response's text parts in their original order. Its final
+reply owns the first text buffer and appends later text directly, without a
+borrowed-part vector or a separate joined string. Non-text parts stay excluded;
+no text or only empty text still follows the original unavailable result.
+Appending can reallocate and is not pre-admitted by this transfer.
+
 This is output custody, not pre-allocation admission. Serialization may still
 allocate before its capacity is recorded, and reallocation may temporarily
 hold old and new backing. Independent MEMORIES disclosure clones, reply JSON
