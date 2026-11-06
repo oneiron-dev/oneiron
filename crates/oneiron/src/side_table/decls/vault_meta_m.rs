@@ -54,15 +54,25 @@ side_tables! {
     /// erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).
     MAIL_PACK_REPLY_COPY: VaultMeta b"mail_pack:reply_copy:v1:" Raw Ciphertext;
     /// Which drafted replies with files name a row (fix list row 17645): an artifact, a pinned
-    /// version's CLAIM or ASSET, the thread, the answered TURN or MESSAGE, or the mailbox
-    /// source, so the erase or retirement of any of them reaches each draft whole. Key:
-    /// id16(row) + id16(draft).
+    /// version's CLAIM or ASSET, a source a pinned version quotes, the thread, the answered
+    /// TURN or MESSAGE, or the mailbox source, so the erase or retirement of any of them
+    /// reaches each draft whole. Key: id16(row) + id16(draft).
     MAIL_PACK_REPLY_DEPENDENCY: VaultMeta b"mail_pack:reply_dependency:v1:" Raw Engine;
     /// One drafted mail reply (FIX 15420): its thread, the message it
     /// answers, its frozen send plan, its words and where it stands; an
     /// actor's erase forgets its drafter. Key: id16(draft).
     MAIL_PACK_REPLY_DRAFT: VaultMeta b"mail_pack:reply_draft:v1:" Named Authored
         => crate::mail_pack::erase_reply_drafter_in_txn;
+    /// What a drafted Gmail reply's current revision froze with its files (fix list row
+    /// 17645): each file's version, name, type, size and hashes, the exact message's length and
+    /// BLAKE3 and the message it answers, sealed under that revision's own erasable
+    /// ConnectorResume key, after the revision (u64be). The draft names it by its digest. Key:
+    /// id16(draft).
+    MAIL_PACK_REPLY_MANIFEST: VaultMeta b"mail_pack:reply_manifest:v1:" Raw Ciphertext;
+    /// The kept Gmail plan a drafted reply with files dispatches (fix list row 17645): its
+    /// fields, its manifest's digest and its carrier's ref, sealed under its revision's own
+    /// erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).
+    MAIL_PACK_REPLY_PLAN_STUB: VaultMeta b"mail_pack:reply_plan_stub:v1:" Raw Ciphertext;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named

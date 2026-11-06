@@ -33,10 +33,11 @@
 //! A Google mailbox's reply may carry files (fix list row 17645,
 //! `reply_attachments`): each one exact version of an artifact the drafter
 //! reads, every recipient cleared for each. Its message is written once at
-//! draft, kept sealed beside the draft (`reply_custody`) and sent exactly as
-//! it was frozen; an erase of a row it depends on ends the draft whole
-//! (`reply_erase`). An IMAP or Microsoft 365 reply with files is refused
-//! before anything is read.
+//! draft, kept sealed beside the draft with its kept plan and its files'
+//! manifest (`reply_custody`) and sent exactly as it was frozen; the draft's
+//! own row names the files only by the manifest's digest. An erase of a row
+//! it depends on ends the draft whole (`reply_erase`). An IMAP or Microsoft
+//! 365 reply with files is refused before anything is read.
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
 //! row 17644, `reply_ask`); the Ask clears when that revision is
@@ -47,15 +48,13 @@ use serde::{Deserialize, Serialize};
 use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_attachments::{
-    AnsweredMessage, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached,
-    ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply, frozen_addresses,
-    reader_reads_attachments_in, readmit_reply_attachments_in, reply_send_completed,
-    standing_refusal_in,
+    AnsweredMessage, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached, ReplyManifestRef,
+    ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply, frozen_addresses, held_manifest,
+    held_manifest_in, reader_reads_attachments_in, readmit_reply_attachments_in,
+    reply_send_completed, standing_refusal_in,
 };
-use super::reply_custody::{reply_carrier_ref, seal_reply_message_in_txn};
-use super::reply_erase::{
-    register_reply_dependencies_in_txn, retire_reply_revision_in_txn, retire_reply_send_in_txn,
-};
+use super::reply_custody::reply_carrier_ref;
+use super::reply_erase::{retire_reply_revision_in_txn, retire_reply_send_in_txn};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
@@ -69,9 +68,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::derived_domains;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, OutboundRecipient, OutboundRecipientRole,
+    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
+    OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult,
+    OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger, OutboundRecipient,
+    OutboundRecipientRole,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault, source_audience};
@@ -148,11 +148,13 @@ pub(super) struct MailReplyDraftRow {
     /// Gmail reply, whose plan the Gmail plan store keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     message: Option<ReplyMessage>,
-    /// The files a Gmail reply carries, the exact message they send in and
-    /// every row the revision depends on (fix list row 17645); `None` for a
-    /// reply without files.
+    /// The digest of the manifest a Gmail reply with files froze and the
+    /// ref of its message's carrier (fix list row 17645): the manifest
+    /// itself, its files, its exact message and the message it answers, is
+    /// sealed beside the draft under the revision's own key
+    /// (`reply_custody`); `None` for a reply without files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) attached: Option<ReplyAttached>,
+    pub(super) attached: Option<ReplyManifestRef>,
 }
 
 /// `vault.mail.reply.draft`'s input.
@@ -280,7 +282,13 @@ fn invalid_state(message: &str) -> MemoryError {
     MemoryError::new(MEMORY_CODE_INVALID_STATE, message, &[])
 }
 
-fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
+/// The draft `id` as its readers see it: revision `row`, with `attached`,
+/// the manifest a reply with files froze, as its reader opened it.
+fn view(
+    id: EntityId,
+    row: &MailReplyDraftRow,
+    attached: Option<&ReplyAttached>,
+) -> MailReplyDraftView {
     let (to, cc) = if row.recipients.is_empty() {
         (vec![row.to.clone()], Vec::new())
     } else {
@@ -300,17 +308,9 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         subject: row.subject.clone(),
         body: row.body.clone(),
         body_html: row.body_html.clone(),
-        attachments: row
-            .attached
-            .as_ref()
-            .map_or_else(Vec::new, ReplyAttached::views),
-        message_octets: row
-            .attached
-            .as_ref()
-            .map(|attached| attached.message.octets),
-        message_blake3: row
-            .attached
-            .as_ref()
+        attachments: attached.map_or_else(Vec::new, ReplyAttached::views),
+        message_octets: attached.map(|attached| attached.message.octets),
+        message_blake3: attached
             .map(|attached| crate::blob_artifact::hash_hex(&attached.message.blake3)),
         plan_ref: row.plan_ref.clone(),
         state: row.state,
@@ -318,6 +318,13 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         drafted_at: row.drafted_at,
         updated_at: row.updated_at,
     }
+}
+
+/// The draft `id` as its readers see it: revision `row`, its files opened
+/// from the manifest sealed beside it (fix list row 17645).
+fn held_view(vault: &Vault, id: EntityId, row: &MailReplyDraftRow) -> Result<MailReplyDraftView> {
+    let attached = held_manifest(vault, &id, row)?;
+    Ok(view(id, row, attached.as_ref()))
 }
 
 /// The subject a reply carries: the parent's, marked as a reply once.
@@ -364,14 +371,14 @@ fn thread_in(
     Ok((*source, row.clone(), messages))
 }
 
-/// Why the revision `row`, a reply with files, may not land, read in `txn`,
-/// the writer that would land it (fix list row 17645): its thread no longer
-/// one `actor` reads, its mailbox source no longer the one `owner` owns
-/// that replies as `route`, or the message it answers gone
-/// ([`answered_refusal_in`]). An erase that committed after the draft was
-/// read finds no draft to end yet; this writer sees it, and nothing that
-/// erase would have ended is published. A reply without files lands as
-/// before.
+/// Why the revision `row`, a reply with files that froze `attached`, may
+/// not land, read in `txn`, the writer that would land it (fix list row
+/// 17645): its thread no longer one `actor` reads, its mailbox source no
+/// longer the one `owner` owns that replies as `route`, or the message it
+/// answers gone ([`answered_refusal_in`]). An erase that committed after the
+/// draft was read finds no draft to end yet; this writer sees it, and
+/// nothing that erase would have ended is published. A reply without files
+/// lands as before.
 fn publication_refusal_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -379,8 +386,9 @@ fn publication_refusal_in(
     route: ReplyRoute,
     owner: Option<EntityId>,
     row: &MailReplyDraftRow,
+    attached: Option<&ReplyAttached>,
 ) -> MemoryResult<Option<String>> {
-    let Some(attached) = &row.attached else {
+    let Some(attached) = attached else {
         return Ok(None);
     };
     let reads = match source_audience::binding_in(vault, txn, &row.thread)? {
@@ -598,6 +606,30 @@ fn forget_kept_plan(vault: &Vault, row: &MailReplyDraftRow) {
     }
 }
 
+/// What one dispatch of a draft's revision answered, as the draft records
+/// it: where it stands now, and its outcome for the reader.
+fn reply_outcome(
+    answer: &std::result::Result<OutboundDispatchResult, OutboundDispatchError>,
+) -> (MailReplyDraftState, String) {
+    match answer {
+        Ok(result) => match result.outcome {
+            OutboundDispatchOutcome::DeliveredToChannel => (
+                MailReplyDraftState::Sent,
+                result.outcome.as_str().to_owned(),
+            ),
+            OutboundDispatchOutcome::Held => (
+                MailReplyDraftState::Approved,
+                format!("held: {}", result.gate_reason_codes.join(", ")),
+            ),
+            _ => (
+                MailReplyDraftState::Unsettled,
+                result.outcome.as_str().to_owned(),
+            ),
+        },
+        Err(error) => (MailReplyDraftState::Approved, format!("refused: {error}")),
+    }
+}
+
 /// The mailbox's owner as the human actor its account reply is sent by:
 /// the person who approves it sends it.
 fn human_actor(person: EntityId) -> OutboundDispatchActor {
@@ -688,6 +720,12 @@ pub(crate) fn approved_source_reply_in_txn(
         ))
 }
 
+/// The ref of the one dispatch a draft's revision `row` is: its logical
+/// send, under which the ledger records its attempt.
+fn reply_intent_ref(row: &MailReplyDraftRow) -> String {
+    format!("outbound:{}", row.send_ref)
+}
+
 /// The one dispatch request a draft's revision is, sent as `actor`: a
 /// Gmail reply's identity's bound sender, or the mailbox's owner for one
 /// sent as the mailbox's own account, which names no sender identity. A
@@ -706,7 +744,7 @@ fn request_for(
     )
     .with_recipients(row.recipients.clone());
     let request = OutboundDispatchRequest::new(
-        format!("outbound:{}", row.send_ref),
+        reply_intent_ref(row),
         row.send_ref.clone(),
         intent,
         actor,
@@ -822,13 +860,19 @@ impl Memory<'_> {
                 && prior.parent_turn == parent_turn
                 && split_recipients(&recipients)?
                     == (prior.to.as_str(), prior.recipients.as_slice())
-                && prior
-                    .attached
-                    .as_ref()
-                    .map(|attached| &attached.attachments)
-                    == admitted.as_ref().map(|admitted| &admitted.attachments)
             {
-                return Ok(view(id, prior));
+                // The same files too, as the prior revision's manifest
+                // names them (fix list row 17645).
+                let same = match (&prior.attached, &admitted) {
+                    (None, None) => Some(None),
+                    (Some(_), Some(admitted)) => held_manifest(vault, &id, prior)?
+                        .filter(|held| held.attachments == admitted.attachments)
+                        .map(Some),
+                    _ => None,
+                };
+                if let Some(held) = same {
+                    return Ok(view(id, prior, held.as_ref()));
+                }
             }
         }
         let revision = prior.as_ref().map_or(1, |prior| prior.revision + 1);
@@ -927,7 +971,7 @@ impl Memory<'_> {
             drafted_at: prior.as_ref().map_or(now, |prior| prior.drafted_at),
             updated_at: now,
             message,
-            attached: frozen.as_ref().map(|frozen| frozen.attached.clone()),
+            attached: frozen.as_ref().map(|frozen| frozen.held.clone()),
         };
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             // The draft lands only over exactly the row this call read, a
@@ -944,9 +988,15 @@ impl Memory<'_> {
             // stand with every recipient still cleared for each, judged
             // again here, before anything of it is sealed, kept or asked
             // (fix list row 17645).
-            if let Some(refusal) =
-                publication_refusal_in(vault, txn, actor, route, mailbox_owner, &row)?
-            {
+            if let Some(refusal) = publication_refusal_in(
+                vault,
+                txn,
+                actor,
+                route,
+                mailbox_owner,
+                &row,
+                frozen.as_ref().map(|frozen| &frozen.attached),
+            )? {
                 return Err(MemoryError::bad_request(refusal));
             }
             if let (Some(frozen), Some(lane)) = (&frozen, &lane) {
@@ -954,25 +1004,21 @@ impl Memory<'_> {
                     vault,
                     lane,
                     txn,
-                    &frozen.attached,
+                    frozen,
                     &frozen_addresses(&row.to, &row.recipients),
                 )?;
             }
             // The revision it replaces ends here: one with files loses its
-            // message, its plan and its index rows in this writer.
+            // message, its plan, its manifest and its index rows in this
+            // writer.
             if let Some(prior) = &prior {
                 retire_reply_revision_in_txn(&vault.store, txn, &id, prior)?;
             }
-            // This one lands with its message, its plan and its index rows.
+            // This one lands with its message, its plan and its manifest,
+            // each sealed under its own key, and its index rows, every
+            // source its files quote among them.
             if let Some(frozen) = &frozen {
-                seal_reply_message_in_txn(&vault.store, txn, &id, row.revision, &frozen.message)?;
-                frozen.plan.keep_in_txn(&vault.store, txn)?;
-                register_reply_dependencies_in_txn(
-                    &vault.store,
-                    txn,
-                    &id,
-                    &frozen.attached.dependencies,
-                )?;
+                frozen.land_in_txn(&vault.store, txn, &id, row.revision)?;
             }
             DRAFTS.put(&vault.store, txn, &id, &row)?;
             // The revision it replaces is no longer asked; this one is.
@@ -992,7 +1038,11 @@ impl Memory<'_> {
         {
             forget_kept_plan(vault, prior);
         }
-        Ok(view(id, &row))
+        Ok(view(
+            id,
+            &row,
+            frozen.as_ref().map(|frozen| &frozen.attached),
+        ))
     }
 
     /// The drafts on the threads the caller reads, newest first.
@@ -1032,21 +1082,23 @@ impl Memory<'_> {
                 if row.attached.is_some() {
                     attached.push((id, row));
                 } else {
-                    drafts.push(view(id, &row));
+                    drafts.push(view(id, &row, None));
                 }
             }
         }
         // A draft with files shows only to a reader whose own lane reads each
         // of them, its version's rows with it: reading the thread is not
-        // reading its files (fix list row 17645).
+        // reading its files. Its files are read from the manifest sealed
+        // beside it, opened under the custody read guard (fix list row
+        // 17645).
         if !attached.is_empty() {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let txn = vault.store.custody_snapshot()?;
             for (id, row) in attached {
-                if let Some(files) = &row.attached
-                    && reader_reads_attachments_in(vault, &lane, &txn, files)?
+                if let Some(files) = held_manifest_in(vault, &txn, &id, &row)?
+                    && reader_reads_attachments_in(vault, &lane, &txn, &files)?
                 {
-                    drafts.push(view(id, &row));
+                    drafts.push(view(id, &row, Some(&files)));
                 }
             }
         }
@@ -1064,7 +1116,8 @@ impl Memory<'_> {
         let actor = self.actor();
         let id = EntityId::from_hex(&input.draft_ref)?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
-        let row = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+        type Discarded = (MailReplyDraftRow, Option<ReplyAttached>);
+        let (row, files) = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<Discarded> {
             let mut row = DRAFTS.get(&vault.store, txn, &id)?.ok_or_else(unknown)?;
             let owner = SOURCES
                 .get(&vault.store, txn, &row.source)?
@@ -1081,12 +1134,13 @@ impl Memory<'_> {
             row.updated_at = crate::unix_seconds_now();
             DRAFTS.put(&vault.store, txn, &id, &row)?;
             clear_reply_ask_in_txn(vault, txn, &id, row.revision)?;
-            // One with files loses its message and its plan in this writer
-            // (fix list row 17645).
+            // One with files loses its message and its plan in this writer;
+            // its manifest stays with the draft (fix list row 17645).
+            let files = held_manifest_in(vault, txn, &id, &row)?;
             if row.attached.is_some() {
-                retire_reply_send_in_txn(&vault.store, txn, &id, &row)?;
+                retire_reply_send_in_txn(&vault.store, txn, &id)?;
             }
-            Ok(row)
+            Ok((row, files))
         })?;
         vault.store.notify_notification_updates();
         // A discarded draft never sends: its kept plan goes with its words
@@ -1094,7 +1148,7 @@ impl Memory<'_> {
         if row.attached.is_none() {
             forget_kept_plan(vault, &row);
         }
-        Ok(view(id, &row))
+        Ok(view(id, &row, files.as_ref()))
     }
 
     /// `vault.mail.reply.approve` on this device, as its embedded owner.
@@ -1161,12 +1215,24 @@ impl Vault {
                     "the send's outcome is uncertain; the ledger holds it",
                 ));
             }
-            MailReplyDraftState::Sent => return Ok(view(id, &row)),
+            MailReplyDraftState::Sent => return Ok(held_view(self, id, &row)?),
             MailReplyDraftState::Discarded => {
                 return Err(invalid_state("the draft was discarded; it never sends"));
             }
         }
         let now = crate::unix_seconds_now();
+        // A reply with files whose send the ledger already completed (the
+        // process stopped before its draft settled) replays that outcome and
+        // settles before today's route or identity is asked for: a paused
+        // mailbox or a withdrawn identity holds none of it back, and nothing
+        // of today's files, recipients or message is judged (fix list row
+        // 17645).
+        if let (Some(_), Some(identity), None) = (&row.attached, row.identity, &row.message)
+            && let Some(sender) =
+                reply_send_completed(self, &reply_intent_ref(&row), &row.plan_ref, identity)?
+        {
+            return self.settle_completed_reply(owner, actor, id, &row, sender, now);
+        }
         // The reply leaves the way its draft froze, while the mailbox still
         // sends that way.
         let (request, digest, dispatcher) = match (
@@ -1212,18 +1278,12 @@ impl Vault {
                 ));
             }
         };
-        // A reply with files whose send the ledger already completed (the
-        // process stopped before its draft settled) replays that outcome and
-        // settles below; nothing of today's files, recipients or message is
-        // judged, and its message need not be held (fix list row 17645).
-        let completed =
-            row.attached.is_some() && reply_send_completed(self, &request, &row.plan_ref)?;
-        // Any other reply with files sends only the message it was frozen
-        // with: before the press, its send still stands and that message
-        // opens as it was frozen.
+        // A reply with files sends only the message it was frozen with:
+        // before the press, its send still stands and that message opens as
+        // it was frozen (fix list row 17645).
         let retained = match &row.attached {
-            Some(_) if !completed => Some(ReplyRetainedMessage::for_press(self, id, &row)?),
-            _ => None,
+            Some(_) => Some(ReplyRetainedMessage::for_press(self, id, &row)?),
+            None => None,
         };
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
@@ -1252,9 +1312,8 @@ impl Vault {
                     "the draft was discarded, sent or left uncertain since it was read",
                 ));
             }
-            // And it still stands in the writer that presses it, unless its
-            // send already completed.
-            if !completed && let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
+            // And it still stands in the writer that presses it.
+            if let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
                 return Err(MemoryError::bad_request(refusal));
             }
             if held.approved_at.is_none() {
@@ -1282,51 +1341,96 @@ impl Vault {
                 self.dispatch_outbound_intent_recorded(request, sink.as_mut())
             }
         };
-        let (state, outcome) = match &answer {
-            Ok(result) => match result.outcome {
-                OutboundDispatchOutcome::DeliveredToChannel => (
-                    MailReplyDraftState::Sent,
-                    result.outcome.as_str().to_owned(),
-                ),
-                OutboundDispatchOutcome::Held => (
-                    MailReplyDraftState::Approved,
-                    format!("held: {}", result.gate_reason_codes.join(", ")),
-                ),
-                _ => (
-                    MailReplyDraftState::Unsettled,
-                    result.outcome.as_str().to_owned(),
-                ),
-            },
-            Err(error) => (MailReplyDraftState::Approved, format!("refused: {error}")),
-        };
-        let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+        let (state, outcome) = reply_outcome(&answer);
+        // A reply with files that sent, or whose outcome is uncertain, never
+        // sends again: its message and its plan go as the draft settles (fix
+        // list row 17645).
+        let retire = matches!(
+            state,
+            MailReplyDraftState::Sent | MailReplyDraftState::Unsettled
+        );
+        let row = self.record_reply_outcome(id, &row, state, outcome, retire, None)?;
+        if let Err(error) = answer {
+            return Err(MemoryError::bad_request(format!(
+                "the reply did not dispatch: {error}"
+            )));
+        }
+        Ok(held_view(self, id, &row)?)
+    }
+
+    /// Settles revision `row` of the draft `id`, a Gmail reply with files
+    /// whose send the ledger already completed as `sender` (fix list row
+    /// 17645), approved by `owner`, the mailbox's own person `actor`: the
+    /// revision's frozen request, rebuilt from the draft as it was
+    /// dispatched, is replayed through the recorded dispatch door, which
+    /// validates it whole against the ledger's frozen request and answers
+    /// with the recorded outcome; nothing is sent, and no live route,
+    /// identity, grant or send capability is needed. In one writer that
+    /// proves the owner again, the draft settles as that outcome says and
+    /// its message and its plan go, whatever the replay answers: a completed
+    /// send never sends again. A replay that fails leaves the draft Approved,
+    /// and the next press replays it again.
+    fn settle_completed_reply(
+        &self,
+        owner: &AuthenticatedOwner,
+        actor: EntityId,
+        id: EntityId,
+        row: &MailReplyDraftRow,
+        sender: EntityId,
+        now: u64,
+    ) -> MemoryResult<MailReplyDraftView> {
+        let request = request_for(id, row, OutboundDispatchActor::agent(sender), now);
+        let answer =
+            crate::channel_identity_provider::gmail::replay_completed_send_recorded(self, request);
+        let (state, outcome) = reply_outcome(&answer);
+        let row = self.record_reply_outcome(id, row, state, outcome, true, Some((owner, actor)))?;
+        if let Err(error) = answer {
+            return Err(MemoryError::bad_request(format!(
+                "the reply did not dispatch: {error}"
+            )));
+        }
+        Ok(held_view(self, id, &row)?)
+    }
+
+    /// Records, in one writer, what a dispatch of revision `row` of the draft
+    /// `id` answered: `state` and `outcome`, while the draft is still that
+    /// revision, and with `retire` a reply with files loses its message and
+    /// its plan there too (fix list row 17645). With `owner`, the mailbox's
+    /// own person and their proof, that writer proves them again first.
+    fn record_reply_outcome(
+        &self,
+        id: EntityId,
+        row: &MailReplyDraftRow,
+        state: MailReplyDraftState,
+        outcome: String,
+        retire: bool,
+        owner: Option<(&AuthenticatedOwner, EntityId)>,
+    ) -> MemoryResult<MailReplyDraftRow> {
+        let unknown = || MemoryError::not_found("no reply draft by that ref");
+        self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+            if let Some((owner, actor)) = owner
+                && (owner.revalidate_person_in_txn(self, txn)? != actor
+                    || SOURCES
+                        .get(&self.store, txn, &row.source)?
+                        .and_then(|source| source.owner)
+                        != Some(actor))
+            {
+                return Err(MemoryError::bad_request(
+                    "only the mailbox's own person approves its replies",
+                ));
+            }
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
             if held.revision == row.revision {
                 held.state = state;
                 held.outcome = Some(outcome);
                 held.updated_at = crate::unix_seconds_now();
                 DRAFTS.put(&self.store, txn, &id, &held)?;
-                // A reply with files that sent (a completed send's replay
-                // too), or whose outcome is uncertain, never sends again:
-                // the draft settles and its message and its plan go in this
-                // one writer (fix list row 17645).
-                if held.attached.is_some()
-                    && matches!(
-                        state,
-                        MailReplyDraftState::Sent | MailReplyDraftState::Unsettled
-                    )
-                {
-                    retire_reply_send_in_txn(&self.store, txn, &id, &held)?;
+                if retire && held.attached.is_some() {
+                    retire_reply_send_in_txn(&self.store, txn, &id)?;
                 }
             }
             Ok(held)
-        })?;
-        if let Err(error) = answer {
-            return Err(MemoryError::bad_request(format!(
-                "the reply did not dispatch: {error}"
-            )));
-        }
-        Ok(view(id, &row))
+        })
     }
 }
 

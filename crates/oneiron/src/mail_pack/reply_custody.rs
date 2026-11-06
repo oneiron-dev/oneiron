@@ -1,13 +1,24 @@
-//! A drafted Gmail reply's retained message (fix list row 17645): the exact
-//! RFC 5322 bytes one revision sends, written once at draft and sealed once
-//! under that revision's own erasable custody key, a ConnectorResume leaf
-//! whose ref derives from the draft and the revision under a domain of its
-//! own, apart from every connector call's and ledger row's. The send opens
-//! it, checks it against the revision's frozen length and BLAKE3, and sends
-//! it as it is: nothing is read, masked or written again. Its row and its
-//! key retire in the writer that ends the revision (a redraft, a discard, a
-//! settled send, an erase); custody destroys the key after that writer
-//! commits, so a restored image of the row opens nothing.
+//! What one revision of a drafted Gmail reply with files keeps sealed beside
+//! its draft (fix list row 17645), each record under that revision's own
+//! erasable custody key, a ConnectorResume leaf whose ref derives from the
+//! draft and the revision under a domain of the record's own, apart from
+//! every connector call's and ledger row's:
+//!
+//! - **The message**: the exact RFC 5322 bytes the revision sends, written
+//!   once at draft. The send opens it, checks it against the revision's
+//!   frozen length and BLAKE3, and sends it as it is: nothing is read,
+//!   masked or written again.
+//! - **The plan stub**: the kept Gmail plan the send dispatches, its words
+//!   with its manifest's digest and its carrier's ref.
+//! - **The manifest**: the files the revision carries, its exact message's
+//!   length and BLAKE3, and the message it answers. The draft's own row names
+//!   it only by its digest, so no image of that row carries a file's name,
+//!   ref or hash; the draft's readers open it here.
+//!
+//! The message and the plan stub retire in the writer that ends the send (a
+//! redraft, a discard, a settled send, an erase); the manifest in the writer
+//! that ends the revision (a redraft, an erase). Custody destroys each key
+//! after that writer commits, so a restored image of a row opens nothing.
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -21,46 +32,151 @@ use crate::secret_custody::{
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
-/// Each draft's retained message: the revision it is, u64be, then the
-/// message sealed. Key: id16(draft).
-const COPIES: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::MAIL_PACK_REPLY_COPY);
-
-/// The domain a revision's custody ref derives under.
-const CUSTODY_REF_DOMAIN: &str = "oneiron mail reply copy custody v1";
-
-/// The custody ref revision `revision` of the draft `draft` seals under: one
-/// per draft and revision, at the custody's first generation.
-fn custody_ref(draft: &EntityId, revision: u64) -> Result<EntityId> {
-    let mut hasher = blake3::Hasher::new_derive_key(CUSTODY_REF_DOMAIN);
-    hasher.update(draft.as_bytes());
-    hasher.update(&revision.to_le_bytes());
-    let derived = hasher.finalize();
-    let bytes = derived.as_bytes()[..ENTITY_ID_LEN]
-        .try_into()
-        .map_err(|_| Error::InvariantViolation("mail reply custody ref"))?;
-    EntityId::from_bytes(bytes).map_err(|_| Error::InvariantViolation("mail reply custody ref"))
+/// One record a revision keeps sealed beside its draft: the table it rests
+/// in, each row the revision it is, u64be, then the record sealed (key:
+/// id16(draft)), and the domain its custody ref derives under.
+struct SealedRecord {
+    table: SideTable<EntityId, Vec<u8>, Raw>,
+    domain: &'static str,
+    label: &'static str,
 }
 
-/// The ref a kept Gmail plan names the carrier of revision `revision` of
-/// the draft `draft` by: its custody ref, 32-hex (fix list row 17645).
-///
-/// # Errors
-///
-/// The derivation's invariant failure.
-pub(super) fn reply_carrier_ref(draft: &EntityId, revision: u64) -> Result<String> {
-    Ok(custody_ref(draft, revision)?.to_hex())
-}
+/// The revision's exact message.
+const MESSAGE: SealedRecord = SealedRecord {
+    table: SideTable::new(&side_table::MAIL_PACK_REPLY_COPY),
+    domain: "oneiron mail reply copy custody v1",
+    label: "mail reply retained message",
+};
 
-/// The revision a stored row is, and its sealed message.
+/// The revision's kept Gmail plan.
+const PLAN_STUB: SealedRecord = SealedRecord {
+    table: SideTable::new(&side_table::MAIL_PACK_REPLY_PLAN_STUB),
+    domain: "oneiron mail reply plan stub custody v1",
+    label: "mail reply plan stub",
+};
+
+/// The revision's files, message and answered message.
+const MANIFEST: SealedRecord = SealedRecord {
+    table: SideTable::new(&side_table::MAIL_PACK_REPLY_MANIFEST),
+    domain: "oneiron mail reply manifest custody v1",
+    label: "mail reply manifest",
+};
+
+/// The revision a stored row is, and its sealed record.
 fn split_row(row: &[u8]) -> Option<(u64, &[u8])> {
     let (revision, sealed) = row.split_first_chunk::<{ size_of::<u64>() }>()?;
     Some((u64::from_be_bytes(*revision), sealed))
 }
 
+impl SealedRecord {
+    /// The custody ref revision `revision` of the draft `draft` seals this
+    /// record under: one per draft and revision, at the custody's first
+    /// generation.
+    fn custody_ref(&self, draft: &EntityId, revision: u64) -> Result<EntityId> {
+        let mut hasher = blake3::Hasher::new_derive_key(self.domain);
+        hasher.update(draft.as_bytes());
+        hasher.update(&revision.to_le_bytes());
+        let derived = hasher.finalize();
+        let bytes = derived.as_bytes()[..ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| Error::InvariantViolation("mail reply custody ref"))?;
+        EntityId::from_bytes(bytes).map_err(|_| Error::InvariantViolation("mail reply custody ref"))
+    }
+
+    /// Seals `record` for revision `revision` of the draft `draft` in
+    /// `wtxn`, the writer that lands that revision: its key is minted and
+    /// journaled before the row commits, and the row replaces the draft's
+    /// earlier one, whose retirement the caller staged first.
+    fn seal_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        draft: &EntityId,
+        revision: u64,
+        record: &[u8],
+    ) -> Result<()> {
+        let sealed = seal_connector_resume_in_txn(
+            store,
+            wtxn,
+            &self.custody_ref(draft, revision)?,
+            0,
+            record,
+        )?;
+        let mut row = revision.to_be_bytes().to_vec();
+        row.extend_from_slice(&sealed);
+        self.table.put(store, wtxn, draft, &row)
+    }
+
+    /// Whether the draft `draft` holds this record of revision `revision`,
+    /// read in `txn`, without opening it.
+    fn holds_in(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        draft: &EntityId,
+        revision: u64,
+    ) -> Result<bool> {
+        Ok(self
+            .table
+            .get_borrowed(store, txn, draft)?
+            .is_some_and(|row| split_row(&row).is_some_and(|(held, _)| held == revision)))
+    }
+
+    /// This record of revision `revision` of the draft `draft`, opened in
+    /// `txn` (a writer, or a snapshot under the custody read guard); `None`
+    /// when the draft holds none of that revision.
+    fn open_in(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        draft: &EntityId,
+        revision: u64,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let Some(row) = self.table.get_borrowed(store, txn, draft)? else {
+            return Ok(None);
+        };
+        let Some((held, sealed)) = split_row(&row) else {
+            return Err(Error::CorruptedIndex(self.label));
+        };
+        if held != revision {
+            return Ok(None);
+        }
+        open_connector_resume_in_txn(store, txn, &self.custody_ref(draft, revision)?, 0, sealed)
+            .map(Some)
+    }
+
+    /// Drops the draft `draft`'s record, whichever revision it is, and
+    /// stages its key's retirement in `wtxn`, the writer that ends it. A
+    /// draft that holds none changes nothing.
+    fn retire_in_txn(&self, store: &Store, wtxn: &mut RwTxn<'_>, draft: &EntityId) -> Result<()> {
+        let held = self
+            .table
+            .get_borrowed(store, wtxn, draft)?
+            .map(|row| split_row(&row).map(|(revision, _)| revision));
+        let Some(held) = held else {
+            return Ok(());
+        };
+        if let Some(revision) = held {
+            retire_connector_resume_in_txn(store, wtxn, &self.custody_ref(draft, revision)?)?;
+        }
+        self.table.delete(store, wtxn, draft)?;
+        Ok(())
+    }
+}
+
+/// The ref a kept Gmail plan names the carrier of revision `revision` of
+/// the draft `draft` by: its message's custody ref, 32-hex (fix list row
+/// 17645).
+///
+/// # Errors
+///
+/// The derivation's invariant failure.
+pub(super) fn reply_carrier_ref(draft: &EntityId, revision: u64) -> Result<String> {
+    Ok(MESSAGE.custody_ref(draft, revision)?.to_hex())
+}
+
 /// Seals `message`, the exact bytes revision `revision` of the draft
-/// `draft` sends, in `wtxn`, the writer that lands that revision: its key is
-/// minted and journaled before the row commits, and the row replaces the
-/// draft's earlier one, whose retirement the caller staged first.
+/// `draft` sends, in `wtxn`, the writer that lands that revision.
 ///
 /// # Errors
 ///
@@ -72,11 +188,7 @@ pub(super) fn seal_reply_message_in_txn(
     revision: u64,
     message: &[u8],
 ) -> Result<()> {
-    let sealed =
-        seal_connector_resume_in_txn(store, wtxn, &custody_ref(draft, revision)?, 0, message)?;
-    let mut row = revision.to_be_bytes().to_vec();
-    row.extend_from_slice(&sealed);
-    COPIES.put(store, wtxn, draft, &row)
+    MESSAGE.seal_in_txn(store, wtxn, draft, revision, message)
 }
 
 /// Whether the draft `draft` holds the retained message of revision
@@ -91,9 +203,7 @@ pub(super) fn holds_reply_message_in(
     draft: &EntityId,
     revision: u64,
 ) -> Result<bool> {
-    Ok(COPIES
-        .get_borrowed(store, txn, draft)?
-        .is_some_and(|row| split_row(&row).is_some_and(|(held, _)| held == revision)))
+    MESSAGE.holds_in(store, txn, draft, revision)
 }
 
 /// The retained message of revision `revision` of the draft `draft`, opened
@@ -112,26 +222,18 @@ pub(super) fn open_reply_message_in(
     revision: u64,
     message: &MailMessageIdentity,
 ) -> Result<Option<Zeroizing<Vec<u8>>>> {
-    let Some(row) = COPIES.get_borrowed(store, txn, draft)? else {
+    let Some(opened) = MESSAGE.open_in(store, txn, draft, revision)? else {
         return Ok(None);
     };
-    let Some((held, sealed)) = split_row(&row) else {
-        return Err(Error::CorruptedIndex("mail reply retained message"));
-    };
-    if held != revision {
-        return Ok(None);
-    }
-    let opened =
-        open_connector_resume_in_txn(store, txn, &custody_ref(draft, revision)?, 0, sealed)?;
     if !message.matches(&opened) {
-        return Err(Error::CorruptedIndex("mail reply retained message"));
+        return Err(Error::CorruptedIndex(MESSAGE.label));
     }
     Ok(Some(opened))
 }
 
 /// Drops the draft `draft`'s retained message, whichever revision it is,
-/// and stages its key's retirement in `wtxn`, the writer that ends that
-/// revision. A draft that holds none changes nothing.
+/// and stages its key's retirement in `wtxn`, the writer that ends its send.
+/// A draft that holds none changes nothing.
 ///
 /// # Errors
 ///
@@ -141,15 +243,98 @@ pub(super) fn retire_reply_message_in_txn(
     wtxn: &mut RwTxn<'_>,
     draft: &EntityId,
 ) -> Result<()> {
-    let held = COPIES
-        .get_borrowed(store, wtxn, draft)?
-        .map(|row| split_row(&row).map(|(revision, _)| revision));
-    let Some(held) = held else {
-        return Ok(());
-    };
-    if let Some(revision) = held {
-        retire_connector_resume_in_txn(store, wtxn, &custody_ref(draft, revision)?)?;
-    }
-    COPIES.delete(store, wtxn, draft)?;
-    Ok(())
+    MESSAGE.retire_in_txn(store, wtxn, draft)
+}
+
+/// Seals `stub`, the kept Gmail plan revision `revision` of the draft
+/// `draft` dispatches (`GmailSendPlan::stub`), in `wtxn`, the writer that
+/// lands that revision.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(super) fn seal_reply_plan_stub_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+    stub: &[u8],
+) -> Result<()> {
+    PLAN_STUB.seal_in_txn(store, wtxn, draft, revision, stub)
+}
+
+/// The kept Gmail plan of revision `revision` of the draft `draft`, opened
+/// in `txn` (a snapshot under the custody read guard); `None` when the
+/// draft holds none of that revision.
+///
+/// # Errors
+///
+/// A key that does not open it, and storage faults.
+pub(super) fn open_reply_plan_stub_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    PLAN_STUB.open_in(store, txn, draft, revision)
+}
+
+/// Drops the draft `draft`'s kept Gmail plan, whichever revision it is, and
+/// stages its key's retirement in `wtxn`, the writer that ends its send.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(super) fn retire_reply_plan_stub_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    draft: &EntityId,
+) -> Result<()> {
+    PLAN_STUB.retire_in_txn(store, wtxn, draft)
+}
+
+/// Seals `manifest`, what revision `revision` of the draft `draft` froze
+/// with its files, in `wtxn`, the writer that lands that revision.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(super) fn seal_reply_manifest_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+    manifest: &[u8],
+) -> Result<()> {
+    MANIFEST.seal_in_txn(store, wtxn, draft, revision, manifest)
+}
+
+/// The manifest of revision `revision` of the draft `draft`, opened in
+/// `txn` (a writer, or a snapshot under the custody read guard); `None`
+/// when the draft holds none of that revision.
+///
+/// # Errors
+///
+/// A key that does not open it, and storage faults.
+pub(super) fn open_reply_manifest_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    MANIFEST.open_in(store, txn, draft, revision)
+}
+
+/// Drops the draft `draft`'s manifest, whichever revision it is, and stages
+/// its key's retirement in `wtxn`, the writer that ends that revision.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(super) fn retire_reply_manifest_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    draft: &EntityId,
+) -> Result<()> {
+    MANIFEST.retire_in_txn(store, wtxn, draft)
 }

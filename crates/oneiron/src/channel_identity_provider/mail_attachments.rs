@@ -7,8 +7,8 @@
 //! base64 and its name in RFC 2231 form. Nothing here reads a file: the
 //! drafter's door admits each one and hands its exact copy in, and the
 //! message is written once, when it is frozen. A kept plan names its files
-//! and message only by their manifest's digest; their holder's live row
-//! keeps them.
+//! and message only by their manifest's digest; their holder keeps them,
+//! and the plan, sealed beside the message.
 
 use std::fmt::Write as _;
 
@@ -87,10 +87,10 @@ impl MailMessageIdentity {
     }
 }
 
-/// What a send with files was frozen with, as its holder's own live row
-/// keeps it (fix list row 17645): its files in their order and its exact
-/// message. A kept plan names it only by [`Self::digest`], so no image of
-/// the plan carries a file's name, ref or hash.
+/// What a send with files was frozen with, as its holder keeps it sealed
+/// (fix list row 17645): its files in their order and its exact message. A
+/// kept plan names it only by [`Self::digest`], so no image of the plan
+/// carries a file's name, ref or hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MailManifest {
     pub(crate) attachments: Vec<MailAttachment>,
@@ -123,14 +123,23 @@ pub(crate) trait RetainedMailMessage {
     /// revision, as the kept plan names it.
     fn carrier_ref(&self) -> &str;
 
-    /// The files and the exact message the plan was frozen with, read from
-    /// the holder's own live row; `None` once that row no longer names
-    /// them, and the kept plan is then no plan.
+    /// The files and the exact message the plan was frozen with, opened
+    /// from the holder's own sealed row; `None` once the holder no longer
+    /// keeps them, and the kept plan is then no plan.
     ///
     /// # Errors
     ///
     /// The failure of its read.
     fn manifest(&self) -> Result<Option<MailManifest>>;
+
+    /// The kept plan itself, as its holder keeps it sealed beside the
+    /// message: the bytes the plan's own store wrote; `None` once the holder
+    /// no longer keeps it, and there is then no plan.
+    ///
+    /// # Errors
+    ///
+    /// The failure of its read.
+    fn plan_stub(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
 
     /// Judges the frozen send again in `txn`, a writer: the one that admits
     /// it, and the credential door's before the message leaves.

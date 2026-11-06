@@ -239,6 +239,55 @@ impl GmailDelegatedAdapter {
     }
 }
 
+/// The sink a completed member send replays through (fix list row 17645):
+/// the ledger's completed record answers the dispatch, so nothing asks it to
+/// send. It admits no new call, so a call the ledger has not completed is
+/// refused before any decision is recorded, and it sends nothing.
+struct CompletedSendSink;
+
+impl OutboundExecutionSink for CompletedSendSink {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        OutboundExecutionOutcome::failed("gmail_send_replay_only")
+    }
+
+    fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> Result<()> {
+        Err(Error::InvalidConfig(
+            "a completed gmail send only replays; it never sends".to_owned(),
+        ))
+    }
+
+    fn delivers_recipient_lists(&self) -> bool {
+        true
+    }
+}
+
+/// Replays one member send the recorded dispatch door already completed
+/// (fix list row 17645), as [`GmailDelegatedAdapter::dispatch_send_recorded`]
+/// replays it, but with no adapter: no live row, grant or send capability is
+/// needed, because nothing sends. The door validates `request` against the
+/// ledger's frozen request, whole, and answers with the outcome it recorded;
+/// a delivered send's thread record is projected again. A call the ledger has
+/// not completed is refused, never sent.
+///
+/// # Errors
+///
+/// An envelope that names no sender, the dispatch door's refusal (a request
+/// other than the frozen one among them), or a thread/comm projection failure
+/// after delivery (replay the same request to project it again).
+pub(crate) fn replay_completed_send_recorded(
+    vault: &Vault,
+    request: OutboundDispatchRequest,
+) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+    let invalid = || Error::InvalidConfig("invalid gmail member send envelope".to_owned());
+    let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
+    let actor = request.actor.actor_entity_ref.ok_or_else(invalid)?;
+    let result = vault.dispatch_outbound_intent_recorded(request, &mut CompletedSendSink)?;
+    if result.outcome == OutboundDispatchOutcome::DeliveredToChannel {
+        record_sent_thread(vault, identity_ref, actor, &result)?;
+    }
+    Ok(result)
+}
+
 /// Projects one delivered member send into the thread record: its
 /// `(identity × Message-ID)` passport with References/In-Reply-To, and each
 /// recipient's comm last-touch: its counterparty's, and every recipient's of
