@@ -2483,7 +2483,7 @@
      "path": "src/attempt_queue/cancel/ops.rs",
      "purpose": "RUNG 1 of the graceful-cancel protocol plus the landing reserve dial",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 6
      }
     },
@@ -9288,9 +9288,9 @@
      "path": "src/blob_artifact/family.rs",
      "purpose": "The artifact family contract (ARCH-0078): every deliverable is an artifact, and every kind gives the same…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 8,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -9331,7 +9331,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 2,
       "re-export": 18
      }
@@ -9417,9 +9417,9 @@
      "path": "src/blob_artifact/verbs.rs",
      "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 17,
+      "fn": 19,
       "struct": 21
      }
     },
@@ -9456,7 +9456,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 9,
       "re-export": 1,
@@ -9471,6 +9471,16 @@
      "purpose": "Checked append decisions shared by direct and Memory transaction doors",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/versions/queue_check.rs",
+     "purpose": "Stores queue-check output through the receipt-bound completion token",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -14561,7 +14571,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 23,
       "fn": 8
      }
     },
@@ -21643,7 +21653,7 @@
      "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -21663,7 +21673,7 @@
      "path": "src/consent/doors/queue_check.rs",
      "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -33617,9 +33627,9 @@
      "path": "src/embed.rs",
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 9,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 3
      }
     },
@@ -33660,7 +33670,7 @@
      "path": "src/embed/device.rs",
      "purpose": "Which device and runtime computed a stored vector (ARCH-0036, owner 2026-10-11)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "re-export": 1
      }
@@ -33688,11 +33698,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HomeClaimVector"
+     ],
+     "path": "src/embed/home_vectors.rs",
+     "purpose": "Default CLAIM vectors move only over an authenticated own-machine read, never through a canonical window's…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/embed/locality.rs",
      "purpose": "Provenance of a filled vector, written atomically with the fill",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -36151,7 +36175,7 @@
      "path": "src/federation/record_scope/stamping.rs",
      "purpose": "The birth-position stamp doors: put, stage, settle and restamp a record's position",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -36197,7 +36221,7 @@
      "path": "src/federation/ruling_integrity.rs",
      "purpose": "Stored authority bindings and append-only protection for administrative rulings",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -48490,7 +48514,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 4
      }
     },
@@ -49266,7 +49290,7 @@
      "path": "src/memory/secret_sight.rs",
      "purpose": "Secret sight for artifact and typed-body reads by a bound memory caller",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -50673,8 +50697,18 @@
      "path": "src/merge_queue/check_execute.rs",
      "purpose": "One check execution body for both check paths (FIX 6868): the low-level callback `check` and the bound…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_exhaust.rs",
+     "purpose": "Retains actual queue-check exhaust as immutable native artifact versions",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -50691,6 +50725,7 @@
       "QueueCheckInvocation",
       "QueueCheckLimits",
       "QueueCheckNeed",
+      "QueueCheckOutputRef",
       "QueueCheckReceipt",
       "QueueCheckRun",
       "QueueCheckTarget",
@@ -50703,8 +50738,9 @@
       "const": 1,
       "enum": 3,
       "fn": 9,
-      "struct": 10,
-      "trait": 2
+      "struct": 11,
+      "trait": 2,
+      "type": 1
      }
     },
     {
@@ -50857,7 +50893,7 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -51392,7 +51428,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 29,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -51647,7 +51683,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -51733,7 +51769,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -54221,7 +54257,7 @@
      "path": "src/origin/smart_http/door_window.rs",
      "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -72828,13 +72864,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/pending_embedding.rs",
      "purpose": "Pending-embedding marker rows gating vector writes: encode/decode, mark/clear, and token checks",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -75113,7 +75149,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 8
      }
     },
@@ -75154,7 +75190,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 5
      }
     },
@@ -75328,6 +75364,16 @@
      "notable": [],
      "path": "src/sync/client/residence/checkpoint_roots.rs",
      "purpose": "Checkpoint root attestations between this machine and its home (FIX 4882), on the steady pass after the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/claim_vectors.rs",
+     "purpose": "A single leased default CLAIM asks the live home once",
      "surface": {
       "crate-vis": 1
      }
@@ -75623,7 +75669,7 @@
      "path": "src/sync/connection/home_search.rs",
      "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -89517,7 +89563,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89993,7 +90039,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -90308,7 +90354,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90798,7 +90844,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 353,
+     "files": 354,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91010,7 +91056,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6393,
+   "source_files": 6397,
    "test_files": 895
   },
   "oneiron-android": {
@@ -121079,7 +121125,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -121099,7 +121145,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -121252,6 +121298,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/claim_vectors.rs",
+     "purpose": "Default CLAIM derivations are a machine-only read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/custody.rs",
      "purpose": "`residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its…",
      "surface": {
@@ -121375,7 +121431,7 @@
      "path": "src/livequery/routing.rs",
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -123137,6 +123193,16 @@
      "purpose": "Placing a manifest's files on this machine, verifying an operator's directory, and reading what is on disk",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_artifacts/install/quarantine.rs",
+     "purpose": "Retaining a mismatched installed model before its replacement is fetched",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -128018,7 +128084,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -128067,7 +128133,7 @@
      "purpose": "MCP connector actor registry"
     },
     "model_artifacts": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -128230,7 +128296,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1597,
+   "source_files": 1599,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

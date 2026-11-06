@@ -1175,9 +1175,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
-| `src/livequery.rs` | src | m | 34 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
+| `src/livequery.rs` | src | m | 35 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
-| `src/livequery/connection.rs` | src | m | 21 crate-vis | — | Socket attachment and bounded reconnect retention |
+| `src/livequery/connection.rs` | src | m | 22 crate-vis | — | Socket attachment and bounded reconnect retention |
 | `src/livequery/connection/refresh_loop.rs` | src | s | 1 crate-vis | — | The hub's refresh loop: one task per hub, driving every kept session's refresh on a short tick and, at once… |
 | `src/livequery/device_local_tests.rs` | test | m | — | — | Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live subscription keeps the pushes it derived… |
 | `src/livequery/error.rs` | src | s | 18 crate-vis | — | The HTTP facade error body on app frames |
@@ -1193,6 +1193,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/bundle_commit.rs` | src | s | 6 crate-vis | — | Bundle execution and owner-request publication receipts are distinct |
 | `src/livequery/residence/bundles.rs` | src | s | 9 crate-vis | — | Sealed residence bundles: their put, list, get, turn and pad replacement |
 | `src/livequery/residence/checkpoint_roots.rs` | src | s | 4 crate-vis | — | `residence.authority.checkpoint.{roots,attest,countersign}` (FIX 4882): the home's half of checkpoint root… |
+| `src/livequery/residence/claim_vectors.rs` | src | s | 1 crate-vis | — | Default CLAIM derivations are a machine-only read |
 | `src/livequery/residence/custody.rs` | src | s | 1 crate-vis | — | `residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its… |
 | `src/livequery/residence/home_handoff.rs` | src | s | 3 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
 | `src/livequery/residence/index.rs` | src | m | 7 crate-vis | — | A window's residence index: its paged projection, touches, promotions and version vector |
@@ -1205,7 +1206,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/search.rs` | src | s | 1 crate-vis | — | A window's home search: the candidates a residence search returns for one query |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
-| `src/livequery/routing.rs` | src | s | 5 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
+| `src/livequery/routing.rs` | src | s | 6 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
 | `src/livequery/rpc.rs` | src | m | 6 crate-vis | — | The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the… |
 | `src/livequery/rule5_tests.rs` | test | m | 4 crate-vis | — | Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits… |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
@@ -1361,6 +1362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/validators.rs` | src | s | 5 crate-vis | — | Small field validators shared by every MCP argument type |
 | `src/model_artifacts/catalog.rs` | src | m | 2 crate-vis | — | The house models the deploy scripts serve today, pinned file by file (`deploy/house-model/`… |
 | `src/model_artifacts/install.rs` | src | m | 11 crate-vis | — | Placing a manifest's files on this machine, verifying an operator's directory, and reading what is on disk |
+| `src/model_artifacts/install/quarantine.rs` | src | s | 1 crate-vis | — | Retaining a mismatched installed model before its replacement is fetched |
 | `src/model_artifacts/licence.rs` | src | s | 6 crate-vis | — | Which licences let a model download start (the owner's standing grant: any licence that does not hurt us… |
 | `src/model_artifacts/manifest.rs` | src | s | 10 crate-vis | — | The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence… |
 | `src/model_artifacts/mod.rs` | src | s | 5 crate-vis | — | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
