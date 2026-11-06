@@ -59,8 +59,8 @@ pub(crate) use self::bundle::PadEraseSubject;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
-    retired_bundle_generations, sealed_bundle_slot,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, UnmergedSection,
+    UnmergedStage, WorldCapsuleImport, retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
 pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
