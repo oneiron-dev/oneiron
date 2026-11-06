@@ -65,6 +65,9 @@ pub struct VoiceSessionConfig {
     /// to help reaches this person's trusted contacts (OF-527); without it,
     /// it reaches no one's.
     pub policy_person: Option<crate::consent::AuthenticatedOwner>,
+    /// The native host action the admitted caller acts under. Speaker-entry
+    /// writes retain its live guard instead of treating a Human writer as proof.
+    pub host_action: Option<crate::authority::HostActionAuthority>,
     /// The container this session is heard in, when its host bound one.
     /// Each speaker it cannot place enters it before any context is
     /// assembled, and an attendee's entry stops output assembled before
@@ -83,6 +86,7 @@ impl VoiceSessionConfig {
             policy_world_ref: None,
             policy_caller_ref: None,
             policy_person: None,
+            host_action: None,
             container: None,
         }
     }
@@ -775,9 +779,21 @@ impl VoiceCascadeSession {
             .now_recorded_at()
             .checked_add(bound.ask_seconds)
             .ok_or_else(|| invalid("voice identity ask expiry overflow"))?;
-        self.vault
-            .memory(bound.writer, bound.writer_class)
-            .voice_speakers_entered(bound.container, &roster, None, &bound.candidates, until)
+        let memory = self.vault.memory(bound.writer, bound.writer_class);
+        let memory = match &self.config.host_action {
+            Some(action) => memory.with_host_action_authority(action),
+            None => Ok(memory),
+        };
+        memory
+            .and_then(|memory| {
+                memory.voice_speakers_entered(
+                    bound.container,
+                    &roster,
+                    None,
+                    &bound.candidates,
+                    until,
+                )
+            })
             .map(drop)
             .map_err(|error| Error::InvalidConfig(format!("voice speaker entry: {error}")))
     }

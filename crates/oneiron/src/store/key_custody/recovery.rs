@@ -24,6 +24,8 @@
 
 mod admission;
 mod credentials;
+mod issuer_transfer;
+pub(crate) use issuer_transfer::admit_published_host_issuer_seeds;
 mod pads;
 mod source;
 mod takeover;
