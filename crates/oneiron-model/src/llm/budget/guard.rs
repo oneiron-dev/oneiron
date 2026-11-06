@@ -251,16 +251,7 @@ impl BudgetGuard {
     pub fn lease_observation(&self, lease_id: &str) -> Option<BudgetLeaseState> {
         let state = self.lock_state();
         let record = state.leases.get(lease_id)?;
-        Some(match record.state {
-            LeaseState::Open => BudgetLeaseState::Open {
-                reserve_units: record.reserve_units,
-                dispatched: record.dispatched,
-            },
-            LeaseState::Settled { charged_units } => BudgetLeaseState::Settled {
-                used_units: charged_units,
-            },
-            LeaseState::Aborted => BudgetLeaseState::Aborted,
-        })
+        Some(super::accounting::lease_observation(record))
     }
 
     /// The engine-stamped actor a policy-aware guard is bound to, if any.
