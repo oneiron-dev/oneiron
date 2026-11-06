@@ -320,7 +320,8 @@ impl Vault {
     }
 
     /// Marks an old revision superseded by an admitted new revision of the
-    /// SAME skill (ARCH-0053 §6): the old record flips
+    /// SAME skill (ARCH-0053 §6), or by an admitted fork of exactly that
+    /// record (replace by fork, FIX 4463): the old record flips
     /// `active → superseded` (frozen; never loads as canon again) and a
     /// `Supersedes` edge `new → old` records the succession, in one
     /// transaction. This door does NOT activate `new_id` — admission
@@ -353,9 +354,13 @@ impl Vault {
         }
         let old = self.read_skill_record_in_txn(wtxn, old_id)?;
         let new = self.read_skill_record_in_txn(wtxn, new_id)?;
-        if new.skill_id != old.skill_id {
+        // A fork takes its own skillId (the one fork law), so its replacement
+        // of its parent is the one cross-skill succession: `new` must name
+        // exactly `old` as the record it forked from (FIX 4463).
+        let replaces_parent = new.forked_from == Some(*old_id);
+        if new.skill_id != old.skill_id && !replaces_parent {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "supersession links two revisions of one skill",
+                "supersession links two revisions of one skill, or an admitted fork and its parent",
             )));
         }
         if super::resident_of(&old)? != super::resident_of(&new)? {
@@ -363,7 +368,9 @@ impl Vault {
                 "supersession cannot cross resident ownership",
             )));
         }
-        if new.version == old.version {
+        // A fork starts its own version line, so its label is no revision
+        // of its parent's.
+        if !replaces_parent && new.version == old.version {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "superseding revision must carry a new version",
             )));
@@ -587,6 +594,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

@@ -14,6 +14,9 @@
 
 use std::collections::BTreeSet;
 
+mod unbound;
+pub use unbound::UnboundMediaSample;
+
 use super::space::{
     EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
     has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
@@ -162,6 +165,7 @@ impl Vault {
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, space_id)? else {
                 return Err(Error::InvalidConfig(format!(
@@ -628,6 +632,23 @@ pub(super) fn text_document_in_txn(
     text_document_in(vault, &vault.store, txn, id)
 }
 
+/// The actual current text input and every native row it reads.
+#[cfg(feature = "sync")]
+pub(crate) fn text_vector_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<([u8; 32], Vec<EntityId>)>> {
+    Ok(
+        text_row_in(vault, &vault.store, txn, id)?.map(|(text, _, mut rows)| {
+            rows.push(*id);
+            rows.sort_unstable();
+            rows.dedup();
+            (text_hash(&text), rows)
+        }),
+    )
+}
+
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
 /// turns compose with base.
 pub(super) fn text_document_in(
@@ -687,4 +708,24 @@ pub(super) fn asset_text(
     Ok(String::from_utf8(bytes)
         .ok()
         .filter(|text| text.chars().any(|c| !c.is_whitespace() && !c.is_control())))
+}
+
+impl Vault {
+    /// Reuses one batch of the opened device's home's current text media vectors.
+    /// Missing home rows leave the existing local backfill unchanged.
+    pub async fn reuse_home_text_media_vectors(
+        &self,
+        space_id: &str,
+        max_items: usize,
+    ) -> Result<usize> {
+        #[cfg(feature = "sync")]
+        {
+            super::space::reuse_home_text_media_vectors(self, space_id, max_items).await
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            let _ = (space_id, max_items);
+            Ok(0)
+        }
+    }
 }

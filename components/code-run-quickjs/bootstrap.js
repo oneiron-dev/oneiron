@@ -72,7 +72,7 @@
     // `connector` answers a name it does not hold with that connector's tools.
     guard = (path, object) => {
       for (const [key, value] of Object.entries(object))
-        if (value && typeof value === "object") object[key] = guard(`${path}.${key}`, value);
+        if (value && (typeof value === "object" || typeof value === "function" && Object.keys(value).length)) object[key] = guard(`${path}.${key}`, value);
       const missing = path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
       return new Proxy(object, {
         get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
