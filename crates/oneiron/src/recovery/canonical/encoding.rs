@@ -5,8 +5,9 @@ use serde::{Serialize, Serializer as _};
 
 use super::{
     BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalAssetBodyRef,
-    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier,
-    CanonicalRoomFact, CanonicalRoomTurn, CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone,
+    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalEntity, CanonicalHeadMove,
+    CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalRowBirth,
+    CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -81,7 +82,7 @@ impl CanonicalEncoding {
             ("doc_snapshots", &Rows(doc_snapshots, false)),
             ("entity_documents", &Rows(entity_documents, false)),
             ("document_heads", &Rows(document_heads, false)),
-            ("head_move_receipts", &Rows(head_move_receipts, false)),
+            ("head_move_receipts", &ByteRows(head_move_receipts, false)),
             ("note_forks", &Rows(note_forks, false)),
             ("note_proposals", &Rows(note_proposals, false)),
             ("container_manifests", &Rows(container_manifests, false)),
@@ -249,6 +250,26 @@ impl ByteRow for CanonicalCustodyTransition {
         write_named(out, "piece")?;
         write_named(out, piece)?;
         write_named(out, "carrier")
+    }
+}
+
+impl ByteRow for CanonicalHeadMove {
+    fn bytes(&self) -> &[u8] {
+        &self.receipt
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalHeadMove {
+            id,
+            entity_id,
+            receipt: _,
+        } = self;
+        write_struct_header(out, "CanonicalHeadMove", 3)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "entity_id")?;
+        write_named(out, entity_id)?;
+        write_named(out, "receipt")
     }
 }
 
