@@ -13,6 +13,8 @@
 //! never stored or serialized; the root stores the binding it yields, and
 //! each new admission reads that binding again.
 
+use std::collections::BTreeMap;
+
 use crate::Vault;
 use crate::authority::{
     AgentGrantActRecord, AgentGrantChange, AuthorityEntryHash, AuthorityOp, authority_entry_hash,
@@ -141,14 +143,24 @@ impl Vault {
 /// its live row ([`mint_matches_row`]), by its own authority entry hash.
 /// `None` when no counted mint matches. A counted owner revoke, slip-grant
 /// revoke or membership withdrawal of the Grant, or two matching counted
-/// mints, refuses.
+/// mints, refuses. The acts read are this vault's resident log rows and the
+/// bodies an adopted checkpoint image carries whole for rows it does not
+/// store: a paired or restored vault may hold the Grant's mint only there,
+/// and the fold counts it. A resident row wins over the image's copy of it.
 fn counted_matching_mint_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     standing: &AgentGrantStanding,
 ) -> Result<Option<AuthorityEntryHash>> {
-    let fold = vault.authority_view_readonly_in_txn(txn)?;
-    let mut found: Option<AuthorityEntryHash> = None;
+    let names = |op: &AuthorityOp| match op {
+        AuthorityOp::AgentGrantAct(record) => record.grant == standing.id,
+        AuthorityOp::SlipGrantRevoke { grant_ref } => *grant_ref == standing.id,
+        AuthorityOp::MembershipExecution(record) => {
+            record.withdrawn_grants.binary_search(&standing.id).is_ok()
+        }
+        _ => false,
+    };
+    let mut acts = BTreeMap::new();
     for id in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -163,19 +175,21 @@ fn counted_matching_mint_in_txn(
         let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
             continue;
         };
-        let names = match &entry.op {
-            AuthorityOp::AgentGrantAct(record) => record.grant == standing.id,
-            AuthorityOp::SlipGrantRevoke { grant_ref } => *grant_ref == standing.id,
-            AuthorityOp::MembershipExecution(record) => {
-                record.withdrawn_grants.binary_search(&standing.id).is_ok()
-            }
-            _ => false,
-        };
-        if !names {
-            continue;
+        if names(&entry.op) {
+            acts.insert(authority_entry_hash(&entry)?, entry);
         }
-        let hash = authority_entry_hash(&entry)?;
-        if !fold.valid_entries.contains(&hash) {
+    }
+    if let Some(evidence) = crate::authority::adopted_evidence_in_txn(&vault.store, txn)? {
+        for (hash, entry) in evidence.bodies() {
+            if names(&entry.op) {
+                acts.entry(*hash).or_insert_with(|| entry.clone());
+            }
+        }
+    }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let mut found: Option<AuthorityEntryHash> = None;
+    for (hash, entry) in &acts {
+        if !fold.valid_entries.contains(hash) {
             continue;
         }
         let AuthorityOp::AgentGrantAct(record) = &entry.op else {
@@ -184,7 +198,7 @@ fn counted_matching_mint_in_txn(
         match &record.change {
             AgentGrantChange::Revoke { .. } => return Err(refused("the owner revoked it")),
             AgentGrantChange::Mint { .. } => {
-                if mint_matches_row(record, standing) && found.replace(hash).is_some() {
+                if mint_matches_row(record, standing) && found.replace(*hash).is_some() {
                     return Err(refused("more than one counted signed mint names it"));
                 }
             }
