@@ -7,7 +7,8 @@ use super::{
 use oneiron::code_run::model_call::NativeReadDigests;
 use oneiron::llm::DispatchRelease;
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, SeatPhase, SeatRequest,
+    DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionSystemOneResponse,
+    SeatPhase, SeatRequest,
 };
 use oneiron::{
     BudgetLease, FatalLlmError, HostingPrivacyPosture, LlmResult, LlmUsage, RetryableLlmError,
@@ -119,11 +120,24 @@ impl<'seat> PreparedSystemOnePackRead<'seat> {
     }
 
     pub async fn ask_recorded<'call>(
-        mut self,
+        self,
         lease: &'call BudgetLease,
         time_left: Duration,
         release: Option<DispatchRelease<'call>>,
     ) -> SystemOnePackRead
+    where
+        'seat: 'call,
+    {
+        self.ask_observed(lease, time_left, release).await.0
+    }
+
+    /// Returns raw source beside the unchanged pack result, never per-row shares.
+    pub async fn ask_observed<'call>(
+        mut self,
+        lease: &'call BudgetLease,
+        time_left: Duration,
+        release: Option<DispatchRelease<'call>>,
+    ) -> (SystemOnePackRead, Option<DecisionSystemOneResponse>)
     where
         'seat: 'call,
     {
@@ -205,7 +219,7 @@ impl SystemOneSeat {
         prepared: PreparedSystemOnePackRead<'_>,
         lease: &BudgetLease,
         release: Option<DispatchRelease<'_>>,
-    ) -> SystemOnePackRead {
+    ) -> (SystemOnePackRead, Option<DecisionSystemOneResponse>) {
         let PreparedSystemOnePackRead {
             mut template,
             questions,
@@ -215,12 +229,14 @@ impl SystemOneSeat {
         let digests = serde_json::from_slice::<Value>(&sent.body)
             .ok()
             .and_then(|body| native_seat_read_digests(&body).ok());
+        let mut observation = None;
         let result = async {
             let model = sent.model.clone();
             let response = match release {
                 Some(release) => self.transport.send_released(sent, lease, release).await?,
                 None => self.transport.send(sent, lease).await?,
             };
+            observation = Some(response.observation(&model));
             if !(200..300).contains(&response.status) {
                 return Err(if response.status >= 500 || response.status == 429 {
                     RetryableLlmError::ServerError.into()
@@ -264,9 +280,12 @@ impl SystemOneSeat {
             Ok(SystemOnePackAnswer { answers, usage })
         }
         .await;
-        SystemOnePackRead {
-            request: digests,
-            result,
-        }
+        (
+            SystemOnePackRead {
+                request: digests,
+                result,
+            },
+            observation,
+        )
     }
 }
