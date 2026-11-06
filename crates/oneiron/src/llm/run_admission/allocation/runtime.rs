@@ -109,6 +109,7 @@ impl RunInner {
             .facts
             .initiator
             .or_else(|| permit.facts.attribution.as_ref().map(|bound| bound.agent));
+        let line_source = self.guard.reservation_source(&permit.lease);
         let reserve = account.ledger.reserve(
             key,
             permit.reserve_native,
@@ -130,6 +131,7 @@ impl RunInner {
                     reserve_native: permit.reserve_native,
                     rates: permit.rates.clone(),
                     metered: permit.metered,
+                    line_source,
                 };
                 account
                     .producer

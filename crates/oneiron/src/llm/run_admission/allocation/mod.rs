@@ -45,6 +45,9 @@ pub struct AllocationCallContext {
     pub reserve_native: u128,
     pub rates: Vec<UnitRate>,
     pub metered: bool,
+    /// Original issuing meter and reservation coordinates, never a restored
+    /// lease or a replacement policy. Absence remains unknown.
+    pub line_source: Option<oneiron_model::llm::BudgetReservationSource>,
 }
 
 /// Immutable host-supplied conversion terms for one original allocation.
