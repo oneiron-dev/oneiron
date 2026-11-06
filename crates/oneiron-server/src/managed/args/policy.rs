@@ -417,7 +417,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     // The host's public addresses, which the supervisor owns and passes on:
-    // its https origin and the URLs a kit dials. The settings file never
+    // its https origin, the URLs a kit dials and its Git door. The settings file never
     // sets them, and no auth layer is built from them.
     (
         "oauth-resource-indicator",
@@ -427,6 +427,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "kit-bundle-public-urls",
         |args| args.kit_bundle_public_urls.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "git-door-base",
+        |args| args.git_door_base.is_some(),
         ArgvUse::Read,
     ),
     // The owner's own choices, which the supervisor passes on (FIX 4488).

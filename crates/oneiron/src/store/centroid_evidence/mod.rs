@@ -9,8 +9,8 @@ use crate::store::{ResponseFamily, ResponseRead, RetrievalRunRecord};
 use crate::{Error, Result};
 
 pub(crate) use erase::{
-    centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_in_txn,
-    erased_source_in_txn, run_sources,
+    centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_as_in_txn,
+    erase_centroid_source_in_txn, erased_source_in_txn, run_sources,
 };
 
 pub(crate) const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =

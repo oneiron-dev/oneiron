@@ -60,7 +60,7 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let team_shape = self.root_skill_pack(&request.skills.team_shape)?;
         let (request, owner_choices) = request.with_owner_choices(self.vault, Some(project))?;
-        let evidence = self.planner_evidence_for(
+        let (evidence, root_lookup) = self.planner_evidence_sourced_for(
             Some(project),
             None,
             spend,
@@ -73,6 +73,7 @@ impl AgentDispatcher<'_> {
                 self.root_skill_pack(skill)
             })?;
         receipt.owner_choices = owner_choices;
+        receipt.type_tree_root_lookup = root_lookup;
         Ok(receipt)
     }
 

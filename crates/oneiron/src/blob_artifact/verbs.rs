@@ -475,11 +475,51 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.view`: kind, name, type, head and every version with
-    /// its made_by and born-from.
+    /// its made_by and born-from. Queue-check exhaust needs the request's
+    /// authenticated Owner proof; an unbound public read withholds it.
     pub fn artifacts_view(&self, input: &ArtifactRefRequest) -> MemoryResult<Option<ArtifactView>> {
-        Ok(self
+        let artifact = entity(&input.artifact_ref)?;
+        if let Some(view) = self
             .vault()
-            .blob_artifact_view(&entity(&input.artifact_ref)?)?)
+            .blob_artifact_view_for_reader(&artifact, None, None)?
+        {
+            return Ok(Some(view));
+        }
+        match self.queue_check_request_owner() {
+            Some(owner) => self.artifacts_view_as_owner(owner, input),
+            None => Ok(None),
+        }
+    }
+
+    /// The family view with the actual Owner proof carried by this request.
+    /// The protected artifact and Owner are judged again in the read snapshot.
+    pub fn artifacts_view_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactRefRequest,
+    ) -> MemoryResult<Option<ArtifactView>> {
+        self.artifact_owner_matches(owner)?;
+        let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
+        Ok(self.vault().blob_artifact_view_for_reader(
+            &entity(&input.artifact_ref)?,
+            Some(owner),
+            Some(&lane),
+        )?)
+    }
+
+    pub(crate) fn artifact_owner_matches(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> MemoryResult<()> {
+        let actor = owner.revalidate(self.vault())?;
+        if self.actor_class() != EdgeActorClass::Human || self.actor() != actor {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "artifact Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        Ok(())
     }
 
     /// `vault.artifacts.export`: one version's export file, with the born-with
@@ -488,13 +528,39 @@ impl Memory<'_> {
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifacts_export_with_owner(input, self.queue_check_request_owner())
+    }
+
+    /// A sighted export with this request's real Owner proof. Secret sight
+    /// remains independent of the protected exhaust's Owner audience.
+    pub fn artifacts_export_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactExportRequest,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifact_owner_matches(owner)?;
+        self.artifacts_export_with_owner(input, Some(owner))
+    }
+
+    fn artifacts_export_with_owner(
+        &self,
+        input: &ArtifactExportRequest,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
         let vault = self.vault();
-        let Some(file) = self.export_blob_artifact_sighted(
-            &entity(&input.artifact_ref)?,
-            input.version,
-            input.why.as_deref(),
-        )?
-        else {
+        let artifact = entity(&input.artifact_ref)?;
+        let file = match owner {
+            Some(owner) => self.export_blob_artifact_sighted_as_owner(
+                &artifact,
+                input.version,
+                input.why.as_deref(),
+                owner,
+            )?,
+            None => {
+                self.export_blob_artifact_sighted(&artifact, input.version, input.why.as_deref())?
+            }
+        };
+        let Some(file) = file else {
             return Ok(None);
         };
         // The owner's export comes back to the owner, a download or a save to

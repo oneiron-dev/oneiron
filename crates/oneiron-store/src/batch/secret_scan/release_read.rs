@@ -25,10 +25,6 @@ use oneiron_base::error::Result;
 /// from: the longest of them, a carrier's magic and its two ids, fits.
 pub const HEAD_BYTES: u64 = 64;
 
-/// The segment edges the assignment rule splits text at. None is a token
-/// byte, so no provider token crosses one either.
-pub const SEGMENT_BREAKS: [char; 6] = ['\n', '\r', ',', ';', '{', '}'];
-
 /// The release private-key rule as the text streams: the first `-----BEGIN
 /// ` of a line, then whether `PRIVATE KEY` comes before the first `-----`
 /// after it, as [`shapes::private_key_header`] reads each line.
@@ -85,11 +81,12 @@ impl HeaderLine {
 }
 
 /// How much of `pattern` the text ends in once `byte` follows a text that
-/// ended in its first `matched` bytes (`matched` short of the whole).
-fn advance(pattern: &[u8], matched: usize, byte: u8) -> usize {
+/// ended in its first `matched` bytes. After a whole match the next byte
+/// is read on from the pattern's longest border.
+pub fn advance(pattern: &[u8], matched: usize, byte: u8) -> usize {
     let mut matched = matched;
     loop {
-        if pattern[matched] == byte {
+        if pattern.get(matched) == Some(&byte) {
             return matched + 1;
         }
         if matched == 0 {

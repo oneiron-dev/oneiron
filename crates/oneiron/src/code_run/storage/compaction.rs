@@ -26,6 +26,9 @@ const WRITTEN: SideTable<(EntityId, EntityId), WrittenCoverage, Raw> =
 const VERSION: u8 = 4;
 /// The fixed coverage, then the receipt's length.
 const BODY_LEN: usize = 1 + 16 * 3 + 8 * 4 + 32;
+/// The digest slot of a row whose summary is withdrawn (FIX 928): no hash
+/// of the erased words stays. BLAKE3 never yields it for a real body.
+const WITHDRAWN_DIGEST: [u8; 32] = [0; 32];
 const FRAME_LEN: usize = BODY_LEN + 4;
 
 /// A run-local span derived from the durable replay and the sealed compaction
@@ -109,8 +112,10 @@ pub(crate) struct CodeRunCompactionCoverage {
     /// before it, so the next epoch lets this one stand for them.
     calls: u64,
     /// BLAKE3 of the SUMMARY body the gate accepted: a generic write that
-    /// replaces it later never renders as the run's summary.
-    digest: [u8; 32],
+    /// replaces it later never renders as the run's summary. `None` once the
+    /// summary is withdrawn: the row keeps its span and renders no words
+    /// again, and no confirmation hash of what they said (FIX 928).
+    digest: Option<[u8; 32]>,
 }
 
 impl CodeRunCompactionCoverage {
@@ -132,6 +137,42 @@ impl CodeRunCompactionCoverage {
     }
     pub(crate) fn calls(&self) -> u64 {
         self.calls
+    }
+
+    /// Withdraws every coverage row bound to the epoch summary `summary`,
+    /// in the writer that withdraws it (FIX 928; ARCH-0038: deleted words
+    /// leave no confirmation hash): each keeps its run, summary, epoch and
+    /// span, and loses its body digest for good, and a self-written row's
+    /// receipt loses the accepted snapshot's hash and length; its
+    /// content-free execution record stays.
+    ///
+    /// # Errors
+    /// A store failure, or a coverage row that does not decode.
+    pub(crate) fn withdraw_summary_in_txn(
+        dbs: &impl ManifestDbs,
+        txn: &mut heed::RwTxn<'_>,
+        summary: &EntityId,
+    ) -> Result<()> {
+        let mut withdrawn = Vec::new();
+        for item in WRITTEN.iter_from(dbs, &*txn, &[])? {
+            let (key, mut written) = item?;
+            let snapshot = written.writer.as_ref().is_some_and(|writer| {
+                writer.snapshot_hash.is_some() || writer.snapshot_len.is_some()
+            });
+            if key.1 != *summary || (written.row.digest.is_none() && !snapshot) {
+                continue;
+            }
+            written.row.digest = None;
+            if let Some(writer) = written.writer.as_mut() {
+                writer.snapshot_hash = None;
+                writer.snapshot_len = None;
+            }
+            withdrawn.push((key, written));
+        }
+        for (key, written) in withdrawn {
+            WRITTEN.put(dbs, txn, &key, &written)?;
+        }
+        Ok(())
     }
 }
 
@@ -185,7 +226,7 @@ fn encode(
     raw.extend_from_slice(&row.first.to_be_bytes());
     raw.extend_from_slice(&row.last.to_be_bytes());
     raw.extend_from_slice(&row.calls.to_be_bytes());
-    raw.extend_from_slice(&row.digest);
+    raw.extend_from_slice(&row.digest.unwrap_or(WITHDRAWN_DIGEST));
     raw.extend_from_slice(&receipt_len.to_be_bytes());
     raw.extend_from_slice(&receipt);
     Ok(raw)
@@ -221,7 +262,8 @@ fn decode(raw: &[u8]) -> Result<(CodeRunCompactionCoverage, Option<CompactionExe
         first: number(57)?,
         last: number(65)?,
         calls: number(73)?,
-        digest: raw[81..BODY_LEN].try_into().map_err(|_| corrupt())?,
+        digest: Some(raw[81..BODY_LEN].try_into().map_err(|_| corrupt())?)
+            .filter(|digest| *digest != WITHDRAWN_DIGEST),
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
@@ -239,6 +281,10 @@ fn verify_summary(
     row: &CodeRunCompactionCoverage,
 ) -> Result<Option<String>> {
     let corrupt = || Error::CorruptedIndex("code-run compaction summary binding");
+    // A withdrawn row renders nothing, whatever is stored under its id now.
+    let Some(digest) = row.digest else {
+        return Ok(None);
+    };
     let Some(summary) = dbs.port_entity_record(txn, &row.summary_id)? else {
         return Ok(None);
     };
@@ -246,7 +292,7 @@ fn verify_summary(
     if state.deleted || state.stale || summary.body.is_empty() {
         return Ok(None);
     }
-    if *blake3::hash(&summary.body).as_bytes() != row.digest {
+    if *blake3::hash(&summary.body).as_bytes() != digest {
         return Ok(None);
     }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {
@@ -317,7 +363,7 @@ fn put_coverage_in(
         first: span.first,
         last: span.last,
         calls: span.calls,
-        digest: *blake3::hash(&minted.body).as_bytes(),
+        digest: Some(*blake3::hash(&minted.body).as_bytes()),
     };
     verify_summary(dbs, &*txn, &row)?.ok_or(Error::InvariantViolation(
         "executor coverage names no live summary",

@@ -8,7 +8,8 @@
 //! margin is always found whole, and none is reported twice. A few bytes
 //! before each window are kept, so `\b` and `(?m)^` see the byte before it.
 //! The read stops at the scan bound with a cursor, never with a false "no
-//! match".
+//! match". A scoped child's search also stops at its live cutoff, checked at
+//! each window and each match (FIX 8233).
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, ceil_boundary, count_lf, decode, encoded_len,
@@ -143,6 +144,9 @@ pub(super) fn search(
     // the overlap plus the look-behind, on scan-bound stops only.
     let mut stop_credit: u64 = 0;
     while a < len && stopped.is_none() {
+        // Each window and each match checks the read's live cutoff first
+        // (FIX 8233).
+        body.live_cutoff().check()?;
         // The window: [a, b), with the look-behind before it held.
         let keep = a.saturating_sub(BEHIND).max(hay_start);
         hay.drain(..usize::try_from(keep - hay_start).unwrap_or(hay.len()));
@@ -177,6 +181,7 @@ pub(super) fn search(
                 }
                 continue;
             }
+            body.live_cutoff().check()?;
             let (s, e) = (
                 hay_start + found.start() as u64,
                 hay_start + found.end() as u64,

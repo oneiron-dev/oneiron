@@ -149,6 +149,7 @@ fn world_pending_tombstone_exists(
 pub enum HydratedShortIdDeletionReason {
     UserDelete,
     UserHardDelete,
+    OwnerErase,
     GdprDelete,
     PolicyDelete,
 }
@@ -563,6 +564,9 @@ impl Vault {
             }
             crate::deletion::TombstoneReason::UserHardDelete => {
                 Some(HydratedShortIdDeletionReason::UserHardDelete)
+            }
+            crate::deletion::TombstoneReason::OwnerErase => {
+                Some(HydratedShortIdDeletionReason::OwnerErase)
             }
             crate::deletion::TombstoneReason::GdprDelete => {
                 Some(HydratedShortIdDeletionReason::GdprDelete)

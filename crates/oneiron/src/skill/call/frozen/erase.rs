@@ -74,18 +74,19 @@ pub(crate) fn erase_callable_case_actor_in_txn(
 ///
 /// Storage errors.
 pub(crate) fn erase_callable_cases_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     // The skill tear takes its gate verdict with its cases: an exact id16
     // key, so any other entity's erase is a no-op here.
     GATE_VERDICT.delete(store, wtxn, id)?;
     for key in CASES.scan_keys(store, wtxn, id.as_bytes())? {
-        delete_case_in_txn(store, wtxn, &key)?;
+        delete_erased_case_in_txn(write, wtxn, &key)?;
     }
     for key in index::source_cases_in_txn(store, wtxn, id)? {
-        delete_case_in_txn(store, wtxn, &key)?;
+        delete_erased_case_in_txn(write, wtxn, &key)?;
     }
     index::forget_source_in_txn(store, wtxn, id)?;
     let spelled = id.to_hex();
@@ -104,11 +105,22 @@ pub(crate) fn erase_callable_cases_in_txn(
         };
         if named {
             for key in keys {
-                delete_case_in_txn(store, wtxn, &key)?;
+                delete_erased_case_in_txn(write, wtxn, &key)?;
             }
         }
     }
     Ok(())
+}
+
+fn delete_erased_case_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &Vec<u8>,
+) -> Result<()> {
+    let place = format!("side:{}", CASES.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &CASES.key_bytes(key))?;
+    crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
+    delete_case_in_txn(write.store, wtxn, key)
 }
 
 /// Whether the live attempt `receipt` names — still running, its pack

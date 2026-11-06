@@ -36,4 +36,3 @@ pub const ANCHOR_VERSION: u8 = 1;
 pub fn anchor_corrupt() -> Error {
     Error::CorruptedIndex("key custody anchor")
 }
-
