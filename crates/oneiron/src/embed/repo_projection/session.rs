@@ -44,6 +44,7 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
     sources: &BTreeSet<[u8; 32]>,
     affected: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    let prefixes = crate::embed::space::repo_projection::media_row_prefixes();
     for overlay in vault.store.off_record_sessions.live_overlay_handles() {
         let mut ids = affected.clone();
         match overlay.snapshot() {
@@ -77,9 +78,7 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
         if ids.is_empty() {
             continue;
         }
-        let keys =
-            crate::embed::space::repo_projection::media_row_keys_in(&vault.store, wtxn, &ids)?;
-        if let Err(error) = overlay.invalidate_repo_media_copies(&keys, &ids) {
+        if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, &ids) {
             tracing::warn!(error = %error, "a room's staged media copies stay to its landing check");
         }
     }

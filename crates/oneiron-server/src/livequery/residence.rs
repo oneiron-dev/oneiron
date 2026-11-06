@@ -9,6 +9,7 @@ mod bundle_access;
 mod bundle_commit;
 mod bundles;
 mod checkpoint_roots;
+mod claim_vectors;
 mod custody;
 mod home_handoff;
 mod index;
@@ -59,7 +60,9 @@ use crate::server::SyncServer;
 
 /// The residence calls a socket may make with only its machine proof.
 pub(super) fn machine_method(method: &str) -> bool {
-    method == "residence.pad.fetch" || home_handoff::machine_method(method)
+    method == "residence.claim.vector"
+        || method == "residence.pad.fetch"
+        || home_handoff::machine_method(method)
 }
 
 pub(super) fn run_machine(
@@ -68,7 +71,9 @@ pub(super) fn run_machine(
     method: &str,
     params: Value,
 ) -> Result<Answer, AppError> {
-    if method == "residence.pad.fetch" {
+    if method == "residence.claim.vector" {
+        claim_vectors::read(server, peer, params)
+    } else if method == "residence.pad.fetch" {
         pad_custody::pad_fetch_keys(server, peer, params)
     } else {
         home_handoff::run_machine(server, peer, method, params)
