@@ -79,3 +79,16 @@ codec still emits the `narrowing` receipt, settlement warnings, job and park
 state, citations, prospective hints, provenance, and all finite fields.
 Native reads, writes, owner checks, input decoding, verb hooks, and public
 result types are unchanged. The host-only core vet call is unchanged.
+
+## Core model-catalog output metadata
+
+The core SDK `vault.models.catalog.refresh` and `vault.models.catalog.get` output
+adapters move metadata from both the seed catalog rows and the resulting registry
+rows before the original whole-record codec. `vault.models.catalog.diff` does the
+same for every present previous and current row. The adapters restore the owned
+JSON values in their original positions afterward. Empty metadata maps remain
+omitted; present keys with null values remain present. Row order, absent diff
+rows, receipts and the remaining native serde fields keep the original codec.
+Native producers, owner checks, catalog validation and input handling are
+unchanged. This does not change the separate UniFFI model-catalog conversion or
+the storage codecs, and does not claim a general depth or memory bound.

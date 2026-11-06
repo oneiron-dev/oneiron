@@ -1886,6 +1886,9 @@ def outputs():
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
             encoder = {
+                'vault.models.catalog.refresh': 'model_catalog_output::revision',
+                'vault.models.catalog.get': 'model_catalog_output::revision',
+                'vault.models.catalog.diff': 'model_catalog_output::diff',
                 'vault.claims.review': 'claim_output::review',
                 'vault.claims.vetting': 'claim_output::review',
                 'vault.claims.settle': 'claim_output::settlement',
