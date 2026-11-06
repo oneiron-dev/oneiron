@@ -24,7 +24,7 @@ use crate::frame::{
     STREAM_CHUNK, read_chunk, read_segment, write_chunk, write_segment, write_stream_end,
     write_stream_header,
 };
-use crate::send::{Sender, encoded, push_wiped, reply_headers, watchable};
+use crate::send::{Sender, encoded, git_watchable, push_wiped, reply_headers};
 use crate::{Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 /// The user agent of a git exchange: a smart-HTTP server serves its smart
@@ -201,7 +201,8 @@ struct GitCredential {
 /// trimmed: visible ASCII and spaces, a scheme, then its credentials. The
 /// token watched for is the credentials, or for `Basic` the password the
 /// base64 holds (its user name when the password is empty or GitHub's
-/// `x-oauth-basic`). The token must be one the strip rule is sure to find.
+/// `x-oauth-basic`). The token must be one the reply's echo watch can hold
+/// back ([`git_watchable`]): its literal forms, any bytes.
 fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     let value = secret.trim_ascii();
     if value.is_empty()
@@ -239,7 +240,7 @@ fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     } else {
         Zeroizing::new(credentials.to_vec())
     };
-    if !watchable(&watched) {
+    if !git_watchable(&watched) {
         return Err(Refusal::Secret);
     }
     let mut header = HeaderValue::from_bytes(value).map_err(|_| Refusal::Secret)?;
