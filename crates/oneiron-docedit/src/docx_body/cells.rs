@@ -50,46 +50,7 @@ pub(super) fn read(
                     BlockNode::Paragraph(paragraph) => Some(paragraph),
                     _ => None,
                 })
-                .map(|paragraph| {
-                    // The native cell materializer diffs against accept-all, not the
-                    // joined redline read (which includes Deleted tombstones).
-                    let text = current_text(paragraph);
-                    let locked = if structural
-                        || paragraph
-                            .para_mark_status
-                            .as_ref()
-                            .is_some_and(|status| status != &TrackingStatus::Normal)
-                        || (comment
-                            && paragraph
-                                .segments
-                                .iter()
-                                .any(|segment| segment.status != TrackingStatus::Normal))
-                    {
-                        Some(DocxLock::Tracked)
-                    } else if !paragraph.has_resolved_numbering()
-                        && paragraph
-                            .literal_prefix
-                            .as_deref()
-                            .is_some_and(|label| !label.trim().is_empty())
-                    {
-                        Some(DocxLock::LiteralPrefix)
-                    } else if paragraph
-                        .segments
-                        .iter()
-                        .flat_map(|segment| &segment.inlines)
-                        .any(|inline| !matches!(inline, InlineNode::Text(_)))
-                    {
-                        Some(DocxLock::Anchors)
-                    } else {
-                        None
-                    };
-                    DocxCellParagraph {
-                        id: paragraph.id.to_string(),
-                        guard: stemma::semantic_hash::block_semantic_hash_for_paragraph(paragraph),
-                        text,
-                        locked,
-                    }
-                })
+                .map(|paragraph| read_paragraph(paragraph, structural, comment))
                 .collect();
             Ok(DocxCell {
                 row: view_cell.row,
@@ -99,6 +60,111 @@ pub(super) fn read(
             })
         })
         .collect()
+}
+
+fn read_paragraph(
+    paragraph: &stemma::domain::ParagraphNode,
+    structural: bool,
+    comment: bool,
+) -> DocxCellParagraph {
+    // The native cell materializer diffs against accept-all, not the
+    // joined redline read (which includes Deleted tombstones).
+    let text = current_text(paragraph);
+    let locked = if structural
+        || paragraph
+            .para_mark_status
+            .as_ref()
+            .is_some_and(|status| status != &TrackingStatus::Normal)
+        || (comment
+            && paragraph
+                .segments
+                .iter()
+                .any(|segment| segment.status != TrackingStatus::Normal))
+    {
+        Some(DocxLock::Tracked)
+    } else if !paragraph.has_resolved_numbering()
+        && paragraph
+            .literal_prefix
+            .as_deref()
+            .is_some_and(|label| !label.trim().is_empty())
+    {
+        Some(DocxLock::LiteralPrefix)
+    } else if paragraph
+        .segments
+        .iter()
+        .flat_map(|segment| &segment.inlines)
+        .any(|inline| !matches!(inline, InlineNode::Text(_)))
+    {
+        Some(DocxLock::Anchors)
+    } else {
+        None
+    };
+    DocxCellParagraph {
+        id: paragraph.id.to_string(),
+        guard: stemma::semantic_hash::block_semantic_hash_for_paragraph(paragraph),
+        text,
+        locked,
+    }
+}
+
+/// Nested cell paragraphs appended after the scoped reader's existing results.
+pub(super) fn descendant_paragraph_blocks(
+    blocks: &[TrackedBlock],
+    comment: bool,
+) -> Vec<super::DocxBlock> {
+    let mut paragraphs = Vec::new();
+    for tracked in blocks {
+        if let BlockNode::Table(table) = &tracked.block {
+            append_descendant_paragraph_blocks(
+                table,
+                tracked.status != TrackingStatus::Normal,
+                false,
+                comment,
+                &mut paragraphs,
+            );
+        }
+    }
+    paragraphs
+}
+
+fn append_descendant_paragraph_blocks(
+    table: &stemma::domain::TableNode,
+    ancestor_locked: bool,
+    include_direct: bool,
+    comment: bool,
+    paragraphs: &mut Vec<super::DocxBlock>,
+) {
+    for row in &table.rows {
+        for cell in &row.cells {
+            let structural = ancestor_locked
+                || cell.v_merge == VerticalMerge::Continue
+                || cell
+                    .tracking_status
+                    .as_ref()
+                    .or(row.tracking_status.as_ref())
+                    .is_some();
+            for block in &cell.blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) if include_direct => {
+                        let paragraph = read_paragraph(paragraph, structural, comment);
+                        paragraphs.push(super::DocxBlock {
+                            id: paragraph.id,
+                            kind: super::DocxBlockKind::Paragraph,
+                            role: None,
+                            text: paragraph.text,
+                            runs: Vec::new(),
+                            cells: Vec::new(),
+                            locked: paragraph.locked,
+                        });
+                    }
+                    BlockNode::Table(nested) => append_descendant_paragraph_blocks(
+                        nested, structural, true, comment, paragraphs,
+                    ),
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Current cell paragraphs in native story-local identity space.

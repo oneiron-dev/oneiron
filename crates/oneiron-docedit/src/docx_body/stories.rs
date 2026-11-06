@@ -73,37 +73,42 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
     crate::within(limits, || {
         preflight_with_limits(bytes, limits)?;
         let document = Document::parse(bytes)?;
-        let canonical = &document.snapshot().canonical;
-        let mut stories = Vec::new();
-        let mut push = |scope: DocxStoryScope, blocks: &[stemma::domain::TrackedBlock]| {
-            let view = stemma::view::build_story_blocks_view(blocks);
-            let comment = matches!(&scope, DocxStoryScope::Comment { .. });
-            stories.push(DocxStory {
-                scope,
-                blocks: view
-                    .blocks
-                    .iter()
-                    .map(|view| block(view, blocks, comment))
-                    .collect::<Result<_, _>>()?,
-            });
-            Ok::<_, DoceditError>(())
-        };
-        for (scope, blocks) in story_blocks(&document) {
-            push(scope, blocks)?;
-        }
-        Ok(DocxRead {
-            blocks: document
-                .read()
-                .blocks
-                .iter()
-                .map(|view| block(view, &canonical.blocks, false))
-                .collect::<Result<_, _>>()?,
-            stories,
-        })
+        read_document(&document)
     })
 }
 
-/// Read the exact story's blocks and direct cell paragraphs. An omitted scope
+fn read_document(document: &Document) -> Result<DocxRead, DoceditError> {
+    let canonical = &document.snapshot().canonical;
+    let mut stories = Vec::new();
+    let mut push = |scope: DocxStoryScope, blocks: &[stemma::domain::TrackedBlock]| {
+        let view = stemma::view::build_story_blocks_view(blocks);
+        let comment = matches!(&scope, DocxStoryScope::Comment { .. });
+        stories.push(DocxStory {
+            scope,
+            blocks: view
+                .blocks
+                .iter()
+                .map(|view| block(view, blocks, comment))
+                .collect::<Result<_, _>>()?,
+        });
+        Ok::<_, DoceditError>(())
+    };
+    for (scope, blocks) in story_blocks(document) {
+        push(scope, blocks)?;
+    }
+    Ok(DocxRead {
+        blocks: document
+            .read()
+            .blocks
+            .iter()
+            .map(|view| block(view, &canonical.blocks, false))
+            .collect::<Result<_, _>>()?,
+        stories,
+    })
+}
+
+/// Read the exact story's blocks and cell paragraphs. Existing top-level and
+/// direct-cell results precede nested cell paragraphs. An omitted scope
 /// is the existing body-only read; a missing story never falls back to the body.
 pub fn read_docx_scoped_blocks(
     bytes: &[u8],
@@ -113,30 +118,43 @@ pub fn read_docx_scoped_blocks(
     let Some(scope) = scope else {
         return super::read_docx_blocks(bytes, limits);
     };
-    let mut blocks = read_docx_body(bytes, limits)?
-        .stories
-        .into_iter()
-        .find(|story| &story.scope == scope)
-        .map(|story| story.blocks)
-        .unwrap_or_default();
-    let paragraphs = blocks
-        .iter()
-        .flat_map(|block| {
-            block.cells.iter().flat_map(move |cell| {
-                cell.paragraphs.iter().map(move |paragraph| DocxBlock {
-                    id: paragraph.id.clone(),
-                    kind: super::DocxBlockKind::Paragraph,
-                    role: None,
-                    text: paragraph.text.clone(),
-                    runs: Vec::new(),
-                    cells: Vec::new(),
-                    locked: paragraph.locked.or(block.locked),
+    crate::within(limits, || {
+        preflight_with_limits(bytes, limits)?;
+        let document = Document::parse(bytes)?;
+        let mut blocks = read_document(&document)?
+            .stories
+            .into_iter()
+            .find(|story| &story.scope == scope)
+            .map(|story| story.blocks)
+            .unwrap_or_default();
+        let paragraphs = blocks
+            .iter()
+            .flat_map(|block| {
+                block.cells.iter().flat_map(move |cell| {
+                    cell.paragraphs.iter().map(move |paragraph| DocxBlock {
+                        id: paragraph.id.clone(),
+                        kind: super::DocxBlockKind::Paragraph,
+                        role: None,
+                        text: paragraph.text.clone(),
+                        runs: Vec::new(),
+                        cells: Vec::new(),
+                        locked: paragraph.locked.or(block.locked),
+                    })
                 })
             })
-        })
-        .collect::<Vec<_>>();
-    blocks.extend(paragraphs);
-    Ok(blocks)
+            .collect::<Vec<_>>();
+        blocks.extend(paragraphs);
+        if let Some((_, source)) = story_blocks(&document)
+            .into_iter()
+            .find(|(candidate, _)| candidate == scope)
+        {
+            blocks.extend(super::cells::descendant_paragraph_blocks(
+                source,
+                matches!(scope, DocxStoryScope::Comment { .. }),
+            ));
+        }
+        Ok(blocks)
+    })
 }
 
 /// The authored native stories, in the same order for reads and anchors.

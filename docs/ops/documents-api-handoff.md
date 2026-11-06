@@ -252,3 +252,16 @@ tracked-change transaction (`crates/oneiron-docedit/vendor/stemma-engine`).
 Source: `crates/oneiron-docedit/src/contract/mod.rs` (the types and the op table) and
 `contract/run.rs` (the handlers and the refusal mapping). The recalculation port is
 `crates/oneiron-xlsx-formula/src/contract_port.rs`.
+
+
+## Nested DOCX story paragraph reads
+
+The native `read_docx_scoped_blocks` reader includes paragraphs inside nested
+tables of the exact named story. Existing top-level and direct-cell results
+keep their order and lookup priority; new descendants follow them. Descendants
+use their real native paragraph ids and accepted inline text, not an enclosing
+cell alias. Existing tracked/structural, literal-prefix and inline-anchor locks
+are retained through all cell ancestors, and locked content stays readable.
+The body-only read and the ordinary all-story reply are unchanged. This native
+reader extension does not by itself establish nested live-unit projection,
+annotation freshness, shared-body editing or whole ParagraphAsk support.
