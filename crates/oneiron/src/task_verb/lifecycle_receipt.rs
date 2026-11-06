@@ -368,6 +368,58 @@ pub(crate) fn erase_in_txn(
     Ok(())
 }
 
+/// Whether a lifecycle receipt keeps the field `name` under the owner's
+/// discard of its TASK: the call it records, the proposal it names, and the
+/// TASK type it ran under. Every other field is the call's words.
+fn kept_under_discard(name: &str) -> bool {
+    name == FIELD_CALL
+        || name == FIELD_PROPOSAL_REF
+        || name == "typeRef"
+        || name.starts_with("type_ref.")
+}
+
+/// The owner's discard of TASK `id`'s local copy (FIX 14534 rule 4): each
+/// lifecycle receipt naming it as its TASK or its parked proposal stays
+/// identifier-only history: its id, kind, time, actor, outcome, refs,
+/// policy trace and indexes, and the fields [`kept_under_discard`] names;
+/// the rest of its fields go. A consult interruption's frozen case is an
+/// authority record of ids and digests alone (FIX 9742) and stays whole.
+/// Rewritten in place, in the discard's transaction, with no receipt of its
+/// own; a no-op for any other entity.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    let hex = id.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut row) in RECEIPTS.scan(store, txn)? {
+        if row.trigger_ref.as_deref() != Some(hex.as_str())
+            && row.fields.get(FIELD_PROPOSAL_REF) != Some(&hex)
+        {
+            continue;
+        }
+        if row.fields.get(FIELD_CALL).map(String::as_str)
+            == Some(super::consult_ladder_facade::CASE_CALL)
+        {
+            continue;
+        }
+        let before = row.fields.len();
+        row.fields.retain(|name, _| kept_under_discard(name));
+        if row.fields.len() != before {
+            rows.push((key, row));
+        }
+    }
+    for (key, row) in rows {
+        RECEIPTS.put(store, txn, &key, &row)?;
+    }
+    Ok(())
+}
+
 /// Erasing `actor` from the lifecycle receipts (FIX 3520): each one that
 /// names it as its actor, or as whom the call ran on behalf of, keeps its
 /// row, call, outcome, time, refs and fields, and names no one there. The

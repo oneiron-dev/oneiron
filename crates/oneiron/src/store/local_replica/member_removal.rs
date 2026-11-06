@@ -27,20 +27,25 @@ use crate::temporal::TimeRange;
 /// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
 /// call 4 = A): each one's entity document, a NOTE's text, pending slots
 /// and review workflow (proposal snapshots, waiting forks), and its fetched
-/// read caches. Local only: no receipt, marker or operation. Their custody,
-/// provenance and lifecycle sidecars stay for now.
+/// read caches; a TASK's report journal entries, lifecycle receipts and
+/// mirror events lose their words and stay identifier-only history, its
+/// mirror link kept. Local only: no receipt, marker or operation. Their
+/// custody, provenance and other lifecycle sidecars stay for now.
 pub(super) fn discard_owned_payload(
     store: &Store,
     txn: &mut RwTxn<'_>,
     ids: &[EntityId],
 ) -> Result<()> {
     let mut notes = BTreeSet::new();
+    let mut tasks = Vec::new();
     for id in ids {
         let kind = store
             .port_entity_raw(txn, id)?
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
         if kind == Some(registry::ENTITY_TYPE_NOTE) {
             notes.insert(*id);
+        } else if kind == Some(registry::ENTITY_TYPE_TASK) {
+            tasks.push(*id);
         }
     }
     crate::entity_doc::discard_local_copies_in_txn(store, txn, &ids.iter().copied().collect())?;
@@ -48,6 +53,13 @@ pub(super) fn discard_owned_payload(
         crate::note::delete_document_in_txn(store, txn, note)?;
     }
     crate::note::discard_workflow_in_txn(store, txn, &notes)?;
+    // A TASK's report journal, lifecycle receipts and mirror events stay
+    // identifier-only history, rewritten in place; its mirror link stays.
+    for task in &tasks {
+        crate::task_verb::discard_report_journal_payload_in_txn(store, txn, task)?;
+        crate::task_verb::discard_lifecycle_receipt_payload_in_txn(store, txn, task)?;
+        crate::linear_sync::discard_task_event_payload_in_txn(store, txn, *task)?;
+    }
     crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
 }
 
