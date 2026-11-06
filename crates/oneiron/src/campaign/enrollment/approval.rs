@@ -402,7 +402,7 @@ fn drop_retained_in_txn(
         }
     }
     for (key, mut request, drop_original) in changed {
-        super::held::withdraw_owner_ask_in_txn(vault, wtxn, request.held.as_ref());
+        let _ = super::held::withdraw_owner_ask_in_txn(vault, wtxn, request.held.as_ref());
         if drop_original {
             RETAINED.delete(&vault.store, wtxn, &key)?;
         } else {
@@ -439,7 +439,7 @@ pub(crate) fn drop_enrollment_asks_of_call_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     attempt_id: AttemptId,
     call_seq: u64,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<Vec<u64>> {
     let mut prefix = attempt_id.as_bytes().to_vec();
     prefix.extend_from_slice(&call_seq.to_be_bytes());
     let mut held = Vec::new();
@@ -449,11 +449,14 @@ pub(crate) fn drop_enrollment_asks_of_call_in_txn(
             held.push(request.held);
         }
     }
+    let mut withdrawn = Vec::new();
     for held in held {
-        super::held::withdraw_owner_ask_in_txn(vault, wtxn, held.as_ref());
+        if let Some(seq) = super::held::withdraw_owner_ask_in_txn(vault, wtxn, held.as_ref()) {
+            withdrawn.push(seq);
+        }
     }
     RETAINED.delete_from(&vault.store, wtxn, &prefix)?;
-    Ok(())
+    Ok(withdrawn)
 }
 
 pub(super) fn request_key(
