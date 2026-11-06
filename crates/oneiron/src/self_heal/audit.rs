@@ -2,7 +2,7 @@
 //! Checks are host-executed against the pinned result, under the host's ordinary
 //! Grant and budget. Drawing a check grants no authority and runs no model.
 //! A completed random audit also freezes the checker's contract beside the
-//! receipt, the anchor of a contribution check (FIX 3611, [`contract`]).
+//! receipt, the anchor of a contribution check (FIX 3611, [`AuditContract`]).
 
 mod contract;
 pub mod doors;
@@ -18,7 +18,8 @@ use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
-pub use self::contract::{AuditContract, CheckerProtocol, flaw_free};
+pub use self::contract::{AuditContract, CheckerProtocol, audit_contract, flaw_free};
+pub(crate) use self::contract::{SealedAudit, bound_random_audit_in_txn, pack_receipt_attempt};
 use self::contract::{StoredSeal, freeze_audit_in_txn};
 use self::scope::{attempt_project, audit_rate_in_txn};
 

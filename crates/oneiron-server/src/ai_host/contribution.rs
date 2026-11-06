@@ -12,17 +12,21 @@
 //! answer's text, as before FIX 3607. In the `Executed` mode, where both
 //! forks' programs ran, it reads what each program did after that text
 //! (L08-A's 07:42 answer: no frozen rubric is qualified on executed output
-//! alone).
+//! alone). An `Audit` anchor is scored instead by the completed random
+//! audit's frozen checker contract, by its own judge alone, and never
+//! through a project goal's axis (FIX 3611, [`audit`]).
 
+mod audit;
 mod program;
 
 use std::sync::Weak;
 
 use oneiron::code_run::{
-    ContributionForkModel, ContributionForkScorer, ReplayAnchor, ReplayRung, ScoredFork,
-    run_contribution_forks,
+    ContributionForkModel, ContributionForkScorer, ContributionReplayUnavailable, ReplayAnchor,
+    ReplayRung, ScoredFork, run_contribution_forks,
 };
 use oneiron::dreamer_runner::maintenance::{ContributionForks, ContributionReplayHost};
+use oneiron::learning::Anchor;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::llm::mark_solo;
@@ -38,6 +42,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use self::audit::AuditScorer;
 use self::program::{LentProgram, ProgramLending, executed_evidence};
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
@@ -104,9 +109,20 @@ impl ContributionReplayHost for HostContributionReplay {
             vault,
             lending: &self.programs,
         };
-        let scorer = JudgeScorer { judge: self.judge };
+        let held_out = JudgeScorer { judge: self.judge };
+        let audit = AuditScorer {
+            server: &server,
+            handle: &self.handle,
+            fork_units: self.fork_units,
+        };
+        // An audit's pair is scored by its stored checker contract (FIX
+        // 3611); every other anchor by the replay judge's goal axis.
+        let scorer: &dyn ContributionForkScorer = match candidate.anchor {
+            Anchor::Audit { .. } => &audit,
+            _ => &held_out,
+        };
         Ok(
-            match run_contribution_forks(vault, candidate, &model, &program, &scorer, clock)? {
+            match run_contribution_forks(vault, candidate, &model, &program, scorer, clock)? {
                 Ok(forks) => Some(forks),
                 Err(reason) => {
                     tracing::debug!(reason = reason.as_str(), "contribution forks unavailable");
@@ -202,35 +218,9 @@ impl ContributionForkScorer for JudgeScorer {
         &self,
         vault: &Vault,
         candidate: &ContributionCandidate,
-    ) -> oneiron::Result<Option<ReplayAnchor>> {
-        let Ok(goal) = skill_edit_goal(vault, &candidate.skill) else {
-            return Ok(None);
-        };
-        let Some(axis) = goal.axes.iter().find(|axis| axis.name == candidate.axis) else {
-            return Ok(None);
-        };
-        let Some((project, _)) = goal.project else {
-            return Ok(None);
-        };
-        let Some(record) = vault.project_intake_goal(project)? else {
-            return Ok(None);
-        };
-        let Some(stated) = record
-            .primary_axes
-            .iter()
-            .chain(&record.floor_axes)
-            .chain(&record.cost_axes)
-            .find(|stated| stated.name == axis.name)
-        else {
-            return Ok(None);
-        };
-        Ok(Some(ReplayAnchor {
-            rubric: json!({
-                "name": axis.name, "kind": axis.kind, "measure": stated.measure,
-                "bound": stated.bound, "goal": record.goal, "why": record.why,
-            }),
-            scorer: format!("{}/{SCORER_JUDGMENT}", self.judge.judge_revision()),
-        }))
+    ) -> oneiron::Result<Result<ReplayAnchor, ContributionReplayUnavailable>> {
+        Ok(goal_axis_anchor(vault, candidate, self.judge)?
+            .ok_or(ContributionReplayUnavailable::AnchorUnresolved))
     }
 
     /// The judge's live-axis question on the fork's answer, on the pass's
@@ -267,6 +257,44 @@ impl ContributionForkScorer for JudgeScorer {
             }
         }
     }
+}
+
+/// The skill's goal axis the outcome was anchored on, with the measure and
+/// bound the joined project's goal states for it, scored by `judge`'s
+/// live-axis question; `None` when it resolves to no frozen rubric.
+fn goal_axis_anchor(
+    vault: &Vault,
+    candidate: &ContributionCandidate,
+    judge: &ServeReplayJudge,
+) -> oneiron::Result<Option<ReplayAnchor>> {
+    let Ok(goal) = skill_edit_goal(vault, &candidate.skill) else {
+        return Ok(None);
+    };
+    let Some(axis) = goal.axes.iter().find(|axis| axis.name == candidate.axis) else {
+        return Ok(None);
+    };
+    let Some((project, _)) = goal.project else {
+        return Ok(None);
+    };
+    let Some(record) = vault.project_intake_goal(project)? else {
+        return Ok(None);
+    };
+    let Some(stated) = record
+        .primary_axes
+        .iter()
+        .chain(&record.floor_axes)
+        .chain(&record.cost_axes)
+        .find(|stated| stated.name == axis.name)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(ReplayAnchor {
+        rubric: json!({
+            "name": axis.name, "kind": axis.kind, "measure": stated.measure,
+            "bound": stated.bound, "goal": record.goal, "why": record.why,
+        }),
+        scorer: format!("{}/{SCORER_JUDGMENT}", judge.judge_revision()),
+    }))
 }
 
 /// The replay judge lent for one fork: its ladder and journal on the pass's

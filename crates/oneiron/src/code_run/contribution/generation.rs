@@ -80,8 +80,9 @@ impl Runner<'_> {
         let Some(without_skill) = without_exposure(&with_skill, &slots) else {
             return Ok(Err(Unavailable::Unreadable));
         };
-        let Some(anchor) = self.scorer.resolve(self.vault, self.candidate)? else {
-            return Ok(Err(Unavailable::AnchorUnresolved));
+        let anchor = match self.scorer.resolve(self.vault, self.candidate)? {
+            Ok(anchor) => anchor,
+            Err(reason) => return Ok(Err(reason)),
         };
         // An engine step's window is frozen once here, before either fork.
         let frozen_program = freeze_program_step(self.vault, &capsule, self.program)?;
