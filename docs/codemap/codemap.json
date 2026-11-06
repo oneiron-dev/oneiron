@@ -56257,7 +56257,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -56827,7 +56827,7 @@
      "purpose": "Pinned key sets, content digest, and MessagePack encode/decode",
      "surface": {
       "const": 1,
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -56858,7 +56858,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -56889,7 +56889,7 @@
      "path": "src/outbound_intent_ledger/resolution.rs",
      "purpose": "One delivery-knowledge reducer for a logical outbound send",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -56940,7 +56940,7 @@
      "path": "src/outbound_intent_ledger/store/checkpoint.rs",
      "purpose": "The checkpoint getter of the outbound intent ledger (KS7-2): each call's whole frozen record (its payload…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -56991,7 +56991,7 @@
      "path": "src/outbound_intent_ledger/store/validate.rs",
      "purpose": "The ledger row's own validation: endpoint, binding, approval, budget marker, state and outcome, payload hash…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -57003,7 +57003,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BudgetChargeMarker",
@@ -57033,7 +57033,7 @@
      "purpose": "Version consts, domain types, record impls, and listing/escalation/report types",
      "surface": {
       "const": 2,
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 8,
       "fn": 20,
       "re-export": 2,
@@ -91473,7 +91473,7 @@
     "outbound_intent_ledger": {
      "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
     },
@@ -92087,7 +92087,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 165,
+   "over_bar": 166,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6475,
    "test_files": 895
