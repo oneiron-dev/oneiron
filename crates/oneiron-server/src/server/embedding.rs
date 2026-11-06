@@ -259,14 +259,20 @@ impl SyncServer {
                 tokio::time::sleep(idle).await;
                 continue;
             };
+            let runtime = tokio::runtime::Handle::current();
             let pass = Arc::clone(&reconciler);
+            let server = Arc::clone(self);
             let outcome = if self.text_index_fill_paused() {
                 drop(admission);
                 Ok(Ok(PendingEmbeddingReconcileReport::default()))
             } else {
                 tokio::task::spawn_blocking(move || {
                     let _admission = admission;
-                    pass.reconcile_once()
+                    let mut report = PendingEmbeddingReconcileReport::default();
+                    let result = pass.reconcile_once_into_with_home(&runtime, &mut report);
+                    server.record_embedding_meters(&report);
+                    result?;
+                    Ok::<_, oneiron::Error>(report)
                 })
                 .await
             };
@@ -389,6 +395,46 @@ impl SyncServer {
             truncations,
             "embedding reconcile pass"
         );
+    }
+
+    /// Records the pass's actually-filled measured items as operational
+    /// `EmbedTokens` meter rows. Without a bound usage meter there is no
+    /// billing owner to attribute rows to, so it records nothing. A meter
+    /// error is logged and never fails the embedding pass.
+    fn record_embedding_meters(&self, report: &PendingEmbeddingReconcileReport) {
+        use base64::Engine as _;
+        let Some(usage) = self.vault_usage() else {
+            return;
+        };
+        for fill in &report.measured_fills {
+            let entity_type = match fill.entity_type {
+                oneiron::registry::ENTITY_TYPE_TURN => "TURN",
+                oneiron::registry::ENTITY_TYPE_SUMMARY => "SUMMARY",
+                oneiron::registry::ENTITY_TYPE_CLAIM => "CLAIM",
+                _ => {
+                    tracing::warn!("an embed fill names an unmetered entity type; it is skipped");
+                    continue;
+                }
+            };
+            let source_version =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&fill.source_version);
+            let row = crate::usage::MeterRow {
+                owner: usage.owner().to_owned(),
+                vault_id: usage.vault_id().to_owned(),
+                metric: crate::usage::OperationalMetric::EmbedTokens,
+                idempotency_key: crate::usage::embed_key(
+                    entity_type,
+                    &fill.entity_id.to_hex(),
+                    &source_version,
+                ),
+                quantity: fill.input_tokens,
+                occurred_at: fill.occurred_at,
+                detail: Some(entity_type.to_owned()),
+            };
+            if let Err(error) = self.usage_ledger.record_meter(row) {
+                tracing::warn!(?error, "an embed meter row was not recorded");
+            }
+        }
     }
 }
 

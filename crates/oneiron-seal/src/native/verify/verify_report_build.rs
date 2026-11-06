@@ -9,7 +9,7 @@ pub(super) fn signature_report(
     e: EnvelopeEvidence,
     profile: Option<PadesProfile>,
 ) -> SignatureReport {
-    let paths: Vec<_> = e
+    let paths = e
         .checks
         .iter()
         .filter(|c| {
@@ -18,13 +18,21 @@ pub(super) fn signature_report(
                 VerifyCheckKind::CertificatePath | VerifyCheckKind::TimestampCertificatePath
             )
         })
-        .map(|c| c.status)
-        .collect();
-    let trust = if paths.contains(&VerifyCheckStatus::Fail) {
+        .map(|c| c.status);
+    let trust = if paths
+        .clone()
+        .any(|status| status == VerifyCheckStatus::Fail)
+    {
         VerifyCheckStatus::Fail
-    } else if paths.contains(&VerifyCheckStatus::NotRun) {
+    } else if paths
+        .clone()
+        .any(|status| status == VerifyCheckStatus::NotRun)
+    {
         VerifyCheckStatus::NotRun
-    } else if paths.contains(&VerifyCheckStatus::Pass) {
+    } else if paths
+        .clone()
+        .any(|status| status == VerifyCheckStatus::Pass)
+    {
         VerifyCheckStatus::Pass
     } else {
         VerifyCheckStatus::NotApplicable

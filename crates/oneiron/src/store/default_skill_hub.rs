@@ -41,6 +41,7 @@ pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
             entity_type: crate::registry::ENTITY_TYPE_SKILL_HUB,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: 0,
+            row_version: None,
             data: encode_skill_hub_record(&row)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,

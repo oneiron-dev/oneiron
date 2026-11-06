@@ -25,6 +25,7 @@ impl Vault {
                     entity_type: crate::registry::ENTITY_TYPE_PLACE,
                     occurred,
                     learned_at,
+                    row_version: 0,
                     body: body.to_vec(),
                 },
             )

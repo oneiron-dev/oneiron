@@ -124,6 +124,8 @@ side_tables! {
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
     /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
     SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
+    /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
+    SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked];
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -148,6 +150,9 @@ side_tables! {
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
         => crate::secret_lease::erase_receipt_actor_in_txn;
+    /// Canonical lift counts by run, family and actual source entity or explicitly unmapped
+    /// source (FIX 10493). No values. Key: run id16, family byte, source tag, source id16 if known.
+    SECRET_LIFT_CONTRIBUTION: VaultMeta b"secret_lift:contribution:v1:" Named Engine;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
@@ -160,8 +165,8 @@ side_tables! {
     /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
     /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
-    /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
-    /// (OF-067). Key: id16 (run id).
+    /// Completion metadata for one lift run (OF-067); its canonical contribution rows supply
+    /// the served receipt's counts. Never a value or a digest. Key: id16 (run id).
     SECRET_LIFT_RECEIPT: VaultMeta b"secret_lift:receipt:v1:" Named;
     /// The lift sweep run in progress: its trigger and its `(family, last key)` cursor (OF-067).
     /// Key: ().
@@ -232,6 +237,11 @@ side_tables! {
     /// hours between and the newest kept, one row for the whole choice. Absent is no choice, and
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
+    /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
+    /// agent's board renders under until it lays out its own, and the override whose sections win
+    /// over every agent's own. Absent reads empty. Key: ().
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named
+        => crate::settings::board_layout::erase_board_layout_agent_override_in_txn;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
@@ -325,6 +335,13 @@ side_tables! {
     /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
     /// id).
     SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
+    /// A membership change this install executed with no host issuer to sign it, whose
+    /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
+    /// executed it, the member it moved, the act, the second it was executed at, the signed-mint
+    /// Grants it withdrew and an Owner act's handover, until the pass whose writer the fold counts
+    /// the record in. Holds no value, credential or proof. Key: hex32 (receipt id).
+    SHARED_ACT_MEMBERSHIP_PENDING: VaultMeta b"shared-act:membership-pending:v1:" Named Engine
+        => crate::Vault::erase_pending_membership_execution_actor_in_txn;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
@@ -363,6 +380,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// Last short-id counter per runtime (pack) kind, by its stable short-id prefix, kept across
+    /// uninstall, slot collection and reinstall (FIX 7741). Key: string.
+    SHORT_ID_KIND_COUNTER: VaultMeta b"sid_kind_counter:" Raw;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
@@ -673,6 +693,18 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
+    /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
+    /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
+    SOURCE_AUDIENCE_EVENT: VaultMeta b"source_audience:event:v1:" Named;
+    /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
+    /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
+    SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
+        => crate::source_audience::erase_actor_in_txn;
+    /// The source audience a row was born under; it never moves (FIX 12559). Key: id16(row).
+    SOURCE_AUDIENCE_RECORD: VaultMeta b"source_audience:record:v1:" Named;
+    /// One source thread's audience policy (FIX 12559). Key: id16(source policy) + blake3 (32)
+    /// of the source's thread key.
+    SOURCE_AUDIENCE_THREAD: VaultMeta b"source_audience:thread:v1:" Named;
     /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
     /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
     /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An

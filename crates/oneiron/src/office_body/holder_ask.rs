@@ -194,16 +194,32 @@ impl Memory<'_> {
         ));
         let mut spec = TaskAskSpec::shorthand(Some(who), question, None, TaskAskDefault::Hold);
         spec.intent_key = intent_key;
-        let receipt = self.tasks_ask(&spec)?;
-        vault.record_office_proposal_ask(
-            proposal,
-            ProposalAsk {
-                artifact: *artifact,
-                ask: receipt.handle.group_ref,
-                forks,
-                at: vault.now_recorded_at(),
-            },
-        )?;
+        let receipt = self.tasks_ask_with_txn_effect(&spec, |txn, group| {
+            vault
+                .record_office_proposal_ask_in_txn(
+                    txn,
+                    proposal,
+                    ProposalAsk {
+                        artifact: *artifact,
+                        ask: group,
+                        forks: forks.clone(),
+                        at: vault.now_recorded_at(),
+                    },
+                )
+                .map_err(MemoryError::from)
+        })?;
+        // Admission replays do not rerun their transaction effect.
+        if receipt.idempotent_replay {
+            vault.record_office_proposal_ask(
+                proposal,
+                ProposalAsk {
+                    artifact: *artifact,
+                    ask: receipt.handle.group_ref,
+                    forks,
+                    at: vault.now_recorded_at(),
+                },
+            )?;
+        }
         Ok(())
     }
 }

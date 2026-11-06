@@ -479,6 +479,7 @@ impl Vault {
                 budget,
                 &line,
                 None,
+                None,
             );
         }
         Ok(OwnerPlanePass { verdict, examined })

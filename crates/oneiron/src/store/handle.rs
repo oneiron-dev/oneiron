@@ -237,6 +237,10 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The adopted checkpoint image, verified once per stored rows, with its
+    /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
+    /// exact stored rows, never by generation; dies with the handle.
+    pub(crate) adopted_image_cache: Mutex<Option<crate::authority::AdoptedImageCacheEntry>>,
     /// The causal standing of the topology decision seals one committed
     /// authority generation judged (FIX 4649). Never persisted.
     pub(crate) act_causal_points: Mutex<Option<std::sync::Arc<crate::authority::CausalPoints>>>,
@@ -271,6 +275,10 @@ pub struct StoreCore {
     /// The engine's attempt queue operations, supplied by the open door with
     /// the delete guards.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's voice bank response operations, supplied by the open door with
+    /// the delete guards.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
     /// The engine's core write operations, supplied by the open door with the
     /// delete guards.
     pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
@@ -310,6 +318,10 @@ pub struct StoreCore {
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
     pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
+    /// The host that serves this vault's drafter bindings on its own managed
+    /// worker, none until one attaches (FIX 14976,
+    /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
+    pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -350,6 +362,9 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// Committed consent answers wake this vault's connector-call settler.
+    /// Content-free and in memory only; the durable answer is re-read.
+    pub(crate) consent_answers: tokio::sync::Notify,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -427,6 +442,9 @@ pub struct StoreOwner {
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.
 pub struct Store {
+    /// This handle's live carrier leaves, asks and refusals. Kept outside the
+    /// shared core and wiped before the environment's owner drops.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases
@@ -858,6 +876,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -878,12 +897,16 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&0u64.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    let hash = blake3::hash(&body);
+    let mut trusted_origin = hash.as_bytes().to_vec();
+    trusted_origin.extend_from_slice(&clock.peek_recorded_at().to_be_bytes());
     sync_state.put(
         wtxn,
         &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
-        blake3::hash(&body).as_bytes(),
+        &trusted_origin,
     )?;
     sync_state.put(
         wtxn,

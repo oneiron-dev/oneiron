@@ -70,17 +70,18 @@ pub(super) async fn keep_checkpoint(
         body_spool::declared_length(&headers),
         body,
         SpoolPolicy::custody(&server),
-        |spool| spool,
+        |spool| spool.admit_reader().map(|memory| (spool, memory)),
     )
     .await
-    .map_err(Unspooled::refusal)?;
+    .map_err(Unspooled::refusal)?
+    .map_err(body_spool::reader_memory_refused)?;
     let pinned = blocking(move || -> OwnerResult<PinnedCheckpoint> {
-        let mut spool = spool;
-        Ok(server.vault().keep_training_checkpoint_streamed(
-            &owner,
-            &checkpoint,
-            &mut spool.reader(),
-        )?)
+        let (mut spool, mut memory) = spool;
+        Ok(spool.with_reader_admitted(&mut memory, |reader| {
+            server
+                .vault()
+                .keep_training_checkpoint_streamed(&owner, &checkpoint, reader)
+        })?)
     })
     .await?;
     Ok(Json(pinned))

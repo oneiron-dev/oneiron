@@ -108,10 +108,11 @@ impl Vault {
             })
             .collect();
 
-        self.re_root_authority_in_txn(
+        let current_key = current.public_key();
+        let (_, re_rooted) = self.re_root_authority_in_txn(
             &mut txn,
             next.root_device(self.privacy_posture()),
-            (current.public_key(), Some(FrontierSigner::Host(current))),
+            (&current_key, Some(FrontierSigner::Host(current))),
             |transcript| Ok(current.sign_slip(transcript)),
         )?;
         // The new root's first entry: its sequence is what enrollment extends.
@@ -132,6 +133,9 @@ impl Vault {
             )?;
         }
         txn.commit()?;
+        // The move and its joins reach loaded windows once it lands (FIX
+        // 11993).
+        self.note_committed_authority_rows(re_rooted);
         self.escrow_host_slip_issuer_logged(next);
         Ok(HostReRoot {
             vault_id,

@@ -13,12 +13,6 @@ use utoipa::ToSchema;
 /// capped like the crate's other request-controlled collections.
 pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 
-/// Engine invariant for counterparty keys (`counterparty_contact`'s private
-/// `MAX_COUNTERPARTY_BYTES`): stored keys are trimmed and at most 512 bytes.
-/// Enforced at the DTO boundary so caller input surfaces as a typed 400
-/// instead of an engine error.
-pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
@@ -298,6 +292,12 @@ pub(crate) struct CoreContextPackRequest {
     /// Signals per page, 1..=1000.
     #[serde(default)]
     pub(super) signals_limit: Option<usize>,
+    /// Optional signal read/filter/page budget, in milliseconds (1..=60000).
+    /// Starts when the signal read begins, after pack assembly. Expiry returns
+    /// 408 DEADLINE_EXCEEDED with no partial page or advanced cursor. Omitted,
+    /// the complete feed is read without a signal deadline.
+    #[serde(default)]
+    pub(super) signals_deadline_ms: Option<u64>,
     /// The PERSON whose messages' signals are read. Required for an owner
     /// credential without a bound person; a delegated credential may only
     /// name its own bound person.

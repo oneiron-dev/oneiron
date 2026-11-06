@@ -51,6 +51,49 @@ fn message_metadata(body: &[u8]) -> Option<serde_json::Value> {
 }
 
 impl FloorWrites<'_> {
+    /// The writer's selected result MESSAGE sources must be covered by the
+    /// preview whose files were imported before this writer opened. A changed
+    /// dependency stays staged for a fresh save; no half-save can commit.
+    #[cfg(unix)]
+    pub(in crate::off_record) fn require_preimported_selected_results(
+        &self,
+        imported: &[PromotePlan],
+        selected: &[PromotePlan],
+    ) -> Result<()> {
+        let sources: std::collections::BTreeMap<_, _> = imported
+            .iter()
+            .flat_map(|plan| plan.ops.iter())
+            .filter_map(|op| match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                    Some((*id, data.as_slice()))
+                }
+                _ => None,
+            })
+            .collect();
+        for plan in selected {
+            for (id, _) in message_results(&plan.ops) {
+                for op in &plan.ops {
+                    if let BatchOp::Put {
+                        id: source, data, ..
+                    } = op
+                        && *source == id
+                        && sources.get(&id).copied() != Some(data.as_slice())
+                    {
+                        return Err(crate::Error::InvariantViolation(
+                            "selected result MESSAGE changed before save",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Before a save's transaction (FIX 365): each result body a MESSAGE of
     /// `plans` holds that the room spilled to a file comes into the vault's
     /// `bodies/`, unnamed until that transaction commits, and every such

@@ -25,6 +25,26 @@ use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 /// The bytes of an issued handle id.
 pub const LIVE_RUN_ISSUED_LEN: usize = 16;
 
+/// The version tag of the host-issued opaque live-run handle.
+pub const LIVE_RUN_HANDLE_TAG: &str = "lr1";
+
+/// Parses an attachment handle's syntax only. A parsed handle grants no
+/// authority; the host still resolves its credential, run and live lease.
+#[must_use]
+pub fn parse_live_run_handle(text: &str) -> Option<(EntityId, [u8; LIVE_RUN_ISSUED_LEN])> {
+    let mut parts = text.split('.');
+    let (Some(LIVE_RUN_HANDLE_TAG), Some(run), Some(issued), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    if issued.len() != 32 || !issued.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let issued = u128::from_str_radix(issued, 16).ok()?.to_be_bytes();
+    Some((EntityId::from_hex(run).ok()?, issued))
+}
+
 /// The most bytes a caller's own idempotency key holds, as an action's.
 const CLIENT_KEY_MAX_BYTES: usize = 256;
 

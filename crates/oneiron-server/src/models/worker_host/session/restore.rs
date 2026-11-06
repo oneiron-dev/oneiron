@@ -193,8 +193,8 @@ impl Restore<'_> {
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
-        // Keep the existing pre-open screen; account for retained capacity below.
-        let peak = bytes.saturating_mul(2);
+        // The canonical wire body and plaintext overlap while the body opens.
+        let peak = bytes.saturating_add(self.record.sealed_bytes);
         let mut host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
@@ -260,7 +260,7 @@ impl Restore<'_> {
         };
         let place = self.place;
         let imported = session_import(
-            &place.socket,
+            &place.launch,
             &place.epoch,
             &body,
             region.get(),
@@ -317,6 +317,8 @@ impl Restore<'_> {
         let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
         let opened_capacity = u64::try_from(opened.capacity()).unwrap_or(u64::MAX);
         let plaintext = host_reserved.hold(self.key.anchor.vault, opened, opened_capacity);
+        // The wire body has dropped; only the upcoming region needs reserved credit.
+        host_reserved.release_excess(opened_len);
         // Count the buffer before awaiting more credit; its region is not allocated yet.
         host_reserved.ensure(opened_len).await?;
         Some(plaintext)
@@ -333,12 +335,19 @@ impl Restore<'_> {
         let created: SessionCreated = send(self.place, SessionOp::Create, &body, None)
             .await
             .ok()?;
-        let session = Session {
+        let target = SessionTarget {
+            handle: created.handle,
+            binding: self.key.binding(),
+        };
+        let mut session = Session {
             key: self.key.clone(),
             handle: created.handle,
             generation: created.generation,
             published: None,
             residency: SessionResidency::default(),
+            // No residency report was observed for it yet: its row starts
+            // unreported, never a fabricated default.
+            owner: registry::mint_owner(self.place, self.key.anchor.vault, target, None),
             pending: None,
             stale: None,
             path: Vec::new(),
@@ -354,7 +363,9 @@ impl Restore<'_> {
                 worker.sessions.insert(self.key.binding(), session);
                 None
             } else {
-                Some(worker.owe(self.key.anchor.vault, session.target(), session.residency))
+                // The cold path still owns this pin until a restore is admitted.
+                session.lease = None;
+                Some(worker.owe_session(session))
             }
         };
         if let Some((target, at)) = refused {
@@ -381,7 +392,7 @@ impl Restore<'_> {
             })?;
         session.published = Some(checkpoint.clone());
         session.generation = published.generation;
-        session.residency = published.residency;
+        session.observe(published.residency);
         session.path = self.path.to_vec();
         session.phase = Phase::Ready;
         session.restored = Some(checkpoint.frontier_tokens);

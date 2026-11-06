@@ -5,12 +5,11 @@
 use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
 
 use super::{
-    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, HostLimits, ManagedArgs,
-    ManagedCtl, ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal,
-    SyncServer, UnixTs, WakeLedger, WriteKind, admission, build_managed_app,
-    build_managed_artifact_app, escrow_vault_key, final_ledger_push, managed_page_seal,
-    open_managed_vault, provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow,
-    watch,
+    Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, ManagedArgs, ManagedCtl,
+    ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal, SyncServer,
+    UnixTs, WakeLedger, WriteKind, admission, build_managed_app, build_managed_artifact_app,
+    escrow_vault_key, final_ledger_push, managed_page_seal, open_managed_vault,
+    provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow, watch,
 };
 
 /// Boots the engine as a supervised child process.
@@ -46,8 +45,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
     let shutdown = ManagedShutdown::new();
-    let mut host =
-        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+    let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
@@ -109,8 +107,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
     // recipients hold, nor the per-spawn token or caller headers. A fresh
-    // spawn of this install loads the same seed, so the same logged root;
-    // with none, the vault serves rootless and still as a managed vault.
+    // spawn of this install loads the same seed, so the same logged root.
+    // Explicit hosted service requires that issuer before workers or ready;
+    // non-hosted supervision retains its rootless warning behavior.
     let (issuer, readiness) = provision_host_authority(
         &vault,
         &config.keystore,
@@ -217,7 +216,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .as_ref()
         .is_some_and(|models| models.extraction_egress)
     {
-        sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
+        sync_server = sync_server
+            .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+            .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true));
     }
     sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
@@ -260,7 +261,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
-    crate::builtin_host::install_served_transports(&sync_server);
+    crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -391,6 +392,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         restore.verified(&vault)?;
     }
 
+    // Dedicated environments open before ready and the opening wake push, so
+    // the first supervisor schedule already includes their earliest deadlines.
+    let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+        config.shared_env.clone(),
+        &config,
+        config.lease_vault_id,
+        state.background_admission(WriteKind::DeviceSync),
+        Some(state.device_sync_freeze()),
+    )
+    .await;
+    sync_server.install_shared_envs(shared);
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -402,7 +415,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // traffic to. A facility it serves without is named first, and the ready
     // signal is the same either way.
     super::vault_gates::warn_degraded(&readiness);
-    host.ready()?;
+    if let Err(error) = host.ready() {
+        sync_server.stop_shared_envs().await;
+        return Err(error);
+    }
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
     if let Some(link) = host.vm_link() {
@@ -411,6 +427,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&state),
             Arc::clone(&sync_server),
             shutdown.clone(),
+            managed.vm_outbox_companion_admitted,
         );
         // Its carrier as it stands, and the recipients it delivers later.
         super::carrier_watch::spawn(
@@ -567,6 +584,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Tagging stays outside this scope: an error in it returns only once
     // tagging has stopped and every call it made has settled (FIX 7304).
     let mut tagging = tagging;
+    let mut shared_live = true;
     let outcome = async {
         // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
         ladder_workers.push(crate::ai_host::coach_heal::spawn(
@@ -762,11 +780,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ledger_report.abort();
         let _ = ledger_report.await;
         final_ledger_push(&state, &sync_server).await;
+        // Keep every env in the final full-replacement wake snapshot, then stop.
+        sync_server.stop_shared_envs().await;
+        shared_live = false;
         result?;
         telemetry_drained?;
         anyhow::Ok(())
     }
     .await;
+    // An error before the normal stop still stops every env opened above.
+    if shared_live {
+        sync_server.stop_shared_envs().await;
+    }
     // Still running only when an error left the scope before its join.
     if let Some(background) = background {
         background.stop().await;

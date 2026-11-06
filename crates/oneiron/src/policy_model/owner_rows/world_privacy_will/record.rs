@@ -121,7 +121,8 @@ pub struct ForeignWorldPrivacyLink {
     pub pact: String,
     /// The other vault, as 64 hex.
     pub vault: String,
-    /// The world as its owning vault names it, as hex.
+    /// The world as the other vault names it, as hex: its owned world for
+    /// `owned_by`, or its derived foreign copy for `asked_from`.
     pub world: String,
     /// The asking vault's request, as hex: set on the owning vault's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
