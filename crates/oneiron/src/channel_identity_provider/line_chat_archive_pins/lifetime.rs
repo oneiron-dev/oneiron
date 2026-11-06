@@ -1,7 +1,7 @@
 //! Exact native join-version release. The CONTENT capture ends at claim
 //! teardown; an unfinished release is LIVE until its last holder lets go.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 mod retirement;
 mod sources;
 
+pub(crate) use sources::accept_line_chat_observation_erase_in_txn;
 pub(crate) use sources::erase_line_chat_source_observations_in_txn;
 
 use super::{LineChatArchivePin, PINS};
@@ -21,11 +22,19 @@ use crate::secret_custody::CustodyWrite;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum EraseSource {
+    Observation,
+    Identity,
+    Machine,
+    Artifact,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ArchiveRelease {
     pin: LineChatArchivePin,
     erase: bool,
-    sources: BTreeSet<EntityId>,
+    sources: BTreeMap<EntityId, EraseSource>,
     detached: bool,
     released: bool,
     inventory: Option<retirement::ReleaseInventory>,
@@ -33,7 +42,7 @@ struct ArchiveRelease {
 
 impl ArchiveRelease {
     fn owns_version(&self) -> bool {
-        self.pin.own_join || self.sources.contains(&self.pin.artifact_id)
+        self.pin.own_join || self.sources.get(&self.pin.artifact_id) == Some(&EraseSource::Artifact)
     }
 }
 
@@ -69,13 +78,16 @@ pub(crate) fn release_line_chat_archive_pin_in_txn(
         let mut release = prior.unwrap_or_else(|| ArchiveRelease {
             pin,
             erase: false,
-            sources: BTreeSet::new(),
+            sources: BTreeMap::new(),
             detached: false,
             released: false,
             inventory: None,
         });
         release.erase |= erase;
-        release.sources.insert(*claim);
+        release
+            .sources
+            .entry(*claim)
+            .or_insert(EraseSource::Observation);
         release.detached = true;
         retirement::capture_in_txn(store, txn, &mut release)?;
         RELEASES.put(store, txn, claim, &release)?;
@@ -301,7 +313,7 @@ pub(crate) fn line_chat_archive_releases_owed_in_txn(
         if release.erase
             && sources
                 .iter()
-                .any(|source| release.sources.contains(source))
+                .any(|source| release.sources.contains_key(source))
         {
             return Ok(true);
         }
@@ -322,7 +334,7 @@ pub(crate) fn line_chat_archive_keeps_version_in_txn(
 ) -> Result<bool> {
     for (_, release) in RELEASES.scan(store, txn)? {
         if !release.released
-            && release.sources.contains(artifact)
+            && release.sources.get(artifact) == Some(&EraseSource::Artifact)
             && release.pin.artifact_id == *artifact
             && release.pin.version == version
             && release.pin.content_hash == *content_hash

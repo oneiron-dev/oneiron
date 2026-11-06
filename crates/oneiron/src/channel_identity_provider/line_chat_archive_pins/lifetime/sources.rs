@@ -2,17 +2,64 @@
 //! across a hold and the source's graph teardown. No public reference is
 //! ever converted into ownership of an archive version.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use heed::RwTxn;
 
-use super::{ArchiveRelease, PINS, RELEASES, retirement};
+use super::{ArchiveRelease, EraseSource, PINS, RELEASES, retirement};
 use crate::counterparty_contact::ClaimHeadWriter;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead as _;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::secret_custody::CustodyWrite;
+
+/// Joins an original native capture or accepted continuation. This private
+/// door is shared only by the native source and identity selectors.
+pub(crate) fn accept_line_chat_observation_erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    claim: &EntityId,
+) -> Result<bool> {
+    accept_observation_erase_in_txn(store, txn, source, claim, EraseSource::Identity)
+}
+
+fn accept_observation_erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    claim: &EntityId,
+    kind: EraseSource,
+) -> Result<bool> {
+    let prior = RELEASES.get(store, txn, claim)?;
+    let release = match (prior, PINS.get(store, txn, claim)?) {
+        (Some(release), _) => release,
+        (None, Some(pin)) => ArchiveRelease {
+            pin,
+            erase: false,
+            sources: BTreeMap::new(),
+            detached: false,
+            released: false,
+            inventory: None,
+        },
+        (None, None) => return Ok(false),
+    };
+    let mut release = release;
+    release.erase = true;
+    release
+        .sources
+        .entry(*claim)
+        .or_insert(EraseSource::Observation);
+    if kind == EraseSource::Artifact {
+        release.sources.insert(*source, kind);
+    } else {
+        release.sources.entry(*source).or_insert(kind);
+    }
+    retirement::capture_in_txn(store, txn, &mut release)?;
+    RELEASES.put(store, txn, claim, &release)?;
+    Ok(true)
+}
 
 /// Accepts only native capture rows of this stored MACHINE or artifact.
 /// Every selector is recorded before any observation goes, including one
@@ -36,35 +83,25 @@ pub(crate) fn erase_line_chat_source_observations_in_txn(
     if !machine && !artifact {
         return Ok(());
     }
+    let source_kind = if artifact {
+        EraseSource::Artifact
+    } else {
+        EraseSource::Machine
+    };
     for (claim, pin) in PINS.scan(store, txn)? {
-        if !machine && pin.artifact_id != *source {
-            continue;
+        if machine || pin.artifact_id == *source {
+            accept_observation_erase_in_txn(store, txn, source, &claim, source_kind)?;
         }
-        let mut release = RELEASES
-            .get(store, txn, &claim)?
-            .unwrap_or_else(|| ArchiveRelease {
-                pin,
-                erase: false,
-                sources: BTreeSet::new(),
-                detached: false,
-                released: false,
-                inventory: None,
-            });
-        release.erase = true;
-        release.sources.extend([claim, *source]);
-        retirement::capture_in_txn(store, txn, &mut release)?;
-        RELEASES.put(store, txn, &claim, &release)?;
     }
     // A prior observation erase can already have detached the capture.
     // Join its accepted native selector before this source's graph goes too.
-    for (claim, mut release) in RELEASES.scan(store, txn)? {
+    for (claim, release) in RELEASES.scan(store, txn)? {
         if (machine || release.pin.artifact_id == *source)
-            && (!release.sources.contains(source) || !release.erase)
+            && (!release.sources.contains_key(source)
+                || !release.erase
+                || (artifact && release.sources.get(source) != Some(&EraseSource::Artifact)))
         {
-            release.erase = true;
-            release.sources.extend([claim, *source]);
-            retirement::capture_in_txn(store, txn, &mut release)?;
-            RELEASES.put(store, txn, &claim, &release)?;
+            accept_observation_erase_in_txn(store, txn, source, &claim, source_kind)?;
         }
     }
     // No ClaimOf or source row is needed when a later pass retries these.
