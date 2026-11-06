@@ -252,6 +252,9 @@ impl SessionBinding<'_> {
                     RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
                     if let Some((view, body)) = session_body {
                         publish_body_in_txn(view, txn, &body)?;
+                        super::super::overlay_bodies::release_erased_output_in_txn(
+                            &write, txn, owner, output,
+                        )?;
                     }
                     match published {
                         Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),

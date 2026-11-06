@@ -20,6 +20,8 @@ mod files;
 mod pins;
 #[cfg(unix)]
 mod promote;
+#[cfg(unix)]
+mod session;
 
 #[cfg(unix)]
 pub use collect::ResultBodyCollectReport;

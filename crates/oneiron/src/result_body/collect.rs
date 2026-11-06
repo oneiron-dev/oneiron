@@ -87,10 +87,8 @@ impl Vault {
         &self,
         limit: usize,
     ) -> Result<ResultBodyCollectReport> {
-        let mut report = ResultBodyCollectReport {
-            retirement_reaches_kept_copies: BODY_FILE_SHRED_SCOPE.reaches_kept_copies(),
-            ..ResultBodyCollectReport::default()
-        };
+        let mut report = self.collect_released_session_bodies(limit);
+        report.retirement_reaches_kept_copies = BODY_FILE_SHRED_SCOPE.reaches_kept_copies();
         let released = {
             let rtxn = self.store.env.read_txn()?;
             released_bodies_in_txn(&self.store, &rtxn, limit)?
@@ -118,7 +116,7 @@ impl Vault {
             }
             Ok(taken)
         })?;
-        report.keys_retired = taken
+        report.keys_retired += taken
             .iter()
             .filter(|(_, instance)| instance.is_some())
             .count();

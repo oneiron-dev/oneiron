@@ -5,6 +5,7 @@ mod continuation;
 mod folds;
 mod lift;
 mod model_seat;
+mod overlay_bodies;
 mod overlay_erase;
 mod program_resume;
 mod read_worlds;
