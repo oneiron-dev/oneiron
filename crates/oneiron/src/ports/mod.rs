@@ -53,6 +53,8 @@ pub(crate) use dependent_walk::{
 };
 mod dependency_registration;
 mod integrity;
+mod stale_reads;
+pub(crate) use stale_reads::{StaleRead, StaleReadObserver, StaleReadTable, stale_in_txn_observed};
 pub(crate) use dependency_registration::{
     record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
 };

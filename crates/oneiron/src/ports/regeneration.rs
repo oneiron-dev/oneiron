@@ -149,7 +149,16 @@ pub(super) fn sources_of(
     txn: &RoTxn<'_>,
     dependent: &EntityId,
 ) -> Result<Vec<SourceSpan>> {
-    Ok(reverse_rows(store, txn, dependent)?
+    sources_observed_in(store, txn, dependent, &mut None)
+}
+
+pub(super) fn sources_observed_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+    observer: &mut Option<&mut super::StaleReadObserver<'_>>,
+) -> Result<Vec<SourceSpan>> {
+    Ok(reverse_rows_observed_in(store, txn, dependent, observer)?
         .into_iter()
         .map(|(_, source)| source)
         .collect())
@@ -162,10 +171,28 @@ fn reverse_rows(
     txn: &RoTxn<'_>,
     dependent: &EntityId,
 ) -> Result<Vec<(Vec<u8>, SourceSpan)>> {
+    reverse_rows_observed_in(store, txn, dependent, &mut None)
+}
+
+fn reverse_rows_observed_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+    observer: &mut Option<&mut super::StaleReadObserver<'_>>,
+) -> Result<Vec<(Vec<u8>, SourceSpan)>> {
     let prefix = reverse_prefix(dependent);
     let mut rows = Vec::new();
     for row in store.vault_meta().prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
+        let (key, value) = row?;
+        super::stale_reads::observe(
+            observer,
+            super::StaleRead::Row {
+                table: super::StaleReadTable::VaultMeta,
+                key: &key,
+                value: Some(&value),
+            },
+        );
+        drop(value);
         if key.len() != prefix.len() + 24 {
             return Err(Error::CorruptedIndex("reverse dependency key"));
         }
@@ -181,6 +208,13 @@ fn reverse_rows(
         );
         rows.push((key.to_vec(), SourceSpan { document, frontier }));
     }
+    super::stale_reads::observe(
+        observer,
+        super::StaleRead::ScanComplete {
+            table: super::StaleReadTable::VaultMeta,
+            prefix: &prefix,
+        },
+    );
     Ok(rows)
 }
 
