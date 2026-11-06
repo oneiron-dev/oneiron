@@ -107,6 +107,37 @@ fn origin_transcript(vault_id: &[u8; 32], copy: &SealedHomeClaimVector) -> Resul
 }
 
 impl Vault {
+    /// Prepares optional copies from the actual carried CLAIM occurrences,
+    /// never from the dependency document's current winners. The returned
+    /// native tokens still need `into_copy_for` at the actual send door;
+    /// they authorize neither the raw window nor a later queued release.
+    /// Any error drops this partial preparation, not the canonical delivery.
+    #[cfg(feature = "sync")]
+    pub(crate) fn prepare_carried_home_claim_sends(
+        &self,
+        peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        context: Option<&loro::LoroDoc>,
+    ) -> Result<Vec<PreparedHomeClaimSend>> {
+        let mut prepared = Vec::new();
+        crate::world_keys::pad_custody::reference::with_window_claim_sources(
+            delivery.payload,
+            context,
+            |source| {
+                if let Some(copy) = self.prepare_relayed_home_claim_send(
+                    peer,
+                    delivery,
+                    &source.entity_id,
+                    source.raw,
+                )? {
+                    prepared.push(copy);
+                }
+                Ok(())
+            },
+        )?;
+        Ok(prepared)
+    }
+
     /// Seals as before, then signs the immutable result with this install's
     /// still-current original key. The final send must rejudge every source.
     pub(crate) fn prepare_relayed_home_claim_send(
