@@ -7,6 +7,11 @@ use crate::{Error, Result};
 use rmpv::Value;
 
 pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
+    validate_metadata_shape(field, value)?;
+    scan_value(value)
+}
+
+pub(crate) fn validate_metadata_shape(field: &str, value: &Value) -> Result<()> {
     let valid = match field {
         "tags" => value
             .as_array()
@@ -17,16 +22,18 @@ pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
     if !valid {
         return Err(invalid("invalid editable metadata field or value"));
     }
-    scan_value(value)
+    Ok(())
+}
+
+pub(crate) fn scan_metadata_string(text: &rmpv::Utf8String) -> Result<()> {
+    crate::batch::secret_scan::scan_metadata_field(
+        text.as_str().ok_or(invalid("metadata is not UTF-8"))?,
+    )
 }
 
 fn scan_value(value: &Value) -> Result<()> {
     match value {
-        Value::String(text) => {
-            crate::batch::secret_scan::scan_metadata_field(
-                text.as_str().ok_or(invalid("metadata is not UTF-8"))?,
-            )?;
-        }
+        Value::String(text) => scan_metadata_string(text)?,
         Value::Array(values) => {
             for value in values {
                 scan_value(value)?;
