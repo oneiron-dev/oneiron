@@ -107,6 +107,7 @@ impl Vault {
             approved_vad_ids,
             proactivity_changed,
             consent_answered,
+            decision_answers,
             (
                 task_ids,
                 rows,
@@ -177,6 +178,7 @@ impl Vault {
                     approved,
                     postcommit.proactivity_changed,
                     postcommit.consent_answered,
+                    postcommit.decision_answers,
                     (
                         postcommit.task_ids,
                         postcommit.rows,
@@ -201,6 +203,9 @@ impl Vault {
         self.store.notify_attempt_observers();
         if consent_answered {
             self.notify_consent_answer();
+        }
+        for seq in decision_answers {
+            self.signal_decision_answer(seq);
         }
         if proactivity_changed {
             self.store.notify_proactivity_changes();
