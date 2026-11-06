@@ -56,8 +56,17 @@ pub(crate) fn team_receipts_sourced_for_reader(
     let stored = stored_receipts_in_txn(vault, &txn, ReceiptScan::AllScopes(type_ref))?;
     let reads: Vec<_> = stored
         .iter()
-        .filter_map(|row| row.input_source.as_ref())
-        .map(|source| PointRead::id(source.claim))
+        .flat_map(|row| {
+            row.input_source
+                .as_ref()
+                .map(|source| PointRead::id(source.claim))
+                .into_iter()
+                .chain(
+                    row.team_start_source
+                        .as_ref()
+                        .map(|source| PointRead::id(source.claim())),
+                )
+        })
         .collect();
     // Input capture is optional. Its qualification errors cannot reject a
     // receipt that the ordinary reader would have returned.
@@ -78,10 +87,24 @@ pub(crate) fn team_receipts_sourced_for_reader(
                     .admitted(admitted.next().flatten(), &stored.receipt.team_ref)
                     .map(|id| vec![id])
             });
+            let start = stored.team_start_source.as_ref().map(|source| {
+                source
+                    .admitted_in_txn(
+                        vault,
+                        &txn,
+                        admitted.next().flatten(),
+                        &stored.receipt.team_ref,
+                    )
+                    .map(|id| vec![id])
+            });
             let (receipt, rows) = stored.sourced();
             let rows = match input {
                 None => rows,
                 Some(input) => union_source_rows([rows.as_deref(), input.as_deref()]),
+            };
+            let rows = match start {
+                None => rows,
+                Some(start) => union_source_rows([rows.as_deref(), start.as_deref()]),
             };
             (receipt, rows)
         })
