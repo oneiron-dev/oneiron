@@ -1231,6 +1231,11 @@ impl Vault {
         clear_media_devices_in_txn(&self.store, &mut wtxn, &space_key(space_id))?;
         MEDIA_REFUSED.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
+        super::session_media::drop_room_media_space_copies(
+            &self.store,
+            space_id,
+            &space_key(space_id),
+        );
         let owned = match by.actor() {
             SetupActor::Owner => BTreeSet::from([space_setup_id(space_id)?]),
             SetupActor::System => BTreeSet::new(),

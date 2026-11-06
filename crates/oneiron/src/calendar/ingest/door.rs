@@ -6,6 +6,7 @@ use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
 use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
+use crate::calendar::safeguard::CalendarBodyScreener;
 use crate::calendar::{CalendarError, CalendarReadRequest};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -102,12 +103,15 @@ fn read_upload(
 
 /// Owner-authorized import of one complete uploaded feed, including the
 /// existing complete-empty-feed absence law. No poll is scheduled by a file.
-/// Screening uses the poll runner's production default: off, reported skipped.
+/// The owner's safeguard dial selects the supplied host screener, just as for polls.
 pub fn import_ics_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
     input: &CalendarIcsImportRequest,
+    screener: Option<&dyn CalendarBodyScreener>,
 ) -> MemoryResult<CalendarIcsImportReceipt> {
+    // FIX 4797: the vault's one calendar admission turn, across the diff.
+    let _turn = super::admission_turn(memory.vault()).map_err(calendar_error)?;
     let (source, feed) = read_upload(
         memory,
         owner,
@@ -123,6 +127,7 @@ pub fn import_ics_as_owner(
         input.source_version,
         &feed,
         true,
+        screener,
     )
 }
 
@@ -133,7 +138,11 @@ pub fn move_instance_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
     input: &CalendarInstanceMoveRequest,
+    screener: Option<&dyn CalendarBodyScreener>,
 ) -> MemoryResult<CalendarIcsImportReceipt> {
+    // FIX 4797: the vault's one calendar admission turn, from the passport
+    // checks through the apply.
+    let _turn = super::admission_turn(memory.vault()).map_err(calendar_error)?;
     let (source, mut feed) = read_upload(
         memory,
         owner,
@@ -225,6 +234,7 @@ pub fn move_instance_as_owner(
         input.source_version,
         &feed,
         false,
+        screener,
     )
 }
 
@@ -236,14 +246,16 @@ fn apply_upload(
     version: u64,
     feed: &ParsedIcsFeed,
     complete: bool,
+    screener: Option<&dyn CalendarBodyScreener>,
 ) -> MemoryResult<CalendarIcsImportReceipt> {
     owner.revalidate(memory.vault())?;
+    let safeguard_enabled = super::feed_door::inbound_safeguard_enabled(memory)?;
     let vault = memory.vault();
     let blob_ref = format!("{}#v{version}", source.to_hex());
     let mut admission = PollAdmission {
         vault,
-        screener: None,
-        safeguard_enabled: false,
+        screener,
+        safeguard_enabled,
         system,
         preserve_direction: !complete,
         now: vault.now_recorded_at(),
