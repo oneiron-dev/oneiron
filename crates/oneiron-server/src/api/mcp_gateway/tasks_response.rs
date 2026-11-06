@@ -770,14 +770,14 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// One MCP file read on its owned native stack. Hooks stay in the caller's
 /// existing pre/post chain; the worker returns the rows its read listed.
-async fn mcp_graph_fs_bytes(
+async fn mcp_graph_fs_bytes<I: Send + 'static>(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     surface: McpRowSurface,
-    input: oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+    input: I,
     read: impl FnOnce(
         &oneiron::Memory<'_>,
-        oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+        I,
         &oneiron::batch::ReadPacing,
     )
         -> oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>
