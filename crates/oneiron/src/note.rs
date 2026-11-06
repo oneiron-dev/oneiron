@@ -251,7 +251,8 @@ pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn
 mod fork_downlink;
 #[cfg(feature = "sync")]
 pub(crate) use fork_downlink::{
-    authority_fork_frames_in_txn, install_authority_fork, settle_authority_forks,
+    authority_fork_frames_in_txn, fork_state_cites_withheld, install_authority_fork,
+    settle_authority_forks,
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
