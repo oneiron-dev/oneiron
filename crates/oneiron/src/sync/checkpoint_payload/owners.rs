@@ -32,19 +32,20 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
-use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
+use crate::sync::turn_programs::{TURN_PROGRAM_ARMS_MAP, TURN_PROGRAM_WAKES_MAP};
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 22] = [
+pub(super) const WINDOW_ROOTS: [&str; 24] = [
     "entities",
     "edges",
     "tombstones",
@@ -66,6 +67,8 @@ pub(super) const WINDOW_ROOTS: [&str; 22] = [
     DOCUMENT_PINS_MAP,
     MESSAGE_DOCS_MAP,
     REPO_MANIFESTS_MAP,
+    TURN_PROGRAM_ARMS_MAP,
+    TURN_PROGRAM_WAKES_MAP,
     ASSET_BODY_REFS_MAP,
 ];
 
@@ -158,6 +161,10 @@ pub(crate) fn root_entry(
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
+        // FIX 5266: a turn-program row names its actor.
+        TURN_PROGRAM_ARMS_MAP | TURN_PROGRAM_WAKES_MAP => {
+            crate::sync::turn_programs::checkpoint_entry(root, value)
+        }
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -246,6 +253,13 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
+        // FIX 5266: an arming rides under its registration, a wake under its
+        // turn and registration.
+        TURN_PROGRAM_ARMS_MAP => id_key(key),
+        TURN_PROGRAM_WAKES_MAP if crate::sync::turn_programs::wake_key_is_opaque(key) => {
+            KeyClass::Opaque
+        }
+        TURN_PROGRAM_WAKES_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),
     };
     match class {
