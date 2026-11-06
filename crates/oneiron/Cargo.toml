@@ -73,6 +73,7 @@ rand_core = { workspace = true }
 rand = "0.8"
 rand_distr = "0.4"
 thiserror = { workspace = true }
+rmp = "0.8"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
@@ -181,6 +182,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "deflate",
     "gzip",
     "json",
+    "http2",
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
