@@ -25,6 +25,10 @@ pub(super) use override_keys::LimitsConfigOverride;
 /// its sibling queues (`decision_reads`, `lfs_transfers`) sit.
 const TASK_WORK: usize = 2_048;
 
+/// Operator-overridable input-worker default, recorded as the open
+/// "L05 FIX65/68 context_reads worker admission" call, not a ruled bound.
+const CONTEXT_READS: usize = 2_048;
+
 /// Resolved limits.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LimitsConfig {
@@ -76,6 +80,9 @@ pub struct LimitsConfig {
     /// is one pack of prompts, however many the model server's slots take at
     /// once; the rest wait their turn there.
     pub decision_reads: usize,
+    /// Context-pack input workers held at once. Past it, callers wait their
+    /// fair turn without a new deadline or count refusal.
+    pub context_reads: usize,
     /// Task work (`can`, `ask`, `wait`, `tasks.answer`) the vault runs at
     /// once. Past it, each caller's work waits its fair turn, up to
     /// `queue_wait_timeout_ms`, then runs anyway: it is never refused.
@@ -113,6 +120,10 @@ pub struct LimitsConfig {
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
+    /// How long a verb call a budget window paced waits in its caller's
+    /// line for its turn, in seconds, counted from its hold; past it the
+    /// call ends unrun (FIX 8753, ARCH-0044 C5). A week by default.
+    pub paced_verb_wait_secs: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
@@ -191,6 +202,7 @@ impl Default for LimitsConfig {
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
             decision_reads: 2_048,
+            context_reads: CONTEXT_READS,
             task_work: TASK_WORK,
             renderer_work: crate::slide_render::default_turns(),
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
@@ -205,6 +217,7 @@ impl Default for LimitsConfig {
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
+            paced_verb_wait_secs: oneiron::runtime_hooks::verb::PACED_VERB_WAIT_DEFAULT_SECS,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
             live_sessions: 4_096,
             live_subscriptions: 65_536,
@@ -270,6 +283,7 @@ impl LimitsConfig {
             embedder_requests,
             embedder_answer_bytes,
             decision_reads,
+            context_reads,
             task_work,
             renderer_work,
             lfs_quota_bytes,
@@ -280,6 +294,7 @@ impl LimitsConfig {
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
+            paced_verb_wait_secs,
             disk_reserve_bytes,
             live_sessions,
             live_subscriptions,
@@ -450,6 +465,7 @@ impl LimitsConfig {
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.decision_reads, decision_reads);
+        set(&mut self.context_reads, context_reads);
         set(&mut self.task_work, task_work);
         set(&mut self.renderer_work, renderer_work);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
@@ -463,6 +479,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
+        set(&mut self.paced_verb_wait_secs, paced_verb_wait_secs);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
         set(&mut self.live_sessions, live_sessions);
         set(&mut self.live_subscriptions, live_subscriptions);
@@ -735,6 +752,7 @@ impl LimitsConfig {
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("decision_reads", self.decision_reads as u64),
+            ("context_reads", self.context_reads as u64),
             ("task_work", self.task_work as u64),
             ("renderer_work", self.renderer_work as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
@@ -745,6 +763,7 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("paced_verb_wait_secs", self.paced_verb_wait_secs),
             ("live_sessions", self.live_sessions as u64),
             ("live_subscriptions", self.live_subscriptions as u64),
             ("message_streams", self.message_streams as u64),

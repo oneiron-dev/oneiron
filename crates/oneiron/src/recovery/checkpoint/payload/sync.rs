@@ -497,10 +497,9 @@ fn staged<'e>(
 /// an opened copy that does not read, or that came from a home other than
 /// its capture's (FIX 10283).
 pub(super) fn restore_window_carriers(
-    records: &[WindowCarrierRecord],
-    windows: &[OpenedOwnerRows],
-    unopened: &BTreeSet<OwnerRef>,
+    source: super::restore::OpenedWindowRestoreSource<'_>,
 ) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    let (records, windows, unopened) = source.parts();
     let carriers = records
         .iter()
         .map(|record| LoroCarrier::from_bytes(&record.carrier))

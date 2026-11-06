@@ -36,7 +36,7 @@ pub(crate) struct PreparedHomeClaimSend {
     vault_id: [u8; 32],
     recipient: PeerMachine,
     recipient_encryption_key: Vec<u8>,
-    source: Vec<u8>,
+    vector: super::super::HomeClaimVector,
     signed: SenderSignedHomeClaimVector,
 }
 
@@ -45,9 +45,9 @@ impl PreparedHomeClaimSend {
         self.signed.release_rows()
     }
 
-    /// Rechecks the actual source and original native keys at release. The
-    /// socket must also judge every release row for its real destination.
-    /// Do not queue the returned copy and treat this snapshot as a later grant.
+    /// Rechecks the complete selected default vector, all original release
+    /// rows and native keys for the actual recipient at release. Do not queue
+    /// the returned copy and treat this snapshot as a later grant.
     pub(crate) fn into_copy_for(
         self,
         vault: &Vault,
@@ -86,8 +86,15 @@ impl PreparedHomeClaimSend {
         else {
             return Ok(None);
         };
-        if current.source != self.source || current.release_rows != self.signed.copy.release_rows {
+        if current != self.vector {
             return Ok(None);
+        }
+        let destination = crate::settings::ReadDestination::toward(recipient);
+        let withheld = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
+        for row in self.release_rows() {
+            if crate::settings::device_only_withholds(&vault.store, &txn, &withheld, row)? {
+                return Ok(None);
+            }
         }
         Ok(Some(self.signed))
     }
@@ -100,6 +107,37 @@ fn origin_transcript(vault_id: &[u8; 32], copy: &SealedHomeClaimVector) -> Resul
 }
 
 impl Vault {
+    /// Prepares optional copies from the actual carried CLAIM occurrences,
+    /// never from the dependency document's current winners. The returned
+    /// native tokens still need `into_copy_for` at the actual send door;
+    /// they authorize neither the raw window nor a later queued release.
+    /// Any error drops this partial preparation, not the canonical delivery.
+    #[cfg(feature = "sync")]
+    pub(crate) fn prepare_carried_home_claim_sends(
+        &self,
+        peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        context: Option<&loro::LoroDoc>,
+    ) -> Result<Vec<PreparedHomeClaimSend>> {
+        let mut prepared = Vec::new();
+        crate::world_keys::pad_custody::reference::with_window_claim_sources(
+            delivery.payload,
+            context,
+            |source| {
+                if let Some(copy) = self.prepare_relayed_home_claim_send(
+                    peer,
+                    delivery,
+                    &source.entity_id,
+                    source.raw,
+                )? {
+                    prepared.push(copy);
+                }
+                Ok(())
+            },
+        )?;
+        Ok(prepared)
+    }
+
     /// Seals as before, then signs the immutable result with this install's
     /// still-current original key. The final send must rejudge every source.
     pub(crate) fn prepare_relayed_home_claim_send(
@@ -140,7 +178,7 @@ impl Vault {
             vault_id,
             recipient: peer,
             recipient_encryption_key: prepared.recipient_encryption_key,
-            source: prepared.source,
+            vector: prepared.vector,
             signed: SenderSignedHomeClaimVector { copy, signature },
         }))
     }

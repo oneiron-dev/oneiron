@@ -833,6 +833,8 @@ pub enum EditStep {
         semantic_hash: Option<String>,
         /// The complete new content for the paragraph.
         content: ParagraphContent,
+        /// Exact six-mark sets on newly inserted replacement runs only.
+        exact_marks: bool,
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
@@ -850,6 +852,8 @@ pub enum EditStep {
         semantic_hash: Option<String>,
         /// The complete new content for the paragraph.
         content: ParagraphContent,
+        /// Exact six-mark sets on newly inserted replacement runs only.
+        exact_marks: bool,
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
@@ -12084,6 +12088,7 @@ pub(crate) fn apply_transaction_with_notes(
                 expect,
                 semantic_hash,
                 content,
+                exact_marks,
                 rationale: _,
             }
             | EditStep::EditFooter {
@@ -12092,6 +12097,7 @@ pub(crate) fn apply_transaction_with_notes(
                 expect,
                 semantic_hash,
                 content,
+                exact_marks,
                 rationale: _,
             } => {
                 verbs::headers_footers::apply_edit(
@@ -12101,6 +12107,7 @@ pub(crate) fn apply_transaction_with_notes(
                     expect,
                     semantic_hash.as_deref(),
                     content,
+                    *exact_marks,
                     &transaction.revision,
                     &mut rev_counter,
                     transaction.materialization_mode,
