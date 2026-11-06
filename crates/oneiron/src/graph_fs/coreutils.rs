@@ -118,7 +118,7 @@ impl GraphFsResolver<'_, '_> {
             && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
+            let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Ls,
                 started,
@@ -215,7 +215,7 @@ impl GraphFsResolver<'_, '_> {
                 );
             }
             let (bytes, next_cursor, total) =
-                self.find_newer_pushdown(&normalized, newer_than, cursor)?;
+                self.find_newer_pushdown(&normalized, newer_than, cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Find,
                 started,
@@ -411,18 +411,26 @@ impl GraphFsResolver<'_, '_> {
     fn ls_claims_by_time_pushdown(
         &self,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        self.ls_claims_by_time_pushdown_with_scan_cap(cursor, GRAPH_FS_MAX_SCAN_ROWS)
+        self.ls_claims_by_time_pushdown_with_scan_cap(cursor, GRAPH_FS_MAX_SCAN_ROWS, reader)
     }
 
     pub(super) fn ls_claims_by_time_pushdown_with_scan_cap(
         &self,
         cursor: Option<&str>,
         max_scan_rows: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let scope = self.cursor_scope("ls -t /claims");
-        let cursor = scope.open::<TemporalCursor>(cursor)?;
+        let scope = self.cursor_scope_with("ls -t /claims", || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let cursor = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| Ok(TemporalCursor::from_bytes(bytes)),
+        )?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -441,7 +449,12 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal(&cursor)),
+                    next_cursor
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -465,7 +478,12 @@ impl GraphFsResolver<'_, '_> {
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal(&cursor)),
+                    last_emitted
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -480,8 +498,15 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         newer_than: u64,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        self.find_newer_pushdown_with_scan_cap(path, newer_than, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+        self.find_newer_pushdown_with_scan_cap(
+            path,
+            newer_than,
+            cursor,
+            GRAPH_FS_MAX_SCAN_ROWS,
+            reader,
+        )
     }
 
     pub(super) fn find_newer_pushdown_with_scan_cap(
@@ -490,10 +515,19 @@ impl GraphFsResolver<'_, '_> {
         newer_than: u64,
         cursor: Option<&str>,
         max_scan_rows: usize,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let scope = self.cursor_scope(&format!("find -newer {newer_than} {path}"));
-        let cursor = scope.open::<TemporalCursor>(cursor)?;
+        let prefix = format!("find -newer {newer_than} ");
+        let listing = copy_text_parts(&[&prefix, path], reader, self.options.page_byte_cap)?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let cursor = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| Ok(TemporalCursor::from_bytes(bytes)),
+        )?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -516,7 +550,12 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal(&cursor)),
+                    next_cursor
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
@@ -535,7 +574,12 @@ impl GraphFsResolver<'_, '_> {
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal(&cursor)),
+                    last_emitted
+                        .map(|cursor| {
+                            scope
+                                .seal_bytes_with(&cursor.to_bytes(), quantum, || checkpoint(reader))
+                        })
+                        .transpose()?,
                     total,
                 ));
             }
