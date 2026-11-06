@@ -72,6 +72,23 @@ impl SyncClient {
                 let staged = world
                     .then(|| self.staged_pad_context(key, &window.doc))
                     .flatten();
+                // Its import reads every waiting world update over the live
+                // window alone (`staged_entity_evidence`), so one that builds
+                // on history only a waiting update holds is refused there; it
+                // is refused here, before its pads install.
+                if staged.is_some() {
+                    let imported = window.doc.fork().import(payload).map_err(|_| {
+                        TransportError::InvalidPayload("staged world update decode failed")
+                    })?;
+                    if imported.pending.is_some() {
+                        if crate::sync::window::update_reaches_below_root(&window.doc, payload) {
+                            return Ok(SealedCheck::Answered(vec![replacement_ask(key)?]));
+                        }
+                        return Err(TransportError::InvalidPayload(
+                            "staged world update has missing causal history",
+                        ));
+                    }
+                }
                 let doc = staged.as_ref().unwrap_or(&window.doc);
                 match check_window_update_with_staged_worlds(
                     &self.vault,
@@ -91,14 +108,7 @@ impl SyncClient {
                     Err(_)
                         if crate::sync::window::update_reaches_below_root(&window.doc, payload) =>
                     {
-                        Ok(SealedCheck::Answered(vec![
-                            transport::encode_window_sync(
-                                key.as_str(),
-                                window_sub_tags::REPLACEMENT_REQUEST,
-                                &[],
-                            )
-                            .into_result()?,
-                        ]))
+                        Ok(SealedCheck::Answered(vec![replacement_ask(key)?]))
                     }
                     Err(error) => Err(TransportError::from_window_admission(
                         &error,
@@ -279,15 +289,15 @@ impl SyncClient {
             let translated = {
                 let payload: &[u8] = &self.deferred_sealed_updates[index].envelope.payload;
                 match self.payload_as_admitted(payload, Some(&live.doc)) {
-                    Ok(Translated::Bytes(admitted)) => Ok(Some(
-                        check_window_update_with_staged_worlds(
+                    Ok(Translated::Bytes(admitted)) => {
+                        Ok(Some(check_window_update_with_staged_worlds(
                             &self.vault,
                             &live.doc,
                             &admitted,
                             &key,
                             evidence,
-                        ),
-                    )),
+                        )))
+                    }
                     Ok(Translated::Held) => Ok(None),
                     Err(error) => Err(error),
                 }
@@ -364,4 +374,11 @@ impl SyncClient {
         }
         Ok(progressed)
     }
+}
+
+/// The ask a sealed update built below its window's own shallow root answers
+/// with: the home's replacement brings the window level.
+fn replacement_ask(key: &WindowKey) -> Result<Vec<u8>, TransportError> {
+    transport::encode_window_sync(key.as_str(), window_sub_tags::REPLACEMENT_REQUEST, &[])
+        .into_result()
 }

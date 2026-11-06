@@ -529,7 +529,8 @@ impl SyncClient {
     /// hydration after it asks again. A sealed snapshot first passes its
     /// isolated check over `held`, the window a retain merges it into, or
     /// over an empty one for a first promotion (FIX 10474); `None` when that
-    /// check refuses it, and nothing of it installs.
+    /// check or the promotion byte bound refuses it, and nothing of it
+    /// installs.
     pub(super) fn promotion_snapshot(
         &self,
         window: &WindowKey,
@@ -556,6 +557,13 @@ impl SyncClient {
                 Translated::Bytes(admitted) => admitted,
                 Translated::Held => return Err(held_whole_state()),
             };
+            // The promotion door bounds the translated snapshot this returns
+            // (`MAX_PROMOTION_SNAPSHOT_BYTES`): one past it is refused here,
+            // before its pads install.
+            if admitted.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
+                tracing::warn!(%window, bytes = admitted.len(), "promotion snapshot too large");
+                return Ok(None);
+            }
             if let Err(error) = check_promotion_snapshot(&self.vault, doc, &admitted) {
                 tracing::warn!(%window, kind = ?error.kind(), "promotion snapshot refused");
                 return Ok(None);
