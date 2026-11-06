@@ -132,6 +132,11 @@ pub(crate) fn erase_fork_actor_in_txn(
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
+        // Once the erase commits, the NOTE's own devices read its pending
+        // forks again and drop the one that went (FIX 12790).
+        if !fork.decided {
+            vault.queue_note_document_update_in_txn(wtxn, fork.note);
+        }
     }
     Ok(())
 }
