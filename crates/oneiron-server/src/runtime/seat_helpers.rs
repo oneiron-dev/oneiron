@@ -256,6 +256,21 @@ impl SeatHelperRun {
         true
     }
 
+    /// Takes back `grant`, one [`Self::record`] recorded whose value never
+    /// left the host. `true` when it was still recorded: the caller then
+    /// tears it down itself. `false` when the registration's close already
+    /// took it: the run's teardown revokes it with the rest. The grant's
+    /// taint stays recorded, so the run's exhaust still names the secret.
+    #[must_use]
+    pub fn withdraw(&self, grant: &EntityId) -> bool {
+        let mut state = lock(&self.state);
+        let Some(at) = state.grants.iter().position(|held| held == grant) else {
+            return false;
+        };
+        state.grants.remove(at);
+        true
+    }
+
     /// Closes the registration and hands back what it recorded. A second
     /// close hands back nothing.
     pub fn close(&self) -> HelperRunEnd {
@@ -416,11 +431,15 @@ impl SeatHelperEnv {
             let url = destination.credential_url();
             // An empty helper first clears every helper configured before for
             // this context, so no other helper is asked or handed the value
-            // to store; then this binary alone answers it.
+            // to store; then this binary alone answers it. The leading `!`
+            // makes git run the value as a shell command: without it, git
+            // runs `git credential-<value>`, since the quoted path starts
+            // with neither `/` nor `!`. The name is shell-safe
+            // (`is_helper_destination_name`).
             git_config.push((format!("credential.{url}.helper"), String::new()));
             git_config.push((
                 format!("credential.{url}.helper"),
-                format!("{program} {CREDENTIAL_HELPER_SUBCOMMAND} --destination {name}"),
+                format!("!{program} {CREDENTIAL_HELPER_SUBCOMMAND} --destination {name}"),
             ));
             if destination.path.is_some() {
                 git_config.push((format!("credential.{url}.useHttpPath"), "true".to_owned()));

@@ -152,10 +152,13 @@ fn answer(
     };
     // The run's teardown revokes what its registration recorded; a
     // registration closed meanwhile, or a claim lost, hands nothing out.
+    // A refusal takes back only this grant: the grants and taints recorded
+    // before it stay for the run's teardown and exhaust. A grant the
+    // registration's close already took is revoked by that teardown.
     let recorded = run.record(grant, taint);
     if !recorded || !vault.seat_child_holds(&credential).unwrap_or(false) {
-        if recorded {
-            drop(run.close());
+        if recorded && !run.withdraw(&grant) {
+            return None;
         }
         if let Err(error) = vault.teardown_secret_grant(&caller, &grant, &mut delivery) {
             tracing::warn!(%error, "a refused seat helper's grant could not be torn down");
