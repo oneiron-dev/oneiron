@@ -154,7 +154,7 @@ impl Vault {
             )?
         };
         if row.progress.is_none() {
-            return self.stage_decided_sheet_answers(output, &row, ask.deadline);
+            return self.stage_decided_sheet_answers(output, row, ask.deadline);
         }
         let package_limits = self.docedit_package_limits()?;
         let archive_limits = {
@@ -292,7 +292,7 @@ impl Vault {
             }
             row = self.advance_decided_sheet_answers(output, &expected, row, ask.deadline)?;
         }
-        self.stage_decided_sheet_answers(output, &row, ask.deadline)
+        self.stage_decided_sheet_answers(output, row, ask.deadline)
     }
 }
 

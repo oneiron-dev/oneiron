@@ -29,6 +29,11 @@ current-source check; the engine does not silently apply old answers to a new
 source. Use a new run reference for a new question or selection. A mismatched
 request leaves the original row intact.
 
+The terminal sheet and folder paths move their owned complete bundle and receipt
+vectors into staging instead of cloning them. This does not consume or delete
+the stored answer-progress row. A staging error can still retry that canonical
+row under a new caller deadline.
+
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.
 Folder files are still filtered through that credential. Answers based on
