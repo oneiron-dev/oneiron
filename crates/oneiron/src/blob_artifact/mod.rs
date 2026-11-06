@@ -108,11 +108,11 @@ pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.
-pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactAppendOutcome, BlobArtifactVersion, BlobBytes,
     CalcEngineStamp,
 };
+pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 
 /// The closed deck transaction grammar a deck proposal carries.
 pub use oneiron_docedit::edit::transaction::DeckTransaction;

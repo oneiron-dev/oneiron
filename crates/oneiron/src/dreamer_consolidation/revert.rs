@@ -52,6 +52,7 @@ const SUPERSESSION_PROVENANCE: &str = "core.supersession.provenance";
 const CHANGE_REVERT: RevertSurface = RevertSurface {
     surface: "dreamer_change_revert",
     birth: "dreamer.change_revert",
+    marker: None,
 };
 
 /// What a Dreamer change was.

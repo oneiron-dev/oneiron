@@ -292,6 +292,8 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(key));
         // An unlock opens a new snapshot admission generation, never readiness.
         self.store.inference_snapshots.reopen();
+        // FIX 14976: a bound private drafter may serve again.
+        self.notify_drafter_serving();
     }
 
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).

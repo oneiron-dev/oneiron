@@ -330,6 +330,9 @@ impl PartialServeConfig {
         if let Some(value) = self.channel_endpoints {
             resolved.channel_endpoints = value;
         }
+        if let Some(value) = self.apns {
+            resolved.apns = value;
+        }
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
         }
@@ -341,6 +344,16 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.device_sync {
             resolved.device_sync = Some(value);
+        }
+        if let Some(value) = self.shared_env {
+            resolved.shared_env = value
+                .into_iter()
+                .map(|mut spec| {
+                    spec.path = expand_home(spec.path);
+                    spec.credential_file = expand_home(spec.credential_file);
+                    spec
+                })
+                .collect();
         }
         if let Some(value) = self.connectors {
             resolved.connectors = value;

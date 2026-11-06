@@ -350,7 +350,8 @@ side_tables! {
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
     /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
-    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// actor a home handoff key seals for, a grant, or a drafter version, FIX 12569) and its
+    /// incarnation; never the key.
     /// Key: bytes32 (the key's random ref).
     KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
         => crate::store::home_handoff_custody::scrub_actor_in_txn;
@@ -409,9 +410,6 @@ side_tables! {
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
-    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
     /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
     /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
     /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names

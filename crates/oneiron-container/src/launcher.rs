@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 
 // Bind, listen and accept on a brokered socket: guest-loopback listeners.
 mod loopback;
+// getsockopt and setsockopt on a brokered socket (FIX 6784, FIX 6787).
+mod options;
 
 struct Pending {
     request: Vec<u8>,
-    /// The descriptor that follows the request's frame, sent again with it.
-    fd: Option<Arc<OwnedFd>>,
     sender: mpsc::Sender<wire::Reply>,
 }
 struct Bridge {
@@ -36,12 +36,6 @@ struct Bridge {
 }
 impl Bridge {
     fn call(&self, id: u64, op: wire::Operation) -> io::Result<wire::Reply> {
-        self.carry(id, op, None)
-    }
-
-    /// A call whose frame is followed by `fd` (SCM_RIGHTS), when it has one,
-    /// on its first send and on every replay.
-    fn carry(&self, id: u64, op: wire::Operation, fd: Option<OwnedFd>) -> io::Result<wire::Reply> {
         let notification = id;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut bytes = Vec::new();
@@ -54,7 +48,6 @@ impl Bridge {
             }),
         )?;
         let (sender, rx) = mpsc::channel();
-        let fd = fd.map(Arc::new);
         self.pending
             .lock()
             .map_err(|_| io::Error::other("fence state poisoned"))?
@@ -62,7 +55,6 @@ impl Bridge {
                 id,
                 Pending {
                     request: bytes.clone(),
-                    fd: fd.clone(),
                     sender,
                 },
             );
@@ -74,9 +66,6 @@ impl Bridge {
         {
             use std::io::Write;
             let _ = writer.write_all(&bytes);
-            if let Some(fd) = &fd {
-                let _ = wire::send_fd(writer, fd.as_raw_fd());
-            }
         }
         rx.recv().map_err(io::Error::other)
     }
@@ -361,9 +350,6 @@ fn monitor(
                         if let Some(writer) = writer.as_mut() {
                             for request in pending.values() {
                                 let _ = writer.write_all(&request.request);
-                                if let Some(fd) = &request.fd {
-                                    let _ = wire::send_fd(writer, fd.as_raw_fd());
-                                }
                             }
                         }
                     }
@@ -529,6 +515,7 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
                     family,
                     kind: a[1] as i32,
                     protocol: a[2] as i32,
+                    ipv6_only: family == libc::AF_INET6 && options::default_ipv6_only(),
                 },
             )?
         };
@@ -573,27 +560,11 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         }
         reply
     } else if nr == libc::SYS_setsockopt || nr == libc::SYS_getsockopt {
-        if a[1] as i32 == libc::SOL_SOCKET && a[2] as i32 != libc::SO_DOMAIN {
-            return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
-        }
-        if nr == libc::SYS_getsockopt {
-            let value = if a[2] as i32 == libc::SO_DOMAIN {
-                describe.bytes.first().copied().unwrap_or(2) as i32
-            } else {
-                0_i32
-            };
-            linux::valid(fd, n.id)?;
-            let size: u32 = load(n.pid, a[4])?;
-            if size < 4 {
-                return linux::respond(fd, n.id, 0, libc::EINVAL, 0);
-            }
-            store(n.pid, a[3], value)?;
-            store(n.pid, a[4], 4_u32)?;
-        }
-        wire::Reply {
-            id: n.id,
-            ..Default::default()
-        }
+        let family = describe
+            .bytes
+            .first()
+            .map_or(libc::AF_INET, |family| i32::from(*family));
+        return options::dispatch(listener, bridge, n, socket, family);
     } else if !datagram {
         return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
     } else if nr == libc::SYS_sendto {

@@ -1,8 +1,9 @@
 //! The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per
 //! launch binding the bytes the supervisor verified before it started the
 //! worker (its code bundle, its environment lock and installed environment,
-//! its native binary, its weights' install record, and the model, template
-//! and tokenizer digests those bytes give) to one fresh launch nonce.
+//! its native binary, its weights' install record, its draft's identity, and
+//! the model, template and tokenizer digests those bytes give) to one fresh
+//! launch nonce.
 //!
 //! The worker gets its path. An EXL3 worker echoes the SHA-256 of its exact
 //! bytes beside its own epoch in every answer, and names the manifest's
@@ -48,7 +49,14 @@ pub(super) struct LaunchManifest<'a> {
     pub(super) backend_model: Option<&'a str>,
     /// Kind-scoped code digest; the install directory has its own whole-bundle digest.
     pub(super) bundle_sha256: &'a str,
+    /// The stock draft's install record digest; `None` for a vault's own
+    /// draft, which no install record names.
     pub(super) draft_record_sha256: Option<&'a str>,
+    /// The identity of the draft this launch loads, as every EXL3 answer
+    /// echoes it (`draft_weights_digest`, FIX 14976): a vault load set's
+    /// verified BLAKE3, or the stock draft's install record digest, each
+    /// under its own prefix.
+    pub(super) draft_weights_digest: Option<&'a str>,
     pub(super) env_freeze_sha256: Option<&'a str>,
     pub(super) env_lock_sha256: Option<&'a str>,
     pub(super) kind: WorkerKind,
@@ -131,9 +139,12 @@ impl NativeLaunch {
             && epoch.is_none_or(|expected| actual_epoch == Some(expected))
             && hello.get("model").and_then(serde_json::Value::as_str)
                 == Some(self.wire_model.as_str())
-            && hello.get("launch_manifest").and_then(serde_json::Value::as_str)
+            && hello
+                .get("launch_manifest")
+                .and_then(serde_json::Value::as_str)
                 == Some(self.manifest_sha256.as_str())
-            && hello.pointer("/worker/kind")
+            && hello
+                .pointer("/worker/kind")
                 .and_then(|kind| serde_json::from_value::<WorkerKind>(kind.clone()).ok())
                 == Some(WorkerKind::Exl3)
     }

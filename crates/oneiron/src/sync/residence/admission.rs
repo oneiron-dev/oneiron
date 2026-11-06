@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+use super::content_world::{ContentWorld, content_world_in};
 use crate::Vault;
 use crate::authority::{Destination, PeerMachine, VerifiedSlip, WorldPrivacyView};
 use crate::claim::{CallerLocality, ResidenceReadContext};
@@ -128,6 +129,25 @@ impl<'v> ResidenceAdmission<'v> {
         let id =
             crate::sync::selector::secret_projection::stored_item_in_txn(&self.vault, &txn, id)?;
         self.context.allows_item(&txn, &id)
+    }
+
+    /// Where the row of the admitted item `id` sits, for the copy the
+    /// destination keeps of it (FIX 14534): a world kept off the destination
+    /// is never named to it, and reads as unknown.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn content_world(&self, id: EntityId) -> Result<ContentWorld> {
+        let txn = self.vault.store.env.read_txn()?;
+        let id =
+            crate::sync::selector::secret_projection::stored_item_in_txn(&self.vault, &txn, id)?;
+        Ok(match content_world_in(&self.vault.store, &txn, id)? {
+            ContentWorld::Exclusive(world) if self.withheld.contains(&world) => {
+                ContentWorld::Unknown
+            }
+            witness => witness,
+        })
     }
 
     /// Whether every row of `rows` may go to the destination.

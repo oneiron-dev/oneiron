@@ -898,6 +898,14 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Wall milliseconds from the owning vault's injected clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        match self {
+            Self::Canonical(vault) => vault.now_recorded_ms(),
+            Self::Session(binding) => binding.session.now_recorded_ms(),
+        }
+    }
+
     /// A share of the result-memory pool for this run.
     pub(crate) fn result_share(&self) -> ResultShare {
         match self {

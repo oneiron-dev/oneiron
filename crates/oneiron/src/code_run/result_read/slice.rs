@@ -78,9 +78,9 @@ pub(super) fn slice(
     let mut index = if text || lines_span.is_some() {
         let prefix = index_prefix_len(body);
         match (byte_start, prefix) {
-            // A byte target inside the charged prefix needs no setup: the
-            // pure scan finds it with old-exact charging.
-            (Some(start), Some(prefix)) if start < prefix => None,
+            // UTF-8 snapping can move the target back by three bytes. If
+            // that reaches the charged prefix, avoid charging it twice.
+            (Some(start), Some(prefix)) if start.saturating_sub(3) < prefix => None,
             // Byte arm outside (or without) the prefix: force the eager
             // path with a consistent cursor at the prefix end, so the
             // lookup keeps its jump; the eager skip then only drops a

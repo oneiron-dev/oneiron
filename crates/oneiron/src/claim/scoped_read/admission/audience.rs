@@ -5,7 +5,7 @@
 use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(in crate::claim::scoped_read) fn audience_readable_in(
@@ -79,7 +79,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
@@ -250,7 +250,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let own = self
             .actor_key
