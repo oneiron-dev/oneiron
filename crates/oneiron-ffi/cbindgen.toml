@@ -35,7 +35,12 @@ header = """
  * EngineError leaves its stable OneironEngineErrorCode and words for
  * oneiron_engine_last_error. Engine calls block: make them from app threads,
  * never from a callback. The library exports these only when built with the
- * `engine` cargo feature.
+ * `engine` cargo feature. Shared invitation calls keep the original native
+ * acceptance in an opaque handle. oneiron_shared_last_error_json preserves a
+ * failed shared call's complete native MemoryError on this thread; the outcome
+ * error reader preserves an import error independently of its committed bit.
+ * JSON/text outputs use oneiron_buffer_free; opaque handles use their paired
+ * free functions. Bootstrap never implicitly retains host configuration.
  */
 """
 
@@ -110,4 +115,24 @@ include = [
   "oneiron_engine_artifact_request",
   "oneiron_engine_artifact_connection_open",
   "oneiron_engine_last_error",
+  "OneironRemote",
+  "OneironSharedAcceptance",
+  "OneironSharedOutcome",
+  "oneiron_remote_connect",
+  "oneiron_remote_free",
+  "oneiron_remote_accept_https",
+  "oneiron_remote_retry_https",
+  "oneiron_shared_acceptance_home_url",
+  "oneiron_shared_acceptance_url",
+  "oneiron_shared_acceptance_request_json",
+  "oneiron_shared_acceptance_reply_json",
+  "oneiron_shared_acceptance_member_client",
+  "oneiron_shared_acceptance_free",
+  "oneiron_engine_bootstrap_shared_env",
+  "oneiron_shared_outcome_committed",
+  "oneiron_shared_outcome_vault_path",
+  "oneiron_shared_outcome_error_json",
+  "oneiron_shared_outcome_free",
+  "oneiron_engine_retain_shared_env",
+  "oneiron_shared_last_error_json",
 ]
