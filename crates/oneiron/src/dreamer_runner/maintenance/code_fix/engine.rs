@@ -581,7 +581,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .map(|part| match part {
-            ContentPart::Text { text } => text.clone(),
+            ContentPart::Text { text, .. } => text.clone(),
             other => serde_json::to_string(other).unwrap_or_default(),
         })
         .collect::<Vec<_>>()

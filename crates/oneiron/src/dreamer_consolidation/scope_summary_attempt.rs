@@ -482,11 +482,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: instruction.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: user }],
+                    content: vec![ContentPart::Text { text: user, signature: None }],
                 },
             ],
             tools: Vec::new(),

@@ -259,12 +259,14 @@ impl Responder for AnonymousChatResponder<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: notice.body.clone(),
+                        signature: None,
                     }],
                 }));
             request.messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: text.to_owned(),
+                    signature: None,
                 }],
             });
             let response = generate_private(
@@ -280,7 +282,7 @@ impl Responder for AnonymousChatResponder<'_> {
                 .content
                 .iter()
                 .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
+                    ContentPart::Text { text, .. } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect())

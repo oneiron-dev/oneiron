@@ -44,7 +44,7 @@ pub(super) fn validate_fallback(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -131,6 +131,7 @@ pub(super) async fn generate(
                 content: vec![ContentPart::Text {
                 text: serde_json::json!({"response_format":{"type":"json_schema","schema":schema}})
                     .to_string(),
+                    signature: None,
             }],
             },
         );
@@ -205,7 +206,7 @@ pub(super) async fn generate(
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -263,6 +264,7 @@ pub(super) async fn generate(
                 text:
                     serde_json::json!({"schema_validation_errors":errors,"required_schema":schema})
                         .to_string(),
+                        signature: None,
             }],
         });
     }
