@@ -1,15 +1,31 @@
 //! NOTE entity-document operations, stable cursors and citation provenance.
 
+use std::collections::BTreeMap;
+
+use crate::EntityId;
+use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
+use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
-use crate::{EntityId, WriteActor};
 use loro::cursor::{Cursor, Side};
-use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
+use loro::{
+    CommitOptions, Container, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue, ValueOrContainer,
+};
 use serde::{Deserialize, Serialize};
 
 const BODY: &str = "body";
-const META: &str = "note";
+/// The common root map (FIX 7784): the NOTE's immutable identity, its
+/// editable fields and its pins.
+const META: &str = "meta";
+/// meta's reserved identity key, written only at birth and never editable.
+const ID: &str = "id";
+/// meta's nested map of citations: a pin's hash to its JSON [`NotePin`].
+const PINS: &str = "pins";
+/// meta's title field, one value in the common encoding.
+pub(super) const TITLE: &str = "title";
+/// The root map of operation provenance, never editable metadata.
+const AUTHORSHIP: &str = "authorship";
 /// The part size a Dreamer-written text splits into (`note_parts`). No NOTE
 /// write is refused past it: a size never refuses the user's own NOTE (rule
 /// 5, FIX 10345).
@@ -88,9 +104,102 @@ pub(super) fn frontier(bytes: &[u8]) -> Result<Frontiers> {
 pub(super) fn document_sizes(doc: &LoroDoc) -> [usize; 3] {
     [
         doc.get_text(BODY).len_utf8(),
-        doc.get_map("pins").len(),
-        doc.get_map("authorship").len(),
+        pins_map(doc).ok().flatten().map_or(0, |pins| pins.len()),
+        doc.get_map(AUTHORSHIP).len(),
     ]
+}
+
+/// meta's nested pins map, `None` when `doc` holds none: a value carrier
+/// holds no citation.
+pub(super) fn pins_map(doc: &LoroDoc) -> Result<Option<LoroMap>> {
+    match doc.get_map(META).get(PINS) {
+        None => Ok(None),
+        Some(ValueOrContainer::Container(Container::Map(pins))) => Ok(Some(pins)),
+        Some(_) => Err(invalid("invalid NOTE pin value")),
+    }
+}
+
+/// Every editable field of `meta`, each one value in the common encoding,
+/// checked as [`check_field`] checks it: never the identity or the pins.
+fn editable_fields(meta: &LoroMap) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut fields = BTreeMap::new();
+    for field in meta.keys() {
+        if matches!(field.as_str(), ID | PINS) {
+            continue;
+        }
+        let Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) = meta.get(&field) else {
+            return Err(invalid(if field.as_str() == TITLE {
+                "invalid NOTE title"
+            } else {
+                "unknown NOTE metadata"
+            }));
+        };
+        check_field(&field, bytes.as_slice())?;
+        fields.insert(field.to_string(), bytes.to_vec());
+    }
+    Ok(fields)
+}
+
+/// One editable field's encoded value, as a load and a value carrier admit
+/// it: a field of the common vocabulary other than the identity and the
+/// pins, its value as the shared field rules admit it; a title is also a
+/// NOTE title.
+fn check_field(field: &str, bytes: &[u8]) -> Result<()> {
+    if field == TITLE {
+        return decode_title(bytes).map(drop);
+    }
+    if matches!(field, ID | PINS) || !is_metadata_field(field) {
+        return Err(invalid("unknown NOTE metadata"));
+    }
+    validate_metadata_shape(field, &decode_metadata_value(bytes)?)
+}
+
+/// A title in the common encoding: one string value the shared field rules
+/// admit, and a NOTE title.
+fn decode_title(bytes: &[u8]) -> Result<String> {
+    let value = decode_metadata_value(bytes).map_err(|_| invalid("invalid NOTE title"))?;
+    let title = value
+        .as_str()
+        .ok_or_else(|| invalid("invalid NOTE title"))?;
+    validate_title(title)?;
+    validate_metadata_shape(TITLE, &value)?;
+    Ok(title.to_owned())
+}
+
+/// `title` in the common encoding, checked as a load checks it.
+pub(super) fn encode_title(title: &str) -> Result<Vec<u8>> {
+    validate_title(title)?;
+    let value = rmpv::Value::from(title);
+    validate_metadata_shape(TITLE, &value)?;
+    encode_metadata_value(&value)
+}
+
+/// The title the editable fields `metadata` hold, if they hold one.
+pub(super) fn stored_title(metadata: &BTreeMap<String, Vec<u8>>) -> Result<Option<String>> {
+    metadata
+        .get(TITLE)
+        .map(Vec::as_slice)
+        .map(decode_title)
+        .transpose()
+}
+
+/// Writes a value carrier's meta into `doc`: `note`'s identity and the
+/// editable fields `metadata` holds, each checked as a load checks it. It
+/// writes no pins: a value carries no citation authority.
+pub(super) fn insert_value_meta(
+    doc: &LoroDoc,
+    note: EntityId,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let meta = doc.get_map(META);
+    meta.insert(ID, note.to_hex())
+        .map_err(|_| invalid("proposal identity"))?;
+    for (field, bytes) in metadata {
+        check_field(field, bytes)?;
+        meta.insert(field, bytes.as_slice())
+            .map_err(|_| invalid("proposal metadata"))?;
+    }
+    Ok(())
 }
 
 impl NotePin {
@@ -129,8 +238,48 @@ pub(super) struct NoteDocument {
     pub(super) id: EntityId,
 }
 
+/// The deterministic peer of NOTE `id`'s birth operations, the same on every
+/// replica. Every later operation is made on a document loaded from storage,
+/// under a peer of its own, so the birth's operations are the only ones
+/// under this peer.
+fn birth_peer(id: EntityId) -> u64 {
+    let seed = blake3::hash(id.as_bytes());
+    let mut peer = [0; 8];
+    peer.copy_from_slice(&seed.as_bytes()[..8]);
+    u64::from_le_bytes(peer)
+}
+
+/// The text NOTE `id`'s document `doc` was born with (FIX 7783): its body at
+/// the version of its birth's operations, the only ones under its birth peer.
+/// `None` when `doc` no longer holds that version: its history before a
+/// later version was dropped (a purge, or a masked write's stored state).
+/// Whether NOTE `id`'s document `doc` holds nothing but its birth (FIX
+/// 7783): no operation was made on it after its birth's.
+pub(super) fn holds_only_birth(id: EntityId, doc: &LoroDoc) -> bool {
+    let peer = birth_peer(id);
+    doc.oplog_vv()
+        .get(&peer)
+        .and_then(|count| count.checked_sub(1))
+        .is_some_and(|last| doc.oplog_frontiers() == Frontiers::from_id(loro::ID::new(peer, last)))
+}
+
+pub(super) fn birth_text(id: EntityId, doc: &LoroDoc) -> Option<String> {
+    let peer = birth_peer(id);
+    let last = doc.oplog_vv().get(&peer)?.checked_sub(1)?;
+    let frontier = Frontiers::from_id(loro::ID::new(peer, last));
+    if doc.oplog_frontiers() == frontier {
+        return Some(doc.get_text(BODY).to_string());
+    }
+    if doc.is_shallow() {
+        return None;
+    }
+    let born = doc.fork_at(&frontier).ok()?;
+    Some(born.get_text(BODY).to_string())
+}
+
 impl NoteDocument {
-    pub(super) fn birth(id: EntityId, body: &str, actor: &WriteActor) -> Result<Self> {
+    #[cfg(all(test, feature = "sync"))]
+    pub(super) fn birth(id: EntityId, body: &str, actor: &crate::WriteActor) -> Result<Self> {
         Self::birth_by(id, body, super::NoteActor::Actor(actor.entity_ref()))
     }
 
@@ -143,16 +292,17 @@ impl NoteDocument {
     /// measure it (`EngineScan::NoteDocumentBytes`, `note::scan`).
     pub(super) fn birth_by(id: EntityId, body: &str, author: super::NoteActor) -> Result<Self> {
         let doc = LoroDoc::new();
-        // The birth record is immutable, so lazy creation on different peers
-        // must give its initial operations the same identity.
-        let seed = blake3::hash(id.as_bytes());
-        let mut peer = [0; 8];
-        peer.copy_from_slice(&seed.as_bytes()[..8]);
-        doc.set_peer_id(u64::from_le_bytes(peer))
+        // The birth record is immutable, so a birth on any peer gives its
+        // initial operations the same identity.
+        doc.set_peer_id(birth_peer(id))
             .map_err(|_| invalid("NOTE birth peer"))?;
-        doc.get_map(META)
-            .insert("id", id.to_hex())
+        let meta = doc.get_map(META);
+        meta.insert(ID, id.to_hex())
             .map_err(|_| invalid("NOTE identity insert"))?;
+        // Born under the deterministic peer, the pins map is one container
+        // on every replica, so concurrent citations merge pin by pin.
+        meta.insert_container(PINS, LoroMap::new())
+            .map_err(|_| invalid("NOTE birth insert"))?;
         doc.get_text(BODY)
             .insert(0, body)
             .map_err(|_| invalid("NOTE birth insert"))?;
@@ -181,36 +331,30 @@ impl NoteDocument {
         Self::from_loro(id, doc)
     }
 
+    /// A NOTE document reads in the common schema (FIX 7784): roots `meta`,
+    /// `body` and `authorship`; meta holds the identity, the pins map and
+    /// editable fields of the common vocabulary, each one value in the common
+    /// encoding. Each pin is checked where it is read ([`Self::pins`]).
     pub(super) fn from_loro(id: EntityId, doc: LoroDoc) -> Result<Self> {
-        let loro::LoroValue::Map(root) = doc.get_deep_value() else {
+        let LoroValue::Map(root) = doc.get_deep_value() else {
             return Err(invalid("NOTE root map"));
         };
         if root
             .keys()
-            .any(|name| !matches!(name.as_str(), "note" | "body" | "pins" | "authorship"))
+            .any(|name| !matches!(name.as_str(), "meta" | "body" | "authorship"))
         {
             return Err(invalid("unknown NOTE container"));
         }
-        if root.get(META).is_none_or(|meta| match meta {
-            loro::LoroValue::Map(entries) => {
-                entries.keys().any(|key| key != "id" && key != "title")
-            }
-            _ => true,
-        }) {
+        if !matches!(root.get(META), Some(LoroValue::Map(_))) {
             return Err(invalid("unknown NOTE metadata"));
         }
-        if let Some(title) = doc.get_map(META).get("title") {
-            let loro::ValueOrContainer::Value(loro::LoroValue::String(title)) = title else {
-                return Err(invalid("invalid NOTE title"));
-            };
-            validate_title(&title)?;
-        }
+        let meta = doc.get_map(META);
+        pins_map(&doc)?;
+        editable_fields(&meta)?;
         // No body length, pin count or authorship count refuses a load (rule
         // 5): the store-aware entrances measure them (`note::scan`).
-        let found = doc.get_map(META).get("id").and_then(|v| match v {
-            loro::ValueOrContainer::Value(loro::LoroValue::String(value)) => {
-                Some(value.to_string())
-            }
+        let found = meta.get(ID).and_then(|v| match v {
+            ValueOrContainer::Value(LoroValue::String(value)) => Some(value.to_string()),
             _ => None,
         });
         if found.as_deref() != Some(&id.to_hex()) {
@@ -253,14 +397,19 @@ impl NoteDocument {
     }
 
     pub(super) fn title(&self) -> Result<Option<String>> {
-        match self.doc.get_map(META).get("title") {
+        match self.doc.get_map(META).get(TITLE) {
             None => Ok(None),
-            Some(loro::ValueOrContainer::Value(loro::LoroValue::String(value))) => {
-                validate_title(&value)?;
-                Ok(Some(value.to_string()))
+            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+                decode_title(bytes.as_slice()).map(Some)
             }
             _ => Err(invalid("invalid NOTE title")),
         }
+    }
+
+    /// Every editable field at this version, each one value in the common
+    /// encoding: never the identity or the pins (FIX 7784).
+    pub(super) fn metadata(&self) -> Result<BTreeMap<String, Vec<u8>>> {
+        editable_fields(&self.doc.get_map(META))
     }
 
     /// Rewrites the live body to `text` by the smallest edits that make it:
@@ -285,10 +434,10 @@ impl NoteDocument {
     /// Sets the live title to `title`, a mask on write's reading of it: a
     /// handle in place of each secret it held (OF-067; FIX 1098).
     pub(super) fn mask_title(&self, title: &str) -> Result<()> {
-        validate_title(title)?;
+        let title = encode_title(title)?;
         self.doc
             .get_map(META)
-            .insert("title", title)
+            .insert(TITLE, title)
             .map_err(|_| invalid("NOTE title mask"))?;
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
@@ -298,10 +447,10 @@ impl NoteDocument {
     /// Sets the title, its commit naming the writer's stamp token `stamp`
     /// (FIX 10930).
     pub(super) fn set_title(&self, title: &str, stamp: ActorStamp) -> Result<()> {
-        validate_title(title)?;
+        let title = encode_title(title)?;
         self.doc
             .get_map(META)
-            .insert("title", title)
+            .insert(TITLE, title)
             .map_err(|_| invalid("NOTE title insert"))?;
         commit_stamped(&self.doc, stamp);
         Ok(())
@@ -309,8 +458,11 @@ impl NoteDocument {
 
     pub(super) fn pins(&self) -> Result<Vec<NotePin>> {
         let mut pins = Vec::new();
-        for value in self.doc.get_map("pins").values() {
-            let loro::ValueOrContainer::Value(loro::LoroValue::String(value)) = value else {
+        let Some(map) = pins_map(&self.doc)? else {
+            return Ok(pins);
+        };
+        for value in map.values() {
+            let ValueOrContainer::Value(LoroValue::String(value)) = value else {
                 return Err(invalid("invalid NOTE pin value"));
             };
             let pin: NotePin =
@@ -328,9 +480,17 @@ impl NoteDocument {
         pin.validate()?;
         let value = serde_json::to_string(pin).map_err(|_| invalid("NOTE pin encode"))?;
         let key = blake3::hash(value.as_bytes()).to_hex().to_string();
-        self.doc
-            .get_map("pins")
-            .insert(&key, value)
+        // A live NOTE holds its pins map from birth; a recovered value takes
+        // one at its first citation.
+        let pins = match pins_map(&self.doc)? {
+            Some(pins) => pins,
+            None => self
+                .doc
+                .get_map(META)
+                .insert_container(PINS, LoroMap::new())
+                .map_err(|_| invalid("NOTE pin insert"))?,
+        };
+        pins.insert(&key, value)
             .map_err(|_| invalid("NOTE pin insert"))?;
         commit_stamped(&self.doc, stamp);
         Ok(())

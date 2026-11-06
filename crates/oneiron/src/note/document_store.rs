@@ -5,7 +5,7 @@ use super::document::{
     NoteSpanResolution, frontier, invalid,
 };
 use super::pin_index::NOTE_PIN_SOURCE;
-use super::{NoteBody, NoteKind, encode_note_body};
+use super::{NoteCore, NoteKind, encode_note_core};
 use crate::batch::secret_scan::{
     Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
     secret_scan_mode_in_txn,
@@ -131,6 +131,7 @@ fn persist_structural_with_origin(
             scan_write_payload(pin.quote_text.as_bytes())?;
         }
     }
+    super::documents::admit_value_fields_in_txn(&vault.store, txn, &doc.metadata()?)?;
     let masked = admit_body(vault, txn, doc, masks)?;
     // Keep the live NOTE projection valid, including after concurrent
     // batches merge. A refused commit leaves the durable document unchanged.
@@ -322,10 +323,9 @@ impl Memory<'_> {
         // The brief's commits after its birth name the actor's stamp token
         // (FIX 10930), read on a write of its own before the content write.
         let stamp = crate::provenance::actor_stamp(self.vault(), actor)?;
-        let body = encode_note_body(&NoteBody {
+        let body = encode_note_core(&NoteCore {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
-            markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),
         })?;
         self.with_actor_content_write_txn(|content| {
@@ -371,12 +371,12 @@ impl Memory<'_> {
             {
                 return Err(invalid("brief kind is not person-stamped").into());
             }
-            let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
                 validate_pin_source(self.vault(), content.read(), pin)?;
-                doc.add_pin(pin, stamp)?;
             }
             let now = self.vault().now_recorded_at();
+            // The birth op births the brief's document with its core; its
+            // citations and their authorship land on it in the same write.
             content.apply_batch(
                 self.vault()
                     .batch_in()
@@ -389,11 +389,16 @@ impl Memory<'_> {
                         },
                         now,
                         &body,
+                        &markdown,
                     )
                     .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
                     .made_by(&id, brief_birth(actor, pins, now)),
             )?;
             content.update_note(id, |txn| {
+                let doc = load(self.vault(), txn, id)?;
+                for pin in pins {
+                    doc.add_pin(pin, stamp)?;
+                }
                 super::operations::record_authorship(
                     &doc,
                     &super::NoteAuthorship {

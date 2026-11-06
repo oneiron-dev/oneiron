@@ -202,7 +202,7 @@ impl DocumentRows {
         {
             cores.insert(
                 entity.id,
-                crate::note::decode_note_body_using(
+                crate::note::decode_note_core_using(
                     &entity.blob[ENTITY_METADATA_HEADER_LEN..],
                     crate::note::NoteKind::wire,
                 )?,
@@ -242,7 +242,8 @@ impl DocumentRows {
             return Err(invalid("document birth timestamp binding"));
         }
         // The head's own value carries its birth; any other value, a retained
-        // parent among them (FIX 8829), claims no authority.
+        // parent among them (FIX 8829), claims no authority. The birth text is
+        // the document's alone (FIX 7783): the core binds its author.
         let current = heads.get(&row.entity_id) == Some(&row.head);
         if row.head == row.entity_id && current {
             let birth = row
@@ -253,7 +254,6 @@ impl DocumentRows {
             if birth.actor != core.author_ref
                 || birth.actor_class != "ledger"
                 || birth.grant.is_some()
-                || birth.command_hash != *blake3::hash(core.markdown.as_bytes()).as_bytes()
             {
                 return Err(invalid("NOTE birth provenance binding"));
             }

@@ -1,5 +1,7 @@
 //! Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites.
 
+use std::collections::BTreeMap;
+
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::provenance::ActorStamp;
@@ -423,6 +425,7 @@ pub(crate) fn store_doc(
             crate::batch::secret_scan::scan_write_payload(pin.quote_text.as_bytes())?;
         }
     }
+    admit_value_fields_in_txn(&vault.store, txn, &canonical.metadata()?)?;
     let found = canonical.title()?;
     let original = doc.text();
     let (mut text, mut title) = (original.clone(), found.clone());
@@ -436,7 +439,15 @@ pub(crate) fn store_doc(
     let masked = admitted && (text != original || title != found);
     let (bytes, stored) = if masked {
         // Never retain the operations that contained the secret's plain bytes.
-        let bytes = snapshot(&proposal_value(doc.note, &text, title.as_deref())?)?;
+        // The value keeps every editable field, its title as admitted.
+        let mut metadata = canonical.metadata()?;
+        if let Some(title) = &title {
+            metadata.insert(
+                super::document::TITLE.to_owned(),
+                super::document::encode_title(title)?,
+            );
+        }
+        let bytes = snapshot(&proposal_value(doc.note, &text, &metadata)?)?;
         (bytes, StoredProposal::Value(text))
     } else {
         super::token_uses::record_token_uses_in_txn(vault, txn, doc.note, &doc.doc, None)?;
@@ -558,10 +569,7 @@ pub(crate) fn load_retained_head(
             super::storage::import_complete(&doc, &bytes)?;
             doc
         }
-        None => match super::document_birth_in_txn(vault, txn, note)? {
-            Some(doc) => doc,
-            None => return Ok(None),
-        },
+        None => return Ok(None),
     };
     for update in vault.store.port_document_updates(txn, slot)? {
         if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
@@ -646,20 +654,41 @@ impl Vault {
     }
 }
 
+/// Each editable field other than the title, its whole encoded value read
+/// by the write door's structured payload rules, under the owner's scan
+/// switch (FIX 7784): no writer on this host masks these fields, so a hit
+/// refuses, as a citation's quote does. Every door that persists a NOTE
+/// document or value calls it; loads stay shape-only.
+pub(crate) fn admit_value_fields_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    if crate::batch::secret_scan::secret_scan_mode_in_txn(store, txn)?
+        != crate::batch::secret_scan::SecretScanMode::On
+    {
+        return Ok(());
+    }
+    for (field, bytes) in metadata {
+        if field != super::document::TITLE {
+            crate::batch::secret_scan::scan_write_payload(bytes)?;
+        }
+    }
+    Ok(())
+}
+
 /// Proposal content is a value, never an authenticated document snapshot.
 /// Fresh IDs and no pins/authorship prevent it retaining erased quote history.
-pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) -> Result<LoroDoc> {
+/// `metadata` is every editable field the value carries, each one value in
+/// the common encoding (FIX 7784).
+pub(crate) fn proposal_value(
+    note: EntityId,
+    text: &str,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<LoroDoc> {
     super::validate_markdown(text)?;
     let doc = LoroDoc::new();
-    doc.get_map("note")
-        .insert("id", note.to_hex())
-        .map_err(|_| invalid("proposal identity"))?;
-    if let Some(title) = title {
-        super::document::validate_title(title)?;
-        doc.get_map("note")
-            .insert("title", title)
-            .map_err(|_| invalid("proposal title"))?;
-    }
+    super::document::insert_value_meta(&doc, note, metadata)?;
     doc.get_text("body")
         .insert(0, text)
         .map_err(|_| invalid("proposal text"))?;
@@ -668,15 +697,17 @@ pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) ->
     Ok(doc)
 }
 
-/// Text and title projected from a trusted, locally stored proposal snapshot.
-/// Its pins and authenticated operations are not authority in a value carrier.
+/// Text and editable fields projected from a trusted, locally stored
+/// proposal snapshot. Its pins and authenticated operations are not
+/// authority in a value carrier.
 pub(crate) fn stored_proposal_values(
     note: EntityId,
     doc: &LoroDoc,
-) -> Result<(String, Option<String>)> {
-    let view = super::document::NoteDocument::from_loro(note, doc.fork())?.view()?;
+) -> Result<(String, BTreeMap<String, Vec<u8>>)> {
+    let canonical = super::document::NoteDocument::from_loro(note, doc.fork())?;
+    let view = canonical.view()?;
     super::validate_markdown(&view.markdown)?;
-    Ok((view.markdown, view.title))
+    Ok((view.markdown, canonical.metadata()?))
 }
 
 #[cfg(feature = "sync")]

@@ -327,7 +327,9 @@ pub(super) fn remove_erased_pins(
     txn: &heed::RoTxn<'_>,
     doc: &super::document::NoteDocument,
 ) -> Result<bool> {
-    let pins = doc.doc.get_map("pins");
+    let Some(pins) = super::document::pins_map(&doc.doc)? else {
+        return Ok(false);
+    };
     let mut remove = Vec::new();
     let entries: Vec<_> = pins
         .keys()
@@ -410,8 +412,6 @@ fn scrub_retired_canonical_citations(
                 doc
             }
             None if updates.is_empty() => continue,
-            None if head == note => super::document_birth_in_txn(vault, txn, note)?
-                .ok_or_else(|| super::document::invalid("NOTE original document birth missing"))?,
             None => return Err(super::document::invalid("NOTE head document missing")),
         };
         for update in updates {

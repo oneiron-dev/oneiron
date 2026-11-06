@@ -41,7 +41,7 @@ pub(super) fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> R
     if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
         return Err(Error::EntityNotFound);
     }
-    let note = super::super::decode_note_body_in_txn(&vault.store, txn, &body)?;
+    let note = super::super::decode_note_core_in_txn(&vault.store, txn, &body)?;
     if note.kind != super::super::NoteKind::Diary {
         return Err(Error::InvalidClaimBody(
             "coreference endpoint is not a diary NOTE",

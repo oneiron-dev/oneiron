@@ -104,7 +104,7 @@ impl CanonicalEntityDocument {
     }
 }
 
-fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+pub(super) fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
     fields
         .iter()
         .map(|(field, value)| field.len() + value.len())

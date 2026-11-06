@@ -44,8 +44,8 @@ impl DocumentRegistry {
                     std::slice::from_ref(pin),
                 )?;
             }
-            // Also refuses soft-erased shells and malformed birth records.
-            crate::note::document_birth_in_txn(&self.vault, txn, id)?;
+            // Also refuses soft-erased shells and malformed NOTE cores.
+            crate::note::note_core_in_txn(&self.vault, txn, id)?;
             let key = format!("{}:{}", id.to_hex(), operation.request_id.to_hex()).into_bytes();
             let frame = match QN_E.get(&self.vault.store, txn, &key)? {
                 Some(previous) => {
