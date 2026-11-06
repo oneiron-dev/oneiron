@@ -1,12 +1,13 @@
 //! The same credential-gated file projection for point reads and indexed
 //! hydration. A non-owner never receives a lifted value through raw bytes.
-use super::model::GraphFsResolver;
+use super::model::{GRAPH_FS_PROJECTION_VERSION, GraphFsFile, GraphFsResolver};
 use crate::batch::secret_scan::ContainerReader;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::repo_secret_reads::repo_asset_body_in_txn_with_reader;
 use crate::ports::ScopedReadResult;
 use crate::ports::{PointRead, ReadRow};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use oneiron_contracts::gate::RetrievalFilter;
 
 impl GraphFsResolver<'_, '_> {
@@ -114,6 +115,46 @@ impl GraphFsResolver<'_, '_> {
         Ok(self
             .file_rows_with_reader(&[PointRead::id(id)], None, reader)?
             .single())
+    }
+
+    pub(super) fn read_claim_file(
+        &self,
+        path: &str,
+        claim_id: &EntityId,
+        reader: &ContainerReader,
+    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+        let ScopedReadResult { value, receipt } = self.file_row_with_reader(*claim_id, reader)?;
+        let Some(ReadRow {
+            entity_type: ENTITY_TYPE_CLAIM,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(GRAPH_FS_PROJECTION_VERSION.as_bytes());
+        bytes.extend_from_slice(b"\nkind\tclaim\nmount\t");
+        bytes.extend_from_slice(self.options.mount.stable_label().as_bytes());
+        bytes.extend_from_slice(b"\nid\t");
+        bytes.extend_from_slice(claim_id.to_hex().as_bytes());
+        bytes.extend_from_slice(b"\nlearned_at\t");
+        bytes.extend_from_slice(learned_at.to_string().as_bytes());
+        bytes.extend_from_slice(b"\nbody_msgpack_hex\t");
+        bytes.extend_from_slice(bytes_to_hex_lower(&body).as_bytes());
+        bytes.push(b'\n');
+        Ok(ScopedReadResult {
+            value: Some(GraphFsFile {
+                path: path.to_owned(),
+                mount: self.options.mount,
+                bytes,
+            }),
+            receipt,
+        })
     }
 }
 

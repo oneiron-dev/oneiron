@@ -27,6 +27,7 @@ impl GraphFsResolver<'_, '_> {
         pattern: &str,
         path: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<ClaimGrepPage> {
         let scope = self.cursor_scope(&format!("grep -r {}:{pattern} {path}", pattern.len()));
         let at: LinePosition = scope.open(cursor)?.unwrap_or_default();
@@ -46,7 +47,8 @@ impl GraphFsResolver<'_, '_> {
             .map(|hit| hit.id)
             .collect();
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
-        let projection = self.file_rows(&reads, Some(&hits.receipt.applied.as_filter()))?;
+        let projection =
+            self.file_rows_with_reader(&reads, Some(&hits.receipt.applied.as_filter()), reader)?;
         let mut receipt = hits.receipt;
         receipt.restrict_with(&projection.receipt);
         let mut out = CommandOutputBuilder::new(self.options);

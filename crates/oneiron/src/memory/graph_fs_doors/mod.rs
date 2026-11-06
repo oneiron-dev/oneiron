@@ -218,6 +218,31 @@ impl Memory<'_> {
     }
 
     pub fn graph_fs_grep(&self, input: GraphFsGrepRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_grep_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same grep read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_grep_with_pacing(
+        &self,
+        input: GraphFsGrepRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_grep_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_grep_with_reader(
+        &self,
+        input: GraphFsGrepRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         if input.pattern.is_empty() {
             return Err(MemoryError::bad_request("grep needs a pattern"));
         }
@@ -229,11 +254,12 @@ impl Memory<'_> {
             (&input.path, &input.pattern, input.recursive),
         )?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.grep(
+        let result = tree.grep_with_reader(
             &input.pattern,
             &input.path,
             input.recursive,
             cursor.as_deref(),
+            reader,
         )?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
