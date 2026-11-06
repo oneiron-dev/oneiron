@@ -252,4 +252,3 @@ pub struct SlowRetrievalStage {
     pub duration: Duration,
     pub yields: bool,
 }
-
