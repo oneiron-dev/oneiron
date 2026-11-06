@@ -19,6 +19,11 @@
 //! [`held_start_bytes_in_txn`]); none reads a manifest as a start. A start
 //! whose pieces would not spell its bytes again exactly is one piece.
 //!
+//! FIX 19821: a capsule's writer holds the manifest, the record's frame and
+//! each node of its calls inline whatever the inline bound. A restore reads
+//! them among its rows to find the pieces that hold the start's asks. Every
+//! other piece keeps the bound.
+//!
 //! Byte sharing is not authority sharing. The capsule's run holds each
 //! piece at a path that names the actor and the piece's digest, apart from
 //! the request pieces, and each occurrence keeps its own marks. A writer
@@ -119,11 +124,14 @@ impl Shared {
 
 /// A step start cut into its pieces (FIX 4192): each shared piece once,
 /// the manifest, and the element of each call of its record in order
-/// (`None` for a start kept as one piece).
+/// (`None` for a start kept as one piece). FIX 19821: also the digests of
+/// the record's frame and of each node of its calls, which a capsule's
+/// writer holds inline whatever the bound, as it holds the manifest.
 pub(super) struct StartPieces {
     shared: Vec<(OutputRef, Vec<u8>)>,
     manifest: Vec<u8>,
     calls: Option<Vec<OutputRef>>,
+    frame_and_call_nodes: BTreeSet<[u8; 32]>,
 }
 
 impl StartPieces {
@@ -146,6 +154,7 @@ impl StartPieces {
             manifest: encode_piece(&StartManifest::Whole { start })?,
             shared: shared.pieces,
             calls: None,
+            frame_and_call_nodes: BTreeSet::new(),
         })
     }
 
@@ -166,6 +175,7 @@ impl StartPieces {
         let mut shared = Shared::default();
         let config = shared.add(rmpv_bytes(&Value::Map(body))?);
         let (mut arrays, mut calls) = (Vec::new(), Vec::new());
+        let mut frame_and_call_nodes = BTreeSet::new();
         for (key, value) in &mut frame {
             let (Some(name), Value::Array(elements)) = (growing(key), value) else {
                 continue;
@@ -173,18 +183,21 @@ impl StartPieces {
             let mut last = None;
             for element in std::mem::take(elements) {
                 let element = shared.add(rmpv_bytes(&element)?);
-                if name == CALLS {
-                    calls.push(element);
-                }
                 let node = ElementNode {
                     prior: last,
                     element,
                 };
-                last = Some(shared.add(encode_piece(&node)?));
+                let node = shared.add(encode_piece(&node)?);
+                if name == CALLS {
+                    calls.push(element);
+                    frame_and_call_nodes.insert(node.hash);
+                }
+                last = Some(node);
             }
             arrays.push(last);
         }
         let frame = shared.add(rmpv_bytes(&Value::Map(frame))?);
+        frame_and_call_nodes.insert(frame.hash);
         let manifest = encode_piece(&StartManifest::Cut {
             config,
             frame,
@@ -195,6 +208,7 @@ impl StartPieces {
             shared: shared.pieces,
             manifest,
             calls: Some(calls),
+            frame_and_call_nodes,
         }))
     }
 
@@ -226,8 +240,10 @@ impl StartPieces {
     }
 
     /// The length of each body [`Self::publish_in_txn`] publishes for
-    /// `scope` in `txn`: each piece the run does not hold yet, then the
-    /// manifest. The writer's spill must hold them.
+    /// `scope` in `txn` under the inline bound: each piece the run does not
+    /// hold yet. The writer's spill must hold them. FIX 19821: the manifest,
+    /// the frame and the call nodes are held inline whatever the bound, so
+    /// none of them is here.
     ///
     /// # Errors
     ///
@@ -238,13 +254,12 @@ impl StartPieces {
         txn: &RoTxn<'_>,
         scope: PieceScope,
     ) -> Result<Vec<usize>> {
-        let mut lens: Vec<usize> = self
+        Ok(self
             .unheld_in_txn(store, txn, scope)?
             .into_iter()
+            .filter(|piece| !self.frame_and_call_nodes.contains(&piece.0.hash))
             .map(|piece| piece.1.len())
-            .collect();
-        lens.push(self.manifest.len());
-        Ok(lens)
+            .collect())
     }
 
     /// FIX 4192: publishes the start for `scope` in `wtxn` through the
@@ -252,7 +267,9 @@ impl StartPieces {
     /// becomes a body the run holds at its start piece path; a piece it
     /// holds already is named again, and nothing of it is written. The
     /// manifest becomes the capsule's own body at `path`. Returns the
-    /// manifest's ref.
+    /// manifest's ref. FIX 19821: the manifest, the frame and the call
+    /// nodes are held inline whatever the bound, so a restore finds them
+    /// among its rows. Every other piece keeps the bound.
     ///
     /// # Errors
     ///
@@ -267,13 +284,18 @@ impl StartPieces {
     ) -> Result<OutputRef> {
         for (piece, bytes) in self.unheld_in_txn(&vault.store, wtxn, scope)? {
             let at = scope.start_path(&piece.hash);
-            if spill.publish_in_txn(vault, wtxn, scope.run, &at, bytes)? != *piece {
+            let published = if self.frame_and_call_nodes.contains(&piece.hash) {
+                spill.publish_inline_in_txn(vault, wtxn, scope.run, &at, bytes)?
+            } else {
+                spill.publish_in_txn(vault, wtxn, scope.run, &at, bytes)?
+            };
+            if published != *piece {
                 return Err(Error::InvariantViolation(
                     "a capsule start piece was published as other bytes",
                 ));
             }
         }
-        spill.publish_in_txn(vault, wtxn, scope.run, path, &self.manifest)
+        spill.publish_inline_in_txn(vault, wtxn, scope.run, path, &self.manifest)
     }
 }
 
@@ -628,7 +650,9 @@ pub(crate) fn step_start_ask_pieces(bytes: &[u8]) -> Result<Vec<[u8; 32]>> {
 /// the asks of its calls at `asks` (by place among the calls), each piece
 /// read by `read`, as a census found them: each such call's element, or
 /// the start's one piece when it is kept whole. None when the manifest, its
-/// frame or a node of its calls does not read.
+/// frame or a node of its calls does not read. FIX 19821: a capsule's
+/// writer holds those inline whatever the bound, so a restore reads them
+/// among its rows.
 pub(super) fn manifest_ask_pieces(
     manifest: OutputRef,
     asks: &[u32],

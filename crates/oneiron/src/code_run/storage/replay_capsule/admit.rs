@@ -13,7 +13,8 @@
 //! continuation still finds its checkpoint (FIX 6254). An admitted request
 //! is published as its pieces: each one its run does not hold yet for the
 //! actor, then the manifest as the capsule's own body (FIX 4192). The
-//! step's start is published as its pieces the same way.
+//! step's start is published as its pieces the same way. FIX 19821: its
+//! manifest, frame and call nodes are held inline whatever the bound.
 
 mod refresh;
 mod start_publication;
@@ -129,7 +130,35 @@ impl Spill {
         path: &str,
         bytes: &[u8],
     ) -> Result<OutputRef> {
-        let mut sink = BodySink::new(vault.store.body_dir()?, self.bound, Some(self.mint.clone()));
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, self.bound)
+    }
+
+    /// FIX 19821: [`Self::publish_in_txn`], with the body held inline
+    /// whatever the inline bound. A step start's manifest, frame and call
+    /// nodes go here. A restore reads them among its rows to find the
+    /// pieces that hold the start's asks. Such a body takes no instance.
+    pub(super) fn publish_inline_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<OutputRef> {
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, u64::MAX)
+    }
+
+    /// [`Self::publish_in_txn`], with the body inline up to `bound` bytes.
+    fn publish_bounded_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+        bound: u64,
+    ) -> Result<OutputRef> {
+        let mut sink = BodySink::new(vault.store.body_dir()?, bound, Some(self.mint.clone()));
         sink.write(bytes)?;
         let finished = finish_output(path.to_owned(), sink, true, vault.limit_watch(), |digest| {
             vault.pin_result_body(digest)
