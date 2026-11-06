@@ -53,7 +53,6 @@ use super::reply_attachments::{
     held_manifest_in, reader_reads_attachments_in, readmit_reply_attachments_in,
     reply_send_completed, standing_refusal_in,
 };
-use super::reply_custody::reply_carrier_ref;
 use super::reply_erase::{retire_reply_revision_in_txn, retire_reply_send_in_txn};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_recipients::{addresses_in, reply_recipients};
@@ -148,11 +147,12 @@ pub(super) struct MailReplyDraftRow {
     /// Gmail reply, whose plan the Gmail plan store keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     message: Option<ReplyMessage>,
-    /// The digest of the manifest a Gmail reply with files froze and the
-    /// ref of its message's carrier (fix list row 17645): the manifest
-    /// itself, its files, its exact message and the message it answers, is
-    /// sealed beside the draft under the revision's own key
-    /// (`reply_custody`); `None` for a reply without files.
+    /// The digest of the manifest a Gmail reply with files froze, the ref of
+    /// its message's carrier and the nonce its landing drew (fix list row
+    /// 17645): the manifest itself, its files, its exact message and the
+    /// message it answers, is sealed beside the draft under the revision's
+    /// own key, which derives from that nonce (`reply_custody`); `None` for a
+    /// reply without files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attached: Option<ReplyManifestRef>,
 }
@@ -915,9 +915,18 @@ impl Memory<'_> {
                                 .chain(answered_rows)
                                 .chain([source]),
                         );
-                        let carrier = reply_carrier_ref(&id, revision)?;
-                        let reply =
-                            freeze_gmail_reply(plan, admitted, carrier, answered, dependencies)?;
+                        // Its custody refs derive from the nonce this
+                        // landing draws, so a draft an erase dropped and
+                        // drafted again, revision 1 again, never meets a
+                        // retired ref.
+                        let reply = freeze_gmail_reply(
+                            plan,
+                            admitted,
+                            &id,
+                            revision,
+                            answered,
+                            dependencies,
+                        )?;
                         plan = reply.plan.clone();
                         frozen = Some(reply);
                     }
