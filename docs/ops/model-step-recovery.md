@@ -93,8 +93,8 @@ call finds its paid fact without charging again. These rows are live financial
 state, excluded from checkpoint images, and are not removed by logical memo forget,
 step-mark cleanup or ordinary owed-call retirement.
 
-Automatic payment is not activated. Neither the response producer nor the wake
-aggregate driver calls that primitive. Before activation, the actual invoice
+Automatic direct invoice payment is not activated. Neither the response producer
+nor the wake aggregate driver calls that primitive. Before activation, the actual invoice
 coverage must travel through each native NET or GROSS producer and its settlement.
 A scalar aggregate minus native usage, or a sum of selected lease states, is not
 proof of the covered guard delta. The existing driver charge, owed-unit SUM and
@@ -169,9 +169,10 @@ original population or invoice facts.
 
 A capture or pairing failure is logged and leaves the existing response, aliases,
 charge and result unchanged. A failed parent write rolls back the child record.
-This is source data, not a payment or permission. The actual NET tally/driver
-coverage join, irreversible paid-fact checks and late-call reconciliation remain
-unfinished. Automatic native payment and aggregate subtraction stay off.
+This is source data, not a payment or permission. The partition NET tally/driver
+inclusion and same-attempt Paid acknowledgement are described below. Other
+producer coverage, complete paid-fact checks and late-call reconciliation remain
+unfinished. Automatic direct invoice payment and aggregate subtraction stay off.
 
 ### Original native meter-token capture
 
@@ -367,7 +368,16 @@ records NET inclusion beside the aggregate charge, receipts and any park or
 deferral; its failure leaves those existing operations unchanged. NoReservation
 records no coverage, and a parent abort rolls back both operations.
 
-This data does not change a native invoice to Paid. Unpaired usage, distinct
-recovery selection, cross-alias aggregate overlap and late original-call
-reconciliation remain open. The old aggregate arithmetic and automatic payer
-remain unchanged, and the direct native payment primitive is still uncalled.
+For a same-attempt original invoice, this writer also records Paid using the
+invoice's original quantity and this settlement's time. The existing NET
+aggregate has already charged that original line; this acknowledgement adds no
+debit or subtraction. A prior Paid fact keeps its original time. Another
+attempt's contribution remains inclusion data only, since this settlement does
+not establish that other attempt's free-time attribution.
+
+Coverage and this Paid fact share the optional child transaction. A failed child
+leaves both absent and does not undo the old aggregate charge, so absence of a
+Paid fact is not permission to pay again. Unpaired usage, distinct recovery
+selection, cross-alias aggregate overlap and late original-call reconciliation
+remain open. The old aggregate arithmetic is unchanged, and the direct native
+payment primitive is still uncalled. Automatic direct invoice payment stays off.

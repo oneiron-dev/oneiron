@@ -1,4 +1,4 @@
-//! Inclusion of the original partition tally in an aggregate charge, not payment.
+//! Original NET invoice inclusion in the existing partition settlement.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -115,6 +115,7 @@ pub(in crate::dreamer_runner) fn record_native_net_settlement_in_txn(
         if native.original_line.for_attempt(settlement.child_attempt)
             != Some(settlement.budget_id.as_str())
             || native.units != settlement.actual_units
+            || settled_units < native.units
         {
             return Err(invalid_dreamer_runner("native NET aggregate differs"));
         }
@@ -202,6 +203,16 @@ pub(in crate::dreamer_runner) fn record_native_net_settlement_in_txn(
                     return Err(invalid_dreamer_runner("native NET coverage differs"));
                 }
                 row.net_coverage = coverage.clone();
+                // The existing NET aggregate already charged this original line.
+                // A different attempt's free-time attribution is not paired here.
+                if call.attempt_id == settlement.child_attempt
+                    && let NativeCallInvoice::Invoiced { units } = row.invoice
+                {
+                    row.invoice = NativeCallInvoice::Paid {
+                        units,
+                        at: settlement.now,
+                    };
+                }
                 CALLS.put(&vault.store, &mut child, &call, &row)?;
             }
             if response_total != response_units {
