@@ -122,8 +122,12 @@ pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::{TombstoneScopeProbes, classified_corrupt_claim_in_txn};
-// The relayed ask intents a legal hold kept from their holder's erase (FIX 20468).
-pub(crate) use erase::{clear_held_ask_forward_intent_in_txn, held_ask_forward_intents_in_txn};
+// The relayed ask intents a legal hold kept from their holder's erase (FIX 20468), and those
+// that land after it (FIX 7494).
+pub(crate) use erase::{
+    clear_held_ask_forward_intent_in_txn, held_ask_forward_intents_in_txn,
+    owe_held_ask_forward_intents_in_txn,
+};
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
 pub(crate) use receipt::decode_redaction_audit_receipt;
 // A corrupt CLAIM's repair event is no erase receipt (FIX 7800).

@@ -139,8 +139,9 @@ pub(super) fn stage_retired_rows_in_txn(
 }
 
 /// Records, in the erase's writer, that `intents`, relayed ask intents of `holder` that a legal
-/// hold kept from its erase, are owed their retirement and their results' (FIX 20468).
-pub(super) fn owe_held_ask_forward_intents_in_txn(
+/// hold kept from its erase, are owed their retirement and their results' (FIX 20468). The writer
+/// that puts a held intent or result after that erase records it the same way (FIX 7494).
+pub(crate) fn owe_held_ask_forward_intents_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
