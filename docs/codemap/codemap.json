@@ -2092,7 +2092,7 @@
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -2172,7 +2172,7 @@
      "path": "src/anchored_annotation/recovery.rs",
      "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 4,
       "struct": 2
      }
@@ -34432,7 +34432,7 @@
      "path": "src/edit_settle/carry.rs",
      "purpose": "ARCH-0075 §4: a held answer proposal whose units change under it",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 4,
       "struct": 2
@@ -34471,12 +34471,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DiscardedDeck",
+      "DiscardedSettleWords"
+     ],
+     "path": "src/edit_settle/discarded_words.rs",
+     "purpose": "What a settlement keeps once the owner's discard took its artifact's payload off this machine (FIX 14534…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/edit_settle/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -34486,8 +34500,8 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 7
+      "crate-vis": 5,
+      "re-export": 8
      }
     },
     {
@@ -40845,7 +40859,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -62977,7 +62992,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ExternalImportRefPlan",
@@ -62989,7 +63004,7 @@
       "const": 3,
       "crate-vis": 6,
       "enum": 2,
-      "fn": 1,
+      "fn": 3,
       "re-export": 2
      }
     },
@@ -76964,7 +76979,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/bundle.rs",
@@ -77043,14 +77058,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SealedBundleRelayObservation"
+      "SealedBundleRelayObservation",
+      "UnmergedUpload"
      ],
      "path": "src/sync/client/residence/bundle/relay_observation.rs",
      "purpose": "The last sealed bundle upkeep this process saw, per machine (FIX 4953; CALLS \"4953 relay report\"): what the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -79043,7 +79059,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SealedBundleTake",
@@ -80211,8 +80227,18 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/erased_origin.rs",
+     "purpose": "The origin CLAIM revisions a pinned window's history check refuses (FIX 21141), and the erased form each…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -89837,14 +89863,17 @@
      "kind": "src",
      "notable": [
       "SealedVaultUpload",
+      "UnmergedSection",
+      "UnmergedStage",
       "WorldCapsuleImport"
      ],
      "path": "src/world_keys/bundle/carrier.rs",
      "purpose": "Bundle carrier entry points for sealing and opening one generation",
      "surface": {
       "crate-vis": 6,
-      "fn": 13,
-      "struct": 2
+      "enum": 1,
+      "fn": 14,
+      "struct": 3
      }
     },
     {
@@ -90133,7 +90162,8 @@
       "ReassertKey",
       "ReassertKeyState",
       "ReassertUnread",
-      "RelayObservation"
+      "RelayObservation",
+      "UnmergedUploadView"
      ],
      "path": "src/world_keys/owner_work/diagnostics.rs",
      "purpose": "What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)…",
@@ -90141,7 +90171,7 @@
       "crate-vis": 5,
       "enum": 8,
       "fn": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -92041,7 +92071,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92589,7 +92619,7 @@
     "repo_mutation": {
      "files": 54,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Queued repository mutations, recovery snapshots and reviewed proposals"
     },
@@ -92860,7 +92890,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 371,
+     "files": 372,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93070,9 +93100,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 170,
+   "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6563,
+   "source_files": 6565,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96823,7 +96853,7 @@
      "purpose": "The wire between the daemon and the broker, one connection per call",
      "surface": {
       "const": 4,
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -96842,7 +96872,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "re-export": 1,
       "struct": 4
      }
@@ -96982,7 +97012,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -116150,7 +116180,17 @@
      "path": "src/api/git_http/import_relay.rs",
      "purpose": "The outside import's per-call transport (FIX 6871, G7 PR1)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/import_source_relay.rs",
+     "purpose": "An outside import's bound source fetch through the credential broker (ARCH-0069 OSH-3, FIX 15702)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -125888,6 +125928,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/broker_context/git.rs",
+     "purpose": "The vault's broker for git exchanges (ARCH-0069 OSH-3): the same site the vault-secret keys send through…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/broker_context/secret_use.rs",
      "purpose": "A secret-free installed adapter for `self.use`'s broker model listing",
      "surface": {
@@ -130589,7 +130639,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 695,
+     "files": 696,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130946,7 +130996,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 131,
+     "files": 132,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131109,7 +131159,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1657,
+   "source_files": 1659,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134421,7 +134471,8 @@
      "path": "src/git_wire/import_fetch/profile.rs",
      "purpose": "The fixed process profile of an outside import's Git legs (FIX 6871)",
      "surface": {
-      "fn": 4,
+      "const": 1,
+      "fn": 5,
       "struct": 1
      }
     },
