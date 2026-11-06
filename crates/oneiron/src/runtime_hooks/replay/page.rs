@@ -43,9 +43,9 @@ enum CursorAt {
     Runs(u64, RunKey),
 }
 
-/// Where the next page of a replay starts. As text, `facts;<a>;<b>`, each
-/// source in [`FactSource::ALL`] order as `start`, `end` or the hex of the
-/// position read through, or `runs;<commit ms>;<run key as 64 hex>`.
+/// Where the next page of a replay starts. As text, `facts;<a>;<b>;<c>;<d>`,
+/// each source in [`FactSource::ALL`] order as `start`, `end` or the hex of
+/// the position read through, or `runs;<commit ms>;<run key as 64 hex>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HookReplayCursor(CursorAt);
 

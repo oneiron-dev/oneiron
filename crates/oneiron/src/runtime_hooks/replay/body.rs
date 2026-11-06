@@ -245,14 +245,15 @@ impl Replay<'_> {
         if !filter::fact_matches(
             self.vault,
             &self.binding.selector,
-            entry.kind,
-            entry.entity,
+            entry,
             seen.claim.as_ref(),
             actor,
         )? {
             return Ok(None);
         }
-        if entry.body_hash != Some(seen.body_hash) {
+        // A tick's or an inbound event's input names ids and tokens only, so
+        // the entity's later writes leave it as it was.
+        if entry.input_carries_body() && entry.body_hash != Some(seen.body_hash) {
             return Ok(Some(HookReplayResult::MissingHistory {
                 reason: "the entity changed after this entry and no run pinned its input"
                     .to_owned(),

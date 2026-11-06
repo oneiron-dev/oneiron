@@ -109,6 +109,13 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
     spec.parent_ref = task_body_optional(entries, "parent_ref")?
         .map(|value| decode_entity_ref(value, "tasks.proposal.parent_ref"))
         .transpose()?;
+    spec.due_at = task_body_optional(entries, "due_at")?
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| invalid("tasks.proposal.due_at"))
+        })
+        .transpose()?;
     Ok(spec)
 }
 

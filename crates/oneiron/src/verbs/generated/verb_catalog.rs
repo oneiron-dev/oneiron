@@ -8772,6 +8772,7 @@ impl AgentVerb {
                 "brief",
                 "ttl",
                 "parent_ref",
+                "due_at",
             ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutSpawn => &["spec"],

@@ -778,7 +778,7 @@ export type QueueTaskBrief = { schema: number; type_ref: TypeRef; objective: str
 /** `oneiron::task_verb::verb_kind::TaskTtl` */
 export type TaskTtl = { deadline_at: number }
 /** `oneiron::verbs::TaskCreateRequest` */
-export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null }
+export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null; due_at?: number | null }
 /** `oneiron::task_verb::route_receipts::TaskCreateReceipt` */
 export type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null }
 /** `oneiron::verbs::TaskWaveRequest` */
@@ -2318,11 +2318,11 @@ export type HookGrantRequest = { binding: EntityId }
 /** `oneiron::verbs::hub::HubHookQualifyRequest` */
 export type HubHookQualifyRequest = { source: EntityId }
 /** `oneiron::runtime_hooks::source::FactSource` */
-export type FactSource = "claim_changelog" | "settlement"
+export type FactSource = "claim_changelog" | "settlement" | "schedule" | "surface_inbound"
 /** `oneiron::runtime_hooks::source::FactPositionHex` */
 export type FactPositionHex = string
 /** `oneiron::runtime_hooks::source::FactKind` */
-export type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled"
+export type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled" | "schedule.tick" | "surface.inbound"
 /** `oneiron::runtime_hooks::replay::HookReplayCase` */
 export type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase }
 /** `oneiron::runtime_hooks::replay::HookReplayCompare` */
