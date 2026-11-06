@@ -10,7 +10,7 @@ use super::super::base::{SyncClient, home_reads_window};
 use super::super::types::SyncResidenceMode;
 use super::{OpenedItem, ThinItem};
 use crate::EntityId;
-use crate::sync::residence::RESIDENCE_PAGE_REPLY_BYTES;
+use crate::sync::residence::{ContentWorld, RESIDENCE_PAGE_REPLY_BYTES};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::{self, TransportError};
 use crate::sync::types::WindowKey;
@@ -24,6 +24,9 @@ struct TouchReply {
     entity_id: String,
     blob: TouchItemReply,
     document: TouchItemReply,
+    /// Where the row sits (FIX 14534); unknown from a home that sends none.
+    #[serde(default)]
+    content_world: ContentWorld,
 }
 
 /// One of a touch's two items (FIX 12116): `inline` in base64, or named by
@@ -173,6 +176,7 @@ impl SyncClient {
         if reply.entity_id != item.to_hex() || reply.window != window.as_str() {
             return Err(refused());
         }
+        let content_world = reply.content_world;
         // A row or document past what one reply holds comes in parts (FIX
         // 12116), and a row past one frame, such as an authority entry, is
         // taken whole (FIX 8246).
@@ -255,6 +259,15 @@ impl SyncClient {
                     &format!("ro:e:{}", item.to_hex()),
                     window.as_str().as_bytes(),
                 )?;
+                // The witness belongs to these bytes: one an earlier fetch
+                // kept never stands for them (FIX 14534).
+                let witness = format!("ri:c:{}", item.to_hex());
+                match content_world.encode() {
+                    Some(bytes) => self.vault.store.sync_state.put(txn, &witness, &bytes)?,
+                    None => {
+                        self.vault.store.sync_state.delete(txn, &witness)?;
+                    }
+                }
                 crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
                 // FIX 4385: a machine history the cached row needs is owed.
                 crate::sync::machine_history::owe_touched_in_txn(

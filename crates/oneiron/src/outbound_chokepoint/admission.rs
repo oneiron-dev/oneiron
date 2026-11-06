@@ -6,7 +6,8 @@ use super::budget::{
 };
 use super::dedupe;
 use super::replay::{
-    effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
+    accounting_replay_in_txn, effect_result, gate_rejection, replay_record, send_admitted,
+    suppression_result,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
@@ -208,6 +209,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             OutboundEffectCommand::Resume(_) => None,
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
+    }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of
+    // replays as the owner's erase left it, never gated, asked or sent again.
+    if let Some(result) = accounting_replay_in_txn(vault, &wtxn, &command, intent_id)? {
+        drop(wtxn);
+        return Ok(result);
     }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.

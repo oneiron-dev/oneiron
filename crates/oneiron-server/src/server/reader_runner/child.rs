@@ -24,18 +24,24 @@ impl Child {
     /// the fold the reserve is kept for, so it runs to the whole clock. No
     /// reserve is taken twice and no time is added.
     fn left_ms(&self, now_ms: u64) -> u64 {
-        let binding = &self.job.binding;
-        let left = binding.child_cutoff_unix_ms.saturating_sub(now_ms);
+        let left = self.job.binding.child_cutoff_unix_ms.saturating_sub(now_ms);
         let Some(clock) = self.clock else {
             return left;
         };
-        let reserve = match self.job.kind {
+        left.min(clock.remaining_ms().saturating_sub(self.fold_reserve_ms()))
+    }
+
+    /// The fold reserve this job's live clock is taken short of: the one its
+    /// first spawn fixed, for a read or a scoped child; none for a summary,
+    /// the fold it is kept for. [`Child::left_ms`] and a scoped child's live
+    /// cutoff (FIX 8233) each take it once.
+    pub(super) fn fold_reserve_ms(&self) -> u64 {
+        match self.job.kind {
             ReaderJobKind::Summarize { .. } => 0,
             ReaderJobKind::Read | ReaderJobKind::ScopedAgent { .. } => {
-                binding.deadline.fold_reserve_ms
+                self.job.binding.deadline.fold_reserve_ms
             }
-        };
-        left.min(clock.remaining_ms().saturating_sub(reserve))
+        }
     }
 
     /// How a scoped child that borrowed its parent attempt's lease ends when
@@ -388,11 +394,12 @@ impl Child {
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
-    /// and door, and a scoped child's to its lent `ports`, entered again
-    /// after each yielded slice until it ends or its cutoff comes. The
-    /// cutoff stops the run at its next await; a running step is not cut.
-    /// A profiled child's config takes its `profile`'s model before its
-    /// seat is born (FIX 7508).
+    /// and door, and a scoped child's to its lent `ports` and its live
+    /// cutoff, entered again after each yielded slice until it ends or its
+    /// cutoff comes. The cutoff stops the run at its next await, and a
+    /// scoped child's port call or read at its next check (FIX 8233); a
+    /// running step is not cut. A profiled child's config takes its
+    /// `profile`'s model before its seat is born (FIX 7508).
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per axis the runner binds a child's run to"
@@ -413,12 +420,10 @@ impl Child {
             tracing::warn!(%error, task = %job.task.to_hex(), reason, "a reader child did not run");
             ReaderRunEnd::Failed(reason.to_owned())
         };
+        let control = self.scoped_call_control();
         let bound = self
             .bind(vault, session)
-            .and_then(|dispatcher| match ports {
-                Some(ports) => dispatcher.with_scoped_child_ports(ports),
-                None => Ok(dispatcher),
-            });
+            .and_then(|dispatcher| Self::bind_scoped(dispatcher, control.as_ref(), ports));
         let dispatcher = match bound {
             Ok(dispatcher) => dispatcher.with_agent_verb_door(door),
             Err(error) => return failed("reader_binding_failed", &error),
@@ -512,6 +517,11 @@ impl Child {
             let ran = reactor.block_on(async {
                 tokio::time::timeout(Duration::from_millis(left), executor.run(&config)).await
             });
+            // A cut a port call or read saw ends the entry at its cutoff,
+            // however the run took the refusal (FIX 8233).
+            if let Some(end) = Self::scoped_cut(control.as_ref()) {
+                return end;
+            }
             let error = match ran {
                 Err(_) => return ReaderRunEnd::Cutoff,
                 Ok(Ok(outcome)) => match outcome.status {

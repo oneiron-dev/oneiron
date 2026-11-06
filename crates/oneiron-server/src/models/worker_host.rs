@@ -22,12 +22,24 @@
 //! `models/native_exl3`), its qualification asks there, and its activity
 //! poll reads its stats there.
 //!
+//! A vault's own drafter (FIX 14976) is handed to a managed EXL3 worker by
+//! the same row replacement, with the vault's private load set as the
+//! draft, and only where this process launches the worker for its one vault
+//! (`drafter_binding`). The hosted row stays the configured one. The
+//! drafter evaluator launches incarnations of that row with each arm's
+//! draft, never hosted, so no route reaches them (`evaluator_incarnation`,
+//! FIX 14975).
+//!
 //! The media workers, VoxCPM2 speech and local ASR, are supervised the same
 //! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
 //! lease from before its admission through its renders, its partial
 //! settlement or its cancellation, and the worker runs one inference at a
 //! time.
 mod bundle;
+mod drafter_binding;
+// FIX 14975: the drafter evaluator's incarnations of the vault's own row.
+#[cfg(unix)]
+mod evaluator_incarnation;
 mod install;
 mod launch_manifest;
 mod launcher;
@@ -64,6 +76,15 @@ use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 use serde_json::Value as JsonValue;
 
+pub(super) use drafter_binding::{
+    DraftSeat, clear_vault_drafts, draft_seat, drafter_training_work, launch_records,
+    replace_draft, retrain_target, vault_drafts,
+};
+#[cfg(unix)]
+pub(super) use evaluator_incarnation::{
+    EvaluatorDraft, EvaluatorIncarnation, EvaluatorSeat, evaluator_seat, launch_evaluator,
+    retire_vault_evaluators,
+};
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
@@ -95,6 +116,10 @@ struct Hosted {
     worker: InferenceWorker,
     /// A managed launch's record slot, which names its native socket.
     slot: Option<Arc<LaunchSlot>>,
+    /// The vault's own draft its supervisor launches with in place of the
+    /// row's stock one (FIX 14976, `drafter_binding`); `None` for stock. The
+    /// row itself stays the configured one.
+    draft: Option<Arc<crate::models::VaultLoadSet>>,
 }
 
 impl Hosted {
@@ -664,6 +689,7 @@ pub(super) fn configure(
                         provider: provider.clone(),
                         worker: worker.clone(),
                         slot,
+                        draft: None,
                     };
                     match workers.insert(row.id.clone(), hosted) {
                         Some(old) => {
@@ -682,6 +708,9 @@ pub(super) fn configure(
             statuses.push(worker.status());
         }
     }
+    // FIX 14976: a row started, or replaced with stock, may serve a served
+    // vault's drafter binding; each vault's drafter host serves it again.
+    let moved = !started.is_empty() || !replaced.is_empty();
     for worker in started {
         host.begin(&worker);
     }
@@ -695,6 +724,9 @@ pub(super) fn configure(
                 host.begin(&new);
             });
         }
+    }
+    if moved {
+        super::drafter_serving::workers_configured();
     }
     statuses
 }
@@ -891,6 +923,66 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         }
     };
     route.launch().is_some().then_some(route)
+}
+
+/// The native routes of `provider_name`'s managed EXL3 workers, captured
+/// when a runtime is built (I2-LOCAL), by wire model: each row bound to the
+/// provider whose hosted row and provider still match exactly, in a process
+/// that launches them, on a platform whose native channel checks its peer
+/// against the supervised child (Linux and macOS). A route is captured
+/// whether or not its current launch has a socket: the transport that holds
+/// it sends only over that worker's native channel, each time through
+/// `Channel::connect_launch`, or does not send. A reconfigured row is a new
+/// supervisor that a captured route never retargets to.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn native_local_routes(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+) -> BTreeMap<String, NativeRoute> {
+    let Some(host) = HOST.get() else {
+        return BTreeMap::new();
+    };
+    if !host.launch_permitted.load(Ordering::Relaxed) {
+        return BTreeMap::new();
+    }
+    let workers = host.lock();
+    let mut routes = BTreeMap::new();
+    for row in rows {
+        if row.binding.provider != provider_name {
+            continue;
+        }
+        let Some(hosted) = workers.get(&row.id) else {
+            continue;
+        };
+        if hosted.row != *row || hosted.provider != *provider {
+            continue;
+        }
+        let Some(slot) = hosted.native_slot() else {
+            continue;
+        };
+        routes.insert(
+            row.binding.model.clone(),
+            NativeRoute {
+                worker: hosted.worker.clone(),
+                slot: Arc::clone(slot),
+                wire_model: row.binding.model.clone(),
+            },
+        );
+    }
+    routes
+}
+
+/// No native channel here checks its peer against the supervised child, so
+/// no native route is on device (I2-LOCAL): the provider's own transport
+/// serves every call, at its own locality.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+pub(super) fn native_local_routes(
+    _provider_name: &str,
+    _provider: &ProviderConfig,
+    _rows: &[WorkerConfig],
+) -> BTreeMap<String, NativeRoute> {
+    BTreeMap::new()
 }
 
 /// What an HTTP answer from a managed EXL3 worker must echo to keep a

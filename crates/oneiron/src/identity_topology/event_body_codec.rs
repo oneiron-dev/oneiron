@@ -23,13 +23,17 @@ use super::reassignment_map::{
 };
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{ProposalOutcome, ProposalScope, evaluate_transition};
+use super::wire_keys::IDENTITY_TOPOLOGY_OPERATION_PART_BYTES;
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_AMENDED, BODY_KEY_APPLIED_ASSIGNED,
     BODY_KEY_APPLIED_EVENT, BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY,
-    BODY_KEY_FACETS, BODY_KEY_FORKED, BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OUTCOME,
-    BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN, BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR,
-    BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES, BODY_KEY_SURVIVOR,
-    BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
+    BODY_KEY_FACETS, BODY_KEY_FORKED, BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OPERATION_DIGEST,
+    BODY_KEY_OPERATION_INDEX, BODY_KEY_OPERATION_KIND, BODY_KEY_OPERATION_LENGTH,
+    BODY_KEY_OPERATION_PARTS, BODY_KEY_OPERATION_PAYLOAD, BODY_KEY_OPERATION_ROOT,
+    BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN, BODY_KEY_PROPOSAL,
+    BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES,
+    BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET,
+    EVENT_KIND_MERGE, EVENT_KIND_OPERATION_MANIFEST, EVENT_KIND_OPERATION_PART,
     EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
     EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
@@ -164,6 +168,32 @@ pub(super) fn encode_action_entries(
             if let Some(applied) = applied {
                 entries.push((Value::from(BODY_KEY_APPLIED_EVENT), id_value(applied)));
             }
+        }
+        StoredIdentityOpAction::OperationManifest {
+            kind,
+            parts,
+            length,
+            digest,
+        } => {
+            entries.push((Value::from(BODY_KEY_OPERATION_KIND), Value::from(*kind)));
+            entries.push((Value::from(BODY_KEY_OPERATION_PARTS), Value::from(*parts)));
+            entries.push((Value::from(BODY_KEY_OPERATION_LENGTH), Value::from(*length)));
+            entries.push((
+                Value::from(BODY_KEY_OPERATION_DIGEST),
+                Value::Binary(digest.to_vec()),
+            ));
+        }
+        StoredIdentityOpAction::OperationPart {
+            root,
+            index,
+            payload,
+        } => {
+            entries.push((Value::from(BODY_KEY_OPERATION_ROOT), id_value(root)));
+            entries.push((Value::from(BODY_KEY_OPERATION_INDEX), Value::from(*index)));
+            entries.push((
+                Value::from(BODY_KEY_OPERATION_PAYLOAD),
+                Value::Binary(payload.clone()),
+            ));
         }
     }
 }
@@ -343,6 +373,61 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
         EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
             target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
         }),
+        EVENT_KIND_OPERATION_MANIFEST => {
+            const MANIFEST_CONTEXT: &str = "identity topology operation manifest";
+            let kind = match decode_str_field(map, BODY_KEY_OPERATION_KIND, MANIFEST_CONTEXT)? {
+                EVENT_KIND_MERGE => EVENT_KIND_MERGE,
+                EVENT_KIND_SPLIT => EVENT_KIND_SPLIT,
+                EVENT_KIND_FACET => EVENT_KIND_FACET,
+                _ => {
+                    return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "identity topology operation manifest names no merge, split or facet",
+                    )));
+                }
+            };
+            let parts = u32::try_from(decode_u64_field(
+                map,
+                BODY_KEY_OPERATION_PARTS,
+                MANIFEST_CONTEXT,
+            )?)
+            .map_err(|_| {
+                Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    MANIFEST_CONTEXT,
+                ))
+            })?;
+            let digest = map_field(map, BODY_KEY_OPERATION_DIGEST)
+                .and_then(Value::as_slice)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    MANIFEST_CONTEXT,
+                )))?;
+            Ok(StoredIdentityOpAction::OperationManifest {
+                kind,
+                parts,
+                length: decode_u64_field(map, BODY_KEY_OPERATION_LENGTH, MANIFEST_CONTEXT)?,
+                digest,
+            })
+        }
+        EVENT_KIND_OPERATION_PART => {
+            const PART_CONTEXT: &str = "identity topology operation part";
+            let index = u32::try_from(decode_u64_field(
+                map,
+                BODY_KEY_OPERATION_INDEX,
+                PART_CONTEXT,
+            )?)
+            .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(PART_CONTEXT)))?;
+            let payload = map_field(map, BODY_KEY_OPERATION_PAYLOAD)
+                .and_then(Value::as_slice)
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    PART_CONTEXT,
+                )))?
+                .to_vec();
+            Ok(StoredIdentityOpAction::OperationPart {
+                root: decode_id_field(map, BODY_KEY_OPERATION_ROOT, PART_CONTEXT)?,
+                index,
+                payload,
+            })
+        }
         EVENT_KIND_PROPOSAL_CANCELLATION => Ok(StoredIdentityOpAction::ProposalCancellation {
             proposal: decode_id_field(map, BODY_KEY_PROPOSAL, "proposal cancellation proposal")?,
             participant: decode_id_field(
@@ -434,6 +519,47 @@ pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredI
             "identity topology event body exceeds the size limit",
         )));
     }
+    let record = decode_canonical_identity_topology_record(data)?;
+    validate_identity_topology_event_stateless(&record, RecordScope::Inline)?;
+    Ok(record)
+}
+
+/// Decodes an assembled operation payload (FIX 10188): the inline record
+/// body of one merge, split or facet decision that one record cannot hold.
+/// The same canonical decode and stateless checks as a stored record, except
+/// the per-record bounds: the payload is the whole decision, and the
+/// manifest that names it bounds its byte length.
+pub(super) fn decode_identity_topology_operation_payload(
+    data: &[u8],
+) -> Result<StoredIdentityOpEvent> {
+    let record = decode_canonical_identity_topology_record(data)?;
+    if !matches!(
+        record.action,
+        StoredIdentityOpAction::Merge { .. }
+            | StoredIdentityOpAction::Split { .. }
+            | StoredIdentityOpAction::Facet { .. }
+    ) {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology operation payload is no merge, split or facet",
+        )));
+    }
+    validate_identity_topology_event_stateless(&record, RecordScope::Operation)?;
+    Ok(record)
+}
+
+/// What one stateless check runs over: a stored record, or a whole decision
+/// assembled from operation parts (FIX 10188).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordScope {
+    /// One stored record: the per-record participant and mask bounds hold.
+    Inline,
+    /// One decision assembled from its manifest's parts.
+    Operation,
+}
+
+/// The canonical MessagePack decode shared by stored records and assembled
+/// operation payloads: no trailing bytes, and the bytes re-encode exactly.
+fn decode_canonical_identity_topology_record(data: &[u8]) -> Result<StoredIdentityOpEvent> {
     let mut cursor = data;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
@@ -451,7 +577,6 @@ pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredI
             "identity topology event body is not canonical",
         )));
     }
-    validate_identity_topology_event_stateless(&record)?;
     Ok(record)
 }
 
@@ -459,7 +584,10 @@ pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredI
 /// invariants a local door can enforce without consulting lifecycle state:
 /// sequence/consent legality, bounded fan-out, and operation shape. They run
 /// during body decode, before quota, storage, clock join, or reconciliation.
-fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) -> Result<()> {
+fn validate_identity_topology_event_stateless(
+    record: &StoredIdentityOpEvent,
+    scope: RecordScope,
+) -> Result<()> {
     if record.seq == 0 {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event seq must be nonzero",
@@ -488,6 +616,55 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         )));
     }
     validate_resolution_scope_stateless(record)?;
+    match &record.action {
+        StoredIdentityOpAction::OperationPart { payload, .. } => {
+            if record.actor.is_some()
+                || record.approval != ClaimApprovalStatus::Auto
+                || record.evidence.is_some()
+            {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology operation part envelope",
+                )));
+            }
+            if payload.is_empty() || payload.len() > IDENTITY_TOPOLOGY_OPERATION_PART_BYTES {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology operation part payload size",
+                )));
+            }
+            return Ok(());
+        }
+        StoredIdentityOpAction::OperationManifest {
+            kind,
+            parts,
+            length,
+            ..
+        } => {
+            // The decision's evidence and actor ride its payload and its
+            // attribution carrier, never the manifest.
+            if record.actor.is_some() || record.evidence.is_some() {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology operation manifest envelope",
+                )));
+            }
+            // Every part but the last is full and the last is not empty, so
+            // one length names exactly one part count.
+            let part_bytes = IDENTITY_TOPOLOGY_OPERATION_PART_BYTES as u64;
+            let capacity = u64::from(*parts) * part_bytes;
+            if *parts == 0 || *length == 0 || *length > capacity || *length <= capacity - part_bytes
+            {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology operation manifest length",
+                )));
+            }
+            if *kind == EVENT_KIND_FACET && !is_effective_approval(record.approval) {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "facet identity topology decisions have no propose lane",
+                )));
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
     if matches!(
         record.action,
         StoredIdentityOpAction::AdmissionDisposition(_)
@@ -540,7 +717,11 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
     let IdentityTopologyAction::Apply(op) = record.action.to_fold_action() else {
         return Ok(());
     };
-    if op.participants().len() > MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS {
+    // Record bounds, not decision bounds (FIX 10188): a decision past them
+    // is stored in operation parts, and its assembled payload skips them.
+    if scope == RecordScope::Inline
+        && op.participants().len() > MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS
+    {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology event has too many participants",
         )));
@@ -549,7 +730,7 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         // A facet op names ONE participant however many masks it mints, so
         // the participant bound above does not reach its fan-out. Bound it
         // here, on the same stateless path every admitting door runs.
-        if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
+        if scope == RecordScope::Inline && facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
             return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology event mints too many facets",
             )));

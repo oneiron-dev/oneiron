@@ -1778,6 +1778,22 @@ export class Oneiron {
         pick: (input: Facade.EvalLabelPickRequest): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsLabelsPick(input) as Facade.EvalCase),
       },
     },
+    drafters: {
+      /** The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible. */
+      list: (input: Facade.DrafterListRequest): Facade.DrafterVersionView[] => this.#call(() => this.#client.vaultDraftersList(input) as Facade.DrafterVersionView[]),
+      /** An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read. */
+      list_as: (input: Facade.DrafterListRequest): Facade.DrafterVersionView[] => this.#call(() => this.#client.vaultDraftersListAs(input) as Facade.DrafterVersionView[]),
+      /** The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor. */
+      status: (input: Facade.DrafterStatusRequest): Facade.DrafterStatus => this.#call(() => this.#client.vaultDraftersStatus(input) as Facade.DrafterStatus),
+      policy: {
+        /** The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock. */
+        set: (input: Facade.DrafterPolicySetRequest): Facade.DrafterPolicy => this.#call(() => this.#client.vaultDraftersPolicySet(input) as Facade.DrafterPolicy),
+      },
+      /** The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back. */
+      revert: (input: Facade.DrafterRevertRequest): Facade.DrafterRevertReceipt => this.#call(() => this.#client.vaultDraftersRevert(input) as Facade.DrafterRevertReceipt),
+      /** An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert. */
+      revert_as: (input: Facade.DrafterRevertRequest): Facade.DrafterRevertReceipt => this.#call(() => this.#client.vaultDraftersRevertAs(input) as Facade.DrafterRevertReceipt),
+    },
     roots: {
       requests: {
         /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
@@ -3529,7 +3545,7 @@ export class Oneiron {
       /** Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds. */
       switch_engine: (input: Facade.LiveRunRequest<Facade.SwitchEngineInput>): Facade.BrowserSwitchEngineOutput => this.#call(() => this.#client.selfBrowserSwitchEngine(input) as Facade.BrowserSwitchEngineOutput),
     },
-    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles. */
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console. */
     fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
     /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
     compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
