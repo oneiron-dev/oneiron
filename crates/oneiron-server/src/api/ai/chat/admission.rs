@@ -157,9 +157,6 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }
         None => (None, None),
     };
-    // Where the craft rides after the history, when the layout puts it
-    // there (I1 = C: then it, not the board, follows the history).
-    let craft_in_tail = turn_context;
     // A role admission this turn meets or refuses with, early and late
     // (FIX 6924): the same refusal, whichever snapshot judges it.
     let role_refused = |refusal: RoleRefusal| match refusal {
@@ -333,12 +330,13 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // deliveries. FIX 8133: the newcomer mark still precedes this read; FIX
     // 6794: the board still rides the dynamic tail, before anything the turn
     // witnesses.
-    let board = recall::turn_board(
+    let mut board = recall::turn_board(
         server,
         auth,
         &request.text,
         &request.conversation_ref,
         request.agent_ref.as_deref(),
+        agent,
     )
     .await;
     // Admitted through its role on the current snapshot, after hydration:
@@ -376,6 +374,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }),
     });
     let board_rows = read_board.map(|board| board.rows.clone());
+    let rider_ack = board
+        .as_mut()
+        .ok()
+        .and_then(Option::as_mut)
+        .and_then(|board| board.rider_ack.take());
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
@@ -591,14 +594,14 @@ pub(in crate::api::ai::chat) async fn start_turn(
         answering,
     );
     // DESIGN-V2 R2: once the reply lands whole, the session coordinator
-    // stages its canonical successor; I1 = C: then prepares the next turn's
-    // state part beside it, when that part is the message right after the
-    // history: the board rode, and no resident craft rides there.
-    let next = (recalled && craft_in_tail.is_none()).then(|| {
+    // stages its canonical successor; I1 = C: then prepares beside it what
+    // the next turn puts right after the history, when the board rode: the
+    // craft where the layout puts it there (FIX 14888), then the state part.
+    let next = recalled.then(|| {
         Arc::new(super::next_turn::ChatNextTurn {
             server: Arc::clone(server),
-            auth: auth.clone(),
-            credential: credential.clone(),
+            reader: session_reader.clone(),
+            agent,
             conversation: origin,
         }) as Arc<dyn crate::models::NextTurnSource>
     });
@@ -611,6 +614,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         next,
         answering,
     );
+    if recalled && let Some(rider_ack) = rider_ack {
+        rider_ack.commit(server).await;
+    }
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,

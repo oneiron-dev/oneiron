@@ -14,6 +14,10 @@
 //! ([`author_memory`]).
 
 pub(super) mod session;
+mod wait;
+
+pub use wait::VerbHookWaitStatus;
+pub(super) use wait::status as wait_status;
 
 use std::sync::Arc;
 

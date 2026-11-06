@@ -31,4 +31,3 @@ pub fn is_text_field(field: &str) -> bool {
     matches!(field, "body" | "text" | "txt" | "content" | "markdown")
         || (is_metadata_field(field) && !matches!(field, "tags" | "pins"))
 }
-

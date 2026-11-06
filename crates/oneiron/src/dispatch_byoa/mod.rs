@@ -94,6 +94,7 @@ pub mod official_seats;
 mod record;
 mod repo_binding;
 mod seat_candidate;
+mod seat_secrets;
 mod staged_input;
 mod stream;
 mod validate;
@@ -105,9 +106,9 @@ pub use self::official_seats::{
     DispatchOfficialSeat, DrySeatDecision, DrySeatFallback, GrokApiKeySeatAdapter,
     OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatInput, OfficialSeatRegistry,
     OfficialSeatRoute, OfficialSeatSpec, OfficialSeatStamp, OfficialSeatVendor,
-    SIWC_AUTHORIZE_ENDPOINT, SIWC_RESPONSES_BASE_URL, SeatLoginPlan, SeatPlacementApproval,
-    SeatPlanWindow, SignInWithChatGptAdapter, SiwcAuthorizeRequest, XAI_API_BASE_URL,
-    check_seat_placement, decide_dry_seat, pkce_s256_challenge, seat_login_plan,
+    SIWC_AUTHORIZE_ENDPOINT, SIWC_DYNAMIC_AGENT_CLIENT, SIWC_RESPONSES_BASE_URL, SeatLoginPlan,
+    SeatPlacementApproval, SeatPlanWindow, SignInWithChatGptAdapter, SiwcAuthorizeRequest,
+    XAI_API_BASE_URL, check_seat_placement, decide_dry_seat, pkce_s256_challenge, seat_login_plan,
     siwc_authorize_url, validate_official_seat,
 };
 
@@ -129,6 +130,10 @@ pub use self::exhaust::{
     read_checkpoint_frontier,
 };
 pub use self::repo_binding::ByoaRepoBinding;
+pub use self::seat_secrets::{
+    DeclaredHostSecret, declared_host_secrets, pinned_secret_manifest, seat_child_holder,
+    seat_secret_caller,
+};
 pub use self::staged_input::{ByoaInputStager, StagedInputPin};
 pub(crate) use self::staged_input::{StagedJob, erase_staged_input_in_txn};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};

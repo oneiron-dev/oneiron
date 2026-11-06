@@ -4,12 +4,14 @@ mod ledger;
 mod notification_receipt;
 mod notifications;
 mod secret_scan_switch;
+mod world_placement_switch;
 mod world_privacy_switch;
 mod world_privacy_will;
 
 pub(crate) use authority::{
-    is_live_vault_owner_for_store_in_txn, is_live_vault_owner_in_txn, owners_for_store_in_txn,
-    owners_in_txn, sole_recorded_owner_in_txn,
+    is_live_vault_owner_for_store_in_txn, is_live_vault_owner_in_txn,
+    is_live_writing_member_for_store_in_txn, owners_for_store_in_txn, owners_in_txn,
+    sole_recorded_owner_in_txn,
 };
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{
@@ -17,6 +19,7 @@ pub use notifications::{
     PolicyNotificationTarget,
 };
 pub use secret_scan_switch::SecretScanReceipt;
+pub use world_placement_switch::{WorldMachinePlacement, machine_placement_settings};
 pub use world_privacy_switch::WorldPrivacyReceipt;
 pub use world_privacy_will::{
     ForeignWorldPrivacyCarry, ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest,

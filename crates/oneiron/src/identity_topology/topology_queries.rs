@@ -39,8 +39,10 @@ impl Vault {
         let mut actor = false;
         let mut survivor_role = false;
         for event in events {
+            // The decision read whole (FIX 10188): every source of a merge
+            // stored in operation parts.
             let record = self
-                .identity_topology_event_in_txn(rtxn, &event.event_id)?
+                .identity_topology_decision_in_txn(rtxn, &event.event_id)?
                 .ok_or(Error::CorruptedIndex("identity topology event index"))?;
             let StoredIdentityOpAction::Merge { sources, survivor } = &record.action else {
                 continue;
@@ -91,9 +93,18 @@ impl Vault {
     /// authored and door-validated).
     pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(mut record) = self.identity_topology_event_in_txn(&rtxn, id)? else {
+        let Some(raw) = self.identity_topology_event_in_txn(&rtxn, id)? else {
             return Ok(None);
         };
+        // A decision stored in operation parts reads whole (FIX 10188); an
+        // operation part, or a manifest still waiting on one, reads as stored.
+        let mut record = super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+            &self.store,
+            &rtxn,
+            id,
+            raw.clone(),
+        )?
+        .unwrap_or(raw);
         if !matches!(
             record.action,
             StoredIdentityOpAction::AuthorAttribution { .. }

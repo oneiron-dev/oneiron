@@ -14,6 +14,9 @@
 
 use std::collections::BTreeSet;
 
+mod unbound;
+pub use unbound::UnboundMediaSample;
+
 use super::space::{
     EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
     has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,

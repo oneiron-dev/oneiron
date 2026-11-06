@@ -44,7 +44,7 @@ use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, Re
 mod drive;
 mod startup;
 
-use drive::drive;
+use drive::spawn_driver;
 
 /// The waits before each relaunch after a crash or a transient failure, in
 /// seconds; the last repeats without end. A qualified `Ready` starts the
@@ -527,10 +527,17 @@ impl InferenceWorker {
         if self.inner.launcher.is_none() || tokio::runtime::Handle::try_current().is_err() {
             return;
         }
-        let mut state = self.inner.lock();
-        if !state.driving && !state.retiring && !matches!(state.phase, Phase::Failed { .. }) {
-            state.driving = true;
-            tokio::spawn(drive(Arc::clone(&self.inner)));
+        let start = {
+            let mut state = self.inner.lock();
+            let start =
+                !state.driving && !state.retiring && !matches!(state.phase, Phase::Failed { .. });
+            if start {
+                state.driving = true;
+            }
+            start
+        };
+        if start {
+            drop(spawn_driver(Arc::clone(&self.inner)));
         }
     }
 
@@ -547,7 +554,7 @@ impl InferenceWorker {
     /// Registers this caller's demand, waits for a ready incarnation (one a
     /// stopped worker starts for it), and holds it under the returned lease.
     /// An external worker's lease is granted at once and holds nothing.
-    /// Errs only for a parked or retired worker, never for one starting.
+    /// Errs for a parked or retired worker, or when its executor cannot start.
     pub async fn acquire(&self) -> Result<WorkerLease, WorkerUnavailable> {
         self.admit(true).await.map(|lease| {
             lease.unwrap_or_else(|| WorkerLease {
@@ -572,6 +579,7 @@ impl InferenceWorker {
         let mut demand: Option<Demand> = None;
         loop {
             let mut changes = inner.changed.subscribe();
+            let start;
             {
                 let mut state = inner.lock();
                 if state.retiring {
@@ -614,15 +622,20 @@ impl InferenceWorker {
                     });
                     state_changed = true;
                 }
-                if !state.driving {
+                start = !state.driving;
+                if start {
                     state.driving = true;
-                    tokio::spawn(drive(Arc::clone(inner)));
                     state_changed = true;
                 }
                 if state_changed {
                     drop(state);
                     inner.notify();
                 }
+            }
+            if start && spawn_driver(Arc::clone(inner)).await.is_err() {
+                return Err(
+                    inner.unavailable(WorkerReadiness::Unchecked, "its executor did not start")
+                );
             }
             let _ = changes.changed().await;
         }

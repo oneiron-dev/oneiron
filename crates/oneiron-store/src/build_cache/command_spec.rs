@@ -16,4 +16,3 @@ pub struct CodeSecretTaintRef {
     pub secret_ref: String,
     pub rotation_generation: u32,
 }
-
