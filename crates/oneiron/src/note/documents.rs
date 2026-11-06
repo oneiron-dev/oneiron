@@ -424,6 +424,9 @@ pub(crate) fn store_doc(
         for pin in &pins {
             crate::batch::secret_scan::scan_write_payload(pin.quote_text.as_bytes())?;
         }
+        for text in canonical.field_texts()? {
+            crate::batch::secret_scan::scan_write_payload(text.as_bytes())?;
+        }
     }
     let found = canonical.title()?;
     let original = doc.text();
