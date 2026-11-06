@@ -243,7 +243,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/hub_read.rs` | src | s | 4 fn | — | Fixed network-read profile for a private disposable hub object store |
 | `src/git_wire/ids.rs` | src | s | 4 struct · 1 enum · 16 fn | GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef | Validated git identity newtypes: ref names, object ids, observations, expectations, publications |
 | `src/git_wire/import_fetch.rs` | src | s | 1 mod | — | Store-layer modules of core `git_wire::import_fetch`; core re-exports each one at its old path |
-| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 4 fn | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
+| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
 | `src/git_wire/mirror_push.rs` | src | s | 1 struct · 3 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
 | `src/git_wire/mutation_commands.rs` | src | s | 6 fn | — | Repository scope identity and the existing redacted Git command bridge |
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
