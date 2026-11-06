@@ -14,9 +14,18 @@ not an authenticated owner or leased-run door.
 Native Memory callers can use `code_proposal_rereview_as(owner, original, input)`
 or `repo_proposal_rereview_for_run(binding, original, input, policy, sources)`.
 These use their existing ordinary submission input and return records. The input's
-content is replaced internally. They submit CommitFile changes only, as their ordinary
-submission counterparts do. ResolveConflictFile-specific Memory callers, HTTP and SDK
-surfaces are not added here; the trusted core still accepts both ordinary operations.
+content is replaced internally. These two callers submit CommitFile changes only, as
+their ordinary submission counterparts do.
+
+For an owner-submitted conflict resolution, use
+`code_proposal_resolve_rereview_as(owner, original, input)` with the existing
+`CodeProposalResolveRequest`. It retains the ordinary branch-subject, conflict-claim
+and conflict-task checks before reading the original through the current credential.
+The original must name the same repository, path, branch and conflict subject before
+any handle is resolved. Fresh actor/session/provenance and the same owner writer
+revalidation remain in force. The existing resolve door is unchanged for submissions
+without an original. A leased-run resolution caller, HTTP and SDK surfaces are not
+added here; the trusted core still accepts both ordinary operations.
 
 The owner caller validates the actual owner, repository and attribution sources, and
 reads the original through its current credential. The run caller admits the current

@@ -30,13 +30,16 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .run_for_pack()?;
-        let final_read = self.filter_search_results(
+        let final_read = self.filter_search_results_with_suppression(
             output.scores,
             limit,
             requested,
             &filter,
             &policy,
-            output.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: output.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &output.revisions,
         )?;
         Ok(LoopSearch {

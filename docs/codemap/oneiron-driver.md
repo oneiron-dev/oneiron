@@ -30,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/inference_admission/ticket.rs` | src | s | 11 fn | — | Ticket waits and cancellation for the parent device queue |
 | `src/supervisor/inference_device.rs` | src | m | 6 struct · 2 enum · 21 fn · 3 crate-vis | DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource, TryReserveOutcome, WorkEnvelope | One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency… |
 | `src/supervisor/inference_worker.rs` | src | L | 7 struct · 1 enum · 2 trait · 25 fn · 1 type · 5 const | InferenceWorker, LaunchFailure, RunningWorker, UnloadOutcome, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease +2 | One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an… |
-| `src/supervisor/inference_worker/drive.rs` | src | m | 1 crate-vis | — | A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and… |
+| `src/supervisor/inference_worker/drive.rs` | src | m | 2 crate-vis | — | A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and… |
 | `src/supervisor/inference_worker/startup.rs` | src | s | 1 fn · 1 crate-vis | — | A replacement's startup follows the retirement of every pending predecessor |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn | WakeSupervisor, WakeSupervisorReport | The supervisor loop: one arbiter over fresh ticks, owed retries and wave quanta (see `arbiter`), at most one… |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |

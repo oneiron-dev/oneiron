@@ -258,6 +258,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
