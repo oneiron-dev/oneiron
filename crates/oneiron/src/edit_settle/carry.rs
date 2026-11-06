@@ -65,7 +65,7 @@ mod sheet_keep;
 pub(super) use sheet_keep::SheetKeep;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
-const WITHDRAWALS: SideTable<(EntityId, [u8; 32]), UnitWithdrawal, Named> =
+pub(super) const WITHDRAWALS: SideTable<(EntityId, [u8; 32]), UnitWithdrawal, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_UNIT_WITHDRAWAL);
 
 /// How long a wake that failed waits before it is tried again.
@@ -915,6 +915,7 @@ impl Vault {
             reason: Some("units_withdrawn".to_owned()),
             sheet_answers: held.sheet_answers.clone(),
             deck: None,
+            discarded_words: None,
         };
         RECORD.put(&self.store, wtxn, &key, &record)?;
         self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
