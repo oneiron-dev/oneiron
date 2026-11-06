@@ -233,6 +233,7 @@ impl SyncClient {
                     .map(PreparedSyncFrame::from),
             );
         }
+        self.consume_landed_ask_intents(tag);
         Ok(responses)
     }
 

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4585 declarations.
-Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1267 facade rows, 4592 declarations.
+Inputs: 1197 of 1267 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1099 of 1267 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -15862,6 +15862,37 @@ TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskA
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
+class AskForwardActWord(TypedDict):
+    word: TaskAskWord
+AskForwardAct = Literal["void"] | AskForwardActWord
+class TaskAnswerForwardChallengeRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+class TaskAnswerForwardChallenge(TypedDict):
+    challenge: str
+class AskForwardHolderProof(TypedDict):
+    token: str
+    signature: str
+class TaskAnswerForwardRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+    proof: AskForwardHolderProof
+class AskForwardReceiptPending(TypedDict):
+    state: Literal["pending"]
+    intent_ref: EntityId
+class AskForwardReceiptAnswered(TypedDict):
+    state: Literal["answered"]
+    intent_ref: EntityId
+    answer: TaskAskAnswer
+class AskForwardReceiptVoided(TypedDict):
+    state: Literal["voided"]
+    intent_ref: EntityId
+    generation: int
+AskForwardReceipt = AskForwardReceiptPending | AskForwardReceiptAnswered | AskForwardReceiptVoided
+class TaskAnswerForwardStatusRequest(TypedDict):
+    intent_ref: EntityId
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str

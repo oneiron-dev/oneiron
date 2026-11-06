@@ -148,6 +148,14 @@ pub const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm.v1";
 /// person.
 pub const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
 
+/// A replica's relayed word or void on an ask another node admitted
+/// (`task_verb::ask_forward`, FIX 7494). Parts: group, holder, intent key.
+pub const TASK_ASK_FORWARD_INTENT: &[u8] = b"oneiron.tasks.ask.forward_intent.v1";
+
+/// The admitting node's result for one relayed intent
+/// (`task_verb::ask_forward`, FIX 7494). Parts: intent.
+pub const TASK_ASK_FORWARD_RESULT: &[u8] = b"oneiron.tasks.ask.forward_result.v1";
+
 /// The TASK an Auto post names (`task_verb::highway_post`). Parts: actor,
 /// intent key. The store-local vault id is left out on purpose: every replica
 /// of one vault holds its own, and one post must name one TASK on all of them.
@@ -328,7 +336,7 @@ pub const IDENTITY_TOPOLOGY_OPERATION_PART: &[u8] = b"oneiron/identity-topology/
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 60] = [
+pub(crate) const ALL: [&[u8]; 62] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -360,6 +368,8 @@ pub(crate) const ALL: [&[u8]; 60] = [
     TASK_ASK_SETTLEMENT,
     TASK_ASK_SOFT_CONFIRM,
     TASK_ASK_GUEST_GRANT,
+    TASK_ASK_FORWARD_INTENT,
+    TASK_ASK_FORWARD_RESULT,
     TASK_POST,
     TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,

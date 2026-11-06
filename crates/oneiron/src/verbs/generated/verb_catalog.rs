@@ -835,6 +835,9 @@ pub enum AgentVerb {
     Ask,
     Wait,
     TasksAnswer,
+    TasksAnswerForwardChallenge,
+    TasksAnswerForward,
+    TasksAnswerForwardStatus,
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
@@ -2124,6 +2127,9 @@ impl AgentVerb {
         Self::Ask,
         Self::Wait,
         Self::TasksAnswer,
+        Self::TasksAnswerForwardChallenge,
+        Self::TasksAnswerForward,
+        Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
@@ -3440,6 +3446,9 @@ impl AgentVerb {
             Self::Ask => "ask",
             Self::Wait => "wait",
             Self::TasksAnswer => "tasks.answer",
+            Self::TasksAnswerForwardChallenge => "tasks.answer.forward.challenge",
+            Self::TasksAnswerForward => "tasks.answer.forward",
+            Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
@@ -4741,6 +4750,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -6059,6 +6071,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -7495,6 +7510,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -8410,6 +8428,7 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForward
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
@@ -8687,7 +8706,10 @@ impl AgentVerb {
         )
     }
     pub const fn is_task_work(self) -> bool {
-        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+        matches!(
+            self,
+            Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer | Self::TasksAnswerForward
+        )
     }
     pub const fn takes_task_decisions(self) -> bool {
         matches!(
@@ -9548,6 +9570,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
@@ -10838,6 +10863,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
@@ -13746,6 +13774,15 @@ impl AgentVerb {
             }
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."
+            }
+            Self::TasksAnswerForwardChallenge => {
+                "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."
+            }
+            Self::TasksAnswerForward => {
+                "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."
+            }
+            Self::TasksAnswerForwardStatus => {
+                "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."
             }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
