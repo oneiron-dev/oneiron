@@ -13,7 +13,7 @@ mod host_occurrence;
 mod raw_put;
 mod reader;
 
-pub(in crate::code_run::storage) use self::raw_put::raw_put_publishes_descriptor;
+pub(in crate::code_run::storage) use self::raw_put::raw_put_descriptor_in_txn;
 
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
@@ -481,9 +481,11 @@ pub(in crate::code_run::storage) fn owned_body(
             StoredBody::File { .. } => BodyLocation::File,
         },
     };
+    let occurrence = ResultOccurrence::of(Some(owner), output)?.id();
     Ok(OwnedBody {
         owner,
-        occurrence: ResultOccurrence::of(Some(owner), output)?.id(),
+        occurrence,
+        mark_occurrence: occurrence,
         state: if output.complete {
             BodyState::Complete { body }
         } else {
