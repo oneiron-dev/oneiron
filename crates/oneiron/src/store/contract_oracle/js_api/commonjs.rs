@@ -280,7 +280,6 @@ fn whole_sequence_values<'ast, 'src>(
     }
     let mut sequence_accounted = BTreeSet::new();
     let mut values = Vec::new();
-    let mut fresh_prefix = None;
     for expression in replacements {
         let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
             return None;
@@ -300,17 +299,14 @@ fn whole_sequence_values<'ast, 'src>(
             return None;
         }
         let value = assignment.right.get_inner_expression();
-        let fresh = fresh_value(value);
-        if fresh_prefix.is_some_and(|prefix| prefix != fresh)
-            || (!fresh
-                && !whole_value(value, semantic, &mut sequence_accounted)
-                && !(alias && wrapper(value, "exports", semantic, &mut sequence_accounted)))
+        if fresh_value(value) {
+            values.push(value);
+        } else if !whole_value(value, semantic, &mut sequence_accounted)
+            && !(values.is_empty()
+                && alias
+                && wrapper(value, "exports", semantic, &mut sequence_accounted))
         {
             return None;
-        }
-        fresh_prefix = Some(fresh);
-        if fresh {
-            values.push(value);
         }
     }
     let last = last.get_inner_expression();

@@ -128,7 +128,12 @@ instead replaces the current value once. For example,
 `module.exports = (module.exports = module.exports, {b: 2})` contributes `b` and
 detaches the old wrapper alias. The same object-literal, function, arrow and class
 rules apply to that final value, including unresolved interior references.
-Mixing current reads and fresh prefix values keeps the ordinary fallback.
+Fresh values and current native whole-slot reads may also appear in the same
+flat prefix. Every fresh value is processed in source order, including its
+unresolved interior references. Reading the current slot between replacements
+keeps that value unchanged. A prefix `exports` read still requires the original
+alias and must occur before the first fresh replacement. Reading that old wrapper
+after a replacement keeps the ordinary fallback; its old keys are not restored.
 
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and other sequence-valued terminals keep
