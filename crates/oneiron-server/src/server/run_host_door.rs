@@ -28,8 +28,11 @@
 //! `self.focus.*` and a keyed `describe`, run the engine's board dispatcher
 //! over the agent's own board on the run's own STREAM connection, which goes
 //! when the door does. Its `describe(self)` reads the run's own self brief,
-//! and its `vault.weave.lens` renders the agent's own lens on the run's
-//! line, its card held for the run (FIX 2086). A successful answer the run
+//! through the brief's custody once its prefix was delivered; a pumped run's
+//! brief is installed for its live run and lent to its executor through its
+//! `ResidentSelfBrief` port (FIX 17594 D3). Its `vault.weave.lens` renders the
+//! agent's own lens on the run's line, its card held for the run (FIX 2086).
+//! A successful answer the run
 //! reads as it stands carries the frame that connection queued, beside its
 //! output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
@@ -85,6 +88,7 @@ mod board_carrier;
 mod host_rows;
 mod media_step;
 mod resident_rows;
+mod self_brief_port;
 
 pub(crate) use self::media_step::RunMediaStep;
 
@@ -136,6 +140,19 @@ pub(crate) struct RunHostDoor {
     /// its key. Its rows' surfaces take it from the call's origin. `None`
     /// for a pumped run and a program no slip woke.
     proof: Option<VerifiedSlip>,
+    /// What removes the self brief installed under the run's connection.
+    brief_lifetime: BriefLifetime,
+}
+
+/// What removes the self brief installed under a door's connection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BriefLifetime {
+    /// The door's drop: a turn program's door, which no brief is lent to
+    /// (Engine call DREAMER A).
+    Door,
+    /// The retirement of the run's live run (Engine call RESUME C): a pumped
+    /// run's door, whose brief outlives a durable wait and the door with it.
+    LiveRun,
 }
 
 impl RunHostDoor {
@@ -159,7 +176,17 @@ impl RunHostDoor {
             actor,
             runtime,
             proof: None,
+            brief_lifetime: BriefLifetime::Door,
         }
+    }
+
+    /// This door, for a pumped run whose self brief lives with its live run
+    /// (FIX 17594 D3, Engine call RESUME C): dropping the door leaves the
+    /// brief, which the live run closes as it retires.
+    #[must_use]
+    pub(crate) fn with_live_run_brief_lifetime(mut self) -> Self {
+        self.brief_lifetime = BriefLifetime::LiveRun;
+        self
     }
 
     /// This door, bound to the waking slip's live view of the turn program
@@ -553,9 +580,21 @@ impl AgentVerbDoor for RunHostDoor {
 impl Drop for RunHostDoor {
     fn drop(&mut self) {
         let server = Arc::clone(&self.server);
-        let (actor, board) = (self.actor, self.board.clone());
-        self.runtime
-            .spawn(async move { drop_run_board(&server, actor, &board).await });
+        let board = self.board.clone();
+        // A turn program's brief goes with its door; a pumped run's stays for
+        // its live run, which closes it as the run retires (FIX 17594 D3).
+        let brief = (self.brief_lifetime == BriefLifetime::Door)
+            .then(|| (self.actor.entity_ref(), self.board.0.clone()));
+        self.runtime.spawn(async move {
+            drop_run_board(&server, &board).await;
+            if let Some(key) = brief {
+                server
+                    .self_brief_sessions
+                    .lock()
+                    .await
+                    .close_any_owner(&key);
+            }
+        });
     }
 }
 

@@ -17,6 +17,7 @@ use super::{
     task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
+use oneiron::engine_executor::SelfBriefPort;
 use oneiron::llm::seat::SeatLearningContext;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
@@ -63,7 +64,9 @@ pub(super) fn run_bound(
         tracing::warn!(kind = ?error.kind(), "a resident run's input producers were not declared");
     }
     // One door for the whole run, so its browser lives as long as the run.
-    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    // Its self brief lives longer, with its live run (FIX 17594 D3).
+    let door =
+        Arc::new(RunHostDoor::new(server, actor, runtime, run_id).with_live_run_brief_lifetime());
     let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
@@ -519,7 +522,9 @@ fn hold_seatless_to_list(
 /// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
 /// and its leader calls answer, and its planned team's start is written on
 /// `model_seat` and the entry's line (DOOR-111 S4c-4); `issuer` signs its
-/// leader's subproject spawn.
+/// leader's subproject spawn. Its requests carry the run's self brief,
+/// installed for its live run once its entry's facts are bound (FIX 17594
+/// D3).
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -590,7 +595,7 @@ fn enter_run(
     // attaches, and its guard, held through the whole entry: an action
     // through that handle runs only between entries.
     let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
-    let _serial = live_runs
+    let live = live_runs
         .register(
             vault,
             config.run_id,
@@ -603,8 +608,8 @@ fn enter_run(
             status.input.definition.clone(),
             spend.cloned(),
         )
-        .map_err(text)?
-        .enter();
+        .map_err(text)?;
+    let _serial = live.enter();
     door.bind_meter(line);
     door.bind_lease(lease);
     // FIX 17594: the run ceiling its `describe(self)` states, from the
@@ -623,20 +628,32 @@ fn enter_run(
         actor,
         config.run_id,
     ));
-    let entered = enter_engine_native_run(
-        vault,
-        provider,
-        &bound,
-        config,
-        compaction,
-        reactor,
-        meter,
-        model_seat,
-        planned,
-        status.input.definition.models.clone(),
-        // FIX 17594 D2: the resident entry lends no self-brief port yet.
-        None,
-    );
+    // FIX 17594 D3: the run's self brief, resolved from what this entry
+    // bound and installed under the run's connection, and the port its
+    // requests carry it through. The live run keeps the installation across
+    // its entries and its durable waits, and closes it as it retires (Engine
+    // call RESUME C).
+    let entered = match door.install_self_brief(live.self_brief_owner()) {
+        Ok(brief) => {
+            if let Some(brief) = &brief {
+                live.hold_self_brief(brief.installation());
+            }
+            enter_engine_native_run(
+                vault,
+                provider,
+                &bound,
+                config,
+                compaction,
+                reactor,
+                meter,
+                model_seat,
+                planned,
+                status.input.definition.models.clone(),
+                brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
+            )
+        }
+        Err(error) => Err(EngineRunError::Binding(text(error))),
+    };
     door.bind_meter(None);
     door.bind_lease(None);
     door.bind_run_ceiling(None);

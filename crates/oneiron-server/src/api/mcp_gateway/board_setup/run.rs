@@ -14,7 +14,9 @@ use super::*;
 /// state are keyed on the run's own connection, and nothing is narrowed: the
 /// agent reads its board as a vault-wide connector of its own would:
 /// MEMORIES pins the policy manifest's rows its lane reads (FIX 2646). Its
-/// hook rows are those of the blocks [`run_hook_pins`] keeps.
+/// hook rows are those of the blocks [`run_hook_pins`] keeps. The persons
+/// the prefix of the run's delivered self brief holds on its roster go by
+/// bare handle (FIX 17594 D3).
 pub(crate) async fn run_current_board(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -34,8 +36,15 @@ pub(crate) async fn run_current_board(
         .vault
         .select_board_layout(actor.entity_ref(), true)
         .map_err(|error| mcp_engine_error("board layout selection failed", error))?;
+    // The persons the model reads the run's delivered prefix with, and so
+    // already knows by bare handle; none before its turn one is delivered.
+    let resident = server
+        .self_brief_sessions
+        .lock()
+        .await
+        .acknowledged_residence(&(actor.entity_ref(), connection.0.clone()));
     let (mut sections, omissions, hooks) = run_board_sections(
-        server, actor, &read, &packs, &pins, session, &layout, &mut rows,
+        server, actor, &read, &packs, &pins, session, &layout, &resident, &mut rows,
     )?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
@@ -204,6 +213,27 @@ pub(crate) fn run_brief_pins(
     }
 }
 
+/// The token budget a pumped run's self-brief prefix lays its `people`
+/// roster out under at an epoch boundary (FIX 17594 D3): the `people` share
+/// of the agent's live board layout under the run board's cap, as an HTTP
+/// board's brief lays out under the share of its own cap. `None` when the
+/// layout gives `people` no share.
+///
+/// # Errors
+///
+/// The agent's board layout did not read.
+pub(crate) fn run_brief_people_budget(
+    server: &SyncServer,
+    actor: oneiron::EntityId,
+) -> oneiron::Result<Option<usize>> {
+    let (layout, _) = server.vault.select_board_layout(actor, false)?;
+    let cap_tok = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    )
+    .cap_tok;
+    Ok(layout.share_tok("people", cap_tok))
+}
+
 /// The agent's own read lane, on this device.
 pub(super) fn run_lane(
     server: &SyncServer,
@@ -254,7 +284,9 @@ pub(super) fn run_lane_reads(
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
 /// people and children, the SCRATCHPAD of the run's bound `session`, PACKS
 /// and the packs' own sections. `pins` tag the TASKS rows they name and pin
-/// their other rows into MEMORIES, as on a connector's board.
+/// their other rows into MEMORIES, as on a connector's board. The persons
+/// in `resident`, those the run's delivered self-brief prefix holds, are
+/// named by bare handle.
 pub(super) fn run_board_sections(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -263,6 +295,7 @@ pub(super) fn run_board_sections(
     pins: &[oneiron::context_board::HookPin],
     session: Option<&str>,
     layout: &oneiron::context_board::BoardLayout,
+    resident: &std::collections::BTreeSet<oneiron::EntityId>,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
@@ -298,9 +331,8 @@ pub(super) fn run_board_sections(
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };
-    let resident = std::collections::BTreeSet::new();
     rows.attach_people(
-        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &oneiron::context_board::PeopleView::new(&people, resident),
         &children,
     );
     served.extend(
@@ -322,7 +354,7 @@ pub(super) fn run_board_sections(
             crate::api::context_board::filter_task_rows(
                 &server.vault,
                 read,
-                &oneiron::context_board::PeopleView::new(&people, &resident),
+                &oneiron::context_board::PeopleView::new(&people, resident),
                 Some(actor.entity_ref()),
                 filter,
                 &rows,
@@ -433,7 +465,7 @@ pub(super) fn run_board_sections(
             .memory(actor.entity_ref(), actor.actor_class())
             .at(oneiron::claim::CallerLocality::OnDevice),
         actor.actor_class(),
-        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &oneiron::context_board::PeopleView::new(&people, resident),
     ));
     Ok((sections, omissions, hooks))
 }

@@ -43,7 +43,8 @@ use self::admission::{
 };
 pub(crate) use self::board_observations::{mcp_session_reads, run_session_reads};
 pub(crate) use self::board_setup::{
-    McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier, run_brief_pins,
+    McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier,
+    run_brief_people_budget, run_brief_pins,
 };
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,

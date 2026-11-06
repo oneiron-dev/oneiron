@@ -5,9 +5,11 @@
 //! stages the prefix of the boundary the session has yet to deliver,
 //! acknowledge promotes a staged candidate once its host delivered it, tail
 //! answers a mid-run `describe(self)`, and close removes the installation.
-//! HTTP hydration is the first host to prepare and acknowledge; the native,
-//! MCP and code-mode hosts use the same operations. Nothing here renders on
-//! its own or installs anything.
+//! HTTP hydration prepares and acknowledges through it, and so does a
+//! pumped run's native port (FIX 17594 D3), which installs afresh for its
+//! live run, installs again at the held epoch for each later entry and
+//! advances the epoch at each fold batch; the MCP and code-mode hosts of
+//! later slices use the same operations. Nothing here renders on its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,6 +53,9 @@ struct HostSelfBriefSession {
     render: SelfBriefSession,
     epoch: u64,
     acknowledged: Option<AcknowledgedPrefix>,
+    /// The rows the acknowledged prefix is derived from; empty before one is
+    /// acknowledged.
+    acknowledged_sources: Vec<EntityId>,
     owner: BriefOwner,
 }
 
@@ -85,10 +90,6 @@ pub(crate) struct BriefCandidate {
     sources: Vec<EntityId>,
 }
 
-#[expect(
-    dead_code,
-    reason = "the native, MCP and code-mode hosts of later FIX 17594 slices read a candidate"
-)]
 impl BriefCandidate {
     /// The prefix bytes the candidate delivers.
     pub(crate) fn prefix(&self) -> &str {
@@ -96,6 +97,10 @@ impl BriefCandidate {
     }
 
     /// The persons the candidate prefix's `people` roster holds.
+    #[expect(
+        dead_code,
+        reason = "the MCP and code-mode hosts of later FIX 17594 slices read a candidate's roster"
+    )]
     pub(crate) fn resident_people(&self) -> &BTreeSet<EntityId> {
         self.render.resident_people()
     }
@@ -106,6 +111,10 @@ impl BriefCandidate {
     }
 
     /// The installation the candidate was staged for.
+    #[expect(
+        dead_code,
+        reason = "the MCP and code-mode hosts of later FIX 17594 slices read a candidate's owner"
+    )]
     pub(crate) fn owner(&self) -> BriefOwner {
         self.owner
     }
@@ -125,13 +134,10 @@ pub(crate) enum BriefPreparation<'a> {
         candidate: BriefCandidate,
     },
     /// The installed epoch's prefix is acknowledged: its cached bytes,
-    /// unchanged.
+    /// unchanged, and the rows they are derived from.
     Emitted {
-        #[expect(
-            dead_code,
-            reason = "the native hosts of later FIX 17594 slices deliver these bytes on every request"
-        )]
         prefix: &'a str,
+        sources: &'a [EntityId],
     },
 }
 
@@ -185,11 +191,7 @@ impl InstalledBriefs {
         epoch: u64,
         state: SelfBriefState,
     ) -> oneiron::Result<BriefOwner> {
-        if state.self_ref != actor || session_id.is_empty() {
-            return Err(oneiron::Error::InvariantViolation(
-                "self brief actor or session mismatch",
-            ));
-        }
+        admits(actor, &session_id, &state)?;
         let Self { runs, last_owner } = self;
         let entry = runs.entry((actor, session_id)).or_insert_with(|| {
             *last_owner = last_owner.wrapping_add(1);
@@ -198,6 +200,7 @@ impl InstalledBriefs {
                 render: SelfBriefSession::default(),
                 epoch,
                 acknowledged: None,
+                acknowledged_sources: Vec::new(),
                 owner: BriefOwner(*last_owner),
             }
         });
@@ -207,6 +210,88 @@ impl InstalledBriefs {
         entry.state = state;
         entry.epoch = epoch;
         Ok(entry.owner)
+    }
+
+    /// Installs `state` under `key` as a new installation, for a host whose
+    /// run begins its custody here: whatever was installed under `key` goes,
+    /// and the new installation gets a new owner, the least epoch and no
+    /// acknowledged prefix, so its first boundary is turn one.
+    ///
+    /// # Errors
+    ///
+    /// The state is not the key's agent's, or the session id is empty.
+    pub(crate) fn install_fresh(
+        &mut self,
+        key: BriefKey,
+        state: SelfBriefState,
+    ) -> oneiron::Result<BriefOwner> {
+        admits(key.0, &key.1, &state)?;
+        self.last_owner = self.last_owner.wrapping_add(1);
+        let owner = BriefOwner(self.last_owner);
+        self.runs.insert(
+            key,
+            HostSelfBriefSession {
+                state,
+                render: SelfBriefSession::default(),
+                epoch: u64::MIN,
+                acknowledged: None,
+                acknowledged_sources: Vec::new(),
+                owner,
+            },
+        );
+        Ok(owner)
+    }
+
+    /// Whether `owner`'s installation still holds `key`.
+    pub(crate) fn holds(&self, key: &BriefKey, owner: BriefOwner) -> bool {
+        self.runs.get(key).is_some_and(|run| run.owner == owner)
+    }
+
+    /// Installs `state`, the host's view now, under `key` again at the epoch
+    /// the installation holds: its owner, epoch and acknowledged prefix stay,
+    /// and its next prefix and its tail render from `state`. `false` when
+    /// nothing is installed under `key`.
+    ///
+    /// # Errors
+    ///
+    /// The state is not the key's agent's.
+    pub(crate) fn restate(
+        &mut self,
+        key: &BriefKey,
+        state: SelfBriefState,
+    ) -> oneiron::Result<bool> {
+        admits(key.0, &key.1, &state)?;
+        let Some(run) = self.runs.get_mut(key) else {
+            return Ok(false);
+        };
+        run.state = state;
+        Ok(true)
+    }
+
+    /// Installs `state` under `key` as the epoch after the one `owner`'s
+    /// installation holds: a fold boundary the host's run committed, whose
+    /// prefix [`Self::prepare`] stages next. `false`, with nothing changed,
+    /// when `owner` no longer holds `key`.
+    ///
+    /// # Errors
+    ///
+    /// The state is not the key's agent's, or the epoch would overflow.
+    pub(crate) fn advance(
+        &mut self,
+        key: &BriefKey,
+        owner: BriefOwner,
+        state: SelfBriefState,
+    ) -> oneiron::Result<bool> {
+        admits(key.0, &key.1, &state)?;
+        let Some(run) = self.runs.get_mut(key).filter(|run| run.owner == owner) else {
+            return Ok(false);
+        };
+        run.epoch = run
+            .epoch
+            .checked_add(1)
+            .ok_or(oneiron::Error::ArithmeticOverflow("self brief epoch"))?;
+        run.state = state;
+        Ok(true)
     }
 
     /// Stages the prefix of the boundary `key`'s session has yet to
@@ -236,7 +321,10 @@ impl InstalledBriefs {
             return Ok(run
                 .render
                 .cached_prefix()
-                .map(|prefix| BriefPreparation::Emitted { prefix }));
+                .map(|prefix| BriefPreparation::Emitted {
+                    prefix,
+                    sources: &run.acknowledged_sources,
+                }));
         };
         let mut render = run.render.clone();
         render.set_people_budget_tok(people_budget_tok);
@@ -275,15 +363,12 @@ impl InstalledBriefs {
             boundary: candidate.boundary,
             epoch: candidate.epoch,
         });
+        run.acknowledged_sources = candidate.sources;
         BriefAcknowledgment::Committed
     }
 
     /// The boundary `key`'s delivered prefix was rendered at; `None` before
     /// turn one is acknowledged or when nothing is installed.
-    #[expect(
-        dead_code,
-        reason = "the resident and MCP hosts of later FIX 17594 slices read what was delivered"
-    )]
     pub(crate) fn acknowledged(&self, key: &BriefKey) -> Option<BriefBoundary> {
         self.runs
             .get(key)?
@@ -320,11 +405,6 @@ impl InstalledBriefs {
         })
     }
 
-    /// The brief state installed under `key`.
-    pub(crate) fn state(&self, key: &BriefKey) -> Option<&SelfBriefState> {
-        self.runs.get(key).map(|run| &run.state)
-    }
-
     /// The persons `key`'s prefix roster holds: the acknowledged prefix's
     /// while it covers the installed epoch, else the persons the brief pins
     /// for the boundary still to be delivered.
@@ -340,12 +420,19 @@ impl InstalledBriefs {
         }
     }
 
+    /// The persons `key`'s delivered prefix holds on its roster, whatever
+    /// boundary is still to be delivered: those the model reads the prefix
+    /// with now. Empty before turn one is acknowledged or when nothing is
+    /// installed.
+    pub(crate) fn acknowledged_residence(&self, key: &BriefKey) -> BTreeSet<EntityId> {
+        self.runs
+            .get(key)
+            .filter(|run| run.acknowledged.is_some())
+            .map_or_else(BTreeSet::new, |run| run.render.resident_people().clone())
+    }
+
     /// Removes `key`'s installation only while `owner` holds it, and says
     /// whether it did: a late close never removes a newer owner's.
-    #[expect(
-        dead_code,
-        reason = "the resident and MCP hosts of later FIX 17594 slices close what they installed"
-    )]
     pub(crate) fn close(&mut self, key: &BriefKey, owner: BriefOwner) -> bool {
         let held = self.runs.get(key).is_some_and(|run| run.owner == owner);
         if held {
@@ -360,6 +447,16 @@ impl InstalledBriefs {
     }
 }
 
+/// Refuses a state that is not `actor`'s, or an empty session id.
+fn admits(actor: EntityId, session_id: &str, state: &SelfBriefState) -> oneiron::Result<()> {
+    if state.self_ref != actor || session_id.is_empty() {
+        return Err(oneiron::Error::InvariantViolation(
+            "self brief actor or session mismatch",
+        ));
+    }
+    Ok(())
+}
+
 /// The installed briefs behind one lock. A host holds the lock from prepare
 /// through acknowledge when it must commit with nothing in between, as HTTP
 /// hydration does.
@@ -372,5 +469,11 @@ impl SelfBriefCustody {
     /// Locks the installed briefs for one or more operations.
     pub(crate) async fn lock(&self) -> MutexGuard<'_, InstalledBriefs> {
         self.briefs.lock().await
+    }
+
+    /// [`Self::lock`] from a thread outside any runtime, as a live run that
+    /// retires there closes its brief.
+    pub(crate) fn blocking_lock(&self) -> MutexGuard<'_, InstalledBriefs> {
+        self.briefs.blocking_lock()
     }
 }
