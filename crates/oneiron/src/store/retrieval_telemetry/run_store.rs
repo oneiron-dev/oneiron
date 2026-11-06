@@ -904,6 +904,25 @@ fn stage_context_pack_retrieval_run_finalize(
     {
         inputs.config["pack"] = pack_config;
     }
+    if let Some(memory) = memory.as_deref_mut() {
+        let bytes = record
+            .empty_reason
+            .as_ref()
+            .map_or(0, |reason| reason.capacity() as u64);
+        let bytes = record.replay_inputs.as_ref().map_or(bytes, |inputs| {
+            [
+                inputs.query_ref.as_ref(),
+                inputs.corpus_snapshot_ref.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(
+                bytes.saturating_add(inputs.known_config_backing_bytes()),
+                |bytes, value| bytes.saturating_add(value.capacity() as u64),
+            )
+        });
+        memory.materialized(0, bytes);
+    }
     super::turn_index::put(target, wtxn, &record)?;
     if let Some(memory) = memory {
         let row = RETRIEVAL_RUN.stage(&run_id, &record)?;
