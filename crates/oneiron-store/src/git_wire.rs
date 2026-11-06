@@ -15,6 +15,7 @@ pub mod mutation_commands;
 pub mod objects;
 pub mod operation;
 pub mod origin_relay;
+pub mod path_text;
 pub mod plan;
 pub mod process;
 pub mod projected_object;
