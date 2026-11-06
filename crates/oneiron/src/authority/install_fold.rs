@@ -519,6 +519,18 @@ impl NoVouch {
             &self.fold.grant_travel,
             &fresh_grants,
         );
+        // FIX 4633: report-only vouch-only owner-work hashes. Diagnostic
+        // only: this never touches `held_back`, counts, or execution.
+        if super::owner_work_diagnostics::OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY {
+            let mut vouch_only = BTreeSet::new();
+            for hash in fold.counted_owner_work_request_hashes() {
+                if self.fold.counted_owner_work_request(&hash).is_none() && !self.fresh(fold, &hash)
+                {
+                    vouch_only.insert(hash);
+                }
+            }
+            fold.install.vouch_only_owner_work = Some(vouch_only);
+        }
     }
 }
 
@@ -598,5 +610,6 @@ pub(super) fn held_back(
     InstallBound {
         held_back,
         no_vouch_deadline: None,
+        vouch_only_owner_work: None,
     }
 }

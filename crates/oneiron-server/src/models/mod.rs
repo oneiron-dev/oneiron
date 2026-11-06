@@ -124,7 +124,9 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+pub(crate) use worker_host::{
+    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{

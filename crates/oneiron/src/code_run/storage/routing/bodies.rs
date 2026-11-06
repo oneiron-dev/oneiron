@@ -14,6 +14,19 @@ use crate::side_table::RoutedDbs;
 mod admitted_reply;
 
 impl ExecutorStorage<'_> {
+    /// Live PERSON and custody prints for this execution's typed output text.
+    pub(crate) fn code_run_known_source(
+        &self,
+        exec_run: EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        match self {
+            Self::Canonical(vault) => vault.run_known_source(exec_run),
+            Self::Session(binding) => {
+                binding.answered(|| binding.session.run_known_source(exec_run))
+            }
+        }
+    }
+
     /// A raw spool for one reply body of the run (FIX 5718 part 3, FIX
     /// 6647), into the body directory it is published into: the wall admits
     /// it whole when it is published ([`Self::publish_code_run_reply`]).
