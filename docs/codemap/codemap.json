@@ -25290,7 +25290,7 @@
      "surface": {
       "const": 7,
       "enum": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -37865,13 +37865,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/doors/dreamer_run.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40877,7 +40877,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -48551,7 +48551,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 4
      }
     },
@@ -63463,7 +63463,7 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -63496,7 +63496,7 @@
      "path": "src/scope_summary/request/requester_lane.rs",
      "purpose": "FIX 2194 (OF-506): a queued summary keeps the read lane its requester declared it under",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -76537,7 +76537,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 12,
       "struct": 1
      }
@@ -76570,7 +76570,7 @@
      "path": "src/sync/manager/pending_mirror.rs",
      "purpose": "Durable pending-mirror markers (FIX 7957, FIX 9599)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
