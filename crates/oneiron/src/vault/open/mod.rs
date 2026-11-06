@@ -888,6 +888,22 @@ impl Vault {
         }
     }
 
+    /// Invalidate own devices' copies of `id`'s forks after a committed fork
+    /// change at this authority (FIX 12789): a fork made or uploaded here, a
+    /// decision, a bundle opened. Content-free and best effort, as
+    /// [`Self::notify_note_document`]; a replica's notice stays on it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note_forks(id);
+        }
+    }
+
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
     /// compaction ran: an attached manager decides for its own live handles,
     /// and an attached-but-dropped manager defers rather than rewriting a row a
