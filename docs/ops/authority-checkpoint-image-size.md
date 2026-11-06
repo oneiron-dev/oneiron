@@ -46,6 +46,19 @@ accounting, arbitrary end-to-end transport, or a runtime bound. In particular,
 WindowSync frame limits are separate from checkpoint multipart transport. It
 does not complete FIX5114.
 
+## Cold reads across a changed authority context
+
+A changed pinned root or peer consent set re-judges each dependent covered row
+under both the image's inputs and the current inputs. A world-refolded row may
+use a crossed main-log parent's state rebuilt from that parent's canonical
+signed body already carried in the image. The rebuilt state uses the same
+same-vault parent merge and signed-sequence bound as the original world refold.
+Both judgments must still equal the image's kept state.
+
+Missing replay states, missing carried bodies, side-row parents, and failed
+reconstruction still request the whole history. This does not add image bodies,
+change the checkpoint schema or compaction trigger, or relax row validation.
+
 ## Rollout
 
 Use matching engine/server and remote-client code in an authorized deployment.
