@@ -91,11 +91,36 @@ validate. This is a dedicated own-device source-position import, not
 `RowPut::Birth`, replay authority, restored `FacetOf`, or a new read grant.
 Optional metadata errors do not fail an otherwise working raw update.
 
+## Own-device bounded replacement
+
+The native replacement manager prepares the exact incoming snapshot's
+positions under the original live proof. After the existing concurrent-key,
+queued-write and tombstone decisions, it selects only those incoming values
+still bound to the chosen candidate, before reverse rematerialization can
+remove uninstalled position data. Reverse, forward and canonical export
+scrubs keep their original behavior; unsupported root values are not retained
+or later published as source truth.
+
+Before the final persistence writer, the caller pins result bodies. An
+optional nested savepoint then checks the final candidate's owner carrier
+and file reference, original current connection key, complete canonical
+facts, known births and every row's peer origin. It installs only the native
+BASE/default position with no immutable prior. The savepoint joins the SAME
+snapshot/queue/mirror persistence transaction before its existing freshness
+write. Any optional failure discards all staged position/revision writes
+and leaves ordinary replacement intact. A precommit transaction failure
+rolls the metadata back with the snapshot; an after-commit error does not
+imply rollback. Observers and registry publication remain last.
+
+Raw/public replacement, sealed relay and kit restore supply no live proof
+and do not enter this optional path. This does not activate deferred or
+body-later position import.
+
 ## Remaining cases
 
-The live client UPDATE and server push success boundaries are wired. Bounded
-replacement, deferred/body-later arrival, recovery and later replay do not
-mint an import proof. Raw, held, staged, missing or unknown evidence keeps its
-existing behavior. Those cases and a runtime demonstration remain separate
+The live client UPDATE, server push and live own-device bounded-replacement
+boundaries are wired. Deferred/body-later arrival, recovery and later replay
+do not mint an import proof. Raw, held, staged, missing or unknown evidence
+keeps its existing behavior. Those cases and a runtime demonstration remain separate
 work; this does not close all of FIX40. The older
 foreign-Connect proposal is not enabled by this path.
