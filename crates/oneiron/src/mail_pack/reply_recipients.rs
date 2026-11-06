@@ -113,14 +113,20 @@ fn group_refused(header: &str, hint: &str) -> MemoryError {
 
 /// The mailboxes of one address header value, a comma-separated list
 /// (`Name <a@b>, c@d`): each one's bare address. Commas inside a quoted
-/// display name or an angle address do not split it. An empty group
+/// display name (its `\\"` escapes included) or an angle address do not
+/// split it. An empty group
 /// (`undisclosed-recipients:;`) names no mailbox; a header whose group
 /// names members never reaches here ([`names_group_members`]).
 fn mailboxes(text: &str) -> Vec<String> {
     let mut parts = Vec::new();
-    let (mut start, mut quoted, mut angled) = (0, false, false);
+    let (mut start, mut quoted, mut angled, mut escaped) = (0, false, false, false);
     for (at, character) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match character {
+            '\\' if quoted => escaped = true,
             '"' if !angled => quoted = !quoted,
             '<' if !quoted => angled = true,
             '>' if !quoted => angled = false,
