@@ -34,11 +34,16 @@ webpki-roots = "1"
 # rustls only, and both root stores. `retry(never())` and `Policy::none()` are
 # set on the client itself, so no feature another crate turns on can make it
 # resend.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots"] }
+# `stream`: a git exchange's spooled body goes as the send takes it (OSH-3).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "sync", "time"] }
+# `fs`: a git exchange's body spool; `macros`: its send waits on the
+# daemon's hang-up beside the send.
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+# A git exchange's body spool: a private unnamed file.
+tempfile = "3"
 zeroize = "1"
 rcgen = { version = "0.14", optional = true }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
@@ -49,10 +54,10 @@ libc = "0.2"
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 # The same-user child's channel: each call's socket passes to it as a
 # descriptor (SCM_RIGHTS), and the daemon polls it for the child's hang-up.
-rustix = { version = "1", features = ["event", "net", "std"] }
+# `fs`: the disk room a git exchange's body spool needs.
+rustix = { version = "1", features = ["event", "fs", "net", "std"] }
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints]
