@@ -15,6 +15,7 @@ mod claim_output;
 mod comm_widen;
 mod connector;
 mod connector_call;
+mod connector_output;
 mod connector_pack;
 mod connector_slate;
 mod connector_slate_revision;
