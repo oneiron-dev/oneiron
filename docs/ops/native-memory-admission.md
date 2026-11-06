@@ -36,18 +36,22 @@ keeps the existing native fallback, and ordinary offline preparation APIs stay
 unadmitted. Third-party prepared bytes are never substituted for trusted bytes;
 the first-party organ path and its work limits are unchanged.
 
-This native path has no actual call deadline or stop handle. It uses the
-existing `MachineFloor::lease_untimed`, not the configured timeout of an organ
-call that never ran. The server's `OrganFloor` forwards this to the same process
-memory line.
+The native path cannot wait for capacity while its caller holds source
+inputs: concurrent preparations could otherwise keep each other's required
+room pinned. `MachineFloor::try_lease` forwards through `OrganFloor` to the
+same native process line. It uses the existing floor, live-memory/fallback fit
+and FIFO rules; the decision and charge share the line's lock. A queued waiter
+is never bypassed. If a booking would wait, no reservation or ticket is made.
+The existing retryable preparation status uses the new diagnostic code
+`memory_unavailable`, letting the caller unwind its inputs before retrying. Busy memory is not a fabricated deadline or
+a permanent physical-floor refusal. Other organ/frame wait paths are unchanged.
 
 Each parse attempt draws only from its already-reserved complete pool. A
 shortfall cancels that attempt internally and unwinds its buffers and stages;
-its pool lease is dropped too, before any new memory wait. The next attempt
-books a fresh pool of exactly the observed required size on the same FIFO line.
-No parsed buffer, decoded cache or previous pool reservation is held across
-that wait. There is no speculative growth, synthetic deadline or claim of
-materialization.
+its pool lease is dropped too, before the next nonblocking booking. The next
+attempt requests a fresh pool of exactly the observed required size. No parsed
+buffer, decoded cache or previous pool reservation is held across that booking.
+There is no speculative growth, synthetic deadline or claim of materialization.
 
 Before booking, the existing native `check_irreducible_peak` predicate checks
 the caller's `pinned_buffer_bytes` plus the required complete pool. The seal

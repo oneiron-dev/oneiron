@@ -173,6 +173,29 @@ impl MachineMemory {
         self.wait_in_line(bytes, None, stopped)
     }
 
+    /// Attempts an admission on the same physical-memory line without
+    /// waiting for capacity or bypassing any queued waiter. `None` leaves
+    /// the line unchanged; a caller holding inputs can unwind before retrying.
+    ///
+    /// # Errors
+    /// The physical floor when `bytes` cannot fit even on an idle machine.
+    pub fn try_lease(&self, bytes: u64) -> Result<Option<MemoryLease>, MemoryRefusal> {
+        let shared = &self.shared;
+        let most = shared.total.saturating_sub(shared.reserve);
+        if bytes > most {
+            return Err(MemoryRefusal::Floor {
+                needed: bytes,
+                available: most,
+            });
+        }
+        let mut line = lock(&shared.line);
+        if line.waiting.is_empty() && shared.fits(&line, bytes) {
+            Ok(Some(self.admit(&mut line, bytes)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// The line every lease waits in, until `deadline` when it has one.
     fn wait_in_line(
         &self,
