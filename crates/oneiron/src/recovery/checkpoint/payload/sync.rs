@@ -43,9 +43,10 @@ use crate::store::checkpoint_payload::rows::{
 use crate::sync::checkpoint_payload::{
     AtomHome, AtomRef, CapturedSyncRow, CapturedSyncRows, KindPlacement, LoroCarrier, OpenedAtom,
     OpenedSyncAtoms, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncSkeleton,
-    SyncUnclassified, captured_row_window, project_checkpoint_documents, project_checkpoint_sync,
-    project_checkpoint_windows, read_document_basis, restore_checkpoint_documents,
-    restore_checkpoint_sync, restore_checkpoint_windows,
+    SyncUnclassified, captured_row_window, check_projected_sync_row_in_txn,
+    project_checkpoint_documents, project_checkpoint_sync, project_checkpoint_windows,
+    read_document_basis, restore_checkpoint_documents, restore_checkpoint_sync,
+    restore_checkpoint_windows,
 };
 use crate::sync::selector::RepoCopyAliases;
 
@@ -148,6 +149,11 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         value: &[u8],
         out: &mut Captured,
     ) -> Result<bool> {
+        if matches!(carrier, Carrier::SyncQueue)
+            && crate::sync::queue::capture_home_claim_actor_copy(key, value, out)?
+        {
+            return Ok(true);
+        }
         let rows = CapturedSyncRows::new(vec![CapturedSyncRow {
             carrier: sync_carrier(carrier),
             key,
@@ -221,6 +227,7 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         let restored = restore_checkpoint_sync(&skeleton, &OpenedParts(&opened))?;
         let documents = restore_checkpoint_documents(sync_carrier(carrier), &opened)?;
         for (at, value) in restored.rows.iter().chain(&documents) {
+            check_projected_sync_row_in_txn(self.dbs, txn, at, value)?;
             restore_row_in_txn(self.dbs, txn, at, value)?;
         }
         Ok(Restored {

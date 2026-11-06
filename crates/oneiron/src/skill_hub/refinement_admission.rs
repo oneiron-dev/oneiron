@@ -176,6 +176,32 @@ fn continues_admitted_refinement(
     Ok(declares_refinement(&prior))
 }
 
+/// Read only the actual current row, never carried or historical FIRST bytes.
+fn same_stored_skill_candidate(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(false);
+    };
+    let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(false);
+    };
+    if body == data {
+        return Ok(true);
+    }
+    #[cfg(feature = "sync")]
+    {
+        Ok(crate::entity_doc::resolve_record_body(store, txn, id, body)?.as_slice() == data)
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        Ok(false)
+    }
+}
+
 /// The useful-upstream requirement survives replay, same-byte aliases and
 /// deletion even when the receiver has no locally submitted delta row.
 pub(crate) fn skill_refinement_origin_in_txn(
@@ -223,10 +249,7 @@ pub(crate) fn validate_refinement_admission(
             return Err(Error::CorruptedIndex("skill refinement origin binding"));
         }
         if control.is_none() {
-            let same_stored_candidate = crate::ports::EntityStoreRead::port_entity_raw(
-                store, txn, id,
-            )?
-            .is_some_and(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data));
+            let same_stored_candidate = same_stored_skill_candidate(store, txn, id, data)?;
             let record = crate::skill::decode_skill_record(data)?;
             if !same_stored_candidate
                 || record.lifecycle_status != crate::skill::SkillLifecycle::Candidate

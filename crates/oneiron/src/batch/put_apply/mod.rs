@@ -32,6 +32,30 @@ use crate::store::Store;
 use crate::write_envelope::task_body::TaskRole;
 use std::collections::BTreeSet;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::apply::AdmittedRecordDocumentPut;
+#[cfg(feature = "sync")]
+pub(super) use self::apply::PendingNativeSkillPut;
+
+pub(super) struct AppliedPut {
+    #[cfg(feature = "sync")]
+    pub(super) record_document: Option<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
+    pub(super) pending_native_skill_put: Option<PendingNativeSkillPut>,
+    pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    /// Revision companions a PROJECT put captured, for the batch to write next.
+    pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
+    /// Projects whose frontier the batch end refreshes.
+    pub(super) touched_projects: BTreeSet<EntityId>,
+    pub(super) pending_embedding_token: Option<Vec<u8>>,
+    pub(super) cleared_pending_embedding: bool,
+    pub(super) had_vector_mutation: bool,
+    pub(super) is_lexical_query_hint_claim: bool,
+    /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
+    /// caller's explicit-source reconciliation. Empty on every other path.
+    pub(super) evicted_shell_sources: BTreeSet<EntityId>,
+}
+
 mod apply;
 mod claim_admission;
 mod connector_key_guard;

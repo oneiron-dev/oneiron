@@ -25,7 +25,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_EMBEDDING_SETUP,
-    ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{AssetBodyFacts, asset_file_in_txn};
@@ -42,10 +42,11 @@ pub(in crate::sync) const PEER_ORIGIN_MAP: &str = "peer_origins";
 /// MESSAGE row takes the own-device lane only when no peer's import brought
 /// it, on whichever own machine it lands (FIX 11709). ASSET and ASSET_TEXT
 /// position imports likewise exclude peer-origin owner and source bytes.
-const PEER_JUDGED_KINDS: [u8; 5] = [
+const PEER_JUDGED_KINDS: [u8; 6] = [
     ENTITY_TYPE_AGENT_DEF,
     ENTITY_TYPE_EMBEDDING_SETUP,
     ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT,
 ];

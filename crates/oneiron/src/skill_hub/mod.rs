@@ -24,6 +24,8 @@ mod package_codec;
 mod package_work;
 mod publisher;
 mod ref_sync;
+#[cfg(feature = "sync")]
+mod record_refinement;
 mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
@@ -55,6 +57,8 @@ pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};
+#[cfg(feature = "sync")]
+pub(crate) use record_refinement::{RecordRefinementAdmission, admit_record_document_refinement};
 pub(crate) use refinement_admission::{
     RefinementAdmissionProof, skill_refinement_origin_in_txn, validate_refinement_admission,
 };

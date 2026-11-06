@@ -143,7 +143,7 @@ pub(super) fn read_basis(
     entity: EntityId,
     takes: &dyn Fn(RowDb, &[u8], &[u8]) -> bool,
 ) -> Result<DocumentBasis> {
-    let slot = DocumentSlot::of(entity);
+    let slot = crate::entity_doc::sync_document_slot_in(dbs, txn, &entity)?;
     let Some(snapshot) = SNAPSHOTS.get(dbs, txn, &slot)? else {
         return Ok(DocumentBasis::default());
     };

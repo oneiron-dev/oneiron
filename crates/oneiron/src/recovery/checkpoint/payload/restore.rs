@@ -53,6 +53,19 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
     window_rows: Vec<(RowLocator, Vec<u8>)>,
 }
 
+/// Exact rows consumed from an independently authenticated artifact's payload.
+/// Only this module's opened-bundle dispatch can construct this source. It
+/// grants no peer standing, owner authority or grant admission.
+pub(crate) struct EntityDocRestoreSource {
+    rows: OpenedOwnerRows,
+}
+
+impl EntityDocRestoreSource {
+    pub(crate) fn into_rows(self) -> OpenedOwnerRows {
+        self.rows
+    }
+}
+
 /// Opens `sealed`, the payload an artifact carries apart from its image,
 /// before anything is made: each compartment it names is required through
 /// `plan`, a live one opens, and a retired one's owner is unopened; the rows
@@ -118,6 +131,8 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
             bundles.push((role, opened));
         }
     }
+    #[cfg(feature = "sync")]
+    open_actor_copies(&mut bundles, &vault, plan)?;
     let window_rows = join_windows(&image.window_carriers, &windows, &unopened)?;
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
@@ -134,6 +149,42 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         call_rows: take_call_rows(image),
         window_rows,
     }))
+}
+
+/// Qualifies each origin copy while this restore still owns its custody plan.
+/// A frozen generation can retire while its current owner remains live: only
+/// that copy's part goes, never the owner's canonical rows or pending job.
+#[cfg(feature = "sync")]
+fn open_actor_copies(
+    bundles: &mut [(BundleRole, OpenedOwnerRows)],
+    vault_id: &[u8; 32],
+    plan: &mut CustodyPlan,
+) -> std::result::Result<(), Rejected> {
+    for (role, opened) in bundles {
+        if *role != BundleRole::Carrier(super::Carrier::SyncQueue) {
+            continue;
+        }
+        let mut dropped = BTreeSet::new();
+        for part in &opened.rows {
+            let RowPart::Exact { at, value } = part else {
+                continue;
+            };
+            if at.db == RowDb::SyncQueue
+                && at.path.is_empty()
+                && !held_up(opened, at)
+                && !crate::sync::queue::open_home_claim_actor_copy_for_restore(
+                    &at.key, value, vault_id, plan,
+                )?
+            {
+                dropped.insert(at.clone());
+            }
+        }
+        opened.rows.retain(|part| !dropped.contains(part.at()));
+        opened
+            .dependencies
+            .retain(|dependency| !dropped.contains(&dependency.at));
+    }
+    Ok(())
 }
 
 /// Each split window's rows and markers, joined from its carrier in
@@ -357,6 +408,13 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
                 {
                     blob_artifacts.push(deferred);
                 }
+            }
+            BundleRole::Content(Getter::EntityDoc) => {
+                crate::entity_doc::checkpoint::restore_authenticated_in_txn(
+                    store,
+                    txn,
+                    EntityDocRestoreSource { rows },
+                )?;
             }
             BundleRole::Content(getter) => {
                 getter.restore_in_txn(store, txn, rows)?;

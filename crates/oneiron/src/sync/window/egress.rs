@@ -528,6 +528,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
     // FIX 6870: and an erased repo's portable manifest.
     crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
+    crate::sync::skill_docs::scrub_skill_docs(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
     // FIX 12769: and a section-fit receipt carrier that names an erased actor.

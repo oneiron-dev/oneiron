@@ -747,5 +747,7 @@ fn remove_window_rows(
     // holds the ops it just dropped.
     WINDOW_STATE_VECTOR.delete(store, txn, &key)?;
     WINDOW_SHALLOW_FENCE.delete(store, txn, &key)?;
+    #[cfg(feature = "sync")]
+    crate::store::window_record_sources::remove_window_in_txn(store, txn, &key)?;
     Ok(())
 }

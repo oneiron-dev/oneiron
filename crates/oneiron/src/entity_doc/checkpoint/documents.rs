@@ -52,6 +52,7 @@ const NOTE_HEAD_DOCS: SideTable<(EntityId, EntityId), (), Raw> =
 enum Flavor {
     EntityDoc,
     Note,
+    Sequence,
 }
 
 /// Who a slot's rows belong to: one owner and the document its bytes are,
@@ -121,13 +122,24 @@ fn birth_owner(snapshot: &[u8]) -> Option<EntityId> {
 pub(super) fn capture(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
-    heads: BTreeMap<String, EntityId>,
+    heads: Vec<(String, EntityId)>,
+    sequences: Vec<(String, EntityId)>,
     out: &mut Captured,
 ) -> Result<()> {
-    let mut claims: BTreeMap<String, Claim> = heads
-        .into_iter()
-        .map(|(slot, entity)| (slot, Claim::Owner(entity, Flavor::EntityDoc)))
-        .collect();
+    let mut claims: BTreeMap<String, Claim> = BTreeMap::new();
+    for (slots, flavor) in [(heads, Flavor::EntityDoc), (sequences, Flavor::Sequence)] {
+        for (slot, entity) in slots {
+            let owner = Claim::Owner(entity, flavor);
+            claims
+                .entry(slot)
+                .and_modify(|claim| {
+                    if *claim != owner {
+                        *claim = Claim::Shared;
+                    }
+                })
+                .or_insert(owner);
+        }
+    }
     // The NOTE getter captures these markers; here they only join slots.
     for row in NOTE_HEAD_DOCS.iter_raw_from(dbs, txn, &[])? {
         let (key, _) = row?;
@@ -157,6 +169,11 @@ pub(super) fn capture(
         match claim {
             Some(Claim::Owner(entity, Flavor::EntityDoc)) => split_slot(out, entity, group),
             Some(Claim::Owner(note, Flavor::Note)) => split_note_slot(out, note, group),
+            Some(Claim::Owner(entity, Flavor::Sequence)) => group.name(
+                out,
+                Some(OwnerRef::entity(&entity)),
+                Unresolved::ActorSplit("independent sequence text has no native field binding"),
+            ),
             Some(Claim::Shared) => group.name(out, None, Unresolved::SharedOwners),
             None => group.name(out, None, Unresolved::NoOwner),
         }
@@ -289,6 +306,13 @@ fn atoms_at(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<Vec<Atom>> {
 /// its updates at sequence keys. Each row's bytes, by its locator, for the
 /// restore's join to write.
 pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
+    join_checked(opened, |_, _| Ok(()))
+}
+
+pub(super) fn join_checked(
+    opened: &OpenedOwnerRows,
+    mut check_entity_doc: impl FnMut(EntityId, &[Vec<u8>]) -> Result<()>,
+) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
     let mut slots: BTreeMap<String, OpenedSlot<'_>> = BTreeMap::new();
     for part in &opened.rows {
         let RowPart::NoActor { at, value } = part else {
@@ -330,6 +354,7 @@ pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<
             let bytes = super::loro::join(&group)?;
             let first = bytes.first().ok_or_else(rows::bad_part)?;
             super::loro::check_snapshot(first, Some(&entity))?;
+            check_entity_doc(entity, &bytes)?;
             bytes
         };
         if bytes.len() != order.len() {

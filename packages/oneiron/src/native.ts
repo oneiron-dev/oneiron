@@ -378,11 +378,13 @@ vaultMembersDelegate(input: unknown): unknown
 vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
+vaultMembersInvitationCode(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
+vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultSharedObject(input: unknown): unknown
