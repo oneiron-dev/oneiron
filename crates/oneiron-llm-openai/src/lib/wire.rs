@@ -448,7 +448,11 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
     })
 }
 
-pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an OpenAI chat reply's `usage` object reports: prompt tokens,
+/// of them the cached, and completion tokens, of them the reasoning. A
+/// relayed reply's own body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let prompt_tokens = u64_field(usage, "prompt_tokens");
     let completion_tokens = u64_field(usage, "completion_tokens");
     let cached_tokens = usage

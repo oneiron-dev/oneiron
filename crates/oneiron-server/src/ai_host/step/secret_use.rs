@@ -42,6 +42,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use super::super::CHAT_ROLE;
 use super::StepHost;
 use super::live_lease::LiveLease;
 use crate::models::{ModelCallBinding, OfferLadder};
@@ -49,6 +50,24 @@ use crate::models::{ModelCallBinding, OfferLadder};
 /// The `self.use` verb as the step's tool: providers take letters, digits,
 /// `_` and `-` in a tool's name, so the dot becomes `_`.
 const SELF_USE_TOOL: &str = "self_use";
+
+/// Finalizes a workflow step's staged capture, when one was staged, with
+/// the binding its call returned. A workflow's step call is admitted on the
+/// chat role (FIX 6359), so its replays are admitted on that role too.
+pub(super) fn finalize_capture(
+    staged: Option<oneiron::code_run::WorkflowCaptureHandle>,
+    vault: &Vault,
+    binding: &ModelCallBinding,
+) {
+    if let Some(staged) = staged {
+        staged.finalize(
+            vault,
+            binding.rung.clone(),
+            CHAT_ROLE,
+            binding.route.clone(),
+        );
+    }
+}
 
 /// Puts `self.use` on `request` when every rung of `ladder` takes tool
 /// calls and their results; whether it did.
@@ -236,9 +255,7 @@ impl<'a> StepSecretUse<'a> {
                     }
                 };
                 if !cursor.capture_completed {
-                    if let Some(staged) = staged {
-                        staged.finalize(self.vault, binding.rung.clone(), binding.route.clone());
-                    }
+                    finalize_capture(staged, self.vault, &binding);
                     cursor.capture_completed = true;
                 }
                 if !response
