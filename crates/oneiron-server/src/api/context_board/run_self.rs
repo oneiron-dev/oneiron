@@ -7,8 +7,9 @@
 //! agent and the run's own board connection `run:<run id>`) renders whole,
 //! and goes when that connection does. Without one, the brief is resolved
 //! from the run itself: the agent, the person its subject anchor names, the
-//! line the run's entry spends on, the clock and the skills the run's own
-//! session loaded. Every field no host resolves is left out of the brief
+//! owner's agent Grants that stand for the agent, the line the run's entry
+//! spends on, the clock and the skills the run's own session loaded. Every
+//! field no host resolves is left out of the brief
 //! and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
@@ -51,7 +52,7 @@ pub(crate) async fn describe_self_for_run(
         .map(|run| run.state.clone());
     let state = match installed {
         Some(state) => state,
-        None => resolved_state(server, actor.entity_ref(), line, &reads)?,
+        None => resolved_state(server, actor, line, &reads)?,
     };
     let brief = state.describe(&server.vault, &reads, Some(&people))?;
     let tail = brief.render();
@@ -62,20 +63,21 @@ pub(crate) async fn describe_self_for_run(
 }
 
 /// The run's brief state as the run itself resolves it for its agent
-/// `self_ref`. Each field no host produces for a run (FIX-LIST: the
+/// `actor`. Each field no host produces for a run (FIX-LIST: the
 /// self-brief producers) is `None`; so is the principal when no subject
-/// anchor names the person behind the agent, and so are the budget lease and
-/// budget when no line binds the run's entry.
-/// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field out
-/// and names it unavailable. A credentialed agent's describe(self) with no
-/// installed snapshot resolves its brief here too, over its own session's
-/// reads and with no line (FIX 11461).
+/// anchor names the person behind the agent, so are the grants when their
+/// read fails, and so are the budget lease and budget when no line binds
+/// the run's entry. [`oneiron::context_board::SelfBrief::render`] leaves
+/// each `None` field out and names it unavailable. A credentialed agent's
+/// describe(self) with no installed snapshot resolves its brief here too,
+/// over its own session's reads and with no line (FIX 11461).
 pub(super) fn resolved_state(
     server: &SyncServer,
-    self_ref: oneiron::EntityId,
+    actor: oneiron::WriteActor,
     line: Option<&RunAdmission>,
     reads: &SessionReadSet,
 ) -> MemoryResult<SelfBriefState> {
+    let self_ref = actor.entity_ref();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -94,10 +96,23 @@ pub(super) fn resolved_state(
             skill_index.push(id);
         }
     }
+    // GRANT (FIX 17594): the owner's agent Grants that stand for the agent,
+    // read in one snapshot. A failed read leaves them unavailable; it never
+    // fails the describe.
+    let grants = server
+        .vault
+        .self_brief_grants(actor)
+        .inspect_err(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the self brief's grants did not read; the brief names them unavailable"
+            );
+        })
+        .ok();
     Ok(SelfBriefState {
         self_ref,
         principal,
-        grants: None,
+        grants,
         run_ceiling: None,
         credential_ceiling: None,
         parent_ceiling: None,

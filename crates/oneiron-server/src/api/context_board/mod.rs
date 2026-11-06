@@ -974,14 +974,16 @@ pub(crate) async fn describe_self_for_auth(
             (tail, sources)
         }
         // FIX 11461: no host installed a snapshot for this session, so the
-        // brief is resolved as a pumped run's is: the agent, the person its
-        // subject anchor names, the clock and the skills this session
-        // loaded, with every field no host resolves (and the budget, as no
-        // run line binds a credential's call) named on one unavailable
-        // line, never stated as a value.
+        // brief is resolved as a pumped run's is: the agent (an agent, as
+        // checked above), the person its subject anchor names, the owner's
+        // agent Grants that stand for it, the clock and the skills this
+        // session loaded, with every field no host resolves (and the
+        // budget, as no run line binds a credential's call) named on one
+        // unavailable line, never stated as a value.
         None => {
+            let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let state =
-                run_self::resolved_state(server, actor, None, &read_set).map_err(|error| {
+                run_self::resolved_state(server, agent, None, &read_set).map_err(|error| {
                     tracing::warn!(code = %error.code, "a credential's self brief did not resolve");
                     crate::error::ApiError::internal_server_error("self brief failed")
                 })?;
