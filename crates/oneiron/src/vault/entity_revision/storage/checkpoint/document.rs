@@ -7,7 +7,9 @@
 //! names no one. Any other kind, an unregistered one, a NOTE pointer or a
 //! spelling the core does not give back, two kinds in one history, a commit
 //! message and an operation outside the document's record and text fields
-//! keep the whole document under the vault-wide seal, its reason named.
+//! keep the whole document under the vault-wide seal, its reason named. An
+//! author carrier's document is not split here at all: the getter places it
+//! whole as its actor's actor-keyed row ([`check_carrier`], FIX 17143).
 //!
 //! No public revision ref changes (lead pick (b)). A ref hashed over its
 //! retained frontier stays, as the split keeps every operation. A ref hashed
@@ -35,6 +37,7 @@ use super::super::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, short_id_content_hash};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{join_core_row, split_core_row};
 use crate::note::decode_note_body_in_txn;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
@@ -249,6 +252,9 @@ struct History {
 /// A history read so far.
 #[derive(Default)]
 struct Reading {
+    /// Whether each raw row must be an author carrier, read whole and never
+    /// split ([`check_carrier`]), instead of a row the allowlist splits.
+    carriers: bool,
     kind: Option<u8>,
     raws: Vec<Vec<u8>>,
     /// The text fields the recorded rows' bodies hold.
@@ -301,7 +307,13 @@ impl Reading {
         if entity_type_registry_entry(kind).is_none() {
             return Err(Unresolved::UnknownKind);
         }
-        split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        if self.carriers {
+            if author_carrier_actor(raw).is_none() {
+                return Err(Unresolved::ActorSplit(UNSUPPORTED_KIND));
+            }
+        } else {
+            split_raw(raw).map_err(Unresolved::ActorSplit)?;
+        }
         if *self.kind.get_or_insert(kind) != kind {
             return Err(Unresolved::ActorSplit(MIXED_KINDS));
         }
@@ -328,9 +340,13 @@ impl Reading {
 /// Reads every operation of `doc`'s history, not only the values that stand
 /// now. A commit message refuses: the ledger commits with none.
 fn read_history(doc: &LoroDoc) -> Admission<History> {
+    read_history_of(doc, Reading::default())
+}
+
+/// [`read_history`], each raw row read as `reading` reads it.
+fn read_history_of(doc: &LoroDoc, mut reading: Reading) -> Admission<History> {
     let start = VersionVector::default();
     let all = doc.export_json_updates_without_peer_compression(&start, &doc.oplog_vv());
-    let mut reading = Reading::default();
     for change in &all.changes {
         if change.msg.is_some() {
             return Err(Unresolved::ActorSplit(COMMIT_MESSAGE));
@@ -628,6 +644,22 @@ pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     }
 }
 
+/// Refuses `value` at `at` unless it is an author carrier's revision
+/// document (FIX 17143): its key an entity, its bytes a full history whose
+/// every raw row is a carrier. Such a document is an actor's actor-keyed
+/// row, restored whole, never split.
+pub(super) fn check_carrier(at: &RowLocator, value: &[u8]) -> Result<()> {
+    rows::check_row(DOC, at, value)?;
+    let carriers = Reading {
+        carriers: true,
+        ..Reading::default()
+    };
+    match full_doc(value).and_then(|doc| read_history_of(&doc, carriers)) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(rows::bad_part()),
+    }
+}
+
 /// A revision document rebuilt from its content and the actors that opened:
 /// each author that did not open stays erased.
 pub(super) fn join(
@@ -693,6 +725,11 @@ fn staged_document(opened: &OpenedOwnerRows) -> Result<Option<EntityId>> {
     let mut entity = None;
     let mut document = false;
     for part in &opened.rows {
+        // An author carrier's document is an actor-keyed row: its slot
+        // names no entity, and no binding of it is checked (FIX 17143).
+        if matches!(part, RowPart::ActorKeyed { .. }) {
+            continue;
+        }
         let at = part.at();
         let candidate = if at.in_table(DOC.decl()) {
             if document {
