@@ -192,6 +192,7 @@ pub(crate) async fn run_context_pack(
     let mut builder = server
         .vault
         .context_pack()
+        .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
