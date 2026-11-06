@@ -121,6 +121,13 @@ use crate::server::SyncServer;
 pub use crate::calendar_host::install_calendar_label_head;
 pub use crate::projection::View;
 
+/// Native stack space for engine-owned runtime and serving threads.
+///
+/// FIX 16372 measured an 11.49 MiB generated dispatch poll frame and a
+/// nested 3.70 MiB verb-invocation frame in a dev binary. Reserve 32 MiB
+/// while FIX 19837 outlines those generated dispatchers.
+pub const ENGINE_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
+
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 ///
 /// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. A door that
