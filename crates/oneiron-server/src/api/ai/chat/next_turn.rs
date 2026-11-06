@@ -60,6 +60,7 @@ impl NextTurnSource for ChatNextTurn {
                 &self.server,
                 &auth.clone().at(reads_at),
                 self.conversation,
+                Some(self.agent),
             )
             .await?;
             let craft = crate::server::blocking(|| self.craft(&auth));

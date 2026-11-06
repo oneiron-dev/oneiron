@@ -296,10 +296,13 @@ impl NoteDocument {
                     }
                     None => self.doc.state_frontiers(),
                 };
-                let candidate = self
-                    .doc
-                    .fork_at(&frontier)
-                    .map_err(|_| invalid("unknown base frontier"))?;
+                let candidate = if frontier == self.doc.oplog_frontiers() {
+                    self.doc.fork()
+                } else {
+                    self.doc
+                        .fork_at(&frontier)
+                        .map_err(|_| invalid("unknown base frontier"))?
+                };
                 if candidate
                     .get_text(TEXT)
                     .update(
@@ -329,10 +332,7 @@ impl NoteDocument {
         Ok(None)
     }
     fn rewrite(&self, head: EntityId, text: &str, stamp: ActorStamp, at: u64) -> Result<Self> {
-        let fork = self
-            .doc
-            .fork_at(&self.doc.state_frontiers())
-            .map_err(|_| invalid("fork frontier"))?;
+        let fork = self.doc.fork();
         let target = fork.get_text(TEXT);
         target
             .delete(0, target.len_unicode())
@@ -390,6 +390,12 @@ pub(crate) fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::Snapshot)
         .map_err(|_| invalid("document snapshot"))
 }
+/// Whether storage kept the admitted operations or rebuilt a masked value.
+pub(crate) enum StoredProposal {
+    Native,
+    Value(String),
+}
+
 /// Proposal-only storage. No caller can advance canonical authority with bytes.
 ///
 /// The proposed text and title are admitted as live ones are, with one plan
@@ -400,13 +406,24 @@ pub(crate) fn store_doc(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
-) -> Result<()> {
+) -> Result<StoredProposal> {
     if doc.head == doc.note {
         return Err(invalid("live NOTE requires canonical operation admission"));
     }
     super::ensure_citations_ready(&vault.store, txn, doc.note)?;
     super::verbs::note_core(vault, txn, doc.note)?;
-    let found = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?.title()?;
+    let canonical = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?;
+    let pins = canonical.pins()?;
+    super::citation_erase::validate_pins(vault, txn, &pins)?;
+    // Quotes cannot be replaced by handles: their original hash must stand.
+    if crate::batch::secret_scan::secret_scan_mode_in_txn(&vault.store, txn)?
+        == crate::batch::secret_scan::SecretScanMode::On
+    {
+        for pin in &pins {
+            crate::batch::secret_scan::scan_write_payload(pin.quote_text.as_bytes())?;
+        }
+    }
+    let found = canonical.title()?;
     let original = doc.text();
     let (mut text, mut title) = (original.clone(), found.clone());
     let mut parts = vec![("text:body", Part::Text(&mut text))];
@@ -415,33 +432,23 @@ pub(crate) fn store_doc(
     }
     let admitted = admit_parts_in_txn(vault, txn, doc.head, &mut parts, &mut Lifted::default())?;
     drop(parts);
-    if admitted && text != original {
-        doc.doc
-            .get_text(TEXT)
-            .update(
-                &text,
-                UpdateOptions {
-                    timeout_ms: None,
-                    use_refined_diff: true,
-                },
-            )
-            .map_err(|_| invalid("proposal mask"))?;
-    }
-    if let Some(title) = title.as_deref().filter(|_| admitted && title != found) {
-        doc.doc
-            .get_map("note")
-            .insert("title", title)
-            .map_err(|_| invalid("proposal title mask"))?;
-    }
-    if admitted {
-        doc.doc.commit();
-    }
+    super::validate_markdown(&text)?;
+    let masked = admitted && (text != original || title != found);
+    let (bytes, stored) = if masked {
+        // Never retain the operations that contained the secret's plain bytes.
+        let bytes = snapshot(&proposal_value(doc.note, &text, title.as_deref())?)?;
+        (bytes, StoredProposal::Value(text))
+    } else {
+        super::token_uses::record_token_uses_in_txn(vault, txn, doc.note, &doc.doc, None)?;
+        (snapshot(&doc.doc)?, StoredProposal::Native)
+    };
     NOTE_PROPOSAL_DOC.put(
         &vault.store,
         txn,
         &HexPair(HexId(doc.note), HexId(doc.head)),
-        &snapshot(&proposal_value(doc.note, &text, title.as_deref())?)?,
-    )
+        &bytes,
+    )?;
+    Ok(stored)
 }
 
 pub(crate) fn load_doc(
@@ -659,6 +666,23 @@ pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) ->
     doc.commit();
     super::document::NoteDocument::from_loro(note, doc.fork())?;
     Ok(doc)
+}
+
+/// Text and title projected from a trusted, locally stored proposal snapshot.
+/// Its pins and authenticated operations are not authority in a value carrier.
+pub(crate) fn stored_proposal_values(
+    note: EntityId,
+    doc: &LoroDoc,
+) -> Result<(String, Option<String>)> {
+    let view = super::document::NoteDocument::from_loro(note, doc.fork())?.view()?;
+    super::validate_markdown(&view.markdown)?;
+    Ok((view.markdown, view.title))
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn stored_proposal_text(note: EntityId, bytes: &[u8]) -> Result<String> {
+    let doc = super::document::NoteDocument::load(note, bytes)?;
+    Ok(stored_proposal_values(note, &doc.doc)?.0)
 }
 
 #[cfg(feature = "sync")]

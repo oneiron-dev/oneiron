@@ -49,4 +49,3 @@ pub fn owner_key_required(count: usize, unopened: &BTreeSet<CompartmentScope>) -
         openers.join("; ")
     )
 }
-
