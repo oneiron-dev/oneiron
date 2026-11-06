@@ -5196,6 +5196,16 @@ export_facade! {
     let output = client.vault_productivity_tree(&input)?;
     crate::codec::lift_record("vault.productivity.tree", &output)
 };
+"vault.ingest.ag_ui.import" => fn vault_ingest_ag_ui_import(&self, input: AgUiFileImport) -> AgUiFileReceipt = |client| {
+    let input: oneiron::ingest::AgUiFileImport = crate::codec::lower_record("vault.ingest.ag_ui.import", input)?;
+    let output = client.vault_ingest_ag_ui_import(&input)?;
+    crate::codec::lift_record("vault.ingest.ag_ui.import", &output)
+};
+"vault.ingest.ag_ui.read" => fn vault_ingest_ag_ui_read(&self, input: AgUiFileReadInput) -> AgUiFileRead = |client| {
+    let input: oneiron::ingest::AgUiFileReadInput = crate::codec::lower_record("vault.ingest.ag_ui.read", input)?;
+    let output = client.vault_ingest_ag_ui_read(&input)?;
+    crate::codec::lift_record("vault.ingest.ag_ui.read", &output)
+};
 "vault.claims.admit" => fn vault_claims_admit(&self, input: AdmitImportedClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;
