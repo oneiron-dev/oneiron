@@ -5805,6 +5805,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.ingest.ag_ui.import",
+                crate::code_run::vault_read::request_schema::<crate::ingest::AgUiFileImport>(),
+            ),
+            (
+                "vault.ingest.ag_ui.read",
+                crate::code_run::vault_read::request_schema::<crate::ingest::AgUiFileReadInput>(),
+            ),
+            (
                 "vault.claims.admit",
                 crate::code_run::vault_read::request_schema::<crate::memory::AdmitImportedClaimInput>(
                 ),
@@ -17992,6 +18000,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.ingest.ag_ui.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.ingest.ag_ui.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23009,6 +23031,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.productivity.tree" => {
             let _input: crate::memory::ProductivityTreeRequest = decode(value.clone())?;
         }
+        "vault.ingest.ag_ui.import" => {
+            let _input: crate::ingest::AgUiFileImport = decode(value.clone())?;
+        }
+        "vault.ingest.ag_ui.read" => {
+            let _input: crate::ingest::AgUiFileReadInput = decode(value.clone())?;
+        }
         "vault.claims.admit" => {
             let _input: crate::memory::AdmitImportedClaimInput = decode(value.clone())?;
         }
@@ -25820,6 +25848,8 @@ pub fn invoke(
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
         "vault.productivity.create" => encode(vault_productivity_create(memory, decode(value)?)?),
         "vault.productivity.tree" => encode(vault_productivity_tree(memory, decode(value)?)?),
+        "vault.ingest.ag_ui.import" => encode(vault_ingest_ag_ui_import(memory, decode(value)?)?),
+        "vault.ingest.ag_ui.read" => encode(vault_ingest_ag_ui_read(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
         "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
@@ -28002,7 +28032,8 @@ pub fn vault_campaign_compliance_install(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_install_as(
+    memory.vault().store.record_hooks.compliance_install_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.install")?,
         &input,
     )
@@ -28011,13 +28042,18 @@ pub fn vault_campaign_compliance_amend(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_amend(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_amend(memory, &input)
 }
 pub fn vault_campaign_compliance_approve(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_approve_as(
+    memory.vault().store.record_hooks.compliance_approve_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.approve")?,
         &input,
     )
@@ -28026,7 +28062,8 @@ pub fn vault_campaign_compliance_reject(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_reject_as(
+    memory.vault().store.record_hooks.compliance_reject_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.reject")?,
         &input,
     )
@@ -28035,7 +28072,8 @@ pub fn vault_campaign_compliance_verify(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceVerifyRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_verify_as(
+    memory.vault().store.record_hooks.compliance_verify_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.verify")?,
         &input,
     )
@@ -28044,7 +28082,11 @@ pub fn vault_campaign_compliance_result(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceResultRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
-    memory.compliance_result(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_result(memory, &input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,
@@ -35157,6 +35199,27 @@ pub fn vault_productivity_tree(
     input: crate::memory::ProductivityTreeRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>> {
     memory.productivity_tree(&input)
+}
+pub fn vault_ingest_ag_ui_import(
+    memory: &Memory<'_>,
+    input: crate::ingest::AgUiFileImport,
+) -> MemoryResult<crate::ingest::AgUiFileReceipt> {
+    memory
+        .vault()
+        .ingest_ag_ui_file(&memory.embedded_owner("vault.ingest.ag_ui.import")?, &input)
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_ingest_ag_ui_read(
+    memory: &Memory<'_>,
+    input: crate::ingest::AgUiFileReadInput,
+) -> MemoryResult<crate::ingest::AgUiFileRead> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.ingest.ag_ui.read",
+        &input,
+        &["/claim_ref"],
+    )?;
+    memory.read_ag_ui_file(&input)
 }
 pub fn vault_claims_admit(
     memory: &Memory<'_>,
