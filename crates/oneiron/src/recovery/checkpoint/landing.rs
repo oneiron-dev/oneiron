@@ -152,7 +152,7 @@ impl Vault {
         Self::check_open_config(&config)?;
         let claim_row_floor = super::claim_order::plan_floor(&mut image, &opened_entities)?;
         // Each row is counted at the length it lands at (FIX 6025, 6232).
-        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
+        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired)?;
         // The opened payload rows land beside them, counted the same way.
         let payload_rows = opened
             .as_ref()

@@ -19,7 +19,8 @@
 //! back inline where their rows lack their bytes and its manifest under the
 //! same occurrence. A start whose rest retired goes as a retired body does.
 //! Each recomposed destination is counted at its grouped length before
-//! anything is opened ([`landed_lengths`]).
+//! anything is opened ([`landed_lengths`]). FIX 11415: a start counts every
+//! row its republish writes, not only its body.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -335,32 +336,6 @@ pub(super) fn land(
     Ok(())
 }
 
-/// The length the `vault_meta` row `key`, `value` in the image now, lands
-/// at as an inline body's row (FIX 4192): its first bytes and its carried
-/// body, unless its instance `retired`.
-fn inline_landed_len(
-    image: &CheckpointImage,
-    retired: &BTreeSet<[u8; 16]>,
-    key: &[u8],
-    value: &[u8],
-) -> u64 {
-    image
-        .inline_bodies
-        .iter()
-        .find(|carried| {
-            carried.database == "vault_meta"
-                && carried.key == key
-                && carried.replay.is_none()
-                && !carried.superseded
-                && !retired.contains(&carried.instance)
-        })
-        .map_or(value.len() as u64, |carried| {
-            carried
-                .landed_len
-                .unwrap_or_else(|| u64::from(carried.keep).saturating_add(carried.len))
-        })
-}
-
 /// The value of the row `key` among sorted `rows`.
 fn image_row<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]> {
     rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
@@ -372,19 +347,26 @@ fn image_row<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]>
 /// `vault_meta` row a recomposed destination lands at, counted before
 /// anything is opened from what its parts carried and how each stands
 /// (`retired`): a replay row's at its recomposed length, never one part's;
-/// a start's body row at its recomposed body held inline, or its capsule's
-/// row beside its own length when the image keeps no body row to stand for
-/// it; a start whose rest retired leaves its body row nothing. FIX 4192:
-/// the start's body row is its manifest's, which lands as any inline body
-/// does; the pieces the restore puts back count at most the recomposed
-/// body beside it. No margin is added.
+/// a start whose rest retired leaves its body row nothing. FIX 11415: a
+/// start whose rest is live counts every row its republish writes, from
+/// its recomposed length and how each of its asks stands, through the
+/// helpers that write them: each piece put back inline with its descriptor
+/// and holder row, the manifest under the same occurrence, the capsule's
+/// row, and each instance row the settle marks inline
+/// (`crate::code_run::republish_step_start_lengths_in_rows`). No margin is
+/// added.
+///
+/// # Errors
+///
+/// A carried start's capsule row the image does not hold, and a row that
+/// does not decode or encode.
 pub(in crate::recovery::checkpoint) fn landed_lengths(
     image: &CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
-) -> Vec<(Vec<u8>, u64)> {
+) -> Result<Vec<(Vec<u8>, u64)>> {
     let mut lengths = Vec::new();
     let Some(rows) = image.databases.get("vault_meta") else {
-        return lengths;
+        return Ok(lengths);
     };
     for (row, destination) in destinations(&image.inline_bodies) {
         let Some((_, rest)) = destination.rest else {
@@ -411,34 +393,26 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
             lengths.push((row, landed));
             continue;
         }
-        let Some(capsule) = image_row(rows, &row) else {
-            continue;
-        };
-        let Some(body_row) = crate::code_run::step_start_body_row(capsule) else {
-            continue;
-        };
-        let body = if live {
+        if live {
             let record = rest
                 .replay
                 .as_ref()
                 .and_then(|part| part.extents.first().copied());
-            crate::code_run::recomposed_len(rest.len, record, false, &requests).saturating_add(1)
-        } else {
-            0
-        };
-        if let Some(value) = image_row(rows, &body_row) {
-            let manifest = if live {
-                inline_landed_len(image, retired, &body_row, value)
-            } else {
-                0
-            };
-            lengths.push((body_row, body.saturating_add(manifest)));
-        } else if body > 0 {
-            let beside = (capsule.len() as u64)
-                .saturating_add(body_row.len() as u64)
-                .saturating_add(body);
-            lengths.push((row, beside));
+            let len = crate::code_run::recomposed_len(rest.len, record, false, &requests);
+            let asks: Vec<(u32, bool)> = destination
+                .requests
+                .iter()
+                .map(|((call, _), _, carried, _)| (*call, !retired.contains(&carried.instance)))
+                .collect();
+            lengths.extend(crate::code_run::republish_step_start_lengths_in_rows(
+                rows, &row, len, &asks,
+            )?);
+        } else if let Some(body_row) =
+            image_row(rows, &row).and_then(crate::code_run::step_start_body_row)
+            && image_row(rows, &body_row).is_some()
+        {
+            lengths.push((body_row, 0));
         }
     }
-    lengths
+    Ok(lengths)
 }
