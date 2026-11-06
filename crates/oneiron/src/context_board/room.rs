@@ -10,7 +10,7 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 mod tests;
 
 /// Most persons the ROOM `invite?:` line names; the rest are counted.
-const ROOM_INVITE_CAP: usize = 5;
+pub(super) const ROOM_INVITE_CAP: usize = 5;
 
 /// One roster entry. The engine builds every entry from the Conversation's
 /// `memberIds` and each member's own grants; no request supplies one.
@@ -156,9 +156,22 @@ impl RoomPosture {
     }
 }
 
+/// One open stretch in this room, read from the live registry for a current
+/// member. `session_ref` is its registry key, usable by the generic session doors.
+#[derive(Debug, Clone)]
+pub struct RoomStretch {
+    pub session_ref: String,
+    /// The live instance, even when a closed stretch's handle is reused.
+    pub instance_ref: EntityId,
+    pub mode: crate::off_record::OffRecordMode,
+}
+
 #[derive(Debug, Clone)]
 pub struct RoomSection {
     pub room: EntityId,
+    /// Every open stretch, with its mode as this board is built. Like scope
+    /// and posture, this whole-room signal rides every page.
+    pub stretches: Vec<RoomStretch>,
     pub roster: Vec<RoomPresence>,
     pub scope: Scope,
     pub posture: RoomPosture,
@@ -180,7 +193,7 @@ pub struct RoomSection {
 }
 
 impl RoomSection {
-    /// Roster, invitees, scope, posture, host, rules and open offers only.
+    /// Roster, stretches, invitees, scope, posture, host, rules and open offers.
     /// Invitees are the reader's people it may invite ([`Self::invitable`]).
     /// Values are escaped again by the board frame; flattening here only
     /// prevents row/control-character tricks. An undecided host renders as
@@ -191,7 +204,25 @@ impl RoomSection {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
-        self.board_section_page(people, &self.roster, None)
+        self.board_section_page(people, &self.roster, None, ROOM_INVITE_CAP)
+    }
+
+    /// [`Self::board_section`] on a board whose layout gives ROOM a share:
+    /// the `invite?:` hint names as many persons as the share allots,
+    /// never fewer than the fixed cap (BOARD-LAYOUT). The rest of ROOM is
+    /// pinned and takes no layout.
+    pub fn board_section_laid_out(
+        &self,
+        people: &PeopleView<'_>,
+        layout: &super::BoardLayout,
+        cap_tok: usize,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
+        self.board_section_page(
+            people,
+            &self.roster,
+            None,
+            layout.row_allotment("room", cap_tok, ROOM_INVITE_CAP),
+        )
     }
 
     /// [`Self::board_section`] for one page of the room's rows (FIX 9746):
@@ -203,9 +234,22 @@ impl RoomSection {
         people: &PeopleView<'_>,
         members: &[RoomPresence],
         page: Option<String>,
+        invite_cap: usize,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
         rows.extend(page);
+        rows.extend(self.stretches.iter().map(|stretch| {
+            let mode = match stretch.mode {
+                crate::off_record::OffRecordMode::OffRecord => "off_record",
+                crate::off_record::OffRecordMode::OnRecord => "on_record",
+                crate::off_record::OffRecordMode::Anonymous => "anonymous",
+            };
+            format!(
+                "stretch: {} instance={} mode={mode}",
+                one_line_token(&stretch.session_ref),
+                stretch.instance_ref.to_hex()
+            )
+        }));
         rows.extend(self.roster.iter().map(|member| {
             let kind = people
                 .kind(member.actor)
@@ -240,13 +284,13 @@ impl RoomSection {
                 "invite?: {}",
                 invitees
                     .iter()
-                    .take(ROOM_INVITE_CAP)
+                    .take(invite_cap)
                     .map(|row| people.label(row.person))
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            if invitees.len() > ROOM_INVITE_CAP {
-                line.push_str(&format!(" +{}", invitees.len() - ROOM_INVITE_CAP));
+            if invitees.len() > invite_cap {
+                line.push_str(&format!(" +{}", invitees.len() - invite_cap));
             }
             rows.push(line);
         }

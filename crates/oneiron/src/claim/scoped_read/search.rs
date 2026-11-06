@@ -1,6 +1,8 @@
 use super::access_gate::HeldAuthority;
 use super::*;
 
+mod native_query;
+
 /// The rows a bounded search's plan refused that its key's own ceiling
 /// admits: rows the request excluded, which its receipt counts (B7). A row
 /// the key cannot read is never among them. A text scan checks every
@@ -161,6 +163,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         query_affect: Option<oneiron_contracts::affect::Vad>,
+        media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
@@ -179,6 +182,9 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted);
+        if let Some(memory) = media_memory {
+            pipeline = pipeline.media_query_memory(memory);
+        }
         if let Some(query) = query {
             pipeline = pipeline.search_text(query, limit);
         }
@@ -298,7 +304,7 @@ impl ScopedRead<'_> {
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
-        let held = HeldAuthority::default();
+        let held = HeldAuthority::for_request(requested);
         // A withheld row counts only inside the key's own ceiling under both
         // snapshots: a request or pinned projection excluded it. A row the
         // key's baseline authority denies stays opaque (FIX 8670).

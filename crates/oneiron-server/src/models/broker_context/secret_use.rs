@@ -9,6 +9,7 @@ use oneiron::secret_custody::{
     BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply,
 };
 use oneiron_broker::{BrokerClient, BrokerConnection, CallHeader, Outcome, Shape};
+use oneiron_llm_anthropic::AnthropicMessagesConfig;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
@@ -19,6 +20,7 @@ use crate::config::models::{ModelsConfig, ProviderKind};
 struct Provider {
     origin: String,
     path: String,
+    shape: Shape,
     headers: Vec<(String, String)>,
     wire_model: String,
     client: Result<BrokerClient, String>,
@@ -56,7 +58,10 @@ impl BrokerContext {
             if provider.key_secret.is_none()
                 || !matches!(
                     provider.kind,
-                    ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+                    ProviderKind::OpenaiCompat
+                        | ProviderKind::LocalOpenaiCompat
+                        | ProviderKind::Gemini
+                        | ProviderKind::AnthropicCompat
                 )
             {
                 continue;
@@ -64,6 +69,37 @@ impl BrokerContext {
             let Ok(url) = reqwest::Url::parse(&provider.base_url) else {
                 continue;
             };
+            let prefix = url.path().trim_end_matches('/');
+            let (shape, path) = if provider.kind == ProviderKind::Gemini {
+                (
+                    Shape::GeminiModels,
+                    join(
+                        prefix.strip_suffix("/v1beta").unwrap_or(prefix),
+                        "/v1beta/models",
+                    ),
+                )
+            } else if provider.kind == ProviderKind::AnthropicCompat {
+                (Shape::AnthropicModels, join(prefix, "/v1/models"))
+            } else {
+                (Shape::OpenAiModels, join(prefix, "/v1/models"))
+            };
+            let mut headers: Vec<_> = provider
+                .headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    let name = name.to_ascii_lowercase();
+                    // The broker's existing bodyless shape carries no content type.
+                    (name != "content-type").then(|| (name, value.clone()))
+                })
+                .collect();
+            if provider.kind == ProviderKind::AnthropicCompat {
+                // Native wire headers take precedence over configured extras.
+                headers.retain(|(name, _)| name != "anthropic-version");
+                headers.push((
+                    "anthropic-version".to_owned(),
+                    AnthropicMessagesConfig::from_catalog([]).anthropic_version,
+                ));
+            }
             let timeout = Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN;
             let client = self
                 .inner
@@ -75,16 +111,9 @@ impl BrokerContext {
                 name.clone(),
                 Provider {
                     origin: url.origin().ascii_serialization(),
-                    path: join(url.path().trim_end_matches('/'), "/v1/models"),
-                    headers: provider
-                        .headers
-                        .iter()
-                        .filter_map(|(name, value)| {
-                            let name = name.to_ascii_lowercase();
-                            // The broker's existing bodyless shape carries no content type.
-                            (name != "content-type").then(|| (name, value.clone()))
-                        })
-                        .collect(),
+                    path,
+                    shape,
+                    headers,
                     // A bodyless listing has no wire selector. Bind it to one
                     // actual configured model, as the existing endpoint probe
                     // does; this neither filters the listing nor proves serving.
@@ -107,12 +136,12 @@ impl BrokerModelListingHost for ListingHost {
         call: &str,
     ) -> Result<Box<dyn BrokerModelListingCall>, String> {
         let provider = self.providers.get(provider).ok_or_else(|| {
-            "name a configured broker-backed OpenAI-compatible provider with a model rung"
+            "name a configured broker-backed OpenAI-compatible, Anthropic-compatible or Gemini provider with a model rung"
                 .to_owned()
         })?;
         let header = CallHeader::new(
             call.to_owned(),
-            Shape::OpenAiModels,
+            provider.shape,
             provider.origin.clone(),
             provider.path.clone(),
             provider.headers.clone(),

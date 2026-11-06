@@ -1,7 +1,6 @@
 //! The witness program's one write transaction: guards and admission, staging, `effect`,
 //! the reply's assertions, program wakes, leader chats, and the route revalidated last.
 
-use super::guards::LandingGuards;
 use super::*;
 
 /// What the witness write reads, prepared before its transaction opens.
@@ -31,6 +30,37 @@ impl Memory<'_> {
         effect: impl FnOnce(&mut heed::RwTxn<'_>, Option<&WitnessReceipt>) -> MemoryResult<()>,
         lands_new: &mut Vec<bool>,
     ) -> MemoryResult<Landed> {
+        let mut mint_conversation = false;
+        let mut person_author = None;
+        let mut leader_project = None;
+        let mut quoted = None;
+        let mut thread = None;
+        let guarded_plan = match write.sink {
+            WitnessSink::Base(_) => {
+                match self.base_guards_in_txn(write.plan, wtxn, prepare, write.quote_key)? {
+                    BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
+                    BaseGuards::Clear {
+                        mint_conversation: absent,
+                        person_author: person,
+                        leader_project: project,
+                        quoted: proven,
+                        thread: binding,
+                    } => {
+                        mint_conversation = absent;
+                        person_author = person.filter(|_| write.plan.imported.is_none());
+                        leader_project = project;
+                        quoted = proven;
+                        thread = binding;
+                    }
+                }
+                Some(self.custody_witness_plan_in_txn(wtxn, write.plan)?)
+            }
+            WitnessSink::Overlay(_) => None,
+        };
+        let write = &WitnessWrite {
+            plan: guarded_plan.as_ref().unwrap_or(write.plan),
+            ..*write
+        };
         let WitnessWrite {
             plan,
             sink,
@@ -40,16 +70,25 @@ impl Memory<'_> {
             saver,
             ..
         } = *write;
-        let (admission, mint_conversation, leader_project, quoted) =
-            match self.admit_landing_in_txn(wtxn, write, prepare)? {
-                LandingGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
-                LandingGuards::Admitted {
-                    admission,
-                    mint_conversation,
-                    leader_project,
-                    quoted,
-                } => (admission, mint_conversation, leader_project, quoted),
-            };
+        let admission = match sink {
+            WitnessSink::Base(_) => {
+                let assertions = write.assertion_lane.map(|lane| AssertionRead {
+                    lane,
+                    refused: write.refused,
+                    unproven: write.unproven,
+                });
+                self.admit_witness_in_txn(
+                    plan,
+                    &self.vault.store,
+                    wtxn,
+                    assertions,
+                    person_author,
+                    quoted.as_ref(),
+                    thread.as_ref(),
+                )?
+            }
+            WitnessSink::Overlay(overlay) => self.admit_overlay_in_txn(wtxn, write, overlay)?,
+        };
         *lands_new = admission
             .message_exists
             .iter()
@@ -62,20 +101,58 @@ impl Memory<'_> {
         if lands_nothing {
             unproven.take();
         }
-        let mut landed = match sink {
-            WitnessSink::Base(base) => Landed::Base(self.stage_base_landing_in_txn(
+        if matches!(sink, WitnessSink::Base(_))
+            && matches!(admission.turn, AdmittedTurn::Mint { .. })
+        {
+            crate::conversation_dag::permit_core_turn_in_txn(
+                self.vault,
                 wtxn,
-                write,
-                base,
-                &admission,
-                mint_conversation,
-                quoted.as_ref(),
-            )?),
+                &plan.conversation_id,
+                plan.turn_id,
+            )?;
+        }
+        let mut landed = match sink {
+            WitnessSink::Base(base) => {
+                let receipt = self.stage_base_landing_in_txn(
+                    wtxn,
+                    write,
+                    base,
+                    &admission,
+                    mint_conversation,
+                    quoted.as_ref(),
+                )?;
+                // Admission produces one authorization per planned message,
+                // in plan order, including exact retries.
+                let bodies = plan
+                    .messages
+                    .iter()
+                    .enumerate()
+                    .map(|(index, planned)| {
+                        (
+                            planned.id,
+                            planned.occurred.start,
+                            admission.authorized[index].body().to_vec(),
+                        )
+                    })
+                    .collect();
+                Landed::Base { receipt, bodies }
+            }
             WitnessSink::Overlay(overlay) => {
                 let (segment, aliases) = self.stage_in_overlay(plan, &admission, overlay, wtxn)?;
                 Landed::Overlay { segment, aliases }
             }
         };
+        if matches!(sink, WitnessSink::Base(_))
+            && matches!(admission.turn, AdmittedTurn::Mint { .. })
+        {
+            crate::conversation_dag::join_core_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.conversation_id,
+                plan.turn_id,
+                plan.learned_at,
+            )?;
+        }
         if let Some(terminal) = write.terminal
             && let [planned] = plan.messages.as_slice()
             && admission.message_exists.as_slice() == [false]
@@ -129,7 +206,7 @@ impl Memory<'_> {
         effect(
             wtxn,
             match &landed {
-                Landed::Base(receipt) => Some(receipt),
+                Landed::Base { receipt, .. } => Some(receipt),
                 _ => None,
             },
         )?;
@@ -152,7 +229,7 @@ impl Memory<'_> {
         {
             let outcome =
                 self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
-            if let Landed::Base(receipt) = &mut landed {
+            if let Landed::Base { receipt, .. } = &mut landed {
                 receipt.wake_outcome = Some(outcome);
             }
         }

@@ -43,7 +43,7 @@ use crate::error::{Error, Result};
 
 /// The most image bytes one countersign part carries: inside the home's
 /// inbound frame once base64 and the RPC envelope are added. An image goes in
-/// as many parts as it takes, up to the image's own size cap.
+/// as many parts as it takes, with no total-image policy cap.
 pub const AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX: usize = 2 * 1024 * 1024;
 
 const WAIT_NOT_COUNTED: &str = "the image's root policy is not the one this vault counts now";
@@ -273,7 +273,9 @@ impl Vault {
         let posture = candidate.aggregate.posture;
         let view = self.authority_view_readonly_in_txn(txn)?;
         // A policy the roster cannot fix under that posture counts nothing.
-        let Ok(counted) = checkpoint_root_policy_of(&view, posture) else {
+        let Ok(counted) =
+            checkpoint_root_policy_of(&view, posture, self.checkpoint_policy_selection_available())
+        else {
             return Ok(Some(WAIT_NOT_COUNTED));
         };
         if !ROOT_CHECKPOINT_AUTHORITY.signs_under(&counted, &candidate.root_policy) {

@@ -673,17 +673,17 @@ fn failure_policy(
 }
 
 /// The park reason of a step whose budget is spent.
-const BUDGET_PARK_REASON: &str = "durable step budget exhausted";
+pub(super) const BUDGET_PARK_REASON: &str = "durable step budget exhausted";
 /// The park reason of a step a host check holds: the account owner's
 /// question, never a spent budget (FIX 11227).
-const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
+pub(super) const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
 
 /// A spent budget, or a host check, parks the step's attempt behind a budget
 /// trap that records `reason`. The trap and its park land in one
 /// transaction: an open trap over an unparked attempt reads as plain leased
 /// work, which boot recovery requeues and a fresh budget runs without the
 /// signal.
-fn budget_trap(
+pub(super) fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
     reason: &str,
@@ -729,6 +729,7 @@ fn step_budget_hit(ctx: &DurableStepContext<'_>, guard: &BudgetGuard, request: &
         guard,
         request.model.as_str(),
         Some(ctx.envelope_actor.entity_ref()),
+        crate::runtime_hooks::VerbCallScope::from_model_scope(&request.envelope.scope),
     );
 }
 
