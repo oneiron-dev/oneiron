@@ -229,7 +229,7 @@ impl AgentDispatcher<'_> {
 /// the one check an unbound agent's transcript and digest reads meet
 /// (`AudienceCache::own_entry_readable_raw`), its errors theirs. No reader,
 /// or a row that is gone, adds nothing here.
-fn own_entry_admits_in(
+pub(super) fn own_entry_admits_in(
     vault: &crate::Vault,
     entry: &AudienceCache,
     dbs: &crate::store::StoreRead<'_>,
