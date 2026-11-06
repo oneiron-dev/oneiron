@@ -418,6 +418,21 @@ construction peaks, cursor storage, raw row copies, individual delete buffers,
 overlay copies, database pages or transaction scratch. It adds no scan, copy,
 lease, admission, wait or configured limit.
 
+During the bound retention-prune loop, each run deletion also records the
+actual encoded key capacities of its final provisional-marker and primary-run
+deletes on the same caller lease. Each delete makes its original key once and
+reports its capacity before the same database operation, including false or
+error returns. The provisional marker still precedes the primary row. These
+native keys drop before the caller lease; the known capacities stay charged
+conservatively until that lease drops. Ordinary unbound deletion uses the same
+shared body without recording capacities.
+
+The preceding turn-index, trace-fork, outcome and age-index cleanup stays in
+its original order with its original errors. Its buffers remain outside this
+two-key charge, as do raw row copies, overlay copies, database pages, transaction
+scratch and allocation peaks. No extra encode, copy, lease, admission, wait or
+configured limit is introduced.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,

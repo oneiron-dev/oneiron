@@ -294,7 +294,7 @@ fn prune_retrieval_runs_with_memory(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     reserve: usize,
-    memory: Option<&mut crate::host_memory::MemoryLease>,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<bool> {
     let resolved = crate::gate::resolve_policy_manifest(store, txn)?;
     let Some(policy) = resolved.retrieval_retention_policy() else {
@@ -309,7 +309,7 @@ fn prune_retrieval_runs_with_memory(
     let age_rows = RETRIEVAL_AGE
         .scan_keys(store, txn, &[])
         .map_err(corrupt_key("retrieval run retention"))?;
-    if let Some(memory) = memory {
+    if let Some(memory) = memory.as_deref_mut() {
         memory.materialized(
             0,
             (age_rows.capacity() as u64)
@@ -323,7 +323,12 @@ fn prune_retrieval_runs_with_memory(
         if index >= over && at >= cutoff {
             break;
         }
-        stage_retrieval_run_delete(store, txn, id)?;
+        super::run_store::stage_retrieval_run_delete_with_memory(
+            store,
+            txn,
+            id,
+            memory.as_deref_mut(),
+        )?;
     }
     Ok(true)
 }
