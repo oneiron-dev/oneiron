@@ -114,3 +114,53 @@ impl<R: Read> Write for SameReader<'_, R> {
         Ok(())
     }
 }
+
+pub(super) struct BodyRangeReader<'a> {
+    file: &'a crate::store::BodyFile,
+    offset: u64,
+    len: u64,
+    at: u64,
+}
+
+impl<'a> BodyRangeReader<'a> {
+    pub(super) fn new(file: &'a crate::store::BodyFile, offset: u64, len: u64) -> Self {
+        Self {
+            file,
+            offset,
+            len,
+            at: 0,
+        }
+    }
+}
+
+impl Read for BodyRangeReader<'_> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let take = usize::try_from(self.len - self.at)
+            .unwrap_or(usize::MAX)
+            .min(out.len());
+        if take == 0 {
+            return Ok(0);
+        }
+        let bytes = self
+            .file
+            .read_range(self.offset + self.at, take)
+            .map_err(io::Error::other)?;
+        out[..take].copy_from_slice(&bytes);
+        self.at += take as u64;
+        Ok(take)
+    }
+}
+
+impl Seek for BodyRangeReader<'_> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let at = match from {
+            SeekFrom::Start(at) => Some(at),
+            SeekFrom::Current(delta) => self.at.checked_add_signed(delta),
+            SeekFrom::End(delta) => self.len.checked_add_signed(delta),
+        }
+        .filter(|at| *at <= self.len)
+        .ok_or(io::ErrorKind::InvalidInput)?;
+        self.at = at;
+        Ok(at)
+    }
+}

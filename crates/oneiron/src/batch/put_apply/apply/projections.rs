@@ -127,7 +127,14 @@ pub(super) fn stage_put_projections(
         )?;
     }
     crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(
+        write,
+        wtxn,
+        &fixed.id,
+        fixed.entity_type,
+        data,
+        fixed.options.storage.asset_file,
+    )?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {

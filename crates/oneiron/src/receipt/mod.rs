@@ -168,8 +168,9 @@ pub(crate) fn validate_put(
     txn: &heed::RoTxn<'_>,
     target: (&crate::entity_id::EntityId, u8, &[u8]),
     stamps: (crate::temporal::TimeRange, u64),
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> crate::Result<()> {
-    validate_receipt_archive_put(store, txn, target.0, target.1, target.2)?;
+    validate_receipt_archive_put(store, txn, target.0, target.1, target.2, asset_file)?;
     validate_receipt_record_put(store, txn, target.0, target.1, target.2, stamps.0, stamps.1)
 }
 
