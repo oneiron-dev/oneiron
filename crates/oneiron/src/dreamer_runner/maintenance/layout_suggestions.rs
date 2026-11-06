@@ -12,8 +12,10 @@
 //!
 //! For each section, the suggested default takes what at least two thirds
 //! of the role's laid-out agents share: the section folded, its median share
-//! of the cap, and the status filter most of them set. Shares that would sum
-//! past the cap are scaled down to fit it. A suggestion is filed
+//! of the cap, and the status filter most of them set. The suggestion is a
+//! whole board layout that passes the engine's layout check: shares that
+//! would sum past the cap are scaled down to fit it, and past the section
+//! limit only the sections most of the agents name are kept. A suggestion is filed
 //! again only when what it suggests changes: its claim id is made from its
 //! content, and the agents behind it are its evidence.
 
@@ -21,7 +23,10 @@ use std::collections::BTreeMap;
 
 use super::coach::{COACH_LAYOUT_DEFAULT_PREDICATE, COACH_LAYOUT_SUGGESTIONS_FACET};
 use super::proposals;
-use crate::context_board::{BoardLayout, board_layouts_in_txn};
+use crate::context_board::{
+    BOARD_LAYOUT_SECTIONS_MAX, BoardLayout, SectionFilter, SectionFold, SectionLayout,
+    board_layouts_in_txn,
+};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::store::agent_record::AgentWakeCadence;
 use crate::{EntityId, Result, Vault};
@@ -84,11 +89,20 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
         if agents.len() < LAYOUT_SUGGESTION_MIN_AGENTS {
             continue;
         }
-        let sections = suggested_sections(agents);
-        if sections.is_empty() {
+        let layout = suggested_layout(agents);
+        if layout.sections.is_empty() {
             continue;
         }
-        let value = serde_json::json!({ "role": role, "sections": sections });
+        // The suggestion is a layout the owner can put in force as it is:
+        // one the engine's own check refuses is not filed.
+        if let Err(error) = layout.validate() {
+            tracing::warn!(
+                ?error,
+                "a board layout suggestion did not pass the layout check"
+            );
+            continue;
+        }
+        let value = serde_json::json!({ "role": role, "layout": layout });
         let evidence: Vec<EntityId> = agents.iter().map(|(actor, _)| *actor).collect();
         if let Err(error) = vault.with_write_txn_grouped(|txn| {
             proposals::emit_in_txn(
@@ -108,23 +122,26 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
     Ok(())
 }
 
-/// What most of `agents` share, section by section: folded, a share of the
-/// cap, a status filter.
-fn suggested_sections(agents: &[(EntityId, BoardLayout)]) -> BTreeMap<String, serde_json::Value> {
+/// What most of `agents` share, section by section (a section folded, a
+/// share of the cap, a status filter), as one board layout within the
+/// engine's limits.
+fn suggested_layout(agents: &[(EntityId, BoardLayout)]) -> BoardLayout {
     let total = agents.len();
-    let mut keys: Vec<&String> = agents
-        .iter()
-        .flat_map(|(_, layout)| layout.sections.keys())
-        .collect();
-    keys.sort_unstable();
-    keys.dedup();
-    let mut suggested = BTreeMap::new();
-    for key in keys {
-        let sections: Vec<_> = agents
+    // How many agents name each section: the sections most agents name are
+    // the ones kept past the section limit.
+    let mut support: BTreeMap<&String, usize> = BTreeMap::new();
+    for (_, layout) in agents {
+        for key in layout.sections.keys() {
+            *support.entry(key).or_default() += 1;
+        }
+    }
+    let mut suggested: Vec<(usize, String, SectionLayout)> = Vec::new();
+    for (key, named) in support {
+        let sections: Vec<&SectionLayout> = agents
             .iter()
             .filter_map(|(_, layout)| layout.sections.get(key))
             .collect();
-        let mut section = serde_json::Map::new();
+        let mut section = SectionLayout::default();
         if most(
             sections
                 .iter()
@@ -132,16 +149,14 @@ fn suggested_sections(agents: &[(EntityId, BoardLayout)]) -> BTreeMap<String, se
                 .count(),
             total,
         ) {
-            section.insert("fold".to_owned(), serde_json::Value::Bool(true));
+            section.fold = Some(SectionFold::default());
         }
         let mut shares: Vec<u8> = sections
             .iter()
             .filter_map(|section| section.share_pct)
             .collect();
-        if most(shares.len(), total)
-            && let Some(share) = median(&mut shares)
-        {
-            section.insert("share_pct".to_owned(), serde_json::Value::from(share));
+        if most(shares.len(), total) {
+            section.share_pct = median(&mut shares);
         }
         let mut filters: BTreeMap<Vec<String>, usize> = BTreeMap::new();
         for section in &sections {
@@ -158,33 +173,41 @@ fn suggested_sections(agents: &[(EntityId, BoardLayout)]) -> BTreeMap<String, se
             .filter(|(_, count)| most(*count, total))
             .max_by_key(|(_, count)| *count)
         {
-            section.insert("status".to_owned(), serde_json::Value::from(status));
+            section.filter = Some(SectionFilter { who: None, status });
         }
-        if !section.is_empty() {
-            suggested.insert(key.clone(), serde_json::Value::Object(section));
+        if section != SectionLayout::default() {
+            suggested.push((named, key.clone(), section));
         }
     }
-    fit_shares_to_cap(&mut suggested);
-    suggested
+    // Most-named first, then by key, so the cut is the same on every pass.
+    suggested.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    suggested.truncate(BOARD_LAYOUT_SECTIONS_MAX);
+    let mut layout = BoardLayout {
+        sections: suggested
+            .into_iter()
+            .map(|(_, key, section)| (key, section))
+            .collect(),
+    };
+    fit_shares_to_cap(&mut layout);
+    layout
 }
 
 /// Section shares are shares of one cap and never sum past it (owner
 /// 2026-11-03 20:31). Medians taken section by section can: then each
-/// suggested share is scaled down in proportion, rounding down, so the
-/// suggested layout is one `BoardLayout::validate` accepts.
-fn fit_shares_to_cap(suggested: &mut BTreeMap<String, serde_json::Value>) {
-    let share =
-        |section: &serde_json::Value| section.get("share_pct").and_then(serde_json::Value::as_u64);
-    let total: u64 = suggested.values().filter_map(share).sum();
+/// suggested share is scaled down in proportion, rounding down.
+fn fit_shares_to_cap(layout: &mut BoardLayout) {
+    let total: u32 = layout
+        .sections
+        .values()
+        .filter_map(|section| section.share_pct)
+        .map(u32::from)
+        .sum();
     if total <= 100 {
         return;
     }
-    for section in suggested.values_mut() {
-        if let (Some(pct), Some(object)) = (share(section), section.as_object_mut()) {
-            object.insert(
-                "share_pct".to_owned(),
-                serde_json::Value::from(pct.saturating_mul(100) / total),
-            );
+    for section in layout.sections.values_mut() {
+        if let Some(pct) = section.share_pct {
+            section.share_pct = u8::try_from(u32::from(pct) * 100 / total).ok();
         }
     }
 }
