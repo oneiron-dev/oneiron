@@ -197,8 +197,10 @@ pub fn evaluate_transition(
                     return Err(IdentityTopologyRejection::DuplicateReassignmentItem);
                 }
                 match entry.target {
+                    // `seen` holds every head: one lookup per row however
+                    // many heads a split names (FIX 10188).
                     ReassignmentTarget::Head(head) => {
-                        if !split.heads.contains(&head) {
+                        if !seen.contains(&head) {
                             return Err(IdentityTopologyRejection::UnknownHead { head });
                         }
                     }
@@ -215,7 +217,9 @@ pub fn evaluate_transition(
                 return Err(IdentityTopologyRejection::EmptyFacets);
             }
             require_active(&facet.entity)?;
-            let facet_count = facet.facets.len() as u32;
+            // An index past `u32::MAX` cannot be written, so a larger mask
+            // count admits every index the wire can carry (FIX 10188).
+            let facet_count = u32::try_from(facet.facets.len()).unwrap_or(u32::MAX);
             let mut seen_items = BTreeSet::new();
             for entry in &facet.reassignment.entries {
                 if !seen_items.insert(encode_reassignment_item(&entry.item)) {
