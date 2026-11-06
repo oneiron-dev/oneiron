@@ -217,8 +217,9 @@ pub(crate) use self::replay_parts::{
 pub(crate) use self::storage::{
     StrippedPieces, drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    republish_step_start_lengths_in_rows, settle_start_bodies_in_rows, step_capsule_row,
-    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
+    republish_step_start_lengths_in_rows, settle_start_bodies_in_rows,
+    start_piece_held_apart_in_txn, step_capsule_row, step_start_body_row,
+    step_start_content_pieces, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::wait_delivery_owners;

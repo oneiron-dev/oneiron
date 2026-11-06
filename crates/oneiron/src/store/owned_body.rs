@@ -131,6 +131,19 @@ pub(crate) fn hold_digest_inline_in_rows(
     Ok(())
 }
 
+/// Every holder of `blake3`: each occurrence holding it and its owner.
+pub(crate) fn digest_holders_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    blake3: &[u8; 32],
+) -> Result<Vec<(EntityId, EntityId)>> {
+    Ok(BODY_DIGEST
+        .scan_from(store, txn, blake3)?
+        .into_iter()
+        .map(|((_, occurrence), owner)| (occurrence, owner))
+        .collect())
+}
+
 /// Whether any descriptor still holds `blake3`.
 pub(crate) fn digest_is_held_in_txn(
     store: &impl ManifestDbs,
