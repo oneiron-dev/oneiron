@@ -63,7 +63,7 @@ impl HostSelfDispatcher<'_> {
             .iter()
             .map(|row| row.last())
             .max();
-        let answer = if call.writes() {
+        let mut answer = if call.writes() {
             self.storage
                 .update_code_run_folds(run_id, |ledger| ledger.answer(call, step, prefix_end))?
         } else {
@@ -72,9 +72,40 @@ impl HostSelfDispatcher<'_> {
                 .answer(call, step, prefix_end)
         };
         // A fold's answer can quote its stub, ids and note: every known
-        // custody value in it reaches the guest as its handle.
-        Ok(SelfDispatchOutcome::Fold(
-            crate::engine_executor::mask_known_text(&self.storage, &answer.to_string())?,
-        ))
+        // custody value in its text reaches the guest as its handle. Only
+        // text values are masked, so the answer stays the same JSON.
+        mask_answer_text(&self.storage, &mut answer)?;
+        Ok(SelfDispatchOutcome::Fold(answer.to_string()))
     }
+}
+
+/// Keys whose value the engine writes as a typed tag (a fold handle, a
+/// claim source, a fold kind, a speech verb): never a quoted text.
+const FOLD_ANSWER_TAG_KEYS: [&str; 4] = ["fold", "source", "kind", "verb"];
+
+/// Masks every known custody value in the text values of one fold answer:
+/// keys, numbers, booleans and typed tags are kept as they are.
+fn mask_answer_text(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+) -> Result<()> {
+    match value {
+        serde_json::Value::String(text) => {
+            *text = crate::engine_executor::mask_known_text(storage, text)?;
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                mask_answer_text(storage, item)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields.iter_mut() {
+                if !FOLD_ANSWER_TAG_KEYS.contains(&key.as_str()) {
+                    mask_answer_text(storage, item)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
