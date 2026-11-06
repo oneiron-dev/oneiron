@@ -243,7 +243,11 @@ pub(crate) fn erase_drafter_actor_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let store = &vault.store;
-    erase_drafter_examples_for_source_in_txn(store, wtxn, id)?;
+    erase_drafter_examples_for_source_in_txn(
+        &crate::secret_record::CustodyWrite::of(vault),
+        wtxn,
+        id,
+    )?;
     erase_drafters_for_source_in_txn(store, wtxn, id)?;
     if let Some(mut policy) = POLICY.get_lenient(store, wtxn, &())?
         && policy.set_by.as_mut().is_some_and(|by| by.forget(id))

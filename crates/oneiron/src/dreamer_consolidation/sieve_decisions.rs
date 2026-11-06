@@ -55,15 +55,44 @@ impl SieveTypingQuestion {
         candidates: &[EntityId],
         labels: &mut CallLabelMap,
     ) -> Result<Self> {
-        let key = rung_key(rung).as_bytes();
+        Self::pack_keyed(rung, decisions, candidates, labels, &[])
+    }
+
+    /// `rung`'s pack over one span of a call that reads several (FIX
+    /// 14711): the same questions, each also keyed by `span`, so no two
+    /// spans of the call share a question or a label.
+    pub(super) fn pack_for_span(
+        rung: SieveRung,
+        decisions: &ConsolidationDecisions,
+        candidates: &[EntityId],
+        labels: &mut CallLabelMap,
+        span: &[u8; 32],
+    ) -> Result<Self> {
+        Self::pack_keyed(rung, decisions, candidates, labels, span)
+    }
+
+    /// The pack, its questions keyed by the rung and then by `span` when it
+    /// is not empty.
+    fn pack_keyed(
+        rung: SieveRung,
+        decisions: &ConsolidationDecisions,
+        candidates: &[EntityId],
+        labels: &mut CallLabelMap,
+        span: &[u8],
+    ) -> Result<Self> {
+        let rung = rung_key(rung).as_bytes();
+        let key: Vec<&[u8]> = std::iter::once(rung)
+            .chain((!span.is_empty()).then_some(span))
+            .collect();
+        let key = key.as_slice();
         let mut questions = vec![
             SIEVE_NOVELTY.question(
-                &[key],
+                key,
                 decisions.sieve_novelty_wording.clone(),
                 AnswerContract::Noul,
             )?,
             SIEVE_KIND.question(
-                &[key],
+                key,
                 decisions.sieve_kind_wording.clone(),
                 AnswerContract::Choice {
                     options: KINDS
@@ -73,7 +102,7 @@ impl SieveTypingQuestion {
                 },
             )?,
             SIEVE_CONFIDENCE.question(
-                &[key],
+                key,
                 decisions.sieve_confidence_wording.clone(),
                 AnswerContract::Score {
                     min: 0.0,
@@ -92,8 +121,13 @@ impl SieveTypingQuestion {
                         .map(|id| labels.assign(LabelKind::Entity, *id).to_string()),
                 )
                 .collect();
+            let parts: Vec<&[u8]> = key
+                .iter()
+                .copied()
+                .chain(std::iter::once(group.as_bytes()))
+                .collect();
             let question = SIEVE_ENTITY.question(
-                &[key, group.as_bytes()],
+                &parts,
                 decisions.sieve_entity_wording.clone(),
                 AnswerContract::Choice { options },
             )?;
@@ -101,6 +135,12 @@ impl SieveTypingQuestion {
             questions.push(question);
         }
         Ok(Self { questions })
+    }
+
+    /// How many questions a pack over `candidates` candidates asks: novelty,
+    /// kind and confidence, then one per candidate group.
+    pub(super) fn question_count(candidates: usize) -> usize {
+        3 + candidates.div_ceil(CANDIDATES_PER_QUESTION)
     }
 
     /// The pack's questions, in order.
