@@ -304,7 +304,6 @@ impl ProviderHttp {
         json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
     }
 
-
     pub(in crate::models) async fn post_json_within_released(
         &self,
         path: &str,
@@ -325,7 +324,6 @@ impl ProviderHttp {
             .map_err(HttpReleaseError::Transport)?;
         json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
     }
-
 
     /// One media exchange at `path`, its reply body read whole, however
     /// large, on the media-reply line (FIX 8615). One request, as every
@@ -529,6 +527,27 @@ impl ProviderHttp {
             .send_body_released(path, request, plain, release, lease)
             .await?;
         // The old reader owns non-2xx status parsing and every SSE frame.
+        let sending: Sending = Box::pin(std::future::ready(Ok(response)));
+        Ok(futures_util::stream::unfold(
+            SseState::Start(sending),
+            next_sse,
+        ))
+    }
+
+    /// A JSON stream with the caller's release checked before every send.
+    pub(in crate::models) async fn post_sse_json_released<'a>(
+        &'a self,
+        path: &'a str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        release: DispatchRelease<'a>,
+        lease: &'a BudgetLease,
+    ) -> Result<impl Stream<Item = Result<SseItem, HttpFailure>> + Send + 'static, HttpReleaseError>
+    {
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let response = self
+            .send_body_released(path, || self.request(path, headers), plain, release, lease)
+            .await?;
         let sending: Sending = Box::pin(std::future::ready(Ok(response)));
         Ok(futures_util::stream::unfold(
             SseState::Start(sending),
