@@ -114,8 +114,8 @@ fn classify(manifest: Option<&RecoveryManifest>, expected: &RecoveryManifest) ->
 #[derive(Debug, Clone, Copy)]
 pub struct RecoveryBudget {
     pub max_bytes: usize,
-    /// The rows one page of a recovery's rebuild, replay or verification
-    /// takes before it hands its turn on: a page size, never a total a
+    /// The rows one page of a recovery's window validation, rebuild, replay
+    /// or verification takes before it hands its turn on: a page size, never a total a
     /// recovery refuses past (Rule 5, FIX 8821). Zero reads as one.
     pub max_obligations: usize,
 }
