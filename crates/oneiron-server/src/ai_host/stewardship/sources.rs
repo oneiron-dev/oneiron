@@ -7,6 +7,10 @@
 //! draft is scheduled as the offer that answered read it: with the evidence
 //! and the voice samples it was sent (FIX 9447).
 
+mod span;
+pub(super) use span::EvidenceSpan;
+pub(super) use span::covers;
+
 use std::sync::{Mutex, PoisonError};
 
 use oneiron::dreamer_runner::maintenance::representation::{
@@ -28,7 +32,7 @@ pub(super) fn draft_messages(
 ) -> Vec<LlmMessage> {
     vec![
         message(LlmMessageRole::System, draft.instruction.clone()),
-        message(LlmMessageRole::User, sources_text(draft, context)),
+        message(LlmMessageRole::User, sources_text(draft, context, None)),
     ]
 }
 
@@ -40,7 +44,11 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
 }
 
 /// `context`'s sources as the draft's call sends them.
-fn sources_text(draft: &StewardshipDraftRequest, context: &RepresentationContext) -> String {
+fn sources_text(
+    draft: &StewardshipDraftRequest,
+    context: &RepresentationContext,
+    span: Option<&EvidenceSpan>,
+) -> String {
     // Each evidence source carries the marker its citation checks for; the
     // voice samples are the owner's own words.
     serde_json::json!({
@@ -50,10 +58,21 @@ fn sources_text(draft: &StewardshipDraftRequest, context: &RepresentationContext
         "evidence": context
             .evidence
             .iter()
-            .map(|source| serde_json::json!({
-                "cite": source.cite(String::new()).marker(),
-                "text": source.text,
-            }))
+            .map(|source| {
+                let mut data = serde_json::json!({
+                    "cite": source.cite(String::new()).marker(),
+                    "text": source.text,
+                });
+                if let Some(span) = span.filter(|span| span.source.as_ref() == source) {
+                    data["text"] = serde_json::json!(span.text());
+                    data["span"] = serde_json::json!({
+                        "start": span.range.start,
+                        "end": span.range.end,
+                        "source_bytes": source.text.len(),
+                    });
+                }
+                data
+            })
             .collect::<Vec<_>>(),
         "voice": context
             .voice
@@ -69,8 +88,10 @@ pub(super) struct DraftSources<'a> {
     vault: &'a Vault,
     draft: &'a StewardshipDraftRequest,
     parts: &'a [GeneratedDraft],
-    /// What the offer last admitted was sent, kept before any byte went to
-    /// it: its read bound to that destination, receipt included.
+    span: Option<&'a EvidenceSpan>,
+    /// The full original sources admitted for the last send, kept before
+    /// any byte goes, receipt included. A span projects message bytes only;
+    /// its separate coverage never changes this destination-bound read.
     sent: Mutex<Option<DestinationContext>>,
 }
 
@@ -79,18 +100,29 @@ impl<'a> DraftSources<'a> {
         vault: &'a Vault,
         draft: &'a StewardshipDraftRequest,
         parts: &'a [GeneratedDraft],
+        span: Option<&'a EvidenceSpan>,
     ) -> Self {
         Self {
             vault,
             draft,
             parts,
+            span,
             sent: Mutex::new(None),
         }
     }
 
     pub(super) fn messages(&self, context: &RepresentationContext) -> Vec<LlmMessage> {
         if self.parts.is_empty() {
-            return draft_messages(self.draft, context);
+            return match self.span {
+                None => draft_messages(self.draft, context),
+                Some(span) => vec![
+                    message(LlmMessageRole::System, self.draft.instruction.clone()),
+                    message(
+                        LlmMessageRole::User,
+                        sources_text(self.draft, context, Some(span)),
+                    ),
+                ],
+            };
         }
         vec![
             message(LlmMessageRole::System, self.draft.instruction.clone()),
@@ -108,10 +140,10 @@ impl<'a> DraftSources<'a> {
         ]
     }
 
-    /// The draft as the offer that answered read it: its evidence and its
-    /// voice narrowed to what that offer was sent, so its voice provenance
-    /// names only the samples it received (FIX 9447). `None` when no offer
-    /// was sent anything.
+    /// The draft's references as the answering offer admitted them; voice
+    /// provenance names only samples it received (FIX 9447). Evidence pins
+    /// the full originals; a span's transmitted body coverage is retained
+    /// separately in `GeneratedDraft`. `None` when no offer was sent anything.
     pub(super) fn served(self) -> Option<(StewardshipDraftRequest, DestinationContext)> {
         let sent = self
             .sent
@@ -146,6 +178,13 @@ impl SourceAdmission for DraftSources<'_> {
             Err(reason) => return SourceOffer::Held(reason),
         };
         if admitted.context.evidence.is_empty() || admitted.context.voice.is_empty() {
+            return SourceOffer::Held(admitted.held.unwrap_or(ReleaseHold::Placement).reason());
+        }
+        // A span projects only the exact original source admitted here.
+        if self
+            .span
+            .is_some_and(|span| !admitted.context.evidence.contains(span.source.as_ref()))
+        {
             return SourceOffer::Held(admitted.held.unwrap_or(ReleaseHold::Placement).reason());
         }
         // A derived draft cannot be narrowed by dropping some of its inputs.

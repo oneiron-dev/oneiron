@@ -9,12 +9,12 @@ use oneiron::dreamer_runner::maintenance::stewardship::{
     StewardshipDraftOutcome, StewardshipDraftRequest,
 };
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmRequest,
-    ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error,
+    FatalLlmError, LlmError, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 
 use super::Drafter;
-use super::sources::{DraftSources, SourcedDraft};
+use super::sources::{DraftSources, EvidenceSpan, SourcedDraft};
 use crate::models::ModelRuntime;
 use oneiron::dreamer_runner::maintenance::representation::DestinationContext;
 
@@ -58,6 +58,30 @@ impl DraftStage {
 pub(super) struct DraftFailure {
     pub(super) stage: DraftStage,
     pub(super) error: Error,
+    /// The actual returned model error and last actual destination read.
+    pub(super) call: Option<LlmError>,
+    pub(super) sent: Option<DestinationContext>,
+}
+
+impl DraftFailure {
+    fn context_overflow(&self) -> bool {
+        matches!(
+            &self.call,
+            Some(LlmError::Fatal(FatalLlmError::InvalidRequestDetail { code: Some(code), .. }))
+                if code == "context_length_exceeded"
+        )
+    }
+
+    fn overflow_span(&self) -> Option<EvidenceSpan> {
+        if !self.context_overflow() {
+            return None;
+        }
+        let evidence = &self.sent.as_ref()?.context.evidence;
+        let [source] = evidence.as_slice() else {
+            return None;
+        };
+        Some(EvidenceSpan::whole(source.clone()))
+    }
 }
 
 /// What drafting one request came to.
@@ -98,9 +122,9 @@ pub(super) async fn draft_pass(
         return Ok(DraftPass::Moved(current));
     }
     if matches!(failure.stage, DraftStage::Call | DraftStage::Schedule)
-        && current.request.evidence.len() > 1
+        && (current.request.evidence.len() > 1 || failure.context_overflow())
     {
-        match fold::draft_fold(vault, runtime, drafter, &current).await? {
+        match fold::draft_fold(vault, runtime, drafter, &current, failure).await? {
             DraftPass::Failed(fold_failure, latest) => {
                 failure = fold_failure;
                 current = latest;
@@ -139,7 +163,12 @@ pub(super) async fn draft_pass(
 
 /// The failure at `stage` of an engine error.
 fn at(stage: DraftStage) -> impl Fn(Error) -> DraftFailure {
-    move |error| DraftFailure { stage, error }
+    move |error| DraftFailure {
+        stage,
+        error,
+        call: None,
+        sent: None,
+    }
 }
 
 /// One model draft of `draft`, scheduled as the request the model that
@@ -151,11 +180,12 @@ async fn draft_one(
     drafter: Drafter,
     draft: &StewardshipDraftRequest,
 ) -> Result<StewardshipDraftOutcome, DraftFailure> {
-    let generated = generate_draft(vault, runtime, drafter, draft, &[]).await?;
+    let generated = generate_draft(vault, runtime, drafter, draft, &[], None).await?;
     let GeneratedDraft {
         text,
         served,
         snapshot,
+        ..
     } = generated;
     vault
         .schedule_stewardship_draft(
@@ -171,6 +201,8 @@ pub(super) struct GeneratedDraft {
     pub(super) text: String,
     pub(super) served: StewardshipDraftRequest,
     pub(super) snapshot: DestinationContext,
+    /// Body ranges covered by completed calls, including a synthesis's parts.
+    pub(super) coverage: Vec<EvidenceSpan>,
 }
 
 async fn generate_draft(
@@ -179,6 +211,7 @@ async fn generate_draft(
     drafter: Drafter,
     draft: &StewardshipDraftRequest,
     parts: &[GeneratedDraft],
+    span: Option<&EvidenceSpan>,
 ) -> Result<GeneratedDraft, DraftFailure> {
     use DraftStage::{Call, Schedule, Sources};
     // Read on this device, for the call's admission: no byte of it goes to
@@ -190,7 +223,12 @@ async fn generate_draft(
         .seat(drafter.role)
         .ok_or_else(|| Error::InvalidConfig("no [models] rung drafts follow-ups".into()))
         .map_err(at(Call))?;
-    let sources = DraftSources::new(vault, draft, parts);
+    if span.is_some_and(|span| !context.evidence.contains(span.source.as_ref())) {
+        return Err(at(Sources)(Error::InvalidClaimBody(
+            "stewardship draft source changed",
+        )));
+    }
+    let sources = DraftSources::new(vault, draft, parts, span);
     let purpose = CallPurpose::Other {
         name: DRAFT_PURPOSE.to_owned(),
     };
@@ -232,12 +270,22 @@ async fn generate_draft(
     let run = runtime.undeclared_run(run_id, guard);
     // Each offer the call reaches, the first included, is sent only what its
     // own destination may receive, read and kept before the send.
-    let response = call
+    let response = match call
         .ladder
         .generate_admitted(&run, call.request, None, &sources)
         .await
-        .map_err(|error| Error::InvalidConfig(format!("stewardship draft call failed: {error}")))
-        .map_err(at(Call))?;
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let sent = sources.served().map(|(_, snapshot)| snapshot);
+            return Err(DraftFailure {
+                stage: Call,
+                error: Error::InvalidConfig(format!("stewardship draft call failed: {error}")),
+                call: Some(error),
+                sent,
+            });
+        }
+    };
     let text: String = response
         .message
         .content
@@ -251,10 +299,27 @@ async fn generate_draft(
         .served()
         .ok_or_else(|| Error::InvalidConfig("stewardship draft was sent no sources".into()))
         .map_err(at(Schedule))?;
+    let coverage = if !parts.is_empty() {
+        parts
+            .iter()
+            .flat_map(|part| part.coverage.iter().cloned())
+            .collect()
+    } else if let Some(span) = span {
+        vec![span.clone()]
+    } else {
+        snapshot
+            .context
+            .evidence
+            .iter()
+            .cloned()
+            .map(EvidenceSpan::whole)
+            .collect()
+    };
     Ok(GeneratedDraft {
         text,
         served,
         snapshot,
+        coverage,
     })
 }
 
