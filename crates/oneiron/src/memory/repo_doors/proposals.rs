@@ -306,6 +306,13 @@ impl Memory<'_> {
                 &["Open a fresh work at the current green and propose the change there."],
             ));
         }
+        // A re-review keeps its original's lineage: it repairs nothing
+        // (FIX 4364).
+        if original.is_some() && input.repair_of.is_some() {
+            return Err(MemoryError::bad_request(
+                "a re-review cannot also repair a failed proposal",
+            ));
+        }
         // A repair source the run's lane does not read answers as an
         // absent one: no existence oracle (FIX 4364).
         if let Some(source) = input.repair_of
