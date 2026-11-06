@@ -131,12 +131,41 @@ pub(crate) fn release_asset_blob_in_txn(
         &EntityId,
     ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> crate::error::Result<()> {
-    let Some(raw) = store.port_entity_raw(wtxn, id)? else {
+    let Some(hash) = held_blob_hash_in_txn(store, wtxn, id)? else {
         return Ok(());
+    };
+    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &hash, deindex)
+}
+
+/// The owner's discard of a world copy takes the hold the ASSET `id` has on
+/// the blob its body names (FIX 14534, Engine 11-06 08:34 call 4 = A), before
+/// its row goes: its `asset_ref` row only, with no fence or deindex of the
+/// bytes' carrier, a member of its own.
+pub(crate) fn discard_asset_blob_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<()> {
+    let Some(hash) = held_blob_hash_in_txn(store, wtxn, id)? else {
+        return Ok(());
+    };
+    crate::blob_artifact::discard_asset_reference_in_txn(store, wtxn, id, &hash)
+}
+
+/// The hash of the blob the stored ASSET `id`'s body names, read while its
+/// body descriptor still stands. None for another kind of row, or a body that
+/// names no blob.
+fn held_blob_hash_in_txn(
+    store: &Store,
+    wtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<Option<[u8; 32]>> {
+    let Some(raw) = store.port_entity_raw(wtxn, id)? else {
+        return Ok(None);
     };
     if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
     {
-        return Ok(());
+        return Ok(None);
     }
     // The writer still holds the prior descriptor: collection cannot
     // retire or unlink its file before this read and reference release.
@@ -153,8 +182,5 @@ pub(crate) fn release_asset_blob_in_txn(
         }
         None => &raw[ENTITY_METADATA_HEADER_LEN..],
     };
-    let Some(blob) = AssetBlobRef::of_body(body) else {
-        return Ok(());
-    };
-    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &blob.hash, deindex)
+    Ok(AssetBlobRef::of_body(body).map(|blob| blob.hash))
 }
