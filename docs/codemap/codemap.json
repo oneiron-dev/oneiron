@@ -4122,7 +4122,7 @@
      "path": "src/authority/frontier_join.rs",
      "purpose": "Joining a wide causal frontier (FIX 7908 and its duplicates, Phase2 B; CALLS \"Phase2 frontier join\")",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -4253,7 +4253,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -4261,8 +4261,8 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 6,
-      "fn": 6,
+      "crate-vis": 7,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -33454,12 +33454,12 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganWait",
@@ -33469,7 +33469,8 @@
      "purpose": "An organ call that waits for a node (OF-575, owner ruling MESH): a host that cannot start an organ, with…",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "crate-vis": 1,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -33481,7 +33482,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 9,
       "re-export": 3
      }
@@ -33589,7 +33590,7 @@
      "path": "src/edit_settle/stranded.rs",
      "purpose": "Stale retained outputs stay durable proposals against the observed new head",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -91151,7 +91152,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 160,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6405,
    "test_files": 895
@@ -119084,7 +119085,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 10,
+      "fn": 12,
       "struct": 1
      }
     },

@@ -19,6 +19,9 @@
 //! `oneiron::Vault::register_secret_as_owner`, which reads the manifest from a
 //! served repository through `oneiron::Vault::origin_secret_manifest`.
 
+use std::collections::BTreeSet;
+use std::ops::Bound::{Included, Unbounded};
+
 use serde::{Deserialize, Serialize};
 
 use crate::secret_record::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
@@ -113,7 +116,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     // The keys the current table has set. TOML forbids setting one twice, or
     // making it a value and a table, and keeping the last would let a later,
     // wider tier erase a narrower one.
-    let mut seen: Vec<Vec<String>> = Vec::new();
+    let mut seen: BTreeSet<Vec<String>> = BTreeSet::new();
 
     for raw in text.lines() {
         let line = toml_trim(raw);
@@ -185,7 +188,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             [key] => key.clone(),
             _ => String::new(),
         };
-        seen.push(path);
+        seen.insert(path);
         let key = key.as_str();
 
         match scope {
@@ -293,9 +296,17 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
 /// Whether `path` sets a key `seen` already holds, or a key inside one, or a
 /// table around one. TOML refuses each: a key is set once, and is a value or
 /// a table, never both.
-fn redefines(seen: &[Vec<String>], path: &[String]) -> bool {
-    seen.iter()
-        .any(|prior| prior.starts_with(path) || path.starts_with(prior))
+fn redefines(seen: &BTreeSet<Vec<String>>, path: &[String]) -> bool {
+    // Accepted paths are prefix-free: any ancestor or descendant would already
+    // have been refused. Their ordered neighbours therefore decide both cases.
+    let before = seen
+        .range::<[String], _>((Unbounded, Included(path)))
+        .next_back();
+    let after = seen
+        .range::<[String], _>((Included(path), Unbounded))
+        .next();
+    before.is_some_and(|prior| path.starts_with(prior))
+        || after.is_some_and(|prior| prior.starts_with(path))
 }
 
 /// `text` without TOML whitespace (space and tab) at either end.
