@@ -332,6 +332,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -480,6 +481,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -614,6 +616,7 @@ impl Vault {
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             claim_vad_payment: Default::default(),
+            cloud_registration_erase_revokes: Default::default(),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -722,7 +725,10 @@ impl Vault {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
                 crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
-                crate::comm::seed_claim_class_descriptors(&vault)?;
+                vault
+                    .store
+                    .record_hooks
+                    .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
             }
         }
@@ -905,6 +911,34 @@ impl Vault {
                 self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
+        }
+    }
+
+    /// Unloads `key`'s window when it is registered and no handle but the
+    /// manager's holds it: persisted, then deregistered, so a sweep may hold
+    /// it closed (FIX 14534). `false` when it is not registered, a handle
+    /// holds it, or no manager is attached.
+    ///
+    /// # Errors
+    ///
+    /// A persist the unload refused; a poisoned attachment.
+    #[cfg(feature = "sync")]
+    pub(crate) fn unload_idle_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::Result<bool> {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("document manager attachment poisoned"))?
+            .upgrade();
+        let Some(manager) = manager else {
+            return Ok(false);
+        };
+        match manager.unload_window(key) {
+            Ok(unloaded) => Ok(unloaded),
+            Err(crate::Error::Sync(crate::error::SyncError::WindowBusy { .. })) => Ok(false),
+            Err(error) => Err(error),
         }
     }
 

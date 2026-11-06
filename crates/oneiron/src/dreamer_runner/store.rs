@@ -617,6 +617,45 @@ impl<'a> DreamerRunnerStore<'a> {
         retry_at: u64,
         step_hashes: &[[u8; 32]],
     ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_hashes,
+            super::SELECTION_DEFERRED_REASON,
+        )
+    }
+
+    /// Requeues a leased try the pass's frozen preparation did not hold, as
+    /// [`Self::defer_selection`] does, under the backlog reason: it ran
+    /// nothing, so its next run is not a selection retry and widens over no
+    /// conversation peers.
+    pub(crate) fn defer_backlog(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_hashes: &[[u8; 32]],
+    ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_hashes,
+            super::BACKLOG_DEFERRED_REASON,
+        )
+    }
+
+    /// The same-row requeue both deferrals share, with `reason` on its
+    /// history.
+    fn requeue_deferred(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_hashes: &[[u8; 32]],
+        reason: &str,
+    ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
@@ -634,7 +673,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    reason: super::SELECTION_DEFERRED_REASON.into(),
+                    reason: reason.into(),
                     due_at: retry_at,
                 },
             )?;
@@ -819,6 +858,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
                 turn,
             )?;
+            if let Some(record) = crate::agent_dispatch::requeue_workflow_tool_failure_in_txn(
+                self.vault, txn, &source, &input,
+            )? {
+                return Ok(record);
+            }
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
