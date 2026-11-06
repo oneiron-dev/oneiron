@@ -185,3 +185,33 @@ proof. This carrier does not register native House input hashes or NET invoices.
 Those actual producer hooks and the executor/driver coverage join remain separate
 work. Automatic payment and the existing generated-only opening policy are
 unchanged.
+
+### Registered GROSS inclusion at park/error settlement
+
+The original admitted line now keeps its actual opaque lease tokens through the
+attempt lifetime. Registration reuses the already allocated original coordinate;
+it does not allocate another call, reserve funds or reconstruct a token from its
+public id. Clones share this finite-attempt registry, deduplicated by native lease
+equality, including the issuing guard's allocation identity.
+
+At a registered meter's park/error settlement, the registry lock is released
+before one snapshot reads that registered guard's total and the selected tokens.
+The same total determines the existing charge delta and receipt prefix. Only
+settled intervals entirely within that original baseline/current interval qualify.
+Foreign, open, aborted, unknown and pre-baseline intervals do not qualify; a known
+settled empty interval stays known and empty. A fresh checkpoint guard cannot
+qualify the old guard's tokens.
+
+After the existing aggregate charge succeeds, the same money writer records this
+GROSS inclusion in the existing private native-call row. Its mandatory coverage
+state is either unknown or the original aggregate interval, input charge, actual
+settled units and settlement time. It changes neither the invoice nor its paid
+fact. A missing reservation records no coverage. An evidence failure rolls back
+only its nested savepoint; a parent failure rolls back the charge and evidence.
+The original charge, owed-unit SUM, receipts, status and error fallback stand.
+
+This is park/error GROSS inclusion evidence only. Successful executor result
+settlement, native NET tally coverage, native House admission/invoice hooks and
+late-call reconciliation still need their actual joins. No durable guard pointer
+is serialized. Automatic native invoice payment and aggregate charge subtraction
+remain off; a known empty GROSS interval is not a zero NET invoice.
