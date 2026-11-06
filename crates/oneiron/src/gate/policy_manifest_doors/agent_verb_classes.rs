@@ -132,8 +132,8 @@ pub(crate) fn decode_agent_verb_classes(
 }
 
 /// The owner's verb-class rows as `txn` holds them, through `store`: the
-/// default manifest's table when that manifest is owner-trusted. An absent
-/// or untrusted manifest, or a table that does not decode, holds none (a
+/// default manifest's table when that manifest is owner-trusted and not
+/// quarantined. An absent, untrusted or quarantined manifest, or a table that does not decode, holds none (a
 /// classed Grant then admits only its classes' own spellings and the
 /// built-in outbound classes). A judgment reads this once and passes it in.
 ///
@@ -155,7 +155,11 @@ pub(crate) fn agent_verb_class_rows_for_store_in_txn(
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
         return Ok(BTreeMap::new());
     };
-    if !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)? {
+    // A quarantined manifest keeps its body and trust stamp, but its rows
+    // count for nothing, as the manifest fold reads it (FIX 8735 review).
+    if !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?
+        || crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)?
+    {
         return Ok(BTreeMap::new());
     }
     match decode_fields(body).and_then(|fields| decode_agent_verb_classes(&fields)) {
@@ -168,6 +172,31 @@ pub(crate) fn agent_verb_class_rows_for_store_in_txn(
             Ok(BTreeMap::new())
         }
     }
+}
+
+/// The verb-class table a stored default-manifest `body` declares, whether
+/// or not it is trusted yet; none when it declares none or does not decode.
+/// A shape plan's projection reads the table a manifest would install with.
+pub(crate) fn agent_verb_class_rows_of_body(body: &[u8]) -> BTreeMap<String, BTreeSet<String>> {
+    decode_fields(body)
+        .and_then(|fields| decode_agent_verb_classes(&fields))
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// Whether the verb-class table `after` confers no verb that `before` did
+/// not: every class it names was in `before`, with no verb added. A class
+/// row is part of every agent Grant naming it, so a new class or an added
+/// verb is a widening, which waits for the owner's word like any other
+/// (FIX 8735 review); removing a class or a verb narrows.
+pub(crate) fn verb_classes_narrow(
+    before: &BTreeMap<String, BTreeSet<String>>,
+    after: &BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    after
+        .iter()
+        .all(|(class, verbs)| before.get(class).is_some_and(|had| verbs.is_subset(had)))
 }
 
 fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<AgentVerbClassesView> {
