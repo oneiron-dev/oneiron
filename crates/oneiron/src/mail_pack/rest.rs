@@ -3,7 +3,7 @@
 //! injected credential, and the text helpers a message body needs.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::time::Duration;
 
@@ -219,6 +219,60 @@ pub(super) fn tidy_text(text: &str) -> String {
 /// a credential replaced at its door is checked again before it reads. The
 /// key is this wire's own and never leaves it, so a digest names no
 /// credential outside it.
+/// The fresh Google access tokens one wire exchanged its sources' stored
+/// grants for (fix list row 16311), by the source and the keyed digest of
+/// the grant: a grant that carries a refresh token and its OAuth client is
+/// exchanged at Google's token endpoint once per wire, not once per call,
+/// and a rotated grant is exchanged again. Read only inside the source's
+/// credential door, so a credential its door refuses sends nothing; held in
+/// memory for the wire's life, never stored.
+pub(super) struct FreshGoogleTokens {
+    key: [u8; 32],
+    fresh: RefCell<BTreeMap<EntityId, ([u8; 32], zeroize::Zeroizing<String>)>>,
+}
+
+impl FreshGoogleTokens {
+    pub(super) fn new() -> Self {
+        Self {
+            key: rand::random(),
+            fresh: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// The `Authorization: Bearer` value for `source`'s injected credential
+    /// `token`: a fresh access token for a stored grant that can refresh,
+    /// else the credential as [`bearer_header`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// `google_credential_refresh_failed` when Google refuses the grant's
+    /// refresh token or cannot be reached; [`bearer_header`]'s own.
+    pub(super) fn bearer(
+        &self,
+        client: &reqwest::blocking::Client,
+        source: EntityId,
+        token: &[u8],
+    ) -> Result<HeaderValue> {
+        let digest = *blake3::keyed_hash(&self.key, token).as_bytes();
+        if let Some((held, fresh)) = self.fresh.borrow().get(&source)
+            && *held == digest
+        {
+            return bearer_header(fresh.as_bytes());
+        }
+        match crate::connector_key::ProviderConnectionChecks::refresh_stored_google_grant(
+            client, token,
+        ) {
+            Ok(Some(fresh)) => {
+                let header = bearer_header(fresh.as_bytes())?;
+                self.fresh.borrow_mut().insert(source, (digest, fresh));
+                Ok(header)
+            }
+            Ok(None) => bearer_header(token),
+            Err(_) => Err(refused("google_credential_refresh_failed")),
+        }
+    }
+}
+
 pub(super) struct VerifiedCredentials {
     key: [u8; 32],
     seen: RefCell<BTreeSet<(EntityId, [u8; 32])>>,
