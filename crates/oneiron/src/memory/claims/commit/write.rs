@@ -5,10 +5,12 @@
 use super::*;
 
 mod attempt;
+mod batch;
 mod landing;
 mod receipt;
 mod resolve;
 
+pub(in crate::memory) use self::batch::{BatchClaim, BatchRefusal};
 use self::resolve::refuse_typed_claim_family;
 
 impl Memory<'_> {
