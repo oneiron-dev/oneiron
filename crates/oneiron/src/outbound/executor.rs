@@ -12,6 +12,7 @@ use super::connector_task::{
 };
 use super::dispatch_pipeline::{
     ALTERNATIVE_OUTCOME_FIELD, GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD,
+    ambient_alternative_ref,
 };
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
@@ -25,12 +26,13 @@ use super::retry_audit::{
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt, RetryAttempt,
+    AttemptId, AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt, RetryAttempt,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_intent_ledger::{
-    IntentEscalationReason, IntentResolution, RetryDisposition, UnconfirmedDelivery,
+    IntentEscalationReason, IntentLedgerError, IntentResolution, RetryDisposition,
+    UnconfirmedDelivery, abandon_attempt_undelivered_intents_in_txn,
 };
 use crate::receipt::SendReceiptOutcome;
 
@@ -227,7 +229,7 @@ impl Vault {
                 SendExecutorLeaseTake::Taken(lease) => lease,
                 SendExecutorLeaseTake::HeldElsewhere(held) => {
                     log_send_executor_stand_down(task_ref, node_id, None, Some(held));
-                    stand_down_connector_task_attempt(self, &attempt, now)?;
+                    stand_down_connector_task_attempt(self, &attempt, &task, now)?;
                     continue;
                 }
                 SendExecutorLeaseTake::Closed => {
@@ -297,7 +299,7 @@ impl Vault {
             // FIX 4747: the fence found the lease moved before the transport
             // call, so nothing was sent; the TASK stays the holder's.
             if send_executor_stood_down(&result) {
-                stand_down_connector_task_attempt(self, &attempt, self.now_recorded_at())?;
+                stand_down_connector_task_attempt(self, &attempt, &task, self.now_recorded_at())?;
                 continue;
             }
             match result.outcome {
@@ -431,17 +433,66 @@ fn complete_connector_task_attempt(
 }
 
 /// What a machine that does not hold a TASK's send executor lease does with
-/// its own local attempt (FIX 4747): it completes the local queue row and
-/// leaves the synced TASK unsettled, so the holder sends and this machine
-/// never claims the row again. Engine call (CALLS, FIX 4747): complete, not
-/// re-park; a lease handed back here later comes with a fresh local attempt
-/// from its handover caller.
+/// its own local attempt (FIX 4747): in one writer, it stops its local sends
+/// of the TASK that certainly never went, which gives their reserved budget
+/// back, and completes the local queue row. A local send that may have gone
+/// keeps its state. The synced TASK stays unsettled, so the holder sends and
+/// this machine never claims the row again. Engine call (CALLS, FIX 4747):
+/// complete, not re-park; a lease handed back here later comes with a fresh
+/// local attempt from its handover caller.
 fn stand_down_connector_task_attempt(
     vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
+    task: &ConnectorSendTask,
     now: u64,
 ) -> Result<(), Error> {
-    complete_connector_task_attempt(vault, attempt, now)
+    let ledger_attempt_ids = connector_task_ledger_attempt_ids(task)?;
+    match vault.with_write_txn_grouped(|txn| {
+        for ledger_attempt_id in &ledger_attempt_ids {
+            abandon_attempt_undelivered_intents_in_txn(
+                vault,
+                txn,
+                *ledger_attempt_id,
+                IntentEscalationReason::SendExecutorStoodDown,
+                now,
+            )
+            .map_err(|error| match error {
+                IntentLedgerError::Engine(error) => error,
+                _ => Error::CorruptedIndex("outbound intent ledger row"),
+            })?;
+        }
+        crate::ports::JobQueue::port_job_complete(
+            vault,
+            txn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )
+    })? {
+        CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_) => Ok(()),
+    }
+}
+
+/// The ledger attempt ids `task`'s local sends are keyed under: its logical
+/// send's, and its bound ambient alternative's (FIX 7962), each derived from
+/// the ledger identity its dispatch request carries.
+fn connector_task_ledger_attempt_ids(task: &ConnectorSendTask) -> Result<Vec<AttemptId>, Error> {
+    let logical_ref = connector_logical_send_intent_ref(task);
+    let mut ledger_refs = Vec::with_capacity(2);
+    if let Some(alternative) = task.ambient_alternative.as_ref() {
+        ledger_refs.push(ambient_alternative_ref(&logical_ref, &alternative.surface));
+    }
+    ledger_refs.push(logical_ref);
+    ledger_refs
+        .iter()
+        .map(|ledger_ref| {
+            super::dispatch_attempt_id::outbound_dispatch_attempt_id(ledger_ref)
+                .map_err(|_| Error::InvariantViolation("invalid connector logical send ref"))
+        })
+        .collect()
 }
 
 /// Whether the send executor fence stood this dispatch down before its
