@@ -13340,7 +13340,7 @@
      "path": "src/channel_identity_provider/gmail/http.rs",
      "purpose": "Production Gmail send wire: one POST to `users.messages.send` (OF-374)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -21509,6 +21509,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 9,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 3,
