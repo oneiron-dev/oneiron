@@ -86,9 +86,10 @@ fn tournament(
     let bound = provider.capability().max_options;
     let mut field = options.clone();
     let mut started = false;
+    let mut measured_cost = false;
     loop {
         if field.len() <= bound {
-            return read_chunk(
+            let mut read = read_chunk(
                 provider,
                 pin,
                 pack,
@@ -97,7 +98,16 @@ fn tournament(
                 readings,
                 started,
                 capture.as_deref_mut(),
-            );
+            )?;
+            if let Read::Answer(answer) = &mut read
+                && started
+                && (measured_cost || answer.cost_per_thousand.is_some())
+            {
+                // A chunk quote is not the whole tournament's quote. Fallback
+                // calls may also quote different currencies.
+                answer.cost_per_thousand = Some(None);
+            }
+            return Ok(read);
         }
         let count = field.len().div_ceil(bound);
         let size = field.len().div_ceil(count);
@@ -114,10 +124,11 @@ fn tournament(
                 started,
                 capture.as_deref_mut(),
             )?;
-            started = true;
             let Read::Answer(answer) = read else {
                 return Ok(read);
             };
+            measured_cost |= answer.cost_per_thousand.is_some();
+            started = true;
             match answer.answer.clone() {
                 DecisionAnswer::Choice(winner) => winners.push((winner, answer)),
                 _ => abstained = Some(answer),
@@ -125,7 +136,13 @@ fn tournament(
         }
         match winners.len() {
             0 => return Ok(abstained.map_or(Read::Cut(StopCause::Deadline), Read::Answer)),
-            1 => return Ok(Read::Answer(winners.remove(0).1)),
+            1 => {
+                let mut answer = winners.remove(0).1;
+                if measured_cost {
+                    answer.cost_per_thousand = Some(None);
+                }
+                return Ok(Read::Answer(answer));
+            }
             _ => field = winners.into_iter().map(|(winner, _)| winner).collect(),
         }
     }
