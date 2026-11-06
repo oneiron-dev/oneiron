@@ -1,10 +1,7 @@
 //! Counterparty contact cache rematerialization, claim supersession, and opt-out folding.
 
-use super::codec::{
-    counterparty_contact_body_key, decode_counterparty_contact_fields,
-    encode_counterparty_contact_body, is_counterparty_contact_claim_predicate,
-};
-use super::read_memory::ContactClaim;
+use super::codec::{encode_counterparty_contact_body, is_counterparty_contact_claim_predicate};
+use super::read_memory::{ContactClaim, CounterpartyContactRead, CounterpartyContactState};
 use super::storage::{
     CONTACT_INDEX, contact_deleted_in_txn, contact_ids_with_live_head_in_txn,
     counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
@@ -12,9 +9,8 @@ use super::storage::{
     remove_counterparty_contact_from_every_party_channel,
 };
 use super::types::{
-    COUNTERPARTY_CONTACT_CLAIM_PREDICATES, COUNTERPARTY_CONTACT_SCHEMA_VERSION,
-    CounterpartyContactRecord, CounterpartyOptOut, CounterpartyOptOutReason, KEY_SCHEMA_VERSION,
-    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+    COUNTERPARTY_CONTACT_CLAIM_PREDICATES, CounterpartyContactRecord, CounterpartyOptOut,
+    CounterpartyOptOutReason, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
 };
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
@@ -450,6 +446,7 @@ pub(super) fn live_counterparty_contact_heads_in_txn(
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
     live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, None)
+        .map(|record| record.map(CounterpartyContactRead::into_unbound_record))
         .map_err(ClaimBodyReadError::into_unbound_error)
 }
 
@@ -458,7 +455,7 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
     memory: Option<ClaimScopeReadMemory<'_>>,
-) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
+) -> std::result::Result<Option<CounterpartyContactRead>, ClaimBodyReadError> {
     if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
         return Ok(None);
     }
@@ -466,7 +463,7 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     if bodies.is_empty() {
         return Ok(None);
     }
-    counterparty_contact_record_from_heads(bodies)
+    counterparty_contact_read_from_heads(bodies)
         .map(Some)
         .map_err(ClaimBodyReadError::from)
 }
@@ -481,6 +478,7 @@ pub(super) fn counterparty_contact_in_claims_in_txn(
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
     counterparty_contact_with_memory_in_claims_in_txn(vault, rtxn, contact_id, None)
+        .map(|record| record.map(CounterpartyContactRead::into_unbound_record))
         .map_err(ClaimBodyReadError::into_unbound_error)
 }
 
@@ -489,13 +487,17 @@ pub(super) fn counterparty_contact_with_memory_in_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
     memory: Option<ClaimScopeReadMemory<'_>>,
-) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
+) -> std::result::Result<Option<CounterpartyContactRead>, ClaimBodyReadError> {
     let Some(mut record) =
         live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, memory)?
     else {
         return Ok(None);
     };
-    fold_party_opt_out_heads_in_txn(vault, rtxn, &mut record)?;
+    let (counterparty, state) = record.fold_fields();
+    vault
+        .store
+        .record_hooks
+        .fold_party_opt_out_heads_in_txn(vault, rtxn, counterparty, state)?;
     Ok(Some(record))
 }
 
@@ -568,6 +570,12 @@ fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
 fn counterparty_contact_record_from_heads(
     bodies: Vec<ContactClaimValue>,
 ) -> Result<CounterpartyContactRecord> {
+    counterparty_contact_read_from_heads(bodies).map(CounterpartyContactRead::into_unbound_record)
+}
+
+fn counterparty_contact_read_from_heads(
+    bodies: Vec<ContactClaimValue>,
+) -> Result<CounterpartyContactRead> {
     let mut heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()] =
         std::array::from_fn(|_| None);
     for body in bodies {
@@ -587,19 +595,7 @@ fn counterparty_contact_record_from_heads(
             )));
         }
     }
-    let schema_version = Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION);
-    // Borrow through the canonical decoder while each value retains its guard.
-    decode_counterparty_contact_fields(|key| {
-        if key == KEY_SCHEMA_VERSION {
-            return Ok(&schema_version);
-        }
-        COUNTERPARTY_CONTACT_CLAIM_PREDICATES
-            .iter()
-            .position(|predicate| counterparty_contact_body_key(predicate) == key)
-            .and_then(|index| heads[index].as_ref())
-            .map(|value| &**value)
-            .ok_or_else(super::codec::invalid_contact)
-    })
+    CounterpartyContactRead::from_heads(heads)
 }
 
 fn fold_party_opt_out_heads_in_txn(
@@ -607,10 +603,16 @@ fn fold_party_opt_out_heads_in_txn(
     rtxn: &heed::RoTxn<'_>,
     record: &mut CounterpartyContactRecord,
 ) -> Result<()> {
-    vault
-        .store
-        .record_hooks
-        .fold_party_opt_out_heads_in_txn(vault, rtxn, record)
+    let mut state = CounterpartyContactState::from_record(record);
+    vault.store.record_hooks.fold_party_opt_out_heads_in_txn(
+        vault,
+        rtxn,
+        &record.counterparty,
+        &mut state,
+    )?;
+    record.updated_at = state.updated_at;
+    record.opt_out = state.opt_out;
+    Ok(())
 }
 
 /// OR-folds every live `comm.opt_out` head for this record's party that COVERS
@@ -636,19 +638,24 @@ fn fold_party_opt_out_heads_in_txn(
 pub(crate) fn fold_party_opt_out_heads_for_store_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    record: &mut CounterpartyContactRecord,
+    counterparty: &str,
+    record: &mut CounterpartyContactState,
 ) -> Result<()> {
     let Some(party_ref) = vault
         .store
         .record_hooks
-        .resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
+        .resolve_party_ref_in_txn(vault, rtxn, counterparty)
         .map_err(comm_fold_error)?
     else {
         return Ok(());
     };
     // Resolved ONCE: the class comes from the record's sending identity, which
     // no head in this loop can move.
-    let contact_class = counterparty_contact_channel_class(&vault.store, rtxn, record)?;
+    let contact_class = super::storage::counterparty_contact_channel_class_for_identity(
+        &vault.store,
+        rtxn,
+        &record.identity_ref,
+    )?;
     // Newest standing source wins, ranked on each head's OWN occurrence. The
     // contact's own head is the incumbent and keeps a tie, being the more
     // specific statement about this exact contact.

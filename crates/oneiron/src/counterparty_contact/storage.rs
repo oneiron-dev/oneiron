@@ -153,7 +153,15 @@ pub(super) fn counterparty_contact_channel_class(
     txn: &heed::RoTxn<'_>,
     record: &CounterpartyContactRecord,
 ) -> Result<Option<String>> {
-    identity_channel_class(store, txn, &record.identity_ref)
+    counterparty_contact_channel_class_for_identity(store, txn, &record.identity_ref)
+}
+
+pub(super) fn counterparty_contact_channel_class_for_identity(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<Option<String>> {
+    identity_channel_class(store, txn, identity_ref)
 }
 
 /// The class the identity's `channel_identity.channel` head names (OF-272);

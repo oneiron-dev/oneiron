@@ -128,11 +128,12 @@ pub(crate) fn resolve_core_interlocutor_set(
             })?;
             let contact = if readable {
                 match memory {
-                    Some(memory) => {
-                        vault.get_counterparty_contact_with_memory(&principal_id, memory)
-                    }
+                    Some(memory) => vault
+                        .get_counterparty_contact_with_memory(&principal_id, memory)
+                        .map(|record| record.map(|_| ())),
                     None => vault
                         .get_counterparty_contact(&principal_id)
+                        .map(|record| record.map(|_| ()))
                         .map_err(ClaimBodyReadError::from),
                 }
             } else {

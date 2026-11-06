@@ -384,23 +384,8 @@ impl CounterpartyContactRecord {
 
     /// Validates CID-7 record invariants.
     pub fn validate(&self) -> Result<()> {
-        validate_counterparty(&self.counterparty)?;
-        if self.updated_at < self.created_at {
-            return Err(invalid_contact());
-        }
-        match (self.status, self.revoked_at) {
-            (CounterpartyContactStatus::Active, None) => {}
-            (CounterpartyContactStatus::Active, Some(_)) => return Err(invalid_contact()),
-            (CounterpartyContactStatus::Revoked, Some(revoked_at))
-                if revoked_at >= self.created_at && self.updated_at >= revoked_at => {}
-            (CounterpartyContactStatus::Revoked, Some(_))
-            | (CounterpartyContactStatus::Revoked, None) => return Err(invalid_contact()),
-        }
-        if let Some(opt_out) = self.opt_out
-            && (opt_out.recorded_at < self.created_at || self.updated_at < opt_out.recorded_at)
-        {
-            return Err(invalid_contact());
-        }
+        super::read_memory::CounterpartyContactState::from_record(self)
+            .validate(&self.counterparty)?;
         validate_notes(&self.notes)?;
         Ok(())
     }

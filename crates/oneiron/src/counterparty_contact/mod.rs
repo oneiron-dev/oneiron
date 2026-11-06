@@ -13,6 +13,8 @@ mod doors;
 mod identity_index;
 mod lifecycle;
 mod read_memory;
+
+pub use self::read_memory::{CounterpartyContactRead, CounterpartyContactState};
 mod storage;
 mod trusted_contact;
 mod trusted_contact_credential;

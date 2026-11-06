@@ -70,6 +70,24 @@ borrow by the same canonical field decoder. No paid value is extracted to build
 an unguarded map. The stored-map decoder keeps its original key checks and uses
 that same field validator.
 
+A memory-bound contact lookup returns an opaque `CounterpartyContactRead`, not
+an unguarded `CounterpartyContactRecord`. The common field decoder validates by
+borrow, using the record's same scalar invariants and note checks. The read keeps
+the original counterparty value and notes array, including their actual backing
+and guards, until its last use. It returns strings by borrow and notes through a
+borrowed iterator; it does not allocate a second string or a typed notes vector.
+Only the eight scalar fields are copied. The party opt-out fold runs through the
+same store hook on the actual counterparty and scalar state, and still changes
+only `opt_out` and `updated_at`. Original unbound record APIs keep owned results.
+Their private conversion checks that the retained values have no memory guard,
+including a zero-byte guard, before allocating an unguarded record.
+
+The server's principal-contact check consumes only existence. Explicit
+`ContactRef` resolution borrows status, counterparty and first-touch from the
+opaque read. Its final interlocutor labels are still distinct output copies;
+the input value guards do not account for those labels or their later copies.
+The borrowed contact terminal adds no allocation admission or memory wait.
+
 The fold still sees the first duplicate only after every claim has been read,
 so a later native read error retains its original precedence. Ignored heads
 release their own guards too. Where the full-body terminal admits relationship

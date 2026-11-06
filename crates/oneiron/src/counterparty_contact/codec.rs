@@ -84,6 +84,39 @@ pub(super) fn decode_counterparty_contact_value(
 pub(super) fn decode_counterparty_contact_fields<'a>(
     field: impl Fn(&str) -> Result<&'a Value>,
 ) -> Result<CounterpartyContactRecord> {
+    Ok(decode_counterparty_contact_fields_borrowed(field)?.to_owned())
+}
+
+pub(super) struct CounterpartyContactFields<'a> {
+    pub state: super::read_memory::CounterpartyContactState,
+    pub counterparty: &'a str,
+    pub notes: &'a [Value],
+}
+
+impl CounterpartyContactFields<'_> {
+    pub fn to_owned(&self) -> CounterpartyContactRecord {
+        CounterpartyContactRecord {
+            identity_ref: self.state.identity_ref,
+            counterparty: self.counterparty.to_owned(),
+            first_touch: self.state.first_touch,
+            status: self.state.status,
+            created_at: self.state.created_at,
+            updated_at: self.state.updated_at,
+            revoked_at: self.state.revoked_at,
+            opt_out: self.state.opt_out,
+            promo_consent: self.state.promo_consent,
+            notes: self
+                .notes
+                .iter()
+                .map(|note| note.as_str().expect("validated contact note").to_owned())
+                .collect(),
+        }
+    }
+}
+
+pub(super) fn decode_counterparty_contact_fields_borrowed<'a>(
+    field: impl Fn(&str) -> Result<&'a Value>,
+) -> Result<CounterpartyContactFields<'a>> {
     if field(KEY_SCHEMA_VERSION)?.as_u64() != Some(COUNTERPARTY_CONTACT_SCHEMA_VERSION) {
         return Err(invalid_contact());
     }
@@ -91,8 +124,7 @@ pub(super) fn decode_counterparty_contact_fields<'a>(
     let identity_ref = decode_entity_ref(field(KEY_IDENTITY_REF)?)?;
     let counterparty = field(KEY_COUNTERPARTY)?
         .as_str()
-        .ok_or_else(invalid_contact)?
-        .to_owned();
+        .ok_or_else(invalid_contact)?;
     let first_touch = CounterpartyFirstTouch::parse(
         field(KEY_FIRST_TOUCH)?
             .as_str()
@@ -119,11 +151,9 @@ pub(super) fn decode_counterparty_contact_fields<'a>(
         Value::Boolean(value) => *value,
         _ => return Err(invalid_contact()),
     };
-    let notes = decode_notes(field(KEY_NOTES)?)?;
-
-    let record = CounterpartyContactRecord {
+    let notes = decode_notes_borrowed(field(KEY_NOTES)?)?;
+    let state = super::read_memory::CounterpartyContactState {
         identity_ref,
-        counterparty,
         first_touch,
         status,
         created_at,
@@ -131,10 +161,17 @@ pub(super) fn decode_counterparty_contact_fields<'a>(
         revoked_at,
         opt_out,
         promo_consent,
-        notes,
     };
-    record.validate()?;
-    Ok(record)
+    state.validate(counterparty)?;
+    // Keep record.validate's final note validation after the state invariants.
+    for note in notes {
+        validate_note(note.as_str().expect("validated contact note"))?;
+    }
+    Ok(CounterpartyContactFields {
+        state,
+        counterparty,
+        notes,
+    })
 }
 
 /// Returns whether `predicate` belongs to the CounterpartyContact claim family.
@@ -296,20 +333,24 @@ pub(super) fn encode_notes(notes: &[String]) -> Value {
 }
 
 fn decode_notes(value: &Value) -> Result<Vec<String>> {
+    Ok(decode_notes_borrowed(value)?
+        .iter()
+        .map(|note| note.as_str().expect("validated contact note").to_owned())
+        .collect())
+}
+
+fn decode_notes_borrowed(value: &Value) -> Result<&[Value]> {
     let Value::Array(values) = value else {
         return Err(invalid_contact());
     };
-    let notes = values
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(invalid_contact)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    validate_notes(&notes)?;
-    Ok(notes)
+    // All wire types are checked before any note's content, as in the owned decoder.
+    for value in values {
+        value.as_str().ok_or_else(invalid_contact)?;
+    }
+    for value in values {
+        validate_note(value.as_str().expect("validated contact note"))?;
+    }
+    Ok(values)
 }
 
 fn validate_notes_value(value: &Value) -> Result<()> {
