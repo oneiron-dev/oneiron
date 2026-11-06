@@ -18,6 +18,8 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
             super::attendee_late_ask::ATTENDEE_LATE_ASK => {
                 Some(super::attendee_late_ask::ATTENDEE_LATE_ASK)
             }
+            crate::task_verb::ask_forward::INTENT => Some(crate::task_verb::ask_forward::INTENT),
+            crate::task_verb::ask_forward::RESULT => Some(crate::task_verb::ask_forward::RESULT),
             _ => None,
         }
     })
@@ -212,6 +214,28 @@ pub(crate) fn guard_ask_fact_put(
                 let group = stored_group(store, txn, result.settlement.group_ref)?;
                 verify_link_settlement(&group, &result)?;
             }
+        }
+        Some(crate::task_verb::ask_forward::INTENT) => {
+            // FIX 7494: a relayed intent lands after its group and names its
+            // exact revision. Its holder proof is judged where it is consumed.
+            let intent: crate::task_verb::ask_forward::AskForwardIntent =
+                decode(data, crate::task_verb::ask_forward::INTENT)?.ok_or_else(invalid)?;
+            intent.validate_put(id, occurred, learned_at)?;
+            if stored_group(store, txn, intent.group)?
+                .effective
+                .what
+                .revision
+                != intent.revision
+            {
+                return Err(invalid());
+            }
+        }
+        Some(crate::task_verb::ask_forward::RESULT) => {
+            // Only the group's issuer key signs a result: its admitting node's.
+            let result: crate::task_verb::ask_forward::AskForwardResult =
+                decode(data, crate::task_verb::ask_forward::RESULT)?.ok_or_else(invalid)?;
+            result.validate_put(id, occurred, learned_at)?;
+            result.verify_origin(&stored_group(store, txn, result.group)?)?;
         }
         _ => {}
     }
