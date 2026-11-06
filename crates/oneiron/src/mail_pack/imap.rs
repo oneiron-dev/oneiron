@@ -25,17 +25,25 @@
 //!   - Elsewhere the header block proposes the id, as an mbox import names
 //!     a message: `mbox` and the first 32 hex of the BLAKE3 of its
 //!     `Message-ID`, the SHA-256 of its unfolded header block and its
-//!     `RFC822.SIZE`. When another folder or UID, or a copy the vault
-//!     landed, holds the same header id, the BLAKE3 of the two whole
+//!     `RFC822.SIZE`. When another folder or UID holds the same header id
+//!     (one this session named, or one the UID map names, landed or not),
+//!     or a copy the vault landed does, the BLAKE3 of the two whole
 //!     messages (each line ended by CRLF) decides: equal, they are one
 //!     message; different, or with no copy of the other left to read, the
 //!     new one is its own message, named `mboxdigest` and the first 32 hex
 //!     of the BLAKE3 of the header id and its digest. A message is read
 //!     whole for this only on such a collision, and the UID map keeps the
-//!     id each UID was given, so a place is never named two ways.
+//!     id each UID was given, and each place it gives a header id, so a
+//!     place is never named two ways and no session gives one id to two
+//!     messages.
 //!   - One with no `Message-ID`, or whose bytes cannot be read for that
 //!     proof, is named by where it is:
 //!     `imapuid.<folder digest>.<UIDVALIDITY>.<UID>`.
+//!   - A message a header id names (an mbox import's, on any server) is
+//!     read whole only where its whole digest is the one the vault keeps of
+//!     it: with none kept, a server that names messages itself finds no
+//!     message by that id, and another message's bytes never come back
+//!     under it.
 //! - **Folders are labels.** Every selectable folder is read but drafts and
 //!   the flagged and important views; trash and junk are looked in only to
 //!   see that a message went there. The all-mail view (`\All`, Gmail's All
@@ -114,8 +122,13 @@ const MAX_MESSAGE_BYTES: u64 = 40 * 1024 * 1024;
 /// The most folders one proof that two copies are one message looks in for
 /// the copy the vault holds.
 const PROOF_FOLDERS: usize = 16;
+/// The most places the UID map names a header id at that one proof reads.
+const PROOF_PLACES: usize = 16;
 /// The prefix of an id from the server's `EMAILID` (RFC 8474).
 const EMAIL_ID_PREFIX: &str = "emailid.";
+/// The prefix of an id a header block gives: a header id, a digest id, or
+/// an mbox import's id of a message with no `Message-ID`.
+const HEADER_ID_PREFIX: &str = "mbox";
 /// The prefix of an id from a message's header id and its own whole digest.
 const DIGEST_ID_PREFIX: &str = "mboxdigest";
 /// The BLAKE3 context of such an id.
@@ -144,6 +157,68 @@ const UIDS: SideTable<(EntityId, [u8; 32], u64), HeldUid, Named> =
 struct HeldUid {
     uid_validity: u64,
     provider_id: String,
+}
+
+/// Each place the UID map gives an id a header block gives (fix list row
+/// 19145): by the source, the BLAKE3 of the id, and the place (the UID
+/// map's key of its folder and the UID). A later place whose header id the
+/// map gives a place already is a collision, proved by digest before it is
+/// named, whichever session named the first and whether or not it landed.
+/// Written and deleted with the UID map's rows, which stay the truth of
+/// each place.
+const ID_PLACES: SideTable<(EntityId, [u8; 32], ([u8; 32], u64)), IdPlace, Named> =
+    SideTable::new(&side_table::MAIL_PACK_IMAP_ID_PLACE);
+
+/// A place the UID map gives an id: its folder's UIDVALIDITY.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct IdPlace {
+    uid_validity: u64,
+}
+
+/// Whether `provider_id` is an id a header block gives, which the digest of
+/// its whole message proves (fix list row 19145).
+fn named_by_header(provider_id: &str) -> bool {
+    provider_id.starts_with(HEADER_ID_PREFIX)
+}
+
+/// The key prefix of the places [`ID_PLACES`] files `provider_id` under for
+/// `source`.
+fn id_places_prefix(source: EntityId, provider_id: &str) -> Vec<u8> {
+    let mut prefix = source.as_bytes().to_vec();
+    prefix.extend_from_slice(blake3::hash(provider_id.as_bytes()).as_bytes());
+    prefix
+}
+
+/// The key of one place of `provider_id` in [`ID_PLACES`].
+fn id_place_key(
+    source: EntityId,
+    provider_id: &str,
+    folder_key: [u8; 32],
+    uid: u64,
+) -> (EntityId, [u8; 32], ([u8; 32], u64)) {
+    (
+        source,
+        *blake3::hash(provider_id.as_bytes()).as_bytes(),
+        (folder_key, uid),
+    )
+}
+
+/// Whether the UID map of the IMAP source `source` gives `provider_id`, an
+/// id a header block gives, to any place (fix list row 19145): a copy an
+/// mbox import cannot read, so an entry proposing that id is proved the
+/// same by no digest.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn imap_id_mapped(vault: &Vault, source: EntityId, provider_id: &str) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let mapped = ID_PLACES
+        .iter_from(&vault.store, &txn, &id_places_prefix(source, provider_id))?
+        .next()
+        .transpose()?
+        .is_some();
+    Ok(mapped)
 }
 
 /// How a session reaches TLS.
@@ -424,7 +499,7 @@ pub(super) fn content_id(rfc_message_id: &str, raw: &[u8], size: u64) -> String 
     hasher.update(rfc_message_id.as_bytes());
     hasher.update(&header_digest(raw));
     hasher.update(&size.to_be_bytes());
-    format!("mbox{}", &hasher.finalize().to_hex()[..32])
+    format!("{HEADER_ID_PREFIX}{}", &hasher.finalize().to_hex()[..32])
 }
 
 /// The SHA-256 of the header block at the start of `raw`: each field up to
@@ -747,15 +822,21 @@ fn digest_at(
 
 /// Of `fetched`, header blocks of the open `folder`, the UIDs whose message
 /// `provider_id` names on a session that names messages another way (an mbox
-/// import's id where the server names each message itself): by its header
-/// id or its place, or where `provider_id` is a digest id, by that id of its
-/// own whole digest.
+/// import's id where the server names each message itself): by its place,
+/// or by its whole digest (fix list row 19145). A header id proposes a UID
+/// whose header block gives that id, a digest id one whose header id and
+/// `kept` hash to it; either names it only when the digest of its whole
+/// message, read once, is `kept`, the one the vault keeps of `provider_id`.
+/// With no digest kept, or no message left to read, no UID is named:
+/// another message with the same header block and size never comes back
+/// under its id.
 fn header_hits(
     session: &mut ImapSession,
     folder: &Folder,
     status: FolderStatus,
     fetched: &[Fetched],
     provider_id: &str,
+    kept: Option<[u8; 32]>,
 ) -> Result<Vec<u64>> {
     let by_digest = provider_id.starts_with(DIGEST_ID_PREFIX);
     let mut hits = Vec::new();
@@ -766,12 +847,17 @@ fn header_hits(
         let names = match header_name(message, folder, status.uid_validity) {
             None => false,
             Some(HeaderName::Place(id)) => id == provider_id,
-            Some(HeaderName::Proposed(proposed)) if by_digest => {
-                whole_digest_of(session, uid, proposed.size)?.is_some_and(|digest| {
-                    digest_variant_id(&proposed.header_id, &digest) == provider_id
-                })
-            }
-            Some(HeaderName::Proposed(proposed)) => proposed.header_id == provider_id,
+            Some(HeaderName::Proposed(proposed)) => match kept {
+                Some(kept) => {
+                    let proposes = if by_digest {
+                        digest_variant_id(&proposed.header_id, &kept) == provider_id
+                    } else {
+                        proposed.header_id == provider_id
+                    };
+                    proposes && whole_digest_of(session, uid, proposed.size)? == Some(kept)
+                }
+                None => false,
+            },
         };
         if names {
             hits.push(uid);
@@ -1396,7 +1482,8 @@ impl ImapMailWire<'_> {
     /// naming each UID is named as every other read names it
     /// ([`Self::resolved_ids`]) and the UID map learns it; an id of another
     /// naming (an mbox import's, where the server names each message
-    /// itself) is checked against each header block ([`header_hits`]).
+    /// itself) is checked against each header block and proved by the
+    /// whole digest the vault keeps of it ([`header_hits`]).
     fn exact_hit(
         &self,
         open: &mut OpenSession,
@@ -1410,11 +1497,23 @@ impl ImapMailWire<'_> {
         // hit is no evidence that the message is gone.
         let place = open.folders[folder].clone();
         let items = format!("UID {}", naming.item());
+        let kept = if naming == open.naming {
+            None
+        } else {
+            self.kept_digest(open.source, provider_id)?
+        };
         let mut best = None;
         for batch in uids.chunks(HIT_BATCH) {
             let fetched = open.session.uid_fetch(&uid_set(batch), &items)?;
             if naming != open.naming {
-                let hits = header_hits(&mut open.session, &place, status, &fetched, provider_id)?;
+                let hits = header_hits(
+                    &mut open.session,
+                    &place,
+                    status,
+                    &fetched,
+                    provider_id,
+                    kept,
+                )?;
                 best = best.max(hits.into_iter().max());
                 continue;
             }
@@ -1481,6 +1580,16 @@ impl ImapMailWire<'_> {
         else {
             return Ok(None);
         };
+        // An id a header block gives names these bytes only when their
+        // whole digest is the one the vault keeps of it (fix list row
+        // 19145): another message's bytes never come back under its id.
+        if whole
+            && named_by_header(provider_id)
+            && let Some(kept) = self.kept_digest(source.source_ref, provider_id)?
+            && whole_digest(read.raw) != kept
+        {
+            return Ok(None);
+        }
         // The labels it has landed with stay, with this folder's: a body
         // read in one folder takes no other folder away.
         let folder = &open.folders[at.folder];
@@ -1689,7 +1798,10 @@ impl ImapMailWire<'_> {
             .collect()
     }
 
-    /// Records which message each of the `learned` UIDs of a folder holds.
+    /// Records which message each of the `learned` UIDs of a folder holds,
+    /// and, in the same write, each place an id a header block gives is
+    /// given at ([`ID_PLACES`]): the place a row named another id at before
+    /// is that id's no more.
     fn remember_uids(
         &self,
         source: EntityId,
@@ -1701,28 +1813,108 @@ impl ImapMailWire<'_> {
             return Ok(());
         }
         self.vault.with_write_txn_grouped(|txn| {
+            let store = &self.vault.store;
             for (uid, provider_id) in learned {
+                let key = (source, folder_key, uid);
+                if let Some(old) = UIDS.get(store, txn, &key)?
+                    && old.provider_id != provider_id
+                    && named_by_header(&old.provider_id)
+                {
+                    let place = id_place_key(source, &old.provider_id, folder_key, uid);
+                    ID_PLACES.delete(store, txn, &place)?;
+                }
+                if named_by_header(&provider_id) {
+                    let place = id_place_key(source, &provider_id, folder_key, uid);
+                    ID_PLACES.put(store, txn, &place, &IdPlace { uid_validity })?;
+                }
                 let row = HeldUid {
                     uid_validity,
                     provider_id,
                 };
-                UIDS.put(&self.vault.store, txn, &(source, folder_key, uid), &row)?;
+                UIDS.put(store, txn, &key, &row)?;
             }
             Ok(())
         })
     }
 
-    /// Forgets the rows of a folder's `uids`.
+    /// Forgets the rows of a folder's `uids`, and the places they gave ids
+    /// a header block gives.
     fn forget_uids(&self, source: EntityId, folder_key: [u8; 32], uids: &[u64]) -> Result<()> {
         if uids.is_empty() {
             return Ok(());
         }
         self.vault.with_write_txn_grouped(|txn| {
-            for uid in uids {
-                UIDS.delete(&self.vault.store, txn, &(source, folder_key, *uid))?;
+            let store = &self.vault.store;
+            for &uid in uids {
+                let key = (source, folder_key, uid);
+                if let Some(old) = UIDS.get(store, txn, &key)?
+                    && named_by_header(&old.provider_id)
+                {
+                    let place = id_place_key(source, &old.provider_id, folder_key, uid);
+                    ID_PLACES.delete(store, txn, &place)?;
+                }
+                UIDS.delete(store, txn, &key)?;
             }
             Ok(())
         })
+    }
+
+    /// The places the UID map gives `provider_id`, an id a header block
+    /// gives, in `source`, other than `except`, at most [`PROOF_PLACES`]:
+    /// each in a folder the session reads, and still the UID map's row
+    /// there.
+    fn mapped_places(
+        &self,
+        open: &OpenSession,
+        provider_id: &str,
+        except: Location,
+    ) -> Result<Vec<Location>> {
+        let keys: Vec<[u8; 32]> = open.folders.iter().map(uid_map_folder_key).collect();
+        let txn = self.vault.store.env.read_txn()?;
+        let mut places = Vec::new();
+        for row in ID_PLACES.iter_from(
+            &self.vault.store,
+            &txn,
+            &id_places_prefix(open.source, provider_id),
+        )? {
+            let ((_, _, (folder_key, uid)), place) = row?;
+            let Some(folder) = keys.iter().position(|key| *key == folder_key) else {
+                continue;
+            };
+            let at = Location {
+                folder,
+                uid_validity: place.uid_validity,
+                uid,
+            };
+            if at == except {
+                continue;
+            }
+            let mapped = UIDS
+                .get(&self.vault.store, &txn, &(open.source, folder_key, uid))?
+                .is_some_and(|held| {
+                    held.uid_validity == place.uid_validity && held.provider_id == provider_id
+                });
+            if mapped {
+                places.push(at);
+                if places.len() >= PROOF_PLACES {
+                    break;
+                }
+            }
+        }
+        Ok(places)
+    }
+
+    /// The whole digest the vault keeps of its copy of `provider_id` in
+    /// `source`, of any presence; `None` when it keeps none.
+    fn kept_digest(&self, source: EntityId, provider_id: &str) -> Result<Option<[u8; 32]>> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(OCCURRENCES
+            .get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(source, provider_id),
+            )?
+            .and_then(|occurrence| occurrence.content_digest))
     }
 
     /// The UID map's row of one UID of one folder of `source`.
@@ -1733,10 +1925,13 @@ impl ImapMailWire<'_> {
 }
 
 /// What is known of a copy of a header id at another place than the one
-/// being named: where this session named it, and the vault's copy.
+/// being named: where this session or the UID map named it, and the
+/// vault's copy.
 struct KnownCopy {
-    /// The place this session first named it at.
-    at: Option<Location>,
+    /// The places it was named at: the one this session first named it at,
+    /// then those the UID map gives it, whichever session named them and
+    /// whether or not their message landed.
+    places: Vec<Location>,
     /// The digest of its whole message, when the vault or this session read
     /// it.
     digest: Option<[u8; 32]>,
@@ -1800,9 +1995,11 @@ impl ImapMailWire<'_> {
     /// The id of the message at `at`, in the open folder (`status`), whose
     /// header block proposes `proposed` (fix list row 19145):
     /// - a UID the UID map holds keeps the id it was given: under one
-    ///   UIDVALIDITY a UID always holds one message;
-    /// - a header id no other place this session named, and no copy the
-    ///   vault landed, holds names the message;
+    ///   UIDVALIDITY a UID always holds one message, and that id was proved
+    ///   against every other place named before it;
+    /// - a header id no other place holds names the message: none this
+    ///   session named, none the UID map gives it (named by any session,
+    ///   landed or not), and no copy the vault landed;
     /// - else the digests of the two whole messages decide: equal, it is
     ///   that message; different, or with no copy of the other left to read,
     ///   it is its own message, named by its digest ([`digest_variant_id`]).
@@ -1827,7 +2024,7 @@ impl ImapMailWire<'_> {
                 .or_insert(at);
             return Ok(row.provider_id);
         }
-        let Some(known) = self.known_copy(open.source, &proposed.header_id, at)? else {
+        let Some(known) = self.known_copy(open, &proposed.header_id, at)? else {
             self.first_places
                 .borrow_mut()
                 .entry(proposed.header_id.clone())
@@ -1860,30 +2057,43 @@ impl ImapMailWire<'_> {
     }
 
     /// What is known of a copy of `header_id` at another place than `at`:
-    /// the place this session first named it at, and the vault's copy (of
-    /// any presence: a forgotten one is a fence). `None` when neither is.
+    /// the place this session first named it at, the places the UID map
+    /// gives it (named by any session, its message landed or not: a
+    /// collision no proof checked is never skipped), and the vault's copy
+    /// (of any presence: a forgotten one is a fence). `None` when none is.
     fn known_copy(
         &self,
-        source: EntityId,
+        open: &OpenSession,
         header_id: &str,
         at: Location,
     ) -> Result<Option<KnownCopy>> {
-        let named = self
+        let mut places: Vec<Location> = self
             .first_places
             .borrow()
             .get(header_id)
             .copied()
-            .filter(|named| *named != at);
+            .filter(|named| *named != at)
+            .into_iter()
+            .collect();
+        for mapped in self.mapped_places(open, header_id, at)? {
+            if !places.contains(&mapped) {
+                places.push(mapped);
+            }
+        }
         let landed = {
             let txn = self.vault.store.env.read_txn()?;
-            OCCURRENCES.get(&self.vault.store, &txn, &occurrence_key(source, header_id))?
+            OCCURRENCES.get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(open.source, header_id),
+            )?
         };
-        if named.is_none() && landed.is_none() {
+        if places.is_empty() && landed.is_none() {
             return Ok(None);
         }
         let read = self.whole_digests.borrow().get(header_id).copied();
         Ok(Some(KnownCopy {
-            at: named,
+            places,
             digest: landed
                 .as_ref()
                 .and_then(|copy| copy.content_digest)
@@ -1894,10 +2104,11 @@ impl ImapMailWire<'_> {
 
     /// The digest of the whole message of `known`, a copy of the header id
     /// `proposed` names at another place than `current`, read where it is:
-    /// at the place this session named it at, else in the folders the vault
-    /// last saw it under and the all-mail view, at a UID a `Message-ID`
-    /// search finds and the UID map names it at. `None` when no copy is left
-    /// to read. The open folder `current` (`status`) is opened again after.
+    /// at the first of the places this session or the UID map named it at
+    /// that still holds it, else in the folders the vault last saw it under
+    /// and the all-mail view, at a UID a `Message-ID` search finds and the
+    /// UID map names it at. `None` when no copy is left to read. The open
+    /// folder `current` (`status`) is opened again after.
     fn known_digest(
         &self,
         open: &mut OpenSession,
@@ -1906,7 +2117,7 @@ impl ImapMailWire<'_> {
         current: Location,
         status: FolderStatus,
     ) -> Result<Option<[u8; 32]>> {
-        if let Some(at) = known.at {
+        for &at in &known.places {
             let digest = digest_at(open, at, proposed.size, current.folder, status)?;
             if digest.is_some() {
                 return Ok(digest);

@@ -22,6 +22,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
     // An owed forget stands with the rows it still owes, as the image holds them.
     (&t::MAIL_PACK_FORGET_OWED, CONTENT),
+    // Derived beside the UID map, restored with it.
+    (&t::MAIL_PACK_IMAP_ID_PLACE, CONTENT),
     // A UID names one message for as long as its UIDVALIDITY stands.
     (&t::MAIL_PACK_IMAP_UID, CONTENT),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),

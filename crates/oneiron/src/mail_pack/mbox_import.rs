@@ -19,8 +19,9 @@
 //!   CRLF, only proposes a name (fix list row 19145): when the vault holds a
 //!   copy under that id, the BLAKE3 of the whole message decides. The same
 //!   as that copy's, it is that message; another, or not known (a copy the
-//!   live sync landed by its headers only), it is its own message, named by
-//!   its digest. One with no `Message-ID` is named by the hash of its bytes.
+//!   live sync landed by its headers only, or a place it named by that id
+//!   whose message never landed), it is its own message, named by its
+//!   digest. One with no `Message-ID` is named by the hash of its bytes.
 //!   Every message landed keeps its digest, so a copy the live sync finds
 //!   later is proved against it.
 //!
@@ -37,7 +38,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{address_list, reads_google_mail, rfc2822_seconds};
-use super::imap::{content_id, digest_variant_id, gmail_id, imap_account_on_gmail, whole_digest};
+use super::imap::{
+    content_id, digest_variant_id, gmail_id, imap_account_on_gmail, imap_id_mapped, whole_digest,
+};
 use super::importer::{MONTH_SECONDS, copies};
 use super::landing::{LandOutcome, Landing};
 use super::mbox::{MboxMessage, MboxReader};
@@ -356,15 +359,18 @@ impl Intake<'_> {
         let mut held = self.occurrence(&headers.provider_id)?;
         // A header id is proved as the IMAP wire proves it (fix list row
         // 19145): a copy under it whose digest is another, or not known, is
-        // another message, and this one is named by its own digest.
-        if self.naming == ImportNaming::HeaderBlock
-            && headers.rfc_message_id.is_some()
-            && held
-                .as_ref()
-                .is_some_and(|held| held.content_digest != Some(digest))
-        {
-            headers.provider_id = digest_variant_id(&headers.provider_id, &digest);
-            held = self.occurrence(&headers.provider_id)?;
+        // another message, and this one is named by its own digest. A place
+        // the live wire named by that id, whose message never landed, is a
+        // copy whose digest an import cannot read.
+        if self.naming == ImportNaming::HeaderBlock && headers.rfc_message_id.is_some() {
+            let proved = match held.as_ref() {
+                Some(held) => held.content_digest == Some(digest),
+                None => !imap_id_mapped(self.vault, self.source, &headers.provider_id)?,
+            };
+            if !proved {
+                headers.provider_id = digest_variant_id(&headers.provider_id, &digest);
+                held = self.occurrence(&headers.provider_id)?;
+            }
         }
         if held.as_ref().is_some_and(|held| {
             held.stage == MailStage::Body || held.presence != MailPresence::Present
