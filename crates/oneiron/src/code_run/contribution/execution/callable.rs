@@ -21,7 +21,8 @@
 //! recorded world past its step, so the pair is scored in the `Text` mode.
 //!
 //! The console is the only message the request builder keeps a witness
-//! for. So the rest of the next request stays as captured only when no
+//! for, and it keeps none in a request that lists the run's results in a
+//! brief. So the rest of the next request stays as captured only when no
 //! recorded call that the branch without the load never made has an answer
 //! that request shows outside the console (FIX 3608). Those calls are the
 //! load's own call and its subtree, and the calls past the point where that
@@ -30,11 +31,20 @@
 //! result of the run make the pair unavailable. The recorded kind of each
 //! call decides, never its bytes.
 //!
+//! Two more records make the pair unavailable (FIX 3608). A result name
+//! the caller's step bound or rebound, by a store, a spilled reply or a
+//! stored reply, stays bound in the run, and the branch without the load
+//! may never have bound it. A call in the load's subtree that may change
+//! state leaves that state changed for the step's later calls, whose
+//! recorded answers a branch reads as they were: nothing recomputes them
+//! without the load.
+//!
 //! A branch the recorded calls do not answer, a callable whose stored file
 //! does not read again as it loaded, a branch that ends its run, a next
-//! request that shows the console otherwise, and a call left out whose
-//! answer that request shows elsewhere are unavailable for the shadow
-//! runner's own reason ([`Unavailable::ProgramReplay`]), never a loss.
+//! request that shows the console otherwise, a call left out whose answer
+//! that request shows elsewhere, a step that bound a result and a subtree
+//! that may change state are unavailable for the shadow runner's own
+//! reason ([`Unavailable::ProgramReplay`]), never a loss.
 
 use std::cmp::Reverse;
 use std::ops::Range;
@@ -54,6 +64,7 @@ use crate::code_run::{
     ConsoleSlot, SelfEffect, StepReplayCapsule, StepReplayContext, agent_verb_observations_of,
     capsule_context_body, capsule_request,
 };
+use crate::engine_executor::continuation::continuation_tail_effect;
 use crate::engine_executor::{
     ArmTypeFeedback, JsCodeModeRuntime, StepCancellation, bridge_result_output_path,
     observation_output_path, run_shadow_callable_branch, script_output_path,
@@ -282,7 +293,8 @@ impl Runner<'_> {
     /// pin, each to its step's end with its run going on. Only a callable
     /// of the first-party tier runs in an arm. The branch without the load
     /// must leave out no recorded call whose answer the next request shows
-    /// outside the console (FIX 3608, [`shown_outside_console`]).
+    /// outside the console, and no call that may change state; the step
+    /// must bind no result (FIX 3608, [`removed_unrebuilt`]).
     fn branch_observations(&self, caller: &StepReplayCapsule, seq: u64) -> Ran<[String; 2]> {
         let step = match prepare_shadow_step_source(self.vault, caller)? {
             Ok(step) => step,
@@ -302,7 +314,7 @@ impl Runner<'_> {
             Some(callable) => callable.nested_end,
         };
         // The load's own call and its subtree never happen without it.
-        if let Some(cause) = shown_outside_console(&step, seq..nested_end) {
+        if let Some(cause) = removed_unrebuilt(&step, seq, nested_end) {
             let shown = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, cause);
             return Ok(Err(shown));
         }
@@ -358,6 +370,56 @@ impl Runner<'_> {
     }
 }
 
+/// Why the branch without the load, called at bridge position `seq` of
+/// `step` with its subtree to `nested_end`, is no counterfactual the next
+/// request can be rebuilt for (FIX 3608), as the cause the pair is
+/// unavailable for; `None` when nothing in the step's record says so:
+///
+/// - an answer of the load's own call or its subtree that the next request
+///   shows outside the console ([`shown_outside_console`]);
+/// - a call in its subtree that may change state (`subtree_effect`), by
+///   its recorded kind, as a continuation's tail is judged
+///   ([`continuation_tail_effect`]): a later recorded read of the step
+///   answers as it read after the change, which that branch never made;
+/// - a result name the step bound or rebound (`bound_result`,
+///   [`step_bound_result`]).
+fn removed_unrebuilt(step: &PreparedShadowStep, seq: u64, nested_end: u64) -> Option<&'static str> {
+    if let Some(cause) = shown_outside_console(step, seq..nested_end) {
+        return Some(cause);
+    }
+    // The load's own call is the one the pair treats: its subtree follows.
+    let Some(subtree) = recorded_calls(step, seq.saturating_add(1)..nested_end) else {
+        return Some("bridge_window");
+    };
+    if subtree.iter().any(continuation_tail_effect) {
+        return Some("subtree_effect");
+    }
+    step_bound_result(step).then_some("bound_result")
+}
+
+/// Whether `step`'s record binds a result name at the step's end that the
+/// run did not bind, as is, when the step started (FIX 3608): a name a
+/// store, a spilled reply or a stored reply bound, or a name rebound to
+/// another result. The name the host binds to the step's own observation
+/// is left out, since each branch's console stands in for it. A record
+/// that holds later steps counts their names too, which leaves the pair
+/// unavailable, never wrong.
+fn step_bound_result(step: &PreparedShadowStep) -> bool {
+    let observation = observation_output_path(step.step().step);
+    step.window
+        .bindings
+        .iter()
+        .any(|binding| binding.path != observation && !step.prefix.bindings.contains(binding))
+}
+
+/// The recorded calls of `step` at the bridge positions in `rows`; `None`
+/// when the step's record does not hold them.
+fn recorded_calls(step: &PreparedShadowStep, rows: Range<u64>) -> Option<&[CodeRunBridgeCall]> {
+    let start = usize::try_from(rows.start).ok()?;
+    let end = usize::try_from(rows.end).ok()?;
+    step.window.bridge_calls.get(start..end)
+}
+
 /// What the next request shows, outside the caller's console, of an answer
 /// of a recorded call of `step` at a bridge position in `rows` (FIX 3608),
 /// as the cause the pair is unavailable for. The branch without the load
@@ -370,19 +432,14 @@ impl Runner<'_> {
 /// - a verb's answer that carried a board frame (`board_frames`): the
 ///   step's frames message beside its console shows it;
 /// - an answer kept as a bound result of the run, a reply spilled as a body
-///   or a stored typed reply (`bound_result`): the brief of the run's
-///   results lists it once a frame stands in for earlier turns, and no
-///   witness says whether the request had one.
+///   or a stored typed reply (`bound_result`): the run keeps it bound, and
+///   the branch without the load never bound it.
 ///
 /// `bridge_window` when the step's record does not hold `rows`; `None` when
 /// no call there has an answer of those kinds.
 fn shown_outside_console(step: &PreparedShadowStep, rows: Range<u64>) -> Option<&'static str> {
     let window = &step.window;
-    let held = usize::try_from(rows.start)
-        .ok()
-        .zip(usize::try_from(rows.end).ok())
-        .and_then(|(start, end)| window.bridge_calls.get(start..end));
-    let Some(calls) = held else {
+    let Some(calls) = recorded_calls(step, rows) else {
         return Some("bridge_window");
     };
     if calls.iter().any(|call| call.effect == SelfEffect::Fold) {
