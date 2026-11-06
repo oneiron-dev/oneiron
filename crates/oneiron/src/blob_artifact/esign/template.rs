@@ -116,7 +116,7 @@ pub fn render_html_template(
 /// Native HTML rendering with traversal/layout and operation-owned backing
 /// admitted on `memory`, plus cooperative checks of `work_deadline`.
 ///
-/// DOM/parser and matcher internals, merge strings, sorting scratch, font
+/// DOM/parser and matcher internals, sorting scratch, font
 /// dictionaries, document/codec objects and output bytes remain unadmitted.
 /// Individual parser/codec calls are not preempted.
 /// Admission refusals retain their native PDF error; an elapsed work deadline

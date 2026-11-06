@@ -20,7 +20,7 @@ pub(super) fn parse(
         budget.checkpoint()?;
         if node.is_text() {
             let text = merge(&node.text(), values, budget)?;
-            node.set_text(text);
+            node.set_text(text.as_str()?);
         } else if node.is_element() {
             let name = node
                 .node_name()
@@ -105,12 +105,12 @@ pub(super) fn parse(
     }
     Ok(document)
 }
-fn merge(text: &str, values: &BTreeMap<String, String>, budget: &Budget) -> Result<String> {
-    let mut out = String::new();
+fn merge(text: &str, values: &BTreeMap<String, String>, budget: &Budget) -> Result<ScratchText> {
+    let mut out = ScratchText::new(budget);
     let mut rest = text;
     while let Some(start) = rest.find("{{") {
         budget.checkpoint()?;
-        out.push_str(&rest[..start]);
+        out.push_str(&rest[..start])?;
         rest = &rest[start + 2..];
         let end = rest.find("}}").ok_or(ContentTemplateError::MergeField)?;
         let key = rest[..end].trim();
@@ -122,13 +122,13 @@ fn merge(text: &str, values: &BTreeMap<String, String>, budget: &Budget) -> Resu
             return Err(ContentTemplateError::MergeField);
         }
         let value = values.get(key).ok_or(ContentTemplateError::MergeField)?;
-        out.push_str(value);
+        out.push_str(value)?;
         rest = &rest[end + 2..];
     }
     if rest.contains("}}") {
         return Err(ContentTemplateError::MergeField);
     }
-    out.push_str(rest);
+    out.push_str(rest)?;
     Ok(out)
 }
 struct Rule {
