@@ -134,8 +134,9 @@ pub use self::replay_capsule::{
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
-    CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture,
-    SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
+    CapturedCallable, CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection,
+    ReaderReadCapture, SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext,
+    reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
