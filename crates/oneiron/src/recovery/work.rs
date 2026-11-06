@@ -9,8 +9,10 @@
 //! without a turn, never refused and never reported Healthy.
 //!
 //! Artifact validation yields between its ordered groups over one immutable
-//! source. Window rows and their indexes use the existing row page size;
-//! each row's nested checks, other groups, encoding and hashing still run whole.
+//! source. Window rows, NOTE document rows, their indexes and asset body
+//! reference checks use the existing row page size. Each row's nested checks,
+//! retained-parent and workflow checks, other groups, encoding and hashing
+//! still run whole.
 //! Aborted-transaction preflight, the NOTE workflow plan and the final snapshot
 //! comparison also run whole. Recapture yields between structural stages while
 //! retaining one store read view. The
