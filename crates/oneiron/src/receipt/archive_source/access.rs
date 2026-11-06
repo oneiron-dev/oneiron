@@ -2,7 +2,7 @@
 use super::{
     codec::{ReceiptArchive, decode, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
-    prepared::PreparedReceiptArchive,
+    prepared::ReceiptArchivePreparation,
 };
 use crate::{
     Vault,
@@ -96,6 +96,7 @@ impl Vault {
         }
         let mut existing = archived_receipt_sources_in_txn(&self.store, txn, holder)?;
         let mut prepared = Vec::new();
+        let mut preparation = None;
         for source in sources {
             let source = source.as_imported_archive();
             source.validate()?;
@@ -106,9 +107,14 @@ impl Vault {
                 continue;
             }
             let archive = ReceiptArchive::new(holder, body, source.clone())?;
-            let body_dir = self.store.body_dir()?;
-            let encoded = PreparedReceiptArchive::new(&body_dir, &archive)?;
-            let id = encoded.id()?;
+            if preparation.is_none() {
+                preparation = Some(ReceiptArchivePreparation::new(self.store.body_dir()?)?);
+            }
+            let encoded = preparation
+                .as_mut()
+                .expect("receipt preparation opened")
+                .push(&archive)?;
+            let id = encoded.id;
             if let Some(raw) =
                 crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
             {
@@ -125,11 +131,15 @@ impl Vault {
             existing.insert(source.receipt_id().to_owned(), source);
         }
         let count = prepared.len();
+        let Some(preparation) = preparation else {
+            return Ok(count);
+        };
+        let bytes = preparation.finish()?;
         for (id, encoded) in prepared {
             // Receipt archives remain owning-adapter rows. No file manifest
             // or persistent instance is introduced: the native stager reads
             // this one frozen archive back for the ordinary ASSET put.
-            let staged = self.stage_asset_body(encoded.reader(), None, None, None)?;
+            let staged = self.stage_asset_body(bytes.reader(&encoded), None, None, None)?;
             encoded.check_facts(staged.facts())?;
             self.put_asset_body_in_txn(
                 txn,

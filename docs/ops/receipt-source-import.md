@@ -9,19 +9,23 @@ identity checks. Native receipt authority is never imported.
 Before this function admits any new source ASSET, it validates every source,
 resolves duplicates, binds each archive to the holder body, computes its
 canonical archive id, and checks any existing row under that id. Canonical
-encoding is written once into a native temporary body, rather than retaining
-all encoded archives in memory until the puts begin.
+encoding is written into one shared native temporary body, rather than
+retaining all encoded archives in memory until the puts begin. Each source
+keeps only its id, range and digest in the preparation vector. The canonical
+serializer first counts the same owned data tree for its id's length frame;
+it does not reopen archive-file inputs. One descriptor serves every source,
+so the number of sources does not require more open files.
 
-These temporary bodies are never published. On a sealed vault, each uses an
+The temporary body is never published. On a sealed vault, it uses an
 in-memory ephemeral key, not a persistent body instance. The temporary name is
 unlinked as soon as its read descriptor is open. The descriptor and key stay
-alive until that source is written or the import returns an error. Failed
-construction removes its temporary name too. The existing writer-open debris
+alive until the sources are written or the import returns an error. Failed
+preparation removes its temporary name too. The existing writer-open debris
 sweep handles a process crash during construction.
 
 The archive id uses the same domain, salt, length framing and canonical bytes
-as the slice-based id. The frozen bytes are checked against the encoded digest
-while their id is read. The final staged body's length and digest are checked
+as the slice-based id. The frozen shared bytes are checked against their
+encoded digest before any put. Each final staged body's length and digest are checked
 again before its put. Puts keep their original order and use the ordinary ASSET
 batch admission path. An error still requires the caller's write transaction
 to abort; this function does not commit it.
