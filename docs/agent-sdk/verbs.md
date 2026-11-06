@@ -224,6 +224,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
+- `vault.proactivity.digest`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
 - `vault.inbox.groups.resolve`
@@ -483,6 +484,12 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.drafters.list`
+- `vault.drafters.list_as`
+- `vault.drafters.status`
+- `vault.drafters.policy.set`
+- `vault.drafters.revert`
+- `vault.drafters.revert_as`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`

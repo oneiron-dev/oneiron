@@ -85,6 +85,7 @@ mod deck_creation_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
+mod drafter_doors;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;

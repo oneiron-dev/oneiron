@@ -338,7 +338,17 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context, continuation);
+                    // FIX 15648: the workflow's wrapper carries the TASK it
+                    // realizes (its leaves carry no backlink), so a leaf of a
+                    // TASK-bound workflow opens as a task wake.
+                    let woken = AttemptQueue::new(vault)
+                        .get(*root)
+                        .ok()
+                        .flatten()
+                        .and_then(|wrapper| wrapper.task_ref)
+                        .or_else(|| step.attempt.task_ref.clone())
+                        .map(|_| oneiron::context_board::TurnWake::Task);
+                    let ran = runner.run(runtime, vault, step, context, continuation, woken);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
                     if !matches!(&ran, Err(fault) if fault.hook_wait) {
