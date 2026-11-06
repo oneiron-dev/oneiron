@@ -86,6 +86,8 @@ mod core;
 mod scrub;
 mod seq;
 
+pub(in crate::sync) use self::seq::push_update_in_txn;
+
 pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 pub(crate) use self::scrub::{
     discard_updates_for_leave_in_txn, queued_window_labels_in_txn,

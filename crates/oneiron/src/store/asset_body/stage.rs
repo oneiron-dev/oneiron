@@ -90,6 +90,21 @@ impl StagedAssetBody {
         }
     }
 
+    /// Canonical receipt source bytes, without reading an unrelated file whole.
+    #[cfg(feature = "sync")]
+    pub(crate) fn receipt_archive_bytes(&self) -> Result<Option<Vec<u8>>> {
+        let head = match &self.body {
+            Staged::Inline(bytes) => bytes[..bytes.len().min(HEAD_BYTES)].to_vec(),
+            Staged::File { file, .. } => {
+                file.read_range(0, self.facts.len.min(HEAD_BYTES as u64) as usize)?
+            }
+        };
+        if !crate::store::receipt_identity::is_receipt_archive_source(&head) {
+            return Ok(None);
+        }
+        self.to_vec().map(Some)
+    }
+
     /// The whole body, read back from its file when it has one.
     ///
     /// # Errors

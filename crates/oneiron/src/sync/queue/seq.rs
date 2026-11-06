@@ -173,3 +173,20 @@ pub(crate) fn push_delete_bearing_in_txn(
         .put(wtxn, &encode_delete_bearing_key(seq), &[1u8])?;
     Ok(seq)
 }
+
+/// An ordinary update queued atomically with its owning window/row writer.
+/// This grants no delete-bearing marker or special retirement exemption.
+pub(in crate::sync) fn push_update_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    update_bytes: &[u8],
+) -> Result<u64> {
+    let value = encode_update_value(window_key, update_bytes)?;
+    let seq = allocate_next_update_seq_in_txn(vault, wtxn)?;
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, &encode_update_key(seq), &value)?;
+    Ok(seq)
+}
