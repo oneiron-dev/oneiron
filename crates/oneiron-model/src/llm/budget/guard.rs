@@ -62,12 +62,9 @@ impl BudgetGuard {
     /// constructor performs no fallible row validation. Public so `oneiron`'s
     /// policy-manifest fold (its one caller outside this module) builds the guard
     /// across the crate line. A guard built from any table still issues every
-    /// lease itself; a caller that builds one governs only its own calls.
-    ///
-    /// # Panics
-    ///
-    /// When `policy` has more rows than a `u16` row index can address (65,536), which
-    /// `resolve_policy_manifest` already refuses.
+    /// lease itself; a caller that builds one governs only its own calls. A row
+    /// is addressed by its position in the table, so a table of any length is
+    /// metered whole (FIX 8781).
     #[must_use]
     pub fn with_policy_table(
         attempt_id: impl Into<String>,
@@ -77,12 +74,6 @@ impl BudgetGuard {
         actor: WriteActor,
         policy: &BudgetPolicyTable,
     ) -> Self {
-        // A hard check, not a debug one: this constructor is public now, and a row past the
-        // u16 index range would be dropped silently instead of enforced.
-        assert!(
-            policy.rows().len() <= usize::from(u16::MAX) + 1,
-            "resolved budget policy rows must stay addressable by a u16 row index"
-        );
         let state = BudgetState::new(
             attempt_id.into(),
             limit_units,
@@ -130,7 +121,9 @@ impl BudgetGuard {
     /// unmetered lease that reserves nothing ([`Self::admit_local`]) before
     /// any paid policy, row cap or capacity is read, so a full or exhausted
     /// paid line never holds it. Every other call reserves on the paid line,
-    /// its purpose's policy rows capping it.
+    /// its purpose's policy rows capping it. A door whose host-bound ladder
+    /// may send the call to a paid offer on this device admits it through
+    /// [`Self::admit_paid_for_request`] instead (FIX 14889).
     ///
     /// This low-level door trusts the request it is given (FIX 8998): its
     /// `envelope.locality` must be host-bound (the seat, route or offer that
@@ -148,6 +141,23 @@ impl BudgetGuard {
         {
             return self.admit_local();
         }
+        let mut state = self.lock_state();
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
+        Ok(state.metered_admission(lease))
+    }
+
+    /// Admits one call of `request` as paid work, whatever its locality
+    /// (FIX 14889): it reserves on the paid line, its purpose's policy rows
+    /// capping it, as [`Self::admit_for_request`] does for a call off the
+    /// device. For a door whose host-bound ladder may send the call to a paid
+    /// offer on this device (a paid provider's managed worker over its native
+    /// channel), which the request's on-device locality alone would admit
+    /// unmetered. The door decides from that ladder, never from caller JSON.
+    pub fn admit_paid_for_request(
+        &self,
+        request: &LlmRequest,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
         let reserve_units = state.reserve_units;
         let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
