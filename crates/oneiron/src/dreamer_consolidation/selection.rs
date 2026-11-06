@@ -59,12 +59,14 @@ pub(crate) fn windowed_partition(kind: &str, attempt_type: &str) -> bool {
 }
 
 /// Whether an attempt of queue `kind` with payload `attempt_type` is a
-/// sieve rung job (a span reading or a window audit), which a window runs
-/// whole beside its partitions: its evidence check, its model reading and
-/// its commit are its own span's, so no other slot's outcome moves it.
+/// sieve rung job (a span reading, a window audit or a TURN's typing
+/// carrier), which a window runs whole beside its partitions: its evidence
+/// check, its model reading and its commit are its own spans', so no other
+/// slot's outcome moves it.
 pub(crate) fn windowed_rung(kind: &str, attempt_type: &str) -> bool {
     kind == crate::dreamer_runner::DreamerConsolidationScope::Micro.attempt_kind()
-        && attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT
+        && (attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT
+            || attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT)
 }
 
 /// The shipped partition width, for a stored selection row written before
