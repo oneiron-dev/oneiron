@@ -343,7 +343,10 @@ impl BlobStore for Memory {
     ) -> Result<bool> {
         let hard = matches!(
             reason,
-            DeleteReason::UserHardDelete | DeleteReason::GdprDelete | DeleteReason::PolicyDelete
+            DeleteReason::UserHardDelete
+                | DeleteReason::OwnerErase
+                | DeleteReason::GdprDelete
+                | DeleteReason::PolicyDelete
         );
         let Some((_, refs)) = txn.blobs.get_mut(hash) else {
             return Ok(false);
