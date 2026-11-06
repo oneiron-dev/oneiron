@@ -66,3 +66,25 @@ An existing no-profile ASR text call remains a local snapshot call. Its model
 binding comes from that snapshot's actual files; it must not receive a
 placeholder revision. Full meeting-transcript production still requires the
 existing alignment, diarization, cleanup, ASR policy, and import-consent inputs.
+
+
+## Artifact revisions and speaker labels
+
+A produced artifact keeps `raw_turns`, the exact aligned turns before cleanup,
+alongside the cleaned `turns` and the existing word and correction provenance.
+The raw text remains part of the exported artifact and its import-consent hash;
+cleanup does not remove it. This is in-memory artifact retention, not vault
+persistence, a SESSION revision history, or an erase-lifetime implementation.
+
+`ProducedMeetingTranscript::with_speaker_labels` returns a separate artifact.
+Its map keys are the existing anonymous speaker clusters. Its values are explicit
+source labels, not authenticated PERSON identities or biometric enrollment.
+Only matching clusters change; unmentioned clusters and existing labels remain.
+A map that changes nothing returns the original artifact bytes. The original
+artifact is never mutated. A changed artifact must obtain import consent for its
+own exact bytes through the existing `authorize_import` method. Imported/Proposed
+admission and all downstream Gate checks remain unchanged.
+
+The authenticated owner speaker-resolution door, durable raw/corrected versions,
+and their SESSION links are still separate, unimplemented work. This API does
+not stand in for those doors or for voiceprint consent.
