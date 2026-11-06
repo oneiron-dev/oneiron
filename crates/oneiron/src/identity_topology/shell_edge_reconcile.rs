@@ -259,16 +259,20 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
     // FIX 10188: a manifest induces its whole decision's sources, and evicting
     // one of its parts unmakes that decision as surely as evicting the
     // manifest. A decision still waiting on a part induces nothing yet.
-    let decision = match &record.action {
-        StoredIdentityOpAction::OperationPart { root, .. } => {
+    let part_of = match &record.action {
+        StoredIdentityOpAction::OperationPart { root, .. } => Some(*root),
+        _ => None,
+    };
+    let decision = match part_of {
+        Some(root) => {
             match super::operation_parts::identity_topology_decision_for_store_in_txn(
-                store, rtxn, root,
+                store, rtxn, &root,
             ) {
                 Ok(Some(decision)) => decision,
                 Ok(None) | Err(_) => return Ok(Some(BTreeSet::new())),
             }
         }
-        _ => match super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+        None => match super::operation_parts::logical_identity_topology_event_for_store_in_txn(
             store, rtxn, id, record,
         )? {
             Some(decision) => decision,

@@ -188,15 +188,18 @@ pub(crate) fn logical_identity_topology_event_for_store_in_txn(
     id: &EntityId,
     raw: StoredIdentityOpEvent,
 ) -> Result<Option<StoredIdentityOpEvent>> {
-    let (kind, parts, length, digest) = match &raw.action {
+    let manifest = match &raw.action {
         StoredIdentityOpAction::OperationPart { .. } => return Ok(None),
         StoredIdentityOpAction::OperationManifest {
             kind,
             parts,
             length,
             digest,
-        } => (*kind, *parts, *length, *digest),
-        _ => return Ok(Some(raw)),
+        } => Some((*kind, *parts, *length, *digest)),
+        _ => None,
+    };
+    let Some((kind, parts, length, digest)) = manifest else {
+        return Ok(Some(raw));
     };
     let mut payload = Vec::new();
     for index in 0..parts {
