@@ -41,9 +41,16 @@ refusals, counters and room/version-move work. A reused row is not reported as
 fresh local model generation.
 
 No vector map is added to canonical window documents. Logical export remains
-setup-only. The media-row storage format, room MediaVector operations and
-checkpoint getter are unchanged. This slice adds no setting, timeout or numeric
-limit, and requires no migration.
+setup-only, and the checkpoint getter is unchanged. This slice adds no setting,
+timeout or numeric limit, and requires no migration.
+
+Image/audio model results now keep the hash of the exact projected bytes sent
+at the native base or room landing. Room replay preserves that hash. A vector
+supplied by a caller without an input binding remains unbound and still works;
+its current body is never used to invent an original-input claim. This binding
+alone does not enable image/audio residence reuse. Text hashes keep their
+existing meaning. The internal media-row codec stores an explicit hash-presence
+byte; no old-format reader or migration is added.
 
 Image/audio rows, default text index vectors, other machine directions and
 devices without the live opened home-query path remain outside this slice.

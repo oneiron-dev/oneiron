@@ -148,7 +148,7 @@ impl Vault {
         }
         let conversation = session.overlay_conversation_shell()?;
         session.overlay_write_routed(&route, |wtxn, apply| {
-            let text_hash = {
+            let input_hash = {
                 let view = session.read_view()?;
                 if view.port_entity_record(&*wtxn, id)?.is_none() {
                     return Err(Error::EntityNotFound);
@@ -182,10 +182,13 @@ impl Vault {
                     Some(PassRead {
                         text_hash: None,
                         copy: Some(sent),
-                    }) if super::repo_projection::media_copy_hash_in(self, &view, &*wtxn, id)?
-                        != Some(sent) =>
-                    {
-                        return Ok(false);
+                    }) => {
+                        if super::repo_projection::media_copy_hash_in(self, &view, &*wtxn, id)?
+                            != Some(sent)
+                        {
+                            return Ok(false);
+                        }
+                        Some(sent)
                     }
                     Some(PassRead {
                         text_hash: Some(embedded),
@@ -222,7 +225,7 @@ impl Vault {
                         space: space_id.to_owned(),
                         id: *id,
                         kind,
-                        text_hash,
+                        input_hash,
                         vector: vector.to_vec(),
                         provenance: provenance.cloned(),
                     },

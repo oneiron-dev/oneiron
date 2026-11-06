@@ -136,10 +136,10 @@ pub fn zeroize_batch_op_payload(op: &mut BatchOp) {
             }
         }
         BatchOp::MediaVector {
-            vector, text_hash, ..
+            vector, input_hash, ..
         } => {
             vector.zeroize();
-            if let Some(hash) = text_hash {
+            if let Some(hash) = input_hash {
                 hash.zeroize();
             }
         }
@@ -394,13 +394,13 @@ fn batch_op_payload_bytes(op: &BatchOp) -> usize {
         BatchOp::MediaVector {
             space,
             vector,
-            text_hash,
+            input_hash,
             ..
         } => vector
             .len()
             .saturating_mul(std::mem::size_of::<f32>())
             .saturating_add(space.len())
-            .saturating_add(text_hash.map_or(0, |hash| hash.len())),
+            .saturating_add(input_hash.map_or(0, |hash| hash.len())),
         BatchOp::Edge { .. }
         | BatchOp::PublicEdgeWithCreatedAt { .. }
         | BatchOp::EdgeWithCreatedAt { .. }

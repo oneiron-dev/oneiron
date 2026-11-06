@@ -49,7 +49,7 @@ pub(crate) fn media_vector_replicas_in_txn(
     let Some((text_hash, source_ids)) = media::text_vector_sources_in_txn(vault, txn, id)? else {
         return Ok(Vec::new());
     };
-    if row.kind != InputKind::Text || row.text_hash != text_hash {
+    if row.kind != InputKind::Text || row.input_hash != Some(text_hash) {
         return Ok(Vec::new());
     }
     let mut sources = Vec::with_capacity(source_ids.len());

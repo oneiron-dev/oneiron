@@ -417,21 +417,23 @@ pub(super) fn clear_media_refusal_in_txn(
 /// Width of a text row's text hash.
 pub(crate) use crate::store::embedding::TEXT_HASH_LEN;
 
-/// A stored media vector: its input kind byte, for a text row the hash of the text it embeds,
+/// A stored media vector: input kind, hash-presence byte, optional embedded-input hash,
 /// then the v1 vector row.
 struct MediaVectorRow {
     kind: InputKind,
-    /// A text row's text hash, so the backfill embeds a document again once its text moves.
-    text_hash: [u8; TEXT_HASH_LEN],
+    /// The exact embedded bytes; caller-supplied media may leave this unknown.
+    input_hash: Option<[u8; TEXT_HASH_LEN]>,
     row: Vec<u8>,
 }
 
 impl RawValue for MediaVectorRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut out = Vec::with_capacity(self.row.len() + 1 + TEXT_HASH_LEN);
+        let mut out =
+            Vec::with_capacity(self.row.len() + 2 + self.input_hash.map_or(0, |hash| hash.len()));
         out.push(self.kind.byte());
-        if self.kind == InputKind::Text {
-            out.extend_from_slice(&self.text_hash);
+        out.push(u8::from(self.input_hash.is_some()));
+        if let Some(hash) = self.input_hash {
+            out.extend_from_slice(&hash);
         }
         out.extend_from_slice(&self.row);
         Ok(out)
@@ -442,19 +444,22 @@ impl RawValue for MediaVectorRow {
             .split_first()
             .ok_or(Error::CorruptedIndex("media vector row"))?;
         let kind = InputKind::from_byte(kind).ok_or(Error::CorruptedIndex("media vector kind"))?;
-        let mut text_hash = [0_u8; TEXT_HASH_LEN];
-        let row = if kind == InputKind::Text {
-            let (hash, row) = rest
-                .split_first_chunk::<TEXT_HASH_LEN>()
-                .ok_or(Error::CorruptedIndex("media vector text hash"))?;
-            text_hash = *hash;
-            row
-        } else {
-            rest
+        let (&present, rest) = rest
+            .split_first()
+            .ok_or(Error::CorruptedIndex("media vector input hash"))?;
+        let (input_hash, row) = match present {
+            0 => (None, rest),
+            1 => {
+                let (hash, row) = rest
+                    .split_first_chunk::<TEXT_HASH_LEN>()
+                    .ok_or(Error::CorruptedIndex("media vector input hash"))?;
+                (Some(*hash), row)
+            }
+            _ => return Err(Error::CorruptedIndex("media vector input hash").into()),
         };
         Ok(Self {
             kind,
-            text_hash,
+            input_hash,
             row: row.to_vec(),
         })
     }
@@ -629,7 +634,7 @@ pub(crate) fn media_text_hash_in_txn(
     Ok(MEDIA_VECTOR
         .get(store, txn, &(space.key(), *id))?
         .filter(|row| row.kind == InputKind::Text)
-        .map(|row| row.text_hash))
+        .and_then(|row| row.input_hash))
 }
 
 /// Stages one media vector into `space`: its kind must be one the space accepts and fills
@@ -648,7 +653,7 @@ pub(crate) fn put_media_vector_in_txn(
     fills: &BTreeSet<InputKind>,
     id: &EntityId,
     kind: InputKind,
-    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    input_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
     provenance: Option<&EmbeddingProvenance>,
 ) -> Result<()> {
@@ -658,16 +663,12 @@ pub(crate) fn put_media_vector_in_txn(
             space.id
         )));
     }
-    let text_hash = match (kind, text_hash) {
-        (InputKind::Text, Some(hash)) => hash,
-        (InputKind::Text, None) => {
-            return Err(Error::InvalidConfig(format!(
-                "a text vector in embedding space {} names the text it embeds",
-                space.id
-            )));
-        }
-        _ => [0_u8; TEXT_HASH_LEN],
-    };
+    if kind == InputKind::Text && input_hash.is_none() {
+        return Err(Error::InvalidConfig(format!(
+            "a text vector in embedding space {} names the text it embeds",
+            space.id
+        )));
+    }
     if !space.accepts.contains(&kind) {
         return Err(Error::InvalidConfig(format!(
             "embedding space {} does not accept {kind:?} input",
@@ -682,7 +683,7 @@ pub(crate) fn put_media_vector_in_txn(
     }
     let row = MediaVectorRow {
         kind,
-        text_hash,
+        input_hash,
         row: encode_vector_row_v1(vector)?,
     };
     let key = (space.key(), *id);
@@ -695,7 +696,7 @@ pub(crate) fn put_media_vector_in_txn(
 /// slot and width rules a base one does, with its mark.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a staged row names its space, its entity, kind, text hash, vector and mark"
+    reason = "a staged row names its space, its entity, kind, input hash, vector and mark"
 )]
 pub(crate) fn stage_media_vector_in_txn(
     store: &impl SideTableDbs,
@@ -703,7 +704,7 @@ pub(crate) fn stage_media_vector_in_txn(
     space_id: &str,
     id: &EntityId,
     kind: InputKind,
-    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    input_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
     provenance: Option<&EmbeddingProvenance>,
 ) -> Result<()> {
@@ -717,7 +718,7 @@ pub(crate) fn stage_media_vector_in_txn(
     };
     let fills = super::space_move::space_fill_kinds_in_txn(store, txn, &space)?;
     put_media_vector_in_txn(
-        store, txn, &space, &fills, id, kind, text_hash, vector, provenance,
+        store, txn, &space, &fills, id, kind, input_hash, vector, provenance,
     )
 }
 
@@ -728,7 +729,7 @@ pub(crate) fn stage_media_vector_in_txn(
 /// room's hash, so the backfill finds it stale and embeds the text again. Its mark lands with it.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a replayed row names its space, its entity, kind, text hash, vector and mark"
+    reason = "a replayed row names its space, its entity, kind, input hash, vector and mark"
 )]
 pub(crate) fn replay_media_vector_in_txn(
     store: &impl SideTableDbs,
@@ -736,7 +737,7 @@ pub(crate) fn replay_media_vector_in_txn(
     space_id: &str,
     id: &EntityId,
     kind: InputKind,
-    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    input_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
     provenance: Option<&EmbeddingProvenance>,
 ) -> Result<()> {
@@ -748,7 +749,7 @@ pub(crate) fn replay_media_vector_in_txn(
         return Ok(());
     }
     put_media_vector_in_txn(
-        store, txn, &space, &fills, id, kind, text_hash, vector, provenance,
+        store, txn, &space, &fills, id, kind, input_hash, vector, provenance,
     )
 }
 

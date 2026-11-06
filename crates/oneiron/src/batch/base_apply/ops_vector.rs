@@ -60,7 +60,7 @@ pub(super) fn apply_media_vector_arm(
     space: String,
     id: EntityId,
     kind: crate::store::embedding::InputKind,
-    text_hash: Option<[u8; crate::store::embedding::TEXT_HASH_LEN]>,
+    input_hash: Option<[u8; crate::store::embedding::TEXT_HASH_LEN]>,
     vector: Vec<f32>,
     provenance: Option<crate::store::embedding::EmbeddingProvenance>,
 ) -> Result<()> {
@@ -73,7 +73,7 @@ pub(super) fn apply_media_vector_arm(
         &space,
         &id,
         kind,
-        text_hash,
+        input_hash,
         &vector,
         provenance.as_ref(),
     )?;
