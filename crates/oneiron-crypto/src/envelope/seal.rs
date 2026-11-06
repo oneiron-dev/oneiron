@@ -660,7 +660,6 @@ fn aead_open_into(
     };
     opened.map_err(|_| Error::OpenFailed)
 }
-
 #[cfg(all(
     test,
     any(target_arch = "x86_64", target_arch = "aarch64"),
