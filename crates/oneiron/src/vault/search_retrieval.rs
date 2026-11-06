@@ -258,6 +258,9 @@ impl Vault {
                     filter_all: false,
                     matches_scope: &mut |_| Ok(true),
                     private_note_ids: None,
+                    // FIX 9096 PART: no caller-side recency signal here; the
+                    // direct-with-profile path still blends no recency.
+                    recency: None,
                 },
             )?
         };

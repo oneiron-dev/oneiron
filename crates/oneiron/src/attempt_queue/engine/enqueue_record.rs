@@ -120,7 +120,9 @@ impl AttemptQueue<'_> {
         // A new row writes its OWN family only. An actor-scoped row never
         // manufactures a v1 entry, which would re-create the actor-blind
         // collision this key family exists to end.
-        if let Some(keys) = dedupe_keys.as_ref() {
+        if let Some(dedupe_key) = record.dedupe_key.as_deref() {
+            let keys =
+                DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store
                 .attempt_dedupe
                 .put(wtxn, &keys.primary[..], record.id.as_bytes())?;

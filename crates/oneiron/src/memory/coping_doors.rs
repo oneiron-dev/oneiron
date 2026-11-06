@@ -279,8 +279,16 @@ impl Memory<'_> {
         self.affect_owner_in_txn(txn, owner)?;
         require_readable(lane, txn, &[person, baseline, later])?;
         if self.vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON)
-            || !crate::affect::state_inputs::spoke_in(self.vault, txn, &person, &baseline)?
-            || !crate::affect::state_inputs::spoke_in(self.vault, txn, &person, &later)?
+            || !self
+                .vault
+                .store
+                .record_hooks
+                .spoke_in(self.vault, txn, &person, &baseline)?
+            || !self
+                .vault
+                .store
+                .record_hooks
+                .spoke_in(self.vault, txn, &person, &later)?
         {
             return Err(Error::InvalidClaimBody(
                 "coping evidence must belong to the affected PERSON",

@@ -14,6 +14,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::embed::PendingEmbedderBinding;
 use crate::{EntityId, Error, Result, Vault};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -58,6 +59,30 @@ pub struct OfferView {
     pub offer: TrainingOffer,
     pub answer: Option<OfferAnswerRecord>,
     pub checks: Vec<OfferCheck>,
+    /// The binding's current state, including settled and undone moves.
+    /// `None` when this offer staged no embedder binding.
+    pub staged: Option<PendingEmbedderBinding>,
+}
+
+/// A committed answer beside the embedder binding's current state.
+/// The answer stays immutable; the binding is read for each reply.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferAnswerReply {
+    pub answer: OfferAnswerRecord,
+    /// Waiting, filling, applied, not applied or undone; `None` when absent.
+    pub staged: Option<PendingEmbedderBinding>,
+}
+
+impl OfferAnswerReply {
+    /// Projects a committed answer; never call from its uncommitted writer.
+    ///
+    /// # Errors
+    /// Storage errors while reading the current binding.
+    pub fn current(vault: &Vault, answer: OfferAnswerRecord) -> Result<Self> {
+        let staged = vault.embedder_binding_move(&answer.offer)?;
+        Ok(Self { answer, staged })
+    }
 }
 
 /// All five engine choices are served, not just the switch approval.
@@ -181,10 +206,12 @@ pub fn list(
         .filter(|(offer, _)| pending.as_ref().is_none_or(|ids| ids.contains(&offer.id)))
         .map(|(offer, answer)| {
             let checks = training_offer_checks(vault, &offer.id)?;
+            let staged = vault.embedder_binding_move(&offer.id)?;
             Ok(OfferView {
                 offer,
                 answer,
                 checks,
+                staged,
             })
         })
         .collect()
@@ -204,10 +231,12 @@ pub fn get(
         .find(|(row, _)| row.id == input.offer)
         .and_then(|(_, answer)| answer);
     let checks = training_offer_checks(vault, &input.offer)?;
+    let staged = vault.embedder_binding_move(&input.offer)?;
     Ok(Some(OfferView {
         offer,
         answer,
         checks,
+        staged,
     }))
 }
 
@@ -215,8 +244,8 @@ pub fn answer(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: OfferAnswerRequest,
-) -> Result<OfferAnswerRecord> {
-    settle_training_offer(
+) -> Result<OfferAnswerReply> {
+    let answer = settle_training_offer(
         vault,
         owner,
         &input.offer,
@@ -224,7 +253,8 @@ pub fn answer(
         input.answer,
         None,
         vault.now_recorded_at(),
-    )
+    )?;
+    OfferAnswerReply::current(vault, answer)
 }
 
 pub fn undo(

@@ -550,11 +550,19 @@ pub(crate) fn drop_witnesses_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     doomed: impl Fn(&WitnessGroup) -> bool,
 ) -> Result<usize> {
-    let keys = picked_keys(&vault.store, wtxn, &WITNESSES, |bytes| {
+    drop_witnesses_for_store_in_txn(&vault.store, wtxn, doomed)
+}
+
+pub(super) fn drop_witnesses_for_store_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    doomed: impl Fn(&WitnessGroup) -> bool,
+) -> Result<usize> {
+    let keys = picked_keys(store, wtxn, &WITNESSES, |bytes| {
         WitnessPart::decode(bytes).is_some_and(|part| doomed(&part.group))
     })?;
     for key in &keys {
-        WITNESSES.delete(&vault.store, wtxn, key)?;
+        WITNESSES.delete(store, wtxn, key)?;
     }
     Ok(keys.len())
 }

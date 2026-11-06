@@ -41,8 +41,9 @@ pub(crate) async fn lfs_batch(
 ) -> Result<Response, EnvelopedApiError> {
     // Read is the floor for reaching the object plane at all; the operation
     // the body names decides whether the write row applies as well.
-    let auth =
-        authorize_request(&parts, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Read)
+        .await
+        .map_err(EnvelopedApiError::from)?;
     let request: LfsBatchRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("lfs batch body is not a batch request", None))?;
     if request.operation == LfsBatchOperation::Upload {
@@ -163,8 +164,9 @@ pub(crate) async fn lfs_upload(
     parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth =
-        authorize_request(&parts, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Write)
+        .await
+        .map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     let size_row = server.config.max_lfs_object_bytes;
@@ -247,8 +249,9 @@ pub(crate) async fn lfs_download(
     Path((_repo, oid)): Path<(String, String)>,
     parts: Parts,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth =
-        authorize_request(&parts, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Read)
+        .await
+        .map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     let Some(record) = server
@@ -342,8 +345,9 @@ pub(crate) async fn lfs_verify(
     parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth =
-        authorize_request(&parts, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Write)
+        .await
+        .map_err(EnvelopedApiError::from)?;
     // It waits on its headers and reads its body at its turn, so a request
     // in line holds none of it. Its room in memory is its route's object's,
     // the only one it may read, sized before it waits.

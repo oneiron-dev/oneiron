@@ -41,6 +41,7 @@
 | `pair(link: String) -> Paired` | `pair(link:)` | redeems a one-use pairing link for `{url, credential, pin, comm}`: `pin` is the checkpoint pin the link named (`CheckpointPin`, bytes as `Data`), `nil` when the vault has no attested checkpoint; keep it beside the origin and credential for a local replica to adopt by. `comm` is the credential's comm reach as the server took it (`parent`, `subtree`, `project` or `vault`) |
 | `as_actor(actor_key: String)` | `client.asActor(actorKey:)` | a NEW handle for another actor; a connected handle refuses `FORBIDDEN` |
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
+| `with_read_credential(credential: String)` | `client.withReadCredential(credential:)` | a NEW handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle refuses `FORBIDDEN` |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |
 | `retry(pending: WireJson, verb: String, input: WireJson) -> WireJson` | `client.retry(pending:verb:input:)` | resends a call a verb hook stopped on an ask under its invocation: `pending` is the `PENDING_ASK` failure's `pending` payload, `input` the same input; answers the verb's wire JSON |
 | `lens_frame_event(card_id: String, request: LensFrameEventRequest) -> LensFrameEventReply` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` record on a lens card the connected server rendered; answers the `Local` (`$state`, beside the card refinement for a patch-profile caller), `Tool` (`outcome`, `readReceipt`) or `Callback` variant |
@@ -96,9 +97,9 @@ no generic `call(name, json)`.
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
   inside its record and never as the whole argument: each `serde_json::Value`
   (a claim's value, a task spec, an entity body, `ai.*` params and the
-  others `generate.py` lists), and the one type on a by-value cycle,
-  `ProjectWriteProof` at `ProjectRecord.write_proof` (its anchor holds an
-  optional proof, and a record cannot hold itself by value). A tuple crosses
+  others `generate.py` lists). `ProjectWriteProof` crosses as an ordinary
+  record: its anchor is a flat `Vec<ProjectAnchorLink>` (FIX 11119), so no
+  by-value cycle remains. A tuple crosses
   as a generated record with positional fields (`item0`, ...) whose serde is
   the tuple's one JSON array, through the tuple codec in `src/codec.rs`.
   A tree that reaches itself only through a list is an ordinary record:
@@ -115,8 +116,8 @@ no generic `call(name, json)`.
 `vault.recall` takes `effort` (`light` … `max`, or `call`: light effort under
 a hard deadline) and `deadlineMs`. Embedded, `high`/`xhigh`/`max` return the
 engine's `LEASE_REQUIRED`: this client mints no lease. `MemoryPack` carries
-items with provenance, `reactions` and `citedMessages` (each with its typed
-`record` ref), scope honesty with
+items with provenance, `assetRef`, every raw per-space `embeddingMatches`
+element, `reactions` and `citedMessages` (each with its typed `record` ref), scope honesty with
 `censusCapped`, retrieval accounting, `packVersion` (always
 `HEAD_MEMORY_PACK_SCHEMA_VERSION`) and the read's `narrowing` receipt. The
 read verbs return `{value, narrowing}`. Blob content crosses as bytes; an

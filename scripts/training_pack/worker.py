@@ -243,10 +243,19 @@ def parse_job(data: bytes) -> TrainingJob:
     _need(path.is_absolute() and base_dir.is_absolute(), "training.path, base.dir: absolute")
     for key, value in _closed(job["provenance"], PROVENANCE, "provenance").items():
         _text(value, f"provenance.{key}")
-    settings = _closed(job["settings"], SETTINGS, "settings")
+    settings = job["settings"]
+    optional = {"evaluation"} if isinstance(settings, dict) and "evaluation" in settings else set()
+    settings = _closed(settings, SETTINGS | optional, "settings")
     _need(settings["recipe"] == RECIPE, f"settings.recipe must be {RECIPE}")
     for key, integral, positive in BOUNDS:
         _number(settings[key], f"settings.{key}", integral, positive)
+    if "evaluation" in settings:
+        evaluation = settings["evaluation"]
+        _need(isinstance(evaluation, dict), "settings.evaluation must be an object")
+        evaluation = _closed(evaluation, {"minimum_accuracy"} & evaluation.keys(), "evaluation")
+        if "minimum_accuracy" in evaluation:
+            minimum = _number(evaluation["minimum_accuracy"], "minimum_accuracy", False, False)
+            _need(minimum <= 1, "minimum_accuracy must be in 0..=1")
     _number(job["export_logit_tolerance"], "export_logit_tolerance", False, False)
     _source(job["harness"], "harness")
     probes = job["probes"]

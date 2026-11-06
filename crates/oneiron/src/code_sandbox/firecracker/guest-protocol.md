@@ -1,4 +1,4 @@
-# Host-configured Firecracker guest ABI v2
+# Host-configured Firecracker guest ABI v3
 
 This is a real jailer launch path. It is not proof that a guest image boots.
 The repository includes the `oneiron-guest` PID-1 source, an artifact build recipe
@@ -26,6 +26,17 @@ The host must provide:
 
 `ONEIRON_MICROVM_CONFIG` names JSON matching `FirecrackerHostConfig`.
 `configured(config)` provides the same host-only input without environment use.
+
+OCI sessions resolve their artifact paths from the host's
+`ONEIRON_MICROVM_OCI_IMAGES` registry. Each selected OCI reference must also
+have its own `oci_pins` entry in `FirecrackerHostConfig`, keyed by that exact
+reference and containing its kernel, rootfs and component BLAKE3 digests.
+Those pins come from the host profile, not from the path registry or the guest.
+Both OCI boot doors use the selected entry for verification and evidence;
+`pins` remains the raw-boot triplet. The current profile format requires
+`oci_pins` (an empty object for a raw-boot-only profile). No old-format reader
+or image artifact is supplied by this source change.
+
 The binary-only constructor never authorizes boot. There is no automatic dev
 fallback in debug, test, or release builds. No network device is configured.
 
@@ -40,7 +51,7 @@ The guest connects AF_VSOCK to host CID 2, port 52. Firecracker forwards this to
 `/vsock.sock_52` inside the jail. Each frame is a 4-byte big-endian JSON length,
 then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
 
-1. Guest: `{"type":"hello","version":2}`. The shared
+1. Guest: `{"type":"hello","version":3}`. The shared
    `GUEST_PROTOCOL_VERSION` is used by both peers; a different version refuses.
 2. Host: `start` with version, vm_id, tier, pids, component_bytes, and source (at most 1 MiB).
    `GuestImage::with_source` supplies source; an empty string selects an embedded
@@ -65,7 +76,8 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
      transport must validate destination/TLS, disallow redirects and bound I/O.
    - `write_open` (path), `write_chunk` (bytes), `write_close`. A proposed
      workspace regular file streams to an anonymous host spool. Chunks spend
-     no request budget and receive no receipt; open and close each receive one.
+     no request budget; each waits for a successful `receipt` before the next
+     chunk. Open and close each receive one receipt too.
    - `delete` (path). Deletes a file that exists in the seeded base tree.
    - `rename` (from, to). Moves a seeded base file to a distinct workspace path.
    - `finish` (status). Nonzero discards every proposal. Success seals deltas
@@ -76,21 +88,36 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
    paths). The host applies each accepted effect to its copy of the base tree's
    shape under the shared contract's path/tree checks and checked byte
    arithmetic. Duplicates, traversal, other mounts, symlinks and special files
-   refuse the run. Only the named open/close, delete and rename requests get
-   `receipt` (accepted true); any refused proposal fails the whole run.
+   refuse the run. Open/close, chunk, delete and rename receive `receipt`
+   (accepted true); any refused proposal fails the whole run. A chunk whose
+   append raises the existing typed proposal disk-floor error receives instead
+   `failure` with `code: "SANDBOX_PROPOSAL_DISK_FLOOR"` and the original error
+   `detail`. This is a proposal error, not a credential response. The guest
+   returns that reason through its existing proposal-chunk error string and
+   poisons the run, so catching the error cannot make the run succeed. Other
+   append and transport errors retain their existing behavior.
+
+   On that floor error the host releases the open and all pending proposal
+   bodies and claims before sending `failure`. If sending succeeds, it reads
+   exactly one subsequent guest frame under the same execution deadline and
+   cancellation before returning the original typed error. A normal guest
+   sends `finish` only after the component returns; the host never dispatches
+   this terminal frame, retries an append or publishes a proposal. A send/read
+   failure still returns the original floor error; a raced cancellation keeps
+   its existing priority. There is no new timer, quota or success path.
 
 Frames stay bounded to 8 MiB. Snapshot and proposed files stream without a
 whole-file wire size cap; source text and step-result JSON retain their 1 MiB
-bounds. Guest whole-file reads still have a 1 MiB bound, and cumulative
-read/random output retains its 16 MiB step bound. Source and outbound request
-budgets remain 16384; file chunks and source file closes do not spend source
+bounds. Guest workspace files are read to EOF; each random-byte output retains a
+1 MiB bound, without a cumulative read/random-output byte ceiling. Source and outbound
+request budgets remain 16384; file chunks and source file closes do not spend source
 requests. Source bytes are copied through the socket. Host source trees are
 never attached as writable devices. Proposed changes do not touch them.
 Collection is consume-once and only possible after successful completion.
 Only changed edit spans become owned strings when a proposal is lowered against
 its exact spooled base; an edit replacing the whole file still owns that span.
 
-Protocol v2 requires matching rebuilt guest executables/rootfs images (including
+Protocol v3 requires matching rebuilt guest executables/rootfs images (including
 the container agent) and updated artifact pins and release contract metadata.
 The existing pinned release recipe still describes its older engine revision;
 this source change does not publish or deploy replacement artifacts.
@@ -145,3 +172,21 @@ scratch application. Host intake turns each accepted `write`, `delete` and
 `rename` into a typed `SandboxProposalWrite` (`FileWrite`, `FileDelete`,
 `FileRename`), which the adapter wraps as a `SandboxProposalDelta` at
 `Proposed` approval.
+
+## Streamed step output
+
+After `ready`, the guest may send `output_text { target, start, frame }`,
+`output_bytes { path, frame }`, or `store_bytes { start, frame }` alongside its
+proposal stream. These frames do not spend logical requests. Each frame is bounded
+by the shared `MAX_CHUNK_BYTES`; `output_bytes` names only `/mnt/outputs` files.
+Text targets are `console`, `finish`, and `store`. Console and files append; a
+`start` frame replaces the previous finish or store value.
+
+The host passes each frame directly to the caller's output sink on the exchange's
+thread. A `receipt { accepted: true }` follows only after that sink stores the
+complete frame. `failure` reports a storage error and the exchange returns the
+original host error under the original cancellation token and deadline. A guest
+poisons its step after either failure or a transport error. Output does not alter
+`step_result`, the terminal status, workspace proposals, or the shared protocol
+version. Release the matching guest executable, rootfs/container agent, and engine
+together: an older guest still drops its output imports before sending any frame.

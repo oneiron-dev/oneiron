@@ -29,7 +29,7 @@ use crate::authority::{AdmittedTaskGrant, InvocationSlipBinding, ManagedOwnerChe
 use crate::error::Result;
 use crate::memory::Memory;
 use crate::task_verb::highway_runner::{
-    RunnerSettle, accept_leased_task_in_txn, report_leased_task_in_txn, runner_report_turn,
+    RunnerSettle, accept_leased_task_in_txn, queued_runner_report_turn, report_leased_task_in_txn,
 };
 use crate::{EntityId, Vault};
 
@@ -218,7 +218,7 @@ impl AgentDispatcher<'_> {
     /// another worker took first, or whose requester stands now, is left as
     /// it is.
     pub(crate) fn end_withdrawn(&self, id: AttemptId, lease_owner: &str, now: u64) -> Result<()> {
-        let held = runner_report_turn(self.vault, id)?;
+        let held = queued_runner_report_turn(self.vault, id)?;
         // The grouped write door, as the ladder's own fail: a TASK this
         // failure settles wakes its peer-result waiters once it commits.
         let ended = self.vault.with_write_txn_grouped(|txn| {

@@ -6,10 +6,10 @@ use super::*;
 
 impl Memory<'_> {
     /// `vault.code.symbols.definitions`: the CALL behind the symbol door is
-    /// exact-name Rust definitions only, as the ingest extractor records
-    /// them in the pinned snapshot symbol manifest, in its stored order. No
-    /// PPR score or Mentions edge is offered as a calls, imports or refs
-    /// fact, and no other language is extracted for the caller.
+    /// exact-name Rust and CommonJS definitions, as the ingest extractors
+    /// record them in the pinned snapshot symbol manifest, in stored order.
+    /// This door returns definitions, not relation neighbors: no PPR score
+    /// or Mentions edge is offered as a calls, imports or refs fact.
     pub fn code_snapshot_definitions_as(
         &self,
         owner: &AuthenticatedOwner,

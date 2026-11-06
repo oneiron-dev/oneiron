@@ -5,7 +5,6 @@
 use super::UnprocessedItem;
 use super::WorldPresence;
 use super::memories_projection::constraint_predicate;
-use crate::affect::processed_subjects;
 use crate::claim::{
     ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead, base_world_id, decode_claim_body,
 };
@@ -113,7 +112,11 @@ pub fn unprocessed_items(read: &ScopedRead<'_>, now: u64) -> Result<Vec<Unproces
                     .iter()
                     .map(|(_, _, _, subject, _)| *subject)
                     .collect();
-                let processed = processed_subjects(read, &subjects)?;
+                let processed = read
+                    .vault()
+                    .store
+                    .record_hooks
+                    .processed_subjects(read, &subjects)?;
                 candidates.retain(|(_, _, _, subject, _)| !processed.contains(subject));
             }
             if !candidates.is_empty() {

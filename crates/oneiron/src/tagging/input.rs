@@ -86,10 +86,8 @@ pub(super) fn turn_input_in_txn(
     turn: &EntityId,
 ) -> Result<TurnInput> {
     let tokens = vault
-        .config
-        .tagging
-        .as_ref()
-        .map_or(0, |tagging| tagging.live_window_tokens);
+        .tagging_marker_config()
+        .map_or(0, |marker| marker.live_window_tokens);
     read_in_txn(vault, txn, turn, tokens)
 }
 
@@ -132,10 +130,8 @@ fn read_in_txn(
         // The vault's configured processing language, when it names one;
         // without it the language remains unspecified.
         language: vault
-            .config
-            .tagging
-            .as_ref()
-            .and_then(|tagging| tagging.language.clone()),
+            .tagging_marker_config()
+            .and_then(|marker| marker.language),
         speaker,
     };
     let text_hash = input_hash(&input);

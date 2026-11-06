@@ -11,7 +11,7 @@ use oneiron::llm::manifest::doors::{
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
     EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
-    ExtractionWork, infer_encoder_for,
+    ExtractionWork, infer_encoder_for, infer_encoder_in,
 };
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
@@ -406,7 +406,16 @@ async fn invoke(
                 // The owner waits on this call: a live one, at the owner's
                 // own turn (FIX 9519).
                 let caller = ExtractionCaller::new("owner");
-                let attempt = infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller);
+                let attempt = match &server.tagger_egress {
+                    Some(predicate) => {
+                        let context = oneiron::llm::TaggerCallContext::new(
+                            Arc::clone(server.vault()),
+                            Arc::clone(predicate),
+                        );
+                        infer_encoder_in(&input, ExtractionWork::Live, encoder, &caller, &context)
+                    }
+                    None => infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller),
+                };
                 let output = attempt.result.map_err(MemoryError::bad_request)?;
                 let provider = slot.config().provider.as_str().to_owned();
                 Ok::<_, MemoryError>((output, attempt.execution, provider))

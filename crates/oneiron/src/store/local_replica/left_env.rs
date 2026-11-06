@@ -112,6 +112,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,
     &side_table::SHORT_ID_COUNTER,
+    &side_table::SHORT_ID_KIND_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
     &side_table::COMPACTION_EPOCH_FLOOR,
@@ -129,7 +130,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::LEGAL_HOLD_USE_LIMIT,
     &side_table::LEGAL_HOLD_PENDING_ERASE,
     &side_table::LEGAL_HOLD_HOST_ROW,
-    &side_table::LEGAL_HOLD_HOST_TARGET,
     &side_table::LEGAL_HOLD_HOST_EVENT,
     &side_table::LEGAL_HOLD_HOST_ERASE_LINK,
     // The body collector's queue, and the device's residence choice.
@@ -431,15 +431,21 @@ fn keep_reason(
     if let Some(kind) = kind.filter(|kind| LEAVE_KEPT_KINDS.contains(kind)) {
         return Ok(Some(KeepReason::Kind(kind)));
     }
-    if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
         return Ok(Some(KeepReason::LegalHold));
     }
     // A pad is its world key's erasable half: a hold on the world or on a
     // claim the key seals keeps it, as the delete guard refuses it (OF-470).
     if kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
-        && crate::world_keys::held_pad_world_in_txn(store, txn, raw)?
+        && crate::world_keys::legal_hold_pad_world_in_txn(store, txn, raw)?
     {
         return Ok(Some(KeepReason::LegalHold));
+    }
+    if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?
+        || (kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
+            && crate::world_keys::held_pad_world_in_txn(store, txn, raw)?)
+    {
+        return Ok(Some(KeepReason::Guarded));
     }
     // A guard that cannot read the pin keeps the row too: keeping is safe.
     if carrier

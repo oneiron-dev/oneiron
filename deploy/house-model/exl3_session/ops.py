@@ -20,6 +20,19 @@ message's thinking block, say). `session.generate` attaches again against
 the ids its own call renders: the attach point is verified on the tokens
 that run.
 
+`session.prepare` (I1 = C) renders the path the host expects the next turn
+to start with (the published path, then the state-only board), as
+`session.append` stages a path, checks that it extends the published
+checkpoint, and prefills its suffix on that checkpoint, as a suffix commit
+does, under the class and priority its body names (background, from the
+host). The result is the session's prepared tail, beside the published
+checkpoint and never published. `session.fork` attaches the turn's branch to
+it instead of the checkpoint only where the turn's own tokens equal the
+tail's further than the checkpoint's attach reaches, and answers what the
+tail held, computed and gave (`prepared`); the tail ends at that fork either
+way, and a prepare still running stops. `session.generate` attaches again on
+the ids its call renders, against whichever the branch holds.
+
 Codec v1.2 (R3) adds the snapshot ops. `session.export` names the published
 checkpoint exactly and answers `{checkpoint, snapshot_bytes,
 snapshot_sha256, output, residency}`; its snapshot region rides on the
@@ -46,6 +59,23 @@ from .anchor import common_prefix
 from .jobs import Plan
 from .registry import (INVALID_INPUT, INVALID_REQUEST, LOST_RESIDENCY, STALE_GENERATION, UNKNOWN_SESSION, Branch,
                        Commit, Refused, Retained, Staged, new_handle)
+
+# A prepare that a later op of the session stops: the turn it prepared for
+# arrived, or the session moved on.
+SUPERSEDED = "superseded"
+# A prepare whose prefill could never fit the page pool beside its pinned
+# base: it would wait at the head of the commit queue for ever.
+PREPARE_TOO_LARGE = "prepare_too_large"
+# The same for a suffix commit: the session cannot hold its successor.
+COMMIT_TOO_LARGE = "commit_too_large"
+
+
+def _fits_pool(layer, commit, base):
+    """Whether `commit`'s fresh pages, beside the pages of the checkpoint
+    `base` it pins, could ever fit the page pool. Commits start in order, so
+    one that cannot would hold back every commit behind it."""
+    base_pages = -(-base.anchor.frontier // PAGE_SIZE) if base is not None else 0
+    return commit.need + base_pages <= layer.scheduler.pool_pages
 
 # The ephemeral tail a differential rendering puts after a canonical path.
 PROBE = {"role": "user", "content": "oneiron session probe"}
@@ -146,6 +176,11 @@ def fork(layer, body, conversation):
             return kept
         layer.check_generation(session, generation)
         checkpoint = layer.expected(session, expected)
+        # The turn has arrived: a prepare still running for it stops, and
+        # what it computes no longer serves.
+        preparing, session.preparing = session.preparing, None
+    if preparing is not None:
+        layer.scheduler.post(lambda: layer.stop_commit(preparing, Refused(SUPERSEDED, "the turn arrived")))
     full = _ids(layer, messages, tools, True)
     cap = common_prefix(full, _ids(layer, messages[:canonical] + [PROBE], tools, True))
     lcp = position = 0
@@ -162,12 +197,34 @@ def fork(layer, body, conversation):
         # A branch no call claimed ends at the session's next fork.
         for branch in [branch for branch in session.branches.values() if not branch.claimed]:
             release += layer.close_branch(branch)
-        branch = Branch(new_handle(), session, checkpoint, cap)
-        if checkpoint is not None:
-            checkpoint.anchor.pins += 1
+        # The prepared tail serves this fork or none: the send-time check is
+        # the turn's own tokens against the tail's, past the checkpoint's
+        # attach point; the branch takes whichever reaches further.
+        prepared, used = session.prepared, None
+        if prepared is not None and checkpoint is not None and prepared.base is checkpoint \
+                and not prepared.checkpoint.anchor.released:
+            reach, _ = prepared.checkpoint.anchor.attach_point(full, int(full.numel()))
+            if reach > position:
+                used = (prepared, reach)
+        if used is not None:
+            branch = Branch(new_handle(), session, prepared.checkpoint, int(full.numel()))
+            branch.checkpoint.anchor.pins += 1
+        else:
+            branch = Branch(new_handle(), session, checkpoint, cap)
+            if checkpoint is not None:
+                checkpoint.anchor.pins += 1
+        release += layer.unprepare(session)
         session.branches[branch.handle] = branch
-        answer = {"branch": branch.handle, "frontier_tokens": position, "canonical_lcp_tokens": lcp,
-                  "residency": layer.residency(session)}
+        answer = {"branch": branch.handle, "frontier_tokens": used[1] if used is not None else position,
+                  "canonical_lcp_tokens": lcp, "residency": layer.residency(session)}
+        if prepared is not None:
+            tail = prepared.checkpoint.anchor.frontier - prepared.base.anchor.frontier
+            reused = max(0, min(used[1] - position, tail)) if used is not None else 0
+            answer["prepared"] = {"attached": used is not None, "prepared_tokens": tail,
+                                  "computed_tokens": prepared.computed_tokens, "reused_tokens": reused}
+        elif preparing is not None:
+            answer["prepared"] = {"attached": False, "prepared_tokens": 0, "computed_tokens": None,
+                                  "reused_tokens": 0, "stopped": True}
         layer.remember(session, op_id, generation, answer)
     if release:
         layer.scheduler.post(lambda: layer.release(release))
@@ -202,7 +259,68 @@ def append(layer, body, conversation):
     return answer
 
 
-def _commit(layer, session, op_id, staged, work):
+def prepare(layer, body, conversation):
+    """`session.prepare`: the path the input region carries, which must
+    extend the published checkpoint `base` names, prefilled on it into the
+    session's prepared tail; answers `{prepared_tokens, computed_tokens}`,
+    the tail's tokens past the checkpoint and the tokens it computed. A tail
+    whose pages could never fit the pool beside its base is refused
+    `prepare_too_large` before it pins anything or joins the queue."""
+    handle, binding = _target(body)
+    op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
+    base = _ref(body, "base")
+    if base is None:
+        raise Refused(INVALID_REQUEST, "a prepare names the published checkpoint it extends")
+    work = _work(body)
+    messages, tools = _conversation(conversation)
+    with layer.lock:
+        session = layer.find(handle, binding)
+        kept = layer.replay(session, op_id)
+        if kept is None:
+            layer.check_generation(session, generation)
+            checkpoint = layer.expected(session, base)
+    if kept is None:
+        path = _ids(layer, messages, tools, False)
+        tokens = path[:common_prefix(path, _ids(layer, messages + [PROBE], tools, True))].clone()
+        frontier = checkpoint.anchor.frontier
+        if int(tokens.numel()) <= frontier or common_prefix(tokens, checkpoint.anchor.tokens) < frontier:
+            raise Refused(STALE_GENERATION, "the prepared path does not extend the published checkpoint")
+        release = []
+        with layer.lock:
+            if session.dropping:
+                raise Refused(UNKNOWN_SESSION, "the session was dropped")
+            layer.check_generation(session, generation)
+            if layer.expected(session, base) is not checkpoint:
+                raise Refused(STALE_GENERATION, "another checkpoint is published")
+            staged = Staged(tokens, checkpoint.head, checkpoint, frontier, generation)
+            kept = _commit(layer, session, op_id, staged, work, prepare=True)
+            # Refused before it pins its base or joins the queue.
+            if not _fits_pool(layer, kept, checkpoint):
+                raise Refused(PREPARE_TOO_LARGE, "the prepared tail does not fit the page pool")
+            stopped = session.preparing
+            release += layer.unprepare(session)
+            checkpoint.anchor.pins += 1
+            session.preparing = kept
+            layer.waiting.append(kept)
+            layer.remember(session, op_id, generation, kept)
+        if stopped is not None:
+            layer.scheduler.post(lambda: layer.stop_commit(stopped, Refused(SUPERSEDED, "another prepare runs")))
+        if release:
+            layer.scheduler.post(lambda: layer.release(release))
+    if not isinstance(kept, Commit) or not kept.prepare:
+        if not isinstance(kept, dict):
+            raise Refused(INVALID_REQUEST, "this op id answered another op")
+        return kept
+    layer.scheduler.poke()
+    # No deadline: the prepare runs when the scheduler has room for it, and
+    # the turn's fork stops it.
+    kept.done.wait()
+    if kept.refusal is not None:
+        raise kept.refusal
+    return _with_stats(layer, kept.reply)
+
+
+def _commit(layer, session, op_id, staged, work, prepare=False):
     """The commit of `staged`: its ids (the path and one pad id, which never
     runs), where it attaches on its base, the fresh pages it needs, and its
     scheduling."""
@@ -214,7 +332,7 @@ def _commit(layer, session, op_id, staged, work):
     depth = int(layer.generator.num_draft_tokens)
     total = -(-(int(ids.numel()) + 2 + depth) // PAGE_SIZE)
     return Commit(session, op_id, staged, Plan(anchor, position, snapshot), ids, total - position // PAGE_SIZE,
-                  work)
+                  work, prepare)
 
 
 def _work(body):
@@ -246,6 +364,9 @@ def suffix_commit(layer, body, _conversation_):
             if staged.base is not session.published:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
             kept = _commit(layer, session, op_id, staged, work)
+            # Refused before it pins its base or joins the queue.
+            if not _fits_pool(layer, kept, staged.base):
+                raise Refused(COMMIT_TOO_LARGE, "the successor does not fit the page pool")
             if staged.base is not None:
                 staged.base.anchor.pins += 1
             session.commit = kept
@@ -405,6 +526,7 @@ HANDLERS = {
     "session.fork": fork,
     "session.append": append,
     "session.suffix_commit": suffix_commit,
+    "session.prepare": prepare,
     "session.checkpoint": checkpoint,
     "session.drop": drop,
     "session.export": export,
@@ -412,7 +534,7 @@ HANDLERS = {
 }
 
 # The ops that carry a `chat_json` input region.
-WITH_INPUT = ("session.fork", "session.append", "session.generate")
+WITH_INPUT = ("session.fork", "session.append", "session.prepare", "session.generate")
 # The op that carries a `snapshot_v1` input region, and the op whose answer
 # passes one: the handler gives (answer, region).
 SNAPSHOT_INPUT = ("session.import",)

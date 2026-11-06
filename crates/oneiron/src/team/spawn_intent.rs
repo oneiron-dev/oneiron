@@ -234,6 +234,24 @@ impl FrozenPatternPack {
         self.revision
     }
 
+    /// Clears only this erased skill's retained revision witness.
+    pub(crate) fn erase_revision_for(&mut self, entity: &EntityId) -> bool {
+        if self.entity == *entity && self.revision.is_some_and(|(pinned, _)| pinned == *entity) {
+            self.revision = None;
+            return true;
+        }
+        false
+    }
+
+    /// The same frozen pack apart from its erasable revision witness.
+    pub(crate) fn same_frozen_pack(&self, other: &Self) -> bool {
+        self.entity == other.entity
+            && self.skill_id == other.skill_id
+            && self.version == other.version
+            && self.files == other.files
+            && self.body_hash == other.body_hash
+    }
+
     /// The skill entity that loaded.
     #[must_use]
     pub fn entity(&self) -> EntityId {

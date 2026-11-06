@@ -1,27 +1,14 @@
-//! The routing probe that tells an agent dispatch's attempt row apart
-//! without the strict reader: its record version, the Dreamer kind and its
-//! payload's attempt type, and the family test checkpoint carriage routes
-//! on. The attempt queue's response carriage
-//! (`attempt_queue::payload_erase::response`) decodes, scans and retires
-//! the rows it finds.
-use serde::Deserialize;
+//! Core half of `store::attempt_payload_route`: its store-layer items live in `oneiron_store::attempt_payload_route` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::attempt_payload_route::*;
 
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_record::ATTEMPT_RECORD_VERSION;
 use crate::store::dispatch_attempt_kind::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::store::is_opaque_erased;
-
-/// The Dreamer attempt payload's pinned key naming its attempt type.
-const PAYLOAD_ATTEMPT_TYPE_KEY: &str = "job_type";
-
-/// What the routing probe reads of a queue row: its kind and payload, past
-/// every validator the strict reader runs.
-#[derive(Deserialize)]
-struct Routing {
-    kind: String,
-    payload: Vec<u8>,
-}
+use serde::Deserialize;
 
 /// Whether `raw` reads, by the routing probe alone, as a Dreamer agent
 /// dispatch's row: its record version, the Dreamer kind, and a payload map

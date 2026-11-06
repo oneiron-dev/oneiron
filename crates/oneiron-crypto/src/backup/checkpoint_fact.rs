@@ -1,6 +1,7 @@
 //! A sealed backup's checkpoint fact (FIX 7326): its engine vault id, the
 //! full BLAKE3 of its canonical image (the checkpoint id a restore compares),
-//! its commitment digest, the BLAKE3 of its every byte and its size, signed
+//! its commitment digest, the BLAKE3 of its every byte, its size and its
+//! host-holds availability, signed
 //! once the artifact is complete with the keys that signed its commitment. It
 //! travels beside the artifact, never in it, so a host that never opens a
 //! vault learns the artifact's checkpoint id from its pinned signer.
@@ -10,9 +11,10 @@
 //! starts with a map byte, a subject with the domain's length, `0x21`):
 //!
 //! ```text
-//! subject  u8 33 ‖ "oneiron/backup-checkpoint-fact/v1" ‖ u16be 1
+//! subject  u8 33 ‖ "oneiron/backup-checkpoint-fact/v2" ‖ u16be 2
 //!          ‖ engine vault id (32) ‖ checkpoint id (32)
 //!          ‖ commitment digest (32) ‖ outer BLAKE3 (32) ‖ u64be size
+//!          ‖ host-holds tag (1) ‖ recipient (32) ‖ u64be epoch ‖ member BLAKE3 (32)
 //! file     "ONCF" ‖ u16be 1 ‖ u32be n ‖ subject (n) ‖ u32be n ‖ signature record (n)
 //! ```
 //!
@@ -20,22 +22,24 @@
 //! the record.
 
 use super::commitment::{CheckpointSigner, MAX_SIGNED_FRAME, verify_commitment_signature};
+use super::host_holds_availability::{HOST_HOLDS_AVAILABILITY_LEN, HostHoldsAvailability};
 use super::inspect::{BackupEvidence, verify_with_pins};
 use crate::codec::{Reader, check_len, put_lp8};
 use crate::error::{Error, Result};
 use crate::record::SignatureRecord;
 
 /// The signed subject's domain.
-pub const CHECKPOINT_FACT_DOMAIN: &[u8] = b"oneiron/backup-checkpoint-fact/v1";
+pub const CHECKPOINT_FACT_DOMAIN: &[u8] = b"oneiron/backup-checkpoint-fact/v2";
 /// The signed subject's version.
-pub const CHECKPOINT_FACT_VERSION: u16 = 1;
+pub const CHECKPOINT_FACT_VERSION: u16 = 2;
 /// The fact file's magic.
 pub const CHECKPOINT_FACT_MAGIC: &[u8; 4] = b"ONCF";
 /// The fact file's encoding version.
 pub const CHECKPOINT_FACT_FILE_VERSION: u16 = 1;
 /// The signed subject's length: the domain's length byte and bytes, the
-/// version, four 32-byte digests and the size.
-pub const CHECKPOINT_FACT_SUBJECT_LEN: usize = 1 + CHECKPOINT_FACT_DOMAIN.len() + 2 + 4 * 32 + 8;
+/// version, four 32-byte digests, the size and the fixed host-holds field.
+pub const CHECKPOINT_FACT_SUBJECT_LEN: usize =
+    1 + CHECKPOINT_FACT_DOMAIN.len() + 2 + 4 * 32 + 8 + HOST_HOLDS_AVAILABILITY_LEN;
 
 /// What one sealed backup is, as its signer says once it is complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +54,9 @@ pub struct CheckpointFact {
     pub outer_blake3: [u8; 32],
     /// The artifact's length in bytes.
     pub size: u64,
+    /// What the producer sealed for its host in this artifact. Trusted only
+    /// after verification, as an attestation, not a keyless member inspection.
+    pub host_holds: HostHoldsAvailability,
 }
 
 impl CheckpointFact {
@@ -63,6 +70,7 @@ impl CheckpointFact {
         out.extend_from_slice(&self.commitment_digest);
         out.extend_from_slice(&self.outer_blake3);
         out.extend_from_slice(&self.size.to_be_bytes());
+        self.host_holds.encode_into(&mut out);
         out
     }
 
@@ -88,6 +96,7 @@ impl CheckpointFact {
             commitment_digest: r.array("checkpoint fact commitment digest")?,
             outer_blake3: r.array("checkpoint fact outer digest")?,
             size: r.u64("checkpoint fact size")?,
+            host_holds: HostHoldsAvailability::decode(&mut r)?,
         };
         r.finish()?;
         Ok(fact)
@@ -168,7 +177,9 @@ impl SignedCheckpointFact {
 /// its subject (the dual suite, `BatchCheckpoint`, the signature epoch, its
 /// install id and both keys), and the fact names the artifact's vault id,
 /// commitment digest, outer BLAKE3 and size. Returns the fact, its checkpoint
-/// id now the signer's. The caller read `evidence` from the bytes it holds;
+/// id and host-holds availability now the signer's attestations. Availability
+/// does not open or independently inspect the sealed member. The caller read
+/// `evidence` from the bytes it holds;
 /// nothing here enrolls a signer or reads a key.
 pub fn verify_checkpoint_fact(
     signed: &SignedCheckpointFact,
