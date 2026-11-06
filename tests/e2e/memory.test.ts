@@ -16,7 +16,7 @@ afterAll(suite.flush);
  * 0040/0043/0055, not handlers or runtime OpenAPI. Canonical fixture values
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
- * MEMORY-02, MEMORY-03, MEMORY-04 and MEMORY-06 retain their full journeys as TODOs.
+ * MEMORY-03, MEMORY-04 and MEMORY-06 retain their full journeys as TODOs.
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -679,10 +679,38 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
       .toEqual(batch.map(outcome => outcome.outcome === "landed" ? outcome.approval : null));
     expect(mcpBatch[1]!.outcome).toBe("refused");
     if (mcpBatch[1]!.outcome !== "refused") throw new Error("MCP batch conf element landed");
+    expect(typeof mcpBatch[1]!.refusal.reason).toBe("string");
     expect(typeof mcpBatch[1]!.refusal.code).toBe("string");
+    expect((mcpBatch[1]!.refusal.code as string).length).toBeGreaterThan(0);
     expect(typeof mcpBatch[1]!.refusal.message).toBe("string");
+    expect((mcpBatch[1]!.refusal.message as string).length).toBeGreaterThan(0);
+    expect(Array.isArray(mcpBatch[1]!.refusal.suggestions)).toBe(true);
+    expect(typeof mcpBatch[1]!.refusal.field).toBe("string");
     expect((await w.engine.client.call("vault.get", { entity_ref: mcpConfId })).value).toBeNull();
     expect((await claims(w, "@person-a")).some(row => row.claim_ref === mcpConfId)).toBe(false);
+    if (mcpBatch[0]!.outcome !== "landed") throw new Error("MCP batch sibling A refused");
+    if (mcpBatch[2]!.outcome !== "landed") throw new Error("MCP batch sibling B refused");
+    await w.engine.awaitReceipt(mcpBatch[0]!.receipt_ref);
+    await w.engine.awaitReceipt(mcpBatch[2]!.receipt_ref);
+    const mcpSibAEntity = (await entity(w.engine.client, mcpBatch[0]!.claim_short_id)).id_hex;
+    const mcpSibBEntity = (await entity(w.engine.client, mcpBatch[2]!.claim_short_id)).id_hex;
+    const mcpSibARow = await claim(w, mcpSibAEntity);
+    const mcpSibBRow = await claim(w, mcpSibBEntity);
+    expect(mcpSibARow.value).toBe(c.valid.value.value);
+    expect(mcpSibARow.claim_scope).toEqual(claimInput(w, c.valid).scope);
+    birth(mcpSibARow, owner, [ref(w, "@name-statement")]);
+    expect(mcpSibARow.approval).toBe("proposed");
+    expect(mcpSibARow.lifecycle).toBe("active");
+    expect(mcpSibBRow.value).toBe(c.valid.value.value);
+    expect(mcpSibBRow.claim_scope).toEqual(claimInput(w, { ...c.valid, subjectId: "@person-b" }).scope);
+    birth(mcpSibBRow, owner, [ref(w, "@name-statement")]);
+    expect(mcpSibBRow.approval).toBe("proposed");
+    expect(mcpSibBRow.lifecycle).toBe("active");
+    const batchFields = (row: Claim): unknown => ({ value: row.value, predicate: row.predicate,
+      subject_ref: row.subject_ref, source: row.source, confidence: row.confidence,
+      claim_scope: row.claim_scope, approval: row.approval, lifecycle: row.lifecycle });
+    expect(batchFields(mcpSibARow)).toEqual(batchFields(sibARow));
+    expect(batchFields(mcpSibBRow)).toEqual(batchFields(sibBRow));
     // Finale: quartet + four seed siblings intact; per-(subject,predicate) counts exact.
     const finalA = (await claims(w, "@person-a")).filter(row => row.predicate === "profile.name");
     const finalB = (await claims(w, "@person-b")).filter(row => row.predicate === "profile.name");
@@ -700,7 +728,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
     birth(await claim(w, opaqueId), owner, [ref(w, "@name-statement")]);
     await w.engine.artifacts.json("memory-02-claim-admission.json", { note: c.opaqueControl.note,
       canon: c.opaqueControl.canon, receipts: { validReceipt, opaqueReceipt, mcpValidReceipt, mcpOpaqueReceipt },
-      readbacks: { validRow, opaqueRow, mcpValidRow, mcpOpaqueRow, sibARow, sibBRow },
+      readbacks: { validRow, opaqueRow, mcpValidRow, mcpOpaqueRow, sibARow, sibBRow, mcpSibARow, mcpSibBRow },
       opaqueRecall: { opaqueTextNorth, opaqueTextSouth }, refusals, batch, mcpBatch,
       parity: { mcpListA, mcpListB, mcpHistory, mcpGet }, finale: { finalA, finalB } });
   } catch (error) {
