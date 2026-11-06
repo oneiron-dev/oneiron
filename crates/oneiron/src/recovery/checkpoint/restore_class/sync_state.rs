@@ -90,6 +90,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_NC_E, CONTENT),
     (&t::SYNC_NOTE_INBOX, CONTENT),
     (&t::NOTE_PROPOSAL_DOC, CONTENT),
+    (&t::NOTE_FORK_AUTHORITY, CONTENT),
     (&t::NOTE_RECEIPT_BY_REQUEST, CONTENT),
     (&t::PEER_AUTHORITY_ENTRY, LIVE),
     (&t::OFF_RECORD_PROMOTE_PICKUP_MARKER, CONTENT),
