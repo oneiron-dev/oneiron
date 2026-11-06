@@ -1,10 +1,12 @@
 //! One public signing executor: turn, access, viewed, terminal, then action.
+use super::rate::{LimitCrossing, keep_limit_crossings};
 use super::{
     capability::{EsignCapability, binding},
     ledger::{append, state_in},
     model::*,
     principals::automated_signing_allowed,
 };
+use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -381,6 +383,17 @@ impl Vault {
                     } else {
                         value.clone()
                     };
+                    let crossing = match (&definition.meta, &value) {
+                        (FieldMeta::Email, FieldValue::Text(text)) => text_crossing(
+                            self,
+                            EngineLimit::EsignEmailFieldBytes,
+                            text.len() as u64,
+                        ),
+                        (FieldMeta::Name | FieldMeta::Date, FieldValue::Text(text)) => {
+                            text_crossing(self, EngineLimit::EsignNameFieldBytes, text.len() as u64)
+                        }
+                        _ => None,
+                    };
                     state = append(
                         self,
                         txn,
@@ -396,6 +409,16 @@ impl Vault {
                         actor,
                         now,
                     )?;
+                    if let Some(crossing) = crossing {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                 }
                 SigningAction::Complete { consent, next } => {
                     if !consent {
@@ -466,6 +489,20 @@ impl Vault {
                         actor,
                         now,
                     )?;
+                    if let Some(crossing) = text_crossing(
+                        self,
+                        EngineLimit::EsignRejectReasonBytes,
+                        reason.len() as u64,
+                    ) {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                     enqueue_seal(self, txn, document, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
@@ -502,4 +539,9 @@ impl Vault {
             }))
         })
     }
+}
+
+fn text_crossing(vault: &Vault, row: EngineLimit, measured: u64) -> Option<LimitCrossing> {
+    let bound = vault.limit_watch().bound(row);
+    (measured > bound).then_some((row, bound, measured))
 }

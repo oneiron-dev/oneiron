@@ -36,6 +36,35 @@ impl Memory<'_> {
         Ok(best)
     }
 
+    /// [`Self::find_prior_claim`] read in `rtxn` (FIX 9403): an atomic
+    /// batch's writer sees the heads its own earlier elements staged there.
+    pub(super) fn find_prior_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        key: &MemoryKey<'_>,
+        exclude: &EntityId,
+        beside_stated: bool,
+    ) -> crate::Result<Option<EntityId>> {
+        let mut best: Option<EntityId> = None;
+        for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
+            if id == *exclude {
+                continue;
+            }
+            let Some(body) = self.vault.get_claim_in_txn(rtxn, &id)? else {
+                continue;
+            };
+            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            {
+                continue;
+            }
+            best = match best {
+                Some(current) if current.to_hex() >= id.to_hex() => Some(current),
+                _ => Some(id),
+            };
+        }
+        Ok(best)
+    }
+
     /// OF-023: the standing `UserStated` peers on `key` whose answer differs
     /// from the observed `value`, read in the write transaction. Every peer
     /// counts, not one advisory newest prior. An incoming id that already
