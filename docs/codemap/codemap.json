@@ -14571,7 +14571,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 8
      }
     },
@@ -44523,7 +44523,7 @@
      "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
      "surface": {
       "crate-vis": 6,
-      "fn": 13,
+      "fn": 14,
       "mod": 1,
       "re-export": 4,
       "struct": 1
@@ -97106,6 +97106,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/options.rs",
+     "purpose": "getsockopt and setsockopt on a brokered socket (FIX 6784, FIX 6787)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -97185,6 +97195,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/supervisor/control.rs",
+     "purpose": "The supervisor's copy of a stream socket's guest end (FIX 6788)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/supervisor/lifetime.rs",
      "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
      "surface": {
@@ -97198,7 +97218,27 @@
      "path": "src/supervisor/loopback.rs",
      "purpose": "The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/loopback/connect.rs",
+     "purpose": "A connect to a full listener queue waits its turn (FIX 6785; the blocking half of FIX 8015)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/loopback/options.rs",
+     "purpose": "The socket options the fence keeps itself, since a socket's Unix stand-in cannot answer them: SO_ACCEPTCONN…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -97277,7 +97317,7 @@
      "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…"
     },
     "launcher": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -97305,7 +97345,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 5,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -97328,7 +97368,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 23,
+   "source_files": 27,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -123846,7 +123886,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 13,
       "re-export": 1,
       "struct": 1
