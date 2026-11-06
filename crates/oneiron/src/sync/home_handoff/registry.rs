@@ -19,7 +19,7 @@ use crate::side_table::SideTableDbs;
 /// Every table a home move carries in this build, in the order the carrier
 /// exports and adopts them (CALLS: home tables). C2's drain, its adoption
 /// and restore's live keys all walk this one list.
-pub(crate) fn home_tables() -> [HomeTableRegistration; 6] {
+pub(crate) fn home_tables() -> [HomeTableRegistration; 7] {
     [
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimePolicyRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeClockRows>(),
@@ -27,6 +27,9 @@ pub(crate) fn home_tables() -> [HomeTableRegistration; 6] {
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeReceiptRows>(),
         HomeTableRegistration::of::<crate::agent_dispatch::spend_handoff::FreeTimeSpendRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeItemRows>(),
+        // FIX 7817: the Coach's topology-audit candidates, selections and
+        // results, one section; independent of the free-time sections.
+        HomeTableRegistration::of::<crate::identity_topology::CoachTopologyAuditRows>(),
     ]
 }
 

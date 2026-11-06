@@ -302,6 +302,90 @@ pub(crate) fn run_verdict(
     answered
 }
 
+/// What an admitted job lends each verdict it asks (FIX 7817, L07-A): its
+/// caller, its own line, the payer that line bills and the session its
+/// calls are captured under. The job's clock rides each request's
+/// `until_ms`, never a clock of the verdict's own.
+pub(crate) struct JobVerdictLine<'a> {
+    pub(crate) principal: EntityId,
+    pub(crate) class: EdgeActorClass,
+    /// The job's one line: every rung of every verdict the job asks spends
+    /// on it, under the reserve it was opened with.
+    pub(crate) meter: &'a BudgetGuard,
+    /// The PERSON the job's line bills; `None` bills the vault owner.
+    pub(crate) payer: Option<&'a PayerPerson>,
+    /// The bound session the model-call capture attributes; `None` only at
+    /// unbound sources.
+    pub(crate) session_ref: Option<&'a str>,
+}
+
+/// Asks `request` through the host's ladder as one question of an admitted
+/// job (FIX 7817, L07-A): the same question family, evidence rule and
+/// ladder as [`run_verdict`], with every rung spending on the job's own line
+/// and billing its payer, each evidence ref read under `reader`, the job's
+/// scoped read, and the call bounded by the time the job has left (the
+/// request's `until_ms`). It opens no line, starts no clock and takes no
+/// reserve of its own, so a job's verdicts draw the job's budget, not a
+/// fresh one each; [`run_verdict`] stays the door for a caller with no job.
+/// The caller's spend check counts what this verdict drew from the line.
+///
+/// Every model rung blocks on the server's runtime: call this on a blocking
+/// thread.
+pub(crate) fn run_job_verdict(
+    server: &SyncServer,
+    job: &JobVerdictLine<'_>,
+    reader: &Memory<'_>,
+    request: &AiVerdictRequest,
+    evidence_read: &mut Vec<EntityId>,
+) -> MemoryResult<AiVerdict> {
+    let vault = server.vault();
+    let before = job.meter.read().used_units;
+    let answered = model_calls::scoped(job.principal, job.session_ref, || {
+        on_caller_meter(job.meter, || {
+            on_caller_payer(job.payer, || {
+                answer_verdict(
+                    server,
+                    job.principal,
+                    job.class,
+                    reader,
+                    None,
+                    None,
+                    request,
+                    evidence_read,
+                )
+            })
+        })
+    });
+    // The line is the job's, shared by its verdicts: this one's spend is
+    // what the line gained while it ran.
+    let spent = job.meter.read().used_units.saturating_sub(before);
+    let now = vault.now_recorded_at();
+    if let Some((window, tally)) =
+        server
+            .decision_host()
+            .verdict_spend()
+            .add(job.principal, spent, now)
+    {
+        tracing::warn!(
+            caller = %job.principal.to_hex(),
+            spent = tally,
+            threshold = VERDICT_SPEND_CHECK_UNITS,
+            "a caller's ai.verdict spend crossed its check; is everything okay?"
+        );
+        if let Err(error) = crate::wire_health::raise_verdict_spend(
+            vault,
+            job.principal,
+            tally,
+            VERDICT_SPEND_CHECK_UNITS,
+            window,
+            now,
+        ) {
+            tracing::warn!(%error, "the ai.verdict spend check was not kept");
+        }
+    }
+    answered
+}
+
 /// [`run_verdict`]'s question through the ladder, on whatever line the
 /// calling thread meters.
 #[expect(
