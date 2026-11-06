@@ -6,7 +6,7 @@ use oneiron::authority::PeerMachine;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::media::AiOperation;
 use oneiron::llm::run_admission::{
-    KeyCustody, LeaseUnit, OfferBinding, OfferRoute, PaidConnector, Payer,
+    KeyCustody, LeaseUnit, OfferBinding, OfferRoute, PaidConnector, offer_is_free_work,
 };
 use oneiron::settings::ReadDestination;
 use oneiron::{ModelId, ModelLocality};
@@ -149,12 +149,17 @@ const NATIVE_LOCAL_ADAPTER: &str = "exl3-native";
 /// channel of its managed EXL3 workers alone (I2-LOCAL): the alternative of
 /// the provider's own offer that a call whose route is on device takes. It
 /// keeps that offer's model, payer, key custody, credential, rates and
-/// catalog revision, so its money is the provider offer's. Its route names
-/// the native adapter at the worker that serves `wire_model`, so neither
-/// offer's permit or gate ever starts the other's call, and its endpoint is
-/// on device only because `native` sends nowhere else. Free work only: a
-/// provider whose calls are paid has no on-device offer, so no locality
-/// ever turns paid work free.
+/// catalog revision, so its money is the provider offer's: a paid provider's
+/// call is charged to the same payer under the same budget line and
+/// allocation, and its receipt names the on-device place (FIX 14889). Its
+/// route names the native adapter at the worker that serves `wire_model`, so
+/// neither offer's permit or gate ever starts the other's call, and its
+/// endpoint is on device only because `native` sends nowhere else. The free
+/// rule gives it the answer the provider offer has: a keyed or non-local
+/// payer stays paid on device, and keyless local work stays free. A provider
+/// whose own calls are paid for their third-party locality alone (a local
+/// payer, no key) would turn free here, so it has no on-device offer: no
+/// locality ever turns paid work free.
 pub(super) fn native_local_offer(
     provider: &ProviderConfig,
     model: ModelId,
@@ -165,13 +170,16 @@ pub(super) fn native_local_offer(
         .workers
         .get(wire_model)
         .ok_or_else(|| anyhow::anyhow!("no supervised native worker serves {wire_model}"))?;
-    let mut binding = provider_offer(provider, model, false)?;
-    if binding.payer != Payer::Local || binding.custody != KeyCustody::Keyless {
-        anyhow::bail!("a native on-device offer serves free work only");
-    }
+    let own = provider_offer(provider, model, false)?;
+    let mut binding = own.clone();
     binding.route = OfferRoute::new(NATIVE_LOCAL_ADAPTER, format!("worker:{worker}"))
         .map_err(|error| anyhow::anyhow!("native route: {error}"))?;
     binding.locality = ModelLocality::OnDevice;
+    if offer_is_free_work(&binding) != offer_is_free_work(&own) {
+        anyhow::bail!(
+            "a native on-device offer is paid exactly when its provider's offer is; a local-payer keyless provider at locality third_party has none"
+        );
+    }
     Ok(ServedOffer {
         binding,
         backend: Arc::clone(&native.backend),

@@ -572,6 +572,11 @@ impl crate::Vault {
         staged: &StagedAssetBody,
     ) -> Result<()> {
         let batch = self.batch_in();
+        // A body this install writes is not one its home served, whatever
+        // bytes it holds: the owner's discard of a world copy keeps it
+        // (FIX 14534).
+        #[cfg(feature = "sync")]
+        crate::sync::asset_body::home_proof::forget_in_txn(&self.store, txn, *id)?;
         if let Staged::File { file, .. } = &staged.body {
             staged
                 .known
