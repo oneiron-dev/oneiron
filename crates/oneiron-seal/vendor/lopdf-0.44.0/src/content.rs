@@ -27,20 +27,26 @@ impl<Operations: AsRef<[Operation]>> Content<Operations> {
     /// Encode content operations.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut buffer = Vec::new();
+        self.encode_to(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Encode content operations to a caller-owned writer.
+    pub fn encode_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         let mut first_operation = true;
         for operation in self.operations.as_ref() {
             // Add new line after each operation except the last one.
             if first_operation {
                 first_operation = false;
             } else {
-                buffer.write_all(b"\n")?;
+                writer.write_all(b"\n")?;
             }
             for operand in &operation.operands {
-                Writer::write_object(&mut buffer, operand)?;
-                buffer.write_all(b" ")?;
+                Writer::write_object(writer, operand)?;
+                writer.write_all(b" ")?;
             }
-            buffer.write_all(operation.operator.as_bytes())?;
+            writer.write_all(operation.operator.as_bytes())?;
         }
-        Ok(buffer)
+        Ok(())
     }
 }
