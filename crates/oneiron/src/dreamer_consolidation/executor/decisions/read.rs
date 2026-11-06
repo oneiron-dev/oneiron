@@ -79,7 +79,7 @@ impl Decider<'_> {
     /// `questions` over `read`'s state through the host's ladder, `read`'s role generation
     /// the dial's first read, on the time the pass has left, any ask going to `read.to` for
     /// the work `read.correlation` names. Each generation that finished is pushed onto
-    /// `spent` (its request hash and usage) as it finishes, whatever the pack's outcome. None
+    /// `spent` (its request hash, usage and memoized flag) as it finishes, whatever the pack's outcome. None
     /// when the step trapped: the attempt is parked.
     ///
     /// Every read shows the pack through `labels` (FIX 7506): the generation's questions by
@@ -94,7 +94,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();
