@@ -783,7 +783,8 @@ impl ImapSession {
             return Ok(Vec::new());
         }
         if !self.has("ESEARCH") {
-            let uids = self.uid_search(&format!("UID {low}:{high}"))?;
+            let mut uids = self.uid_search(&format!("UID {low}:{high}"))?;
+            uids.retain(|uid| (low..=high).contains(uid));
             return Ok(ranges_of(&uids));
         }
         let answers = self.command(&format!("UID SEARCH RETURN (ALL) UID {low}:{high}"))?;

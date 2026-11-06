@@ -947,6 +947,12 @@ impl ImapMailWire<'_> {
                 .iter()
                 .filter_map(|message| {
                     let uid = message.uid().filter(|&uid| uid < top)?;
+                    // Only an answer that carries the section asked for
+                    // names the message: an unsolicited update (its flags)
+                    // carries none.
+                    message
+                        .value_starting("BODY[HEADER.FIELDS")
+                        .and_then(Item::bytes)?;
                     Some((uid, fetched_id(message, place, status.uid_validity)?))
                 })
                 .collect();
