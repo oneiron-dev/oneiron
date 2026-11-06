@@ -6,7 +6,9 @@
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{LinePosition, join_graph_path, page_grep_lines};
+use super::coreutils_text::{
+    LinePosition, copy_path_parts, join_graph_path_with_reader, page_grep_lines,
+};
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
 
@@ -248,8 +250,13 @@ impl GraphFsResolver<'_, '_> {
         let mut dirs: Vec<String> = Vec::with_capacity(at.frames.len());
         for frame in &at.frames {
             let dir = match dirs.last() {
-                Some(parent) => join_graph_path(parent, &frame.name),
-                None => root.to_owned(),
+                Some(parent) => join_graph_path_with_reader(
+                    parent,
+                    &frame.name,
+                    reader,
+                    self.options.page_byte_cap,
+                )?,
+                None => copy_path_parts(&[root], reader, self.options.page_byte_cap)?,
             };
             dirs.push(dir);
         }
@@ -298,7 +305,12 @@ impl GraphFsResolver<'_, '_> {
                 continue;
             };
             steps += 1;
-            let child = join_graph_path(&dirs[depth], entry.name());
+            let child = join_graph_path_with_reader(
+                &dirs[depth],
+                entry.name(),
+                reader,
+                self.options.page_byte_cap,
+            )?;
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
             if self.coreutils_path_visible(&child)? {
                 if let Visited::Cut(lines) =
