@@ -16,6 +16,9 @@ use crate::session_overlay::RouteTarget;
 use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
+mod step_digests;
+pub(super) use self::step_digests::{StepEnd, StepResultDigests};
+
 pub(super) struct LoadedReplayRecord {
     pub(super) record: CodeRunReplayRecord,
     pub(super) generation: Option<CodeRunReplayGeneration>,
@@ -675,32 +678,9 @@ pub(super) fn durable_wait_reason_from_str(
     }
 }
 
-/// What a step's checkpoint hashes of its result: each body's BLAKE3
-/// digest, which its stored manifest already carries, never the body.
-pub(super) struct StepResultDigests {
-    pub(super) observation: [u8; 32],
-    pub(super) done: bool,
-    /// Each file the step wrote, by the guest path it named.
-    pub(super) outputs: Vec<(String, [u8; 32])>,
-    /// Each result name the step bound, with the handle it names, in the
-    /// order the step bound them.
-    pub(super) bindings: Vec<(String, String)>,
-}
-
-impl StepResultDigests {
-    /// The digests of a result held whole in memory.
-    pub(super) fn of(observation: &str, done: bool) -> Self {
-        Self {
-            observation: *blake3::hash(observation.as_bytes()).as_bytes(),
-            done,
-            outputs: Vec::new(),
-            bindings: Vec::new(),
-        }
-    }
-}
-
 /// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
-/// preparation; every caller outside the tests passes its preparation.
+/// preparation, and of a step that ends at bridge position zero with no
+/// replay context; every caller outside the tests passes its own.
 #[cfg(test)]
 pub(super) fn step_state_hash(
     previous: [u8; 32],
@@ -720,14 +700,20 @@ pub(super) fn step_state_hash(
         result,
         implicit_speak,
         bridge_calls,
+        StepEnd {
+            bridge_end: 0,
+            context: [0; 32],
+        },
     )
 }
 
 /// The checkpoint hash of one step, for a step whose program may have run as
 /// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
 /// preparation's identity (the executed JavaScript, its map and the Oxc
-/// pin), hashed beside the original program; a JavaScript step has none,
-/// and its hash is the one it always had.
+/// pin), hashed beside the original program; a JavaScript step has none.
+/// `end` is where the step's calls end and the digest of its replay context
+/// (FIX 6354, FIX 6351), so a context with other responses never stands for
+/// the same step.
 #[expect(
     clippy::too_many_arguments,
     reason = "the checkpoint hashes every part of the step's state"
@@ -741,6 +727,7 @@ pub(super) fn prepared_step_state_hash(
     result: &StepResultDigests,
     implicit_speak: Option<&str>,
     bridge_calls: &[CodeRunBridgeCall],
+    end: StepEnd,
 ) -> EngineExecutorResult<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CHECKPOINT_DOMAIN);
@@ -785,6 +772,8 @@ pub(super) fn prepared_step_state_hash(
             hash_bytes(&mut hasher, &rewritten);
         }
     }
+    hash_u64(&mut hasher, end.bridge_end);
+    hash_bytes(&mut hasher, &end.context);
     Ok(*hasher.finalize().as_bytes())
 }
 
