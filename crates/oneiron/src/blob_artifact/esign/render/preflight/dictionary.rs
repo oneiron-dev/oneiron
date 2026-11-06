@@ -1,9 +1,13 @@
 //! Linear lexical framing; the PDF parser validates the single bounded operand.
 use super::*;
 
-pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(Dictionary, usize)> {
-    let end = bytes.len().min(64 * 1024);
+pub(super) fn leading_dictionary(
+    bytes: &[u8],
+    stage: &super::Stage,
+) -> Result<(Dictionary, usize)> {
+    let end = bytes.len();
     let mut cursor = 0;
+    let mut backing = stage.nested();
     let mut nesting = Vec::new();
     let mut started = false;
     let mut dictionary_start = 0;
@@ -20,6 +24,7 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                 if !started {
                     dictionary_start = cursor;
                 }
+                stage.reserve(&mut nesting, 1, &mut backing)?;
                 nesting.push(b'>');
                 started = true;
                 cursor += 1;
@@ -34,9 +39,6 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                         b'(' => depth += 1,
                         b')' => depth -= 1,
                         _ => {}
-                    }
-                    if depth > 32 {
-                        return Err(PdfPreparationError::Limit);
                     }
                     cursor += 1;
                 }
@@ -54,7 +56,10 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                     return Err(PdfPreparationError::MalformedPdf);
                 }
             }
-            b'[' => nesting.push(b']'),
+            b'[' => {
+                stage.reserve(&mut nesting, 1, &mut backing)?;
+                nesting.push(b']');
+            }
             b']' => {
                 if nesting.pop() != Some(b']') {
                     return Err(PdfPreparationError::MalformedPdf);
@@ -66,8 +71,7 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                 }
                 cursor += 1;
                 if nesting.is_empty() {
-                    let mut object =
-                        super::operand_in(&bytes[dictionary_start..=cursor], stage)?;
+                    let mut object = super::operand_in(&bytes[dictionary_start..=cursor], stage)?;
                     let dictionary = match &mut object {
                         super::Object::Dictionary(dictionary) => std::mem::take(dictionary),
                         _ => return Err(PdfPreparationError::MalformedPdf),
@@ -76,9 +80,6 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                 }
             }
             _ => {}
-        }
-        if nesting.len() > 32 {
-            return Err(PdfPreparationError::Limit);
         }
         cursor += 1;
     }

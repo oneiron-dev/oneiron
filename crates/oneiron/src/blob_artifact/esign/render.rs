@@ -269,7 +269,7 @@ fn prepare_in(
         BTreeMap::new(),
         &mut BTreeSet::new(),
         &mut input_pages,
-        0,
+        &admitted::Stage::UNADMITTED,
     )?;
     if input_pages.is_empty() {
         return Err(PdfPreparationError::MalformedPdf);
@@ -452,7 +452,7 @@ fn inspect_in(
         BTreeMap::new(),
         &mut BTreeSet::new(),
         &mut input,
-        0,
+        stage,
     )?;
     if input.is_empty() {
         return Err(PdfPreparationError::MalformedPdf);
