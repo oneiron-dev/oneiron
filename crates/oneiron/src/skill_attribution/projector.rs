@@ -118,6 +118,15 @@ pub fn run_attribution_projector_with_decisions(
         } else {
             None
         };
+        // Every row a note about this outcome is known to stand on, read
+        // before the judge reads them (FIX 7824): an erase landing while it
+        // judges is found on one of them in the writer, even where the
+        // request's read set is unknown.
+        let mut known = known_note_rows(vault, &evidence)?;
+        known.extend(floor_rows.iter().flatten().copied());
+        known.extend(sources.iter().flatten().copied());
+        known.sort_unstable();
+        known.dedup();
         let request = JudgeRequest {
             lane: AttributionLane::Attempt,
             evidence: &evidence,
@@ -152,13 +161,7 @@ pub fn run_attribution_projector_with_decisions(
         ));
         if verdict == AttributionVerdict::Unclear {
             // The context the notes were written in, frozen with them (FIX
-            // 7824); the project and task type are read in the writer. Its
-            // rows are every row the notes are known to stand on, even where
-            // the request's read set is unknown.
-            let mut known = known_note_rows(vault, &evidence)?;
-            known.extend(floor_rows.iter().flatten().copied());
-            known.sort_unstable();
-            known.dedup();
+            // 7824); the project and task type are read in the writer.
             let context = UnclearContext {
                 actor: evidence.actor,
                 skill: evidence.skill,
