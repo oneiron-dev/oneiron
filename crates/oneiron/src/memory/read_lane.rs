@@ -43,7 +43,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`] for rows that go on to `destination` as well
@@ -59,7 +60,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// The queue-exhaust Owner's reader, retaining this handle's actual
@@ -85,7 +87,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
@@ -121,7 +124,12 @@ impl Memory<'_> {
             }
         };
         let key = self.in_room_turn(key.for_destination(&self.destination))?;
-        Ok(Some(self.vault.scoped_read(key).with_claim_status(claims)))
+        Ok(Some(
+            self.vault
+                .scoped_read(key)
+                .with_claim_status(claims)
+                .with_read_filter(self.read_filter.as_ref()),
+        ))
     }
 
     /// The key every read verb on this handle reads under: its proof's, its

@@ -21,6 +21,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 
@@ -57,6 +58,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 }

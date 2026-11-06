@@ -195,6 +195,7 @@ impl<'a> ScopedRead<'a> {
             own_owner_authority: self.own_owner_authority,
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
+            read_filter: self.read_filter.clone(),
         })
     }
 }

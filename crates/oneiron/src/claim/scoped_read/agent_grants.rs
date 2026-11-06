@@ -158,6 +158,10 @@ impl ScopedRead<'_> {
         let Some(reader) = self.grant_reader() else {
             return filter.clone();
         };
+        // Each Grant reads under what the read asked, its bound caller
+        // filter among it (FIX 3977).
+        let requested = self.asked_request(requested);
+        let requested = requested.as_deref();
         let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
             warn_grant_errors(1, &[], Some(error.kind()));
             Vec::new()

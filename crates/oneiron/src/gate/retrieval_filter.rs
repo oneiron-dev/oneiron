@@ -16,6 +16,7 @@ use super::grants::{
 };
 use super::resolution::PolicyManifestResolution;
 
+use oneiron_contracts::gate::MAX_SENSITIVITY_BAND;
 pub use oneiron_contracts::gate::RetrievalFilter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -454,7 +455,7 @@ impl RetrievalPolicyFloor {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.max_sensitivity_band > 3
+        if self.max_sensitivity_band > MAX_SENSITIVITY_BAND
             || !valid_minimum(self.min_confidence)
             || !valid_minimum(self.min_salience)
         {
@@ -521,7 +522,9 @@ pub(crate) fn narrow_retrieval_filter(
         // These are meet identities, NOT a substitute authority floor.
         let request = RetrievalPolicyFloor {
             allowed_entity_types: requested.entity_types.clone(),
-            max_sensitivity_band: requested.max_sensitivity_band.unwrap_or(3),
+            max_sensitivity_band: requested
+                .max_sensitivity_band
+                .unwrap_or(MAX_SENSITIVITY_BAND),
             include_stale: requested.include_stale.unwrap_or(true),
             min_confidence: requested.min_confidence.unwrap_or(0.0),
             min_salience: requested.min_salience.unwrap_or(0.0),

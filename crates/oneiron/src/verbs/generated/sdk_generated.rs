@@ -35443,13 +35443,17 @@ pub fn vault_hydrate(
     memory: &Memory<'_>,
     input: HydrateRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
-    memory.hydrate(&input.refs)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .hydrate(&input.refs)
 }
 pub fn vault_get(
     memory: &Memory<'_>,
     input: EntityRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>> {
-    memory.get_entity(&input.entity_ref)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .get_entity(&input.entity_ref)
 }
 pub fn vault_refs_resolve(
     memory: &Memory<'_>,
@@ -35502,7 +35506,9 @@ pub fn vault_neighbors(
     input: NeighborsRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>> {
     crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
-    memory.neighbors(&input.entity_ref, &input.opts)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .neighbors(&input.entity_ref, &input.opts)
 }
 pub fn vault_structural_put(
     memory: &Memory<'_>,

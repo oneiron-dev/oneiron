@@ -40,7 +40,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         Ok(self
             .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
@@ -57,7 +57,7 @@ impl ScopedRead<'_> {
         ids: &[EntityId],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
@@ -110,7 +110,7 @@ impl ScopedRead<'_> {
         mode: ReadMode,
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| {
                 let Some(revision) =
@@ -329,7 +329,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
@@ -384,7 +384,7 @@ impl ScopedRead<'_> {
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut suppressed = 0;
         let frame_size = crate::request_limits::MAX_BATCH_ENTITIES;
         for (frame_index, frame) in reads.chunks(frame_size).enumerate() {

@@ -2959,6 +2959,12 @@ class RetrievalTurn(TypedDict):
 class RecallTelemetry(TypedDict):
     capture_trace: NotRequired[bool]
     turn: NotRequired[RetrievalTurn | None]
+class ReadFilterInput(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: NotRequired[int | None]
+    include_stale: NotRequired[bool | None]
+    min_confidence: NotRequired[float | None]
+    min_salience: NotRequired[float | None]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -2972,6 +2978,7 @@ class RecallRequest(TypedDict):
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
     telemetry: NotRequired[RecallTelemetry | None]
+    filter: NotRequired[ReadFilterInput | None]
 InputKind = Literal["text", "image", "audio"]
 class EmbeddingMatchEvidence(TypedDict):
     space: str
@@ -3993,6 +4000,7 @@ class VectorSearchRequest(TypedDict):
     kinds: NotRequired[list[InputKind]]
     limit: int
     lane: NotRequired[VectorSearchLane]
+    filter: NotRequired[ReadFilterInput | None]
 class VectorSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -18824,12 +18832,6 @@ class ClaimDemoteView(TypedDict):
     rung: str
     stale: bool
     receipt_ref: str
-class ReadFilterInput(TypedDict):
-    entity_types: NotRequired[list[str] | None]
-    max_sensitivity_band: NotRequired[int | None]
-    include_stale: NotRequired[bool | None]
-    min_confidence: NotRequired[float | None]
-    min_salience: NotRequired[float | None]
 class ClaimFilteredListRequest(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -18885,8 +18887,10 @@ class PendingWrite(TypedDict):
     dreamer_run_id: NotRequired[str | None]
 class HydrateRequest(TypedDict):
     refs: list[str]
+    filter: NotRequired[ReadFilterInput | None]
 class EntityRequest(TypedDict):
     entity_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 class ResolveRecordRefRequest(TypedDict):
     reference: str
 class RecordRefPreview(TypedDict):
@@ -18949,6 +18953,7 @@ class HybridSearchRequest(TypedDict):
     temporal: NotRequired[HybridTemporalQuery | None]
     replay: NotRequired[HybridRankReplay | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class HybridSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -18970,6 +18975,7 @@ class TemporalSearchRequest(TypedDict):
     occurred_range: NotRequired[TemporalSearchRange | None]
     learned_range: NotRequired[TemporalSearchRange | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class TemporalSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -18986,6 +18992,7 @@ class TemporalSearchResult(TypedDict):
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class LexicalHit(TypedDict):
     short_id: str
     kind: str
@@ -19003,6 +19010,7 @@ class NeighborOpts(TypedDict):
 class NeighborsRequest(TypedDict):
     entity_ref: str
     opts: NeighborOpts
+    filter: NotRequired[ReadFilterInput | None]
 class NeighborHit(TypedDict):
     short_id: str
     kind: str

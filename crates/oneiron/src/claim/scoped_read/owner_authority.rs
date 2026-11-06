@@ -178,6 +178,7 @@ impl<'v> ScopedRead<'v> {
             own_owner_authority: false,
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
+            read_filter: self.read_filter.clone(),
         })
     }
 }
