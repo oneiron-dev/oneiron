@@ -55596,15 +55596,16 @@
      "kind": "src",
      "notable": [
       "ConnectorResumeProtocol",
+      "ConnectorResumeState",
       "OpenedConnectorResume"
      ],
      "path": "src/outbound_consent/connector_call_input_resume.rs",
      "purpose": "A live connector exchange's resume state, kept on its call's row beside the round it waits on (FIX 9157…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -119326,7 +119327,7 @@
      "path": "src/connector_call_host/resume.rs",
      "purpose": "A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
