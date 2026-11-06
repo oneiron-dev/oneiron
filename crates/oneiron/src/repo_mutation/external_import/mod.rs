@@ -556,6 +556,25 @@ impl Vault {
         self.put_external_import_observation(call.import, &record)
     }
 
+    /// Judges again, now, whether the custody secret `binding` may carry
+    /// `importer`'s fetch from the https `origin`, as the import judged it
+    /// before its fetch: for a host whose source relay sends each exchange
+    /// through the credential broker (OSH-3), which judges the binding at
+    /// each one. Reads no secret.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] naming the code and the fix when the binding no
+    /// longer admits the fetch; a store, fold or clock failure.
+    pub fn check_external_import_source_binding(
+        &self,
+        binding: &str,
+        origin: &str,
+        importer: EntityId,
+    ) -> Result<()> {
+        self.external_import_binding_admits(binding, origin, importer)?
+            .map_err(|(code, message)| Error::Refused(format!("{code}: {message}")))
+    }
+
     /// Whether the custody secret `binding` may carry this import's fetch
     /// (CALL T, the actor-bound source credential): a binding for
     /// [`EXTERNAL_IMPORT_FETCH_EFFECTOR`] whose scopes name the source's
@@ -578,90 +597,134 @@ impl Vault {
         origin: &str,
         importer: EntityId,
     ) -> Result<std::result::Result<(), (&'static str, String)>> {
-        let fix = format!(
-            "bind a credential for {EXTERNAL_IMPORT_FETCH_EFFECTOR} whose scopes name \
-             origin:{origin} and actor:{}",
-            importer.to_hex()
-        );
         {
             let txn = self.store.env.read_txn()?;
-            let custody =
-                match crate::secret_custody::resolve_secret_ref_in_txn(&self.store, &txn, binding)?
-                {
-                    Some(id) => crate::secret_custody::read_secret_custody_admission_in_txn(
-                        &self.store,
-                        &txn,
-                        &id,
-                    )?,
-                    None => None,
-                };
-            let Some(custody) = custody else {
-                return Ok(Err(("binding_not_found", fix)));
-            };
-            let Some(scopes) = custody
-                .binding_for(EXTERNAL_IMPORT_FETCH_EFFECTOR)
-                .map(|bound| bound.scopes.clone())
-            else {
-                return Ok(Err(("binding_not_for_import_fetch", fix)));
-            };
-            if !scopes.contains(&format!("origin:{origin}")) {
-                return Ok(Err(("binding_not_for_this_host", fix)));
-            }
-            let actors: Vec<&str> = scopes
-                .iter()
-                .filter_map(|scope| scope.strip_prefix("actor:"))
-                .collect();
-            let bound = match actors.as_slice() {
-                [] => {
-                    return Ok(Err((
-                        "binding_actor_missing",
-                        format!("a source credential names the actor it serves: {fix}"),
-                    )));
-                }
-                [one] => match EntityId::from_hex(one) {
-                    Ok(actor) => actor,
-                    Err(_) => return Ok(Err(("binding_actor_malformed", fix))),
-                },
-                _ => {
-                    return Ok(Err((
-                        "binding_names_more_than_one_actor",
-                        format!("a source credential names one actor: {fix}"),
-                    )));
-                }
-            };
-            let owners = crate::policy_model::owners_in_txn(self, &txn)?;
-            if bound != importer {
-                match self.delegated_import_binding_in_txn(&txn, &owners, bound, importer)? {
-                    DelegatedBinding::Stands => {}
-                    DelegatedBinding::Lapsed => {
-                        let lapse = crate::authority::PACT_STANDING_LAPSED;
-                        return Ok(Err((
-                            "pact_standing_lapsed",
-                            lapse
-                                .strip_prefix("pact_standing_lapsed: ")
-                                .unwrap_or(lapse)
-                                .to_owned(),
-                        )));
-                    }
-                    DelegatedBinding::Absent => {
-                        let kind = self.bound_actor_kind_in_txn(&txn, &owners, bound)?;
-                        return Ok(Err((
-                            "binding_bound_to_another_actor",
-                            format!(
-                                "this source credential is bound to another actor (a {kind}); \
-                                 {fix}, or act under a standing Grant from that actor that \
-                                 lists {EXTERNAL_IMPORT_CREATE_VERB}"
-                            ),
-                        )));
-                    }
-                }
+            if let Err(refused) =
+                self.external_import_binding_scopes_in_txn(&txn, binding, origin, importer)?
+            {
+                return Ok(Err(refused));
             }
         }
         if self
             .check_secret_at_door(binding, EXTERNAL_IMPORT_FETCH_EFFECTOR)
             .is_err()
         {
-            return Ok(Err(("binding_refused_at_door", fix)));
+            return Ok(Err((
+                "binding_refused_at_door",
+                import_binding_fix(origin, importer),
+            )));
+        }
+        Ok(Ok(()))
+    }
+
+    /// Reads the custody secret `binding`'s value for `importer`'s fetch
+    /// from the https `origin` at the T0 door
+    /// ([`EXTERNAL_IMPORT_FETCH_EFFECTOR`]), in the one write snapshot that
+    /// judges its scopes and actor again first (OSH-3): a binding rebound or
+    /// narrowed since the fetch began never reaches the door. `apply` gets
+    /// the value inside the door, as every T0 door gives it.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] naming the code and the fix when the binding no
+    /// longer admits the fetch; the door's refusal; a store, fold or clock
+    /// failure.
+    pub fn inject_external_import_source_credential(
+        &self,
+        binding: &str,
+        origin: &str,
+        importer: EntityId,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let wtxn = self.store.env.write_txn()?;
+        if let Err((code, message)) =
+            self.external_import_binding_scopes_in_txn(&wtxn, binding, origin, importer)?
+        {
+            return Err(Error::Refused(format!("{code}: {message}")));
+        }
+        self.inject_secret_at_door_in_txn(wtxn, binding, EXTERNAL_IMPORT_FETCH_EFFECTOR, apply)?;
+        Ok(())
+    }
+
+    /// The scopes and actor half of [`Self::external_import_binding_admits`]
+    /// in the caller's snapshot: a binding for the fetch effector, naming
+    /// `origin` and one actor, who is `importer` or stands behind its Grant.
+    fn external_import_binding_scopes_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &str,
+        origin: &str,
+        importer: EntityId,
+    ) -> Result<std::result::Result<(), (&'static str, String)>> {
+        let fix = import_binding_fix(origin, importer);
+        let custody =
+            match crate::secret_custody::resolve_secret_ref_in_txn(&self.store, txn, binding)? {
+                Some(id) => crate::secret_custody::read_secret_custody_admission_in_txn(
+                    &self.store,
+                    txn,
+                    &id,
+                )?,
+                None => None,
+            };
+        let Some(custody) = custody else {
+            return Ok(Err(("binding_not_found", fix)));
+        };
+        let Some(scopes) = custody
+            .binding_for(EXTERNAL_IMPORT_FETCH_EFFECTOR)
+            .map(|bound| bound.scopes.clone())
+        else {
+            return Ok(Err(("binding_not_for_import_fetch", fix)));
+        };
+        if !scopes.contains(&format!("origin:{origin}")) {
+            return Ok(Err(("binding_not_for_this_host", fix)));
+        }
+        let actors: Vec<&str> = scopes
+            .iter()
+            .filter_map(|scope| scope.strip_prefix("actor:"))
+            .collect();
+        let bound = match actors.as_slice() {
+            [] => {
+                return Ok(Err((
+                    "binding_actor_missing",
+                    format!("a source credential names the actor it serves: {fix}"),
+                )));
+            }
+            [one] => match EntityId::from_hex(one) {
+                Ok(actor) => actor,
+                Err(_) => return Ok(Err(("binding_actor_malformed", fix))),
+            },
+            _ => {
+                return Ok(Err((
+                    "binding_names_more_than_one_actor",
+                    format!("a source credential names one actor: {fix}"),
+                )));
+            }
+        };
+        let owners = crate::policy_model::owners_in_txn(self, txn)?;
+        if bound != importer {
+            match self.delegated_import_binding_in_txn(txn, &owners, bound, importer)? {
+                DelegatedBinding::Stands => {}
+                DelegatedBinding::Lapsed => {
+                    let lapse = crate::authority::PACT_STANDING_LAPSED;
+                    return Ok(Err((
+                        "pact_standing_lapsed",
+                        lapse
+                            .strip_prefix("pact_standing_lapsed: ")
+                            .unwrap_or(lapse)
+                            .to_owned(),
+                    )));
+                }
+                DelegatedBinding::Absent => {
+                    let kind = self.bound_actor_kind_in_txn(txn, &owners, bound)?;
+                    return Ok(Err((
+                        "binding_bound_to_another_actor",
+                        format!(
+                            "this source credential is bound to another actor (a {kind}); \
+                             {fix}, or act under a standing Grant from that actor that \
+                             lists {EXTERNAL_IMPORT_CREATE_VERB}"
+                        ),
+                    )));
+                }
+            }
         }
         Ok(Ok(()))
     }
@@ -746,3 +809,12 @@ impl Vault {
 
 /// The reason prefix a host's fetch refusal names a redirect target with.
 pub const REDIRECT_REFUSED: &str = "redirect_refused:";
+
+/// The fix a refused import binding names.
+fn import_binding_fix(origin: &str, importer: EntityId) -> String {
+    format!(
+        "bind a credential for {EXTERNAL_IMPORT_FETCH_EFFECTOR} whose scopes name \
+         origin:{origin} and actor:{}",
+        importer.to_hex()
+    )
+}
