@@ -218,6 +218,9 @@ pub struct RuntimeConfigOverride {
     /// `[runtime.helper_destinations]`, name to credential-helper binding
     /// (FIX 10624 step 2); a layer that names it replaces the whole table.
     pub helper_destinations: Option<std::collections::BTreeMap<String, super::HelperDestination>>,
+    /// `[runtime.seat_model_providers]`, slot name to model door binding
+    /// (FIX 15702); a layer that names it replaces the whole table.
+    pub seat_model_providers: Option<std::collections::BTreeMap<String, super::SeatModelBinding>>,
     /// `[runtime] seat_host`: whether this host runs queued official CLI
     /// attempts itself.
     pub seat_host: Option<bool>,
@@ -269,6 +272,9 @@ impl RuntimeConfigOverride {
         }
         if other.helper_destinations.is_some() {
             self.helper_destinations = other.helper_destinations;
+        }
+        if other.seat_model_providers.is_some() {
+            self.seat_model_providers = other.seat_model_providers;
         }
         if other.seat_host.is_some() {
             self.seat_host = other.seat_host;
