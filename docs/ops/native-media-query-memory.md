@@ -136,8 +136,17 @@ component-vector backing, using the same capacity calculation as the cloned
 record's top-level score breakdown. These cloned buffers are distinct even
 when their entries describe the same results. All extend the same private
 lease and single materialized charge. An absent trace adds no trace backing;
-an unbound caller performs no added accounting walk. Policy and quality
-backing, serialized row bytes and later decoded records remain separate.
+an unbound caller performs no added accounting walk. Serialized row bytes and
+later decoded records remain separate.
+
+A present cloned policy trace also records its decision vector's actual slot
+capacity using the native decision size, on the same private lease and
+materialized charge. Each decision's state, action and tier are inline within
+those slots; they own no separate backing. The policy identity and envelope,
+and the record's state, turn, action, quality and confidence adjustment also
+own no separate backing. An absent policy trace adds no decision backing.
+This does not price serialized or later decoded copies, config map storage,
+number internals or construction peaks.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full

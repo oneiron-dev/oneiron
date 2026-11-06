@@ -313,6 +313,14 @@ impl Store {
                     bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
                 })
             });
+            let bytes = record.policy_trace.as_ref().map_or(bytes, |trace| {
+                bytes.saturating_add(
+                    (trace.decisions.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<
+                            crate::store::retrieval_policy::RetrievalPolicyDecision,
+                        >() as u64),
+                )
+            });
             memory.materialized(0, bytes);
         }
         let record = ProvisionalRetrievalRun {
