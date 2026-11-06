@@ -237,6 +237,8 @@ pub enum AgentVerb {
     VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
+    VaultSkillHubsClawhubSearch,
+    VaultSkillHubsClawhubImport,
     VaultSkillHubsPublishersAdmit,
     VaultSkillHubsPublishersRevoke,
     VaultSkillHubsRefsGet,
@@ -1525,6 +1527,8 @@ impl AgentVerb {
         Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsClawhubSearch,
+        Self::VaultSkillHubsClawhubImport,
         Self::VaultSkillHubsPublishersAdmit,
         Self::VaultSkillHubsPublishersRevoke,
         Self::VaultSkillHubsRefsGet,
@@ -2816,6 +2820,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsClawhubSearch => "vault.skill_hubs.clawhub.search",
+            Self::VaultSkillHubsClawhubImport => "vault.skill_hubs.clawhub.import",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
             Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
             Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
@@ -4140,6 +4146,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -5457,6 +5465,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -6925,6 +6935,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -8028,6 +8040,7 @@ impl AgentVerb {
                 | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsSet
@@ -8942,6 +8955,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -10231,6 +10246,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -11979,6 +11996,12 @@ impl AgentVerb {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."
             }
             Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsClawhubSearch => {
+                "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."
+            }
+            Self::VaultSkillHubsClawhubImport => {
+                "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."
+            }
             Self::VaultSkillHubsPublishersAdmit => {
                 "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
             }

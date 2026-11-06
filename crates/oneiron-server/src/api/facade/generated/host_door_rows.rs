@@ -28,6 +28,8 @@
 //! - `vault.weave.link.wrong`
 //! - `vault.weave.item.wrong`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skill_hubs.clawhub.search`
+//! - `vault.skill_hubs.clawhub.import`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`

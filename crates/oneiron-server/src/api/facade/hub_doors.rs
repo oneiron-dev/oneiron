@@ -395,3 +395,43 @@ pub(crate) async fn vault_packs_hooks_qualify(
     .await
     .unwrap_or_else(|_| (Err(internal(VERB)), Vec::new()))
 }
+
+/// `vault.skill_hubs.clawhub.search`: public provider metadata, not package admission.
+pub(crate) async fn vault_skill_hubs_clawhub_search(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ClawHubSearchRequest,
+) -> Listed<oneiron::skill_hub::ClawHubSearchReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.search",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_search_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.hub]))
+        },
+    )
+    .await
+}
+
+/// `vault.skill_hubs.clawhub.import`: import an explicit selection through the native owner door.
+pub(crate) async fn vault_skill_hubs_clawhub_import(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_hub::ClawHubImportRequest,
+) -> Listed<oneiron::skill_hub::ClawHubImportReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.import",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_import_as_owner(server.vault(), owner, &input)?;
+            let mut rows = vec![input.hub];
+            if let oneiron::skill_hub::ClawHubImportReply::Imported { entity, .. } = &answer {
+                rows.push(*entity);
+            }
+            Ok((answer, rows))
+        },
+    )
+    .await
+}

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4595 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4602 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5535,6 +5535,63 @@ class SkillHubConfigured(TypedDict):
     consent: HubConsentReceipt
 class SkillHubRequest(TypedDict):
     hub: EntityId
+class ClawHubSearchRequest(TypedDict):
+    hub: EntityId
+    q: str
+    limit: NotRequired[int | None]
+    highlighted_only: NotRequired[bool | None]
+    non_suspicious_only: NotRequired[bool | None]
+    response_limit_bytes: NotRequired[int | None]
+class ClawHubSearchOwner(TypedDict):
+    handle: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    image: NotRequired[str | None]
+class ClawHubSearchHit(TypedDict):
+    score: NotRequired[float | None]
+    slug: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    summary: NotRequired[str | None]
+    version: NotRequired[str | None]
+    updatedAt: NotRequired[float | None]
+    ownerHandle: NotRequired[str | None]
+    owner: NotRequired[ClawHubSearchOwner | None]
+class ClawHubSearchReplyResults(TypedDict):
+    outcome: Literal["results"]
+    results: NotRequired[list[ClawHubSearchHit] | None]
+class ClawHubSearchReplyProviderError(TypedDict):
+    outcome: Literal["provider_error"]
+    status: int
+    retry_after: NotRequired[str | None]
+    body: str
+ClawHubSearchReply = ClawHubSearchReplyResults | ClawHubSearchReplyProviderError
+class ClawHubImportRequest(TypedDict):
+    hub: EntityId
+    slug: str
+    version: NotRequired[str | None]
+    tag: NotRequired[str | None]
+    publisher: str
+    expected_skill_id: NotRequired[str | None]
+    expected_skill_version: NotRequired[str | None]
+    expected_content_hash: NotRequired[str | None]
+    response_limit_bytes: NotRequired[int | None]
+class ClawHubGitHubHandoff(TypedDict):
+    sourceRef: str
+    repo: str
+    commit: str
+    path: str
+    contentHash: str
+    archiveUrl: str
+class ClawHubImportReplyImported(TypedDict):
+    outcome: Literal["imported"]
+    entity: EntityId
+    source: HubRef
+    github_handoff: NotRequired[ClawHubGitHubHandoff | None]
+class ClawHubImportReplyProviderError(TypedDict):
+    outcome: Literal["provider_error"]
+    status: int
+    retry_after: NotRequired[str | None]
+    body: str
+ClawHubImportReply = ClawHubImportReplyImported | ClawHubImportReplyProviderError
 class SkillPublisherRequest(TypedDict):
     hub: EntityId
     identity: str

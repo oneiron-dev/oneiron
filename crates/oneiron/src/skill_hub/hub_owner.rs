@@ -88,7 +88,125 @@ impl<A: SkillHubAdapter> SkillHubAdapter for PrefetchedPackage<'_, A> {
     }
 }
 
+/// Explicit owner selection. Provider version/tag strings are download locators;
+/// only the separate expected fields assert the caller's desired identity.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClawHubImportRequest {
+    pub hub: EntityId,
+    pub slug: String,
+    pub version: Option<String>,
+    pub tag: Option<String>,
+    pub publisher: String,
+    pub expected_skill_id: Option<String>,
+    pub expected_skill_version: Option<String>,
+    /// Native SHA-256 canonical-tree hex, not a provider or archive hash.
+    pub expected_content_hash: Option<String>,
+    /// The initial HTTP response budget; native expanded-tree bounds still apply.
+    pub response_limit_bytes: Option<usize>,
+}
+
+/// A source pin records the actual imported tree. Without an explicit expected
+/// native hash it is first-observed identity, not a previously reviewed pin.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ClawHubImportReply {
+    Imported {
+        entity: EntityId,
+        source: HubRef,
+        github_handoff: Option<super::ClawHubGitHubHandoff>,
+    },
+    ProviderError {
+        status: u16,
+        retry_after: Option<String>,
+        body: String,
+    },
+}
+
 impl Vault {
+    /// Downloads an explicitly selected public-registry skill, then imports the
+    /// same checked bytes through the configured hub's normal marketplace doors.
+    pub fn import_clawhub_skill(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &ClawHubImportRequest,
+    ) -> Result<ClawHubImportReply> {
+        owner.revalidate(self)?;
+        let configured = self.skill_hub_record(&input.hub)?;
+        if configured.kind != super::SkillHubKind::HttpIndex {
+            return Err(invalid("ClawHub import requires a configured HTTP hub"));
+        }
+        // Validate a caller's native pin before fetching, without claiming that
+        // the provider's unrelated contentHash has this algorithm.
+        let expected = input
+            .expected_content_hash
+            .as_deref()
+            .map(crate::skill::SkillContentHash::parse_hex)
+            .transpose()?;
+        let adapter = super::HttpEndpointSkillHubAdapter::new(input.hub, &configured.endpoint)?;
+        let (package, github_handoff) = match adapter.download_clawhub(
+            &input.slug,
+            input.version.as_deref(),
+            input.tag.as_deref(),
+            input.response_limit_bytes,
+        )? {
+            super::http_fetch::ClawHubDownload::Package {
+                package,
+                github_handoff,
+            } => (package, github_handoff),
+            super::http_fetch::ClawHubDownload::ProviderError {
+                status,
+                retry_after,
+                body,
+            } => {
+                return Ok(ClawHubImportReply::ProviderError {
+                    status,
+                    retry_after,
+                    body,
+                });
+            }
+        };
+        check_expected_skill(
+            &package.record,
+            input
+                .expected_skill_id
+                .as_deref()
+                .unwrap_or(&package.record.skill_id),
+            input.expected_skill_version.as_deref(),
+        )?;
+        let hash = package.content_hash()?;
+        if expected.is_some_and(|expected| expected != hash) {
+            return Err(invalid(
+                "ClawHub skill differs from the expected native content hash",
+            ));
+        }
+        let source = HubRef::new(input.hub, &input.slug, HubPin::ContentHash(hash.to_hex()))?;
+        let publisher = self.admit_skill_publisher(owner, &input.publisher, input.hub)?;
+        let at = self.now_recorded_at();
+        let occurred = TimeRange { start: at, end: at };
+        let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        let caller = HoldsNothing;
+        let fit = self.chosen_skill_fit(&caller)?;
+        let entity = self.import_marketplace_skill_with_query(
+            &PrefetchedPackage {
+                adapter: &adapter,
+                source: &source,
+                package,
+            },
+            &source,
+            &publisher,
+            &*fit,
+            osv,
+            occurred,
+            at,
+        )?;
+        Ok(ClawHubImportReply::Imported {
+            entity,
+            source,
+            github_handoff,
+        })
+    }
+
     /// Owner door: import the skill at `folder` of a configured hub, at a
     /// pin. The named publisher is admitted for this hub first. The owner's
     /// chosen skill fit decides: a clean reversible import activates through

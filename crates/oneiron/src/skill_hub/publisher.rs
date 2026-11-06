@@ -49,13 +49,11 @@ impl Vault {
         occurred: crate::temporal::TimeRange,
         learned_at: u64,
     ) -> Result<crate::consent::ConsentReceipt> {
-        // The Git adapter accepts `owner/repo` shorthand; normalize through
-        // it before validating so the stored endpoint is the canonical one
-        // the adapter binds imports to.
+        // Store the same canonical endpoint the transport binds imports to.
         let mut record = record.clone();
         match record.kind {
             super::SkillHubKind::HttpIndex => {
-                super::http_fetch::checked_url(&record.endpoint)?;
+                record.endpoint = super::http_fetch::checked_url(&record.endpoint)?.to_string();
             }
             super::SkillHubKind::Git if !std::path::Path::new(&record.endpoint).is_absolute() => {
                 record.endpoint = super::git_fetch::normalize_endpoint(&record.endpoint)?;
