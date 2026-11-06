@@ -25,8 +25,10 @@
 //! Busy, offline, missing keys, a refused upload or an uncertain ack leave it
 //! pending for the next pass. Each pass keeps what it saw for the owner's
 //! diagnostics (FIX 4784, 4785): the home it reached, or why none, and how
-//! the newest generation's outer capsules opened here. It decides nothing:
-//! who executes and what is carried stay as they are.
+//! the newest generation's outer capsules opened here. An upload it assembles
+//! notes the sections it carries unmerged in the record the slot's own upload
+//! notes too (`relay_observation`, FIX 19525), which outlives the request. It
+//! decides nothing: who executes and what is carried stay as they are.
 
 use std::sync::Arc;
 
@@ -41,9 +43,7 @@ use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::SealedBundleObject;
 use crate::sync::transport::TransportError;
-use crate::world_keys::{
-    LatestRead, PublishObserved, PublishReach, SealedVaultUpload, sealed_bundle_slot,
-};
+use crate::world_keys::{LatestRead, PublishObserved, PublishReach, sealed_bundle_slot};
 use crate::{EntityId, Vault};
 
 /// When a publication's request is enacted (CALLS
@@ -74,25 +74,21 @@ pub(super) async fn publish_asked(manager: &Arc<WindowManager>, config: &SyncCli
     }
 }
 
-/// Keeps what this pass saw for `request` (FIX 4784, 4785), with what the
-/// `upload` it assembled, if any, could not seal fresh (FIX 12417) or merge
-/// (FIX 19525).
+/// Keeps what this pass saw for `request` (FIX 4784, 4785).
 fn observe(
     vault: &Vault,
     request: AuthorityEntryHash,
     home: Option<EntityId>,
     reach: PublishReach,
     latest: LatestRead,
-    upload: Option<&SealedVaultUpload>,
+    incomplete_authority: Vec<EntityId>,
 ) {
     let observed = PublishObserved {
         at: vault.store.clock.now_recorded_at(),
         home,
         reach,
         latest,
-        incomplete_authority: upload
-            .map_or_else(Vec::new, |upload| upload.incomplete_authority.clone()),
-        unmerged_sections: upload.map_or_else(Vec::new, |upload| upload.unmerged_sections.clone()),
+        incomplete_authority,
     };
     vault.observe_bundle_publication(request, observed);
 }
@@ -100,7 +96,14 @@ fn observe(
 /// Keeps `reach`, with no home and nothing read, for every request asked.
 fn observe_all(vault: &Vault, asked: &[(AuthorityEntryHash, EntityId)], reach: PublishReach) {
     for (request, _) in asked {
-        observe(vault, *request, None, reach, LatestRead::NotRead, None);
+        observe(
+            vault,
+            *request,
+            None,
+            reach,
+            LatestRead::NotRead,
+            Vec::new(),
+        );
     }
 }
 
@@ -150,7 +153,7 @@ async fn publish_all(
                 Some(home),
                 PublishReach::OtherHome,
                 LatestRead::NotRead,
-                None,
+                Vec::new(),
             );
             continue;
         }
@@ -160,7 +163,7 @@ async fn publish_all(
             Some(home),
             PublishReach::Reached,
             LatestRead::NotRead,
-            None,
+            Vec::new(),
         );
         publish_one(manager, &mut rpc, request, home, materialize).await?;
     }
@@ -182,7 +185,12 @@ async fn publish_one(
     // An attempt this install persisted and has not resolved comes first
     // (CALLS BUNDLE_PUBLISH_RECONCILE).
     match work::reconcile_request(rpc, vault, request, home).await? {
-        work::WorkFate::Committed(_) => return enact(manager, request).await,
+        work::WorkFate::Committed(attempt) => {
+            // What it carries unmerged stays shown to the owner once the
+            // request has its result (FIX 19525).
+            super::relay_observation::restore_upload(vault, &attempt);
+            return enact(manager, request).await;
+        }
         work::WorkFate::Uncertain => return Ok(()),
         work::WorkFate::Open => {}
     }
@@ -222,7 +230,7 @@ async fn publish_one(
         Some(home),
         PublishReach::Reached,
         read.clone(),
-        None,
+        Vec::new(),
     );
     if named {
         return enact(manager, request).await;
@@ -257,17 +265,24 @@ async fn publish_one(
             return Err(storage(error));
         }
     };
-    // The owner sees each world this upload could not seal fresh (FIX 12417),
-    // and each readable section it carries unmerged (FIX 19525).
+    // The owner sees each world this upload could not seal fresh (FIX 12417).
     observe(
         vault,
         request,
         Some(home),
         PublishReach::Reached,
         read,
-        Some(&upload),
+        upload.incomplete_authority.clone(),
     );
     let generation = upload.bundle.generation();
+    // And each readable section it carries unmerged, in the one record the
+    // slot's own upload notes too, which outlives the request (FIX 19525).
+    super::relay_observation::observe_upload(
+        vault,
+        Some(home),
+        generation,
+        &upload.unmerged_sections,
+    );
     let staged = put_object(
         rpc,
         &generation,
@@ -296,6 +311,7 @@ async fn publish_one(
             pads_digest: upload.pads.digest(),
             incomplete_authority: upload.incomplete_authority.clone(),
             awaiting_reader: Vec::new(),
+            unmerged_sections: upload.unmerged_sections.clone(),
         };
         // The exact attempt persists before the first commit send, so an ack
         // lost on the way resumes, never reuploads.

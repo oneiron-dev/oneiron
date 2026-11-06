@@ -14,7 +14,10 @@
 //!   last relay that failed, each with its time, and the last kit grant this
 //!   process answered (CALLS "4953 relay report"). Unobserved is said, never
 //!   read as zero; pending counts are observations, not promises. Nothing
-//!   here waits on the upkeep or expires.
+//!   here waits on the upkeep or expires. Beside them, the last upload
+//!   assembled here for each home, by the slot or an asked publication, when
+//!   it carries a readable world section unchanged (FIX 19525): a tick that
+//!   assembles nothing leaves it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -261,12 +264,6 @@ struct RelayView {
     /// Worlds whose last taken/published capsule is sealed to no recovery root
     /// pinned here. Empty when no root is pinned or neither take nor publication occurred.
     awaiting_reader: Vec<String>,
-    /// Readable world sections the last assembled upload carries unchanged because
-    /// they did not open, decode or merge here (FIX 19525): each names its world, the
-    /// window whose merge failed, the stage, the error's kind and that the erased-actor
-    /// cleanup did not run on it. Left out when there is none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unmerged_sections: Vec<UnmergedSection>,
     /// Erased worlds and hard-erased keys stripped from the kept pad objects.
     erased: usize,
     /// Grants this machine sealed for a late joiner that the home took.
@@ -291,6 +288,23 @@ struct RelayFailureView {
     error: String,
 }
 
+/// The last upload assembled here for one home that carries a readable world
+/// section unchanged, because the section did not open, decode or merge here
+/// (`UnmergedUpload`, FIX 19525).
+#[derive(Debug, Serialize)]
+struct UnmergedUploadView {
+    observed_at: String,
+    /// The home it was assembled for, 32 hex; none when its proof did not
+    /// stand here.
+    home: Option<String>,
+    /// The generation it seals.
+    generation: String,
+    /// Each such section: its world, the window whose merge failed, the
+    /// stage, the error's kind and that the erased-actor cleanup did not run
+    /// on it. The upload keeps the section; the owner repairs it.
+    unmerged_sections: Vec<UnmergedSection>,
+}
+
 /// `GET /v1/owner/recovery-kit/upkeep`'s answer.
 #[derive(Debug, Serialize)]
 struct UpkeepAnswer {
@@ -301,15 +315,21 @@ struct UpkeepAnswer {
     relay: Observed<RelayView>,
     pending: Observed<PendingView>,
     relay_failure: Option<RelayFailureView>,
+    /// The last upload assembled here for each home that carries a readable
+    /// world section unchanged (FIX 19525). Left out when none does.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unmerged_uploads: Vec<UnmergedUploadView>,
     grant: Observed<PadAccessAnswer>,
 }
 
 /// The upkeep's observation as the answer shows it: what the last relay that
-/// reached the home moved, what the last sweep counted, and the last failure.
+/// reached the home moved, what the last sweep counted, the last failure, and
+/// each home's last upload that carries a section unmerged.
 struct RelayViews {
     relay: Observed<RelayView>,
     pending: Observed<PendingView>,
     failure: Option<RelayFailureView>,
+    unmerged_uploads: Vec<UnmergedUploadView>,
 }
 
 fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews {
@@ -318,6 +338,7 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
             relay: Observed::Unobserved,
             pending: Observed::Unobserved,
             failure: None,
+            unmerged_uploads: Vec::new(),
         };
     };
     let relay = observation
@@ -349,7 +370,6 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
                     .iter()
                     .map(|world| world.to_hex())
                     .collect(),
-                unmerged_sections: relay.unmerged_sections,
                 erased: relay.erased,
                 offered: relay.offered,
             },
@@ -367,10 +387,22 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
         observed_at: rfc3339_secs(at),
         error,
     });
+    let unmerged_uploads = observation
+        .uploads
+        .into_iter()
+        .filter(|(_, upload)| !upload.sections.is_empty())
+        .map(|(home, upload)| UnmergedUploadView {
+            observed_at: rfc3339_secs(upload.at),
+            home: home.map(|home| home.to_hex()),
+            generation: sealed_generation_hex(&upload.generation),
+            unmerged_sections: upload.sections,
+        })
+        .collect();
     RelayViews {
         relay,
         pending,
         failure,
+        unmerged_uploads,
     }
 }
 
@@ -397,6 +429,7 @@ async fn upkeep(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
         relay: views.relay,
         pending: views.pending,
         relay_failure: views.failure,
+        unmerged_uploads: views.unmerged_uploads,
         grant,
     }))
 }

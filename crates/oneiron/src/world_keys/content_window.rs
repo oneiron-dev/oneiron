@@ -9,8 +9,11 @@
 //! section's packets continue.
 //! The mirror keeps its history: before each pack it takes the window's own
 //! deletes here, so a row deleted here leaves every mirror that merges it (FIX
-//! 3360). A section carries each mirror whole; taking one in merges it into the
-//! mirror as more of the same history and materializes the mirror's rows here.
+//! 3360). A mirror of a window pinned history-free, as an erased-actor scrub
+//! of the pack pins it, is stored and sealed as window persist stores that
+//! window (FIX 19525). A section carries each mirror whole; taking one in
+//! merges it into the mirror as more of the same history and materializes
+//! the mirror's rows here.
 //! The live window is not touched. A take of a mirror whose rows already
 //! landed at its version skips that pass (`content_landed`, FIX 5506).
 
@@ -32,7 +35,7 @@ use crate::sync::WindowManager;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{
     apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize_mirror,
-    load_window_from_state, reverse_rematerialize_for_sealing,
+    load_window_from_state, persisted_window_snapshot, reverse_rematerialize_for_sealing,
 };
 use crate::window_key::WindowKey;
 
@@ -180,9 +183,13 @@ impl WindowManager {
 
     /// The whole mirror of `window` of the private `world`, packed with every
     /// row of the window here, as one snapshot: what the world's section of the
-    /// sealed cloud bundle carries for the window (FIX 922). The mirror keeps
-    /// its history and first takes each delete [`SEALED_MIRROR_DELETE_SOURCE`]
-    /// names. Refused unless this machine may read the world now.
+    /// sealed cloud bundle carries for the window (FIX 922). The mirror first
+    /// takes each delete [`SEALED_MIRROR_DELETE_SOURCE`] names, and keeps its
+    /// history unless the window is pinned history-free: a scrub of the pack
+    /// that took out what names an erased actor pins it, and the operation it
+    /// replaced still names that actor. Such a mirror is stored and sealed as
+    /// window persist stores the pinned window (FIX 19525). Refused unless
+    /// this machine may read the world now.
     pub(crate) fn sealed_mirror_snapshot(
         &self,
         world: EntityId,
@@ -215,7 +222,9 @@ impl WindowManager {
         }
         mirror.commit();
         reverse_rematerialize_for_sealing(vault, &mirror, window)?;
-        let snapshot = export_snapshot(&mirror)?;
+        // A pinned window's mirror keeps no history its scrubs took out; any
+        // other mirror is stored and sealed whole (FIX 19525).
+        let snapshot = persisted_window_snapshot(vault, window, &mirror)?;
         vault.with_write_txn_grouped(|wtxn| {
             MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), &snapshot)
         })?;
