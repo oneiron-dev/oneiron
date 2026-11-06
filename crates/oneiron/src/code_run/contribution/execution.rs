@@ -31,6 +31,12 @@
 //! once. A reason a retry may clear waits for one retry first. Neither is a
 //! loss. A call the live guest read through a hook's view the context kept
 //! runs as it ran, and its fork is evidence like any other.
+//!
+//! A callable's pair (FIX 3608, [`callable`]) runs its caller's own
+//! program twice instead, its load present and absent, through the same
+//! lent runtime and scratch stores, before either fork is generated.
+
+mod callable;
 
 use std::sync::Arc;
 
@@ -56,6 +62,9 @@ use crate::engine_executor::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, LlmResponse, Result, Vault};
+
+pub use self::callable::{CallableBranch, execute_callable_branch};
+pub(super) use self::callable::{CallableTarget, callable_target_in_txn};
 
 /// A program run's part, or the shadow runner's reason it has none.
 type Ran<T> = Result<std::result::Result<T, ShadowUnavailable>>;
@@ -347,6 +356,20 @@ pub trait ContributionForkProgram {
         &self,
         step: &PreparedShadowStep,
         response: &LlmResponse,
+    ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
+
+    /// `branch`'s run of `step`'s captured caller step (FIX 3608) through
+    /// [`execute_callable_branch`], as [`Self::execute`] runs a fork's
+    /// answer: on a fresh runtime of that component and in a scratch store
+    /// of its own that the host releases before this returns.
+    ///
+    /// # Errors
+    ///
+    /// The scratch store failing, and a step the executor cannot set up.
+    fn execute_branch(
+        &self,
+        step: &PreparedShadowStep,
+        branch: &CallableBranch,
     ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
 }
 

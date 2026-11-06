@@ -93,12 +93,13 @@ pub(crate) use self::consent_wait::{
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
-    ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
+    CallableBranch, ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
     ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ExecutedBody,
     ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode,
     ForkExecutionOutcome, ForkExecutionPin, ForkJudge, ForkMismatch, ForkScore, ForkScoring,
     ForkScoringIdentity, ForkTreatment, OwnerJudgment, ReplayAnchor, ScoredFork,
-    contribution_fork_receipts, execute_contribution_fork, run_contribution_forks,
+    contribution_fork_receipts, execute_callable_branch, execute_contribution_fork,
+    run_contribution_forks,
 };
 pub(crate) use self::contribution::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,

@@ -10,8 +10,8 @@
 
 use super::{Outcome, PreparedShadowStep, Reason, unavailable};
 use crate::code_run::{
-    CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart, StepReplayCapsule,
-    StepReplayContext,
+    CapturedCallable, CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart,
+    StepReplayCapsule, StepReplayContext,
 };
 
 /// A captured step's replay context, read and checked once: the context and
@@ -100,6 +100,25 @@ impl PreparedShadowStep {
             return Err(missing("hook_view"));
         }
         Ok(response)
+    }
+
+    /// The callable the step's replay context froze for the call at bridge
+    /// position `seq` (FIX 3608); `None` when it froze none there, or no
+    /// context is read.
+    pub(crate) fn callable_at(&self, seq: u64) -> Option<&CapturedCallable> {
+        match &self.context {
+            ArmContext::Captured { context, .. } => context.callable_at(seq),
+            ArmContext::Missing => None,
+        }
+    }
+
+    /// Each callable the step's replay context froze, in call order (FIX
+    /// 3608); none when no context is read.
+    pub(crate) fn callables(&self) -> &[CapturedCallable] {
+        match &self.context {
+            ArmContext::Captured { context, .. } => &context.callables,
+            ArmContext::Missing => &[],
+        }
     }
 
     /// Whether each recorded call an arm matched, from the step's start to

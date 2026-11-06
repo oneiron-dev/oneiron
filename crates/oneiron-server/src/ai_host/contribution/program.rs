@@ -11,6 +11,8 @@
 //! ([`executed_evidence`]) after the answer's text, never in its place. A
 //! server with no runtime of the component says so, a reason a retry may
 //! clear: its pairs wait for one retry, then fall back to the `Text` mode.
+//! A callable's pair runs its caller step's two branches the same way, each
+//! on a fresh runtime and in a scratch store of its own (FIX 3608).
 
 use std::sync::{Arc, OnceLock};
 
@@ -19,7 +21,8 @@ use oneiron::code_run::shadow_runner::{
     ShadowUnavailableReason as Reason,
 };
 use oneiron::code_run::{
-    ContributionForkProgram, ExecutedFork, ExecutedForkView, execute_contribution_fork,
+    CallableBranch, ContributionForkProgram, ExecutedFork, ExecutedForkView,
+    execute_callable_branch, execute_contribution_fork,
 };
 use oneiron::engine_executor::{JsCodeModeRuntime, StepCancellation};
 use oneiron::{Error, LlmResponse, Vault};
@@ -68,6 +71,16 @@ impl ContributionForkProgram for LentProgram<'_> {
     ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
         self.in_arm(step, |runtime, runtime_pin, store, cancel| {
             execute_contribution_fork(step, response, runtime, runtime_pin, store, cancel)
+        })
+    }
+
+    fn execute_branch(
+        &self,
+        step: &PreparedShadowStep,
+        branch: &CallableBranch,
+    ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
+        self.in_arm(step, |runtime, runtime_pin, store, cancel| {
+            execute_callable_branch(step, branch, runtime, runtime_pin, store, cancel)
         })
     }
 }
