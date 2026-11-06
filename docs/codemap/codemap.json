@@ -30201,7 +30201,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 34,
+      "const": 36,
       "crate-vis": 13,
       "fn": 11,
       "re-export": 6,
@@ -31007,6 +31007,16 @@
      "purpose": "The judge labels' re-check after a rubric edit, run (ARCH-0042 \"A human edits the rubric at any time",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/layout_suggestions.rs",
+     "purpose": "Board layout suggestions per agent type (FIX 12572, layout half; owner 2026-11-03 20:31, ledger…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46099,7 +46109,7 @@
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -52912,7 +52922,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -72721,7 +72731,7 @@
      "path": "src/store/document_frame_tags.rs",
      "purpose": "Document frame tags shared by persisted document consumers and transport",
      "surface": {
-      "const": 11,
+      "const": 12,
       "mod": 1
      }
     },
@@ -79781,7 +79791,7 @@
       "crate-vis": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -79830,6 +79840,21 @@
       "fn": 17,
       "mod": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentAssembly",
+      "DocumentPartFrames",
+      "JoinedDocument"
+     ],
+     "path": "src/sync/transport/document_parts.rs",
+     "purpose": "Logical documents released as bounded frames and joined before admission",
+     "surface": {
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -91771,7 +91796,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 202,
+     "files": 203,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92632,7 +92657,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 364,
+     "files": 365,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92844,7 +92869,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6542,
+   "source_files": 6544,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106519,7 +106544,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BudgetGuard"
@@ -106528,7 +106553,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 17,
+      "fn": 18,
       "struct": 1
      }
     },
@@ -125940,7 +125965,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 13,
       "re-export": 1,
       "struct": 1
