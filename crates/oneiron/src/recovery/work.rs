@@ -11,7 +11,8 @@
 //! Artifact validation yields between ordered groups, rows and nested history
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
-//! retained-parent and workflow checks, encoding and hashing still run whole.
+//! retained-parent and workflow checks, encoding and its envelope checksum
+//! still run whole. The outer canonical digest yields between BLAKE3 chunks.
 //! Aborted-transaction preflight and the NOTE workflow plan also run whole;
 //! manifest construction yields between its original whole pack/hash chunks.
 //! Recapture yields between structural stages while retaining one store read
@@ -20,6 +21,9 @@
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
+
+mod encoded_digest;
+use encoded_digest::EncodedDigest;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -88,6 +92,7 @@ pub(crate) struct RecoveryWork {
     digest: [u8; 32],
     phase: RecoveryPhase,
     validation: Option<CanonicalValidation>,
+    encoded_digest: Option<EncodedDigest>,
     preflight_manifest: Option<ManifestChunks>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
@@ -114,6 +119,7 @@ impl RecoveryWork {
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
             validation: None,
+            encoded_digest: None,
             preflight_manifest: None,
             doc: None,
             rebuilt: RebuildAt::default(),
@@ -144,6 +150,7 @@ impl RecoveryWork {
             let result = self.page(vault, materializer);
             if result.is_err() && self.phase == RecoveryPhase::Validate {
                 self.validation = None;
+                self.encoded_digest = None;
             }
             if result.is_err() && self.phase == RecoveryPhase::Preflight {
                 self.preflight_manifest = None;
@@ -220,25 +227,40 @@ impl RecoveryWork {
         let page = self.budget.max_obligations.max(1);
         match self.phase {
             RecoveryPhase::Validate => {
-                // An actor this vault erased reads as no one in the artifact
-                // too (FIX 3878): the recovery checks, installs and compares
-                // only that form. Full domain validation precedes quarantine
-                // and every durable write.
-                if self.validation.is_none() {
-                    self.source = self.source.with_actors_erased_here(vault)?;
+                if self.encoded_digest.is_none() {
+                    // An actor this vault erased reads as no one in the artifact
+                    // too (FIX 3878): the recovery checks, installs and compares
+                    // only that form. Full domain validation precedes quarantine
+                    // and every durable write.
+                    if self.validation.is_none() {
+                        self.source = self.source.with_actors_erased_here(vault)?;
+                    }
+                    if !self
+                        .validation
+                        .get_or_insert_with(CanonicalValidation::default)
+                        .advance(&self.source, page)?
+                    {
+                        return Ok(());
+                    }
+                    let encoded = self
+                        .source
+                        .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                    limit(encoded.len(), self.budget.max_bytes)?;
+                    self.encoded_digest = Some(EncodedDigest::new(encoded));
                 }
                 if !self
-                    .validation
-                    .get_or_insert_with(CanonicalValidation::default)
-                    .advance(&self.source, page)?
+                    .encoded_digest
+                    .as_mut()
+                    .expect("validated encoding is retained for hashing")
+                    .advance(page)
                 {
                     return Ok(());
                 }
-                let encoded = self
-                    .source
-                    .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
-                limit(encoded.len(), self.budget.max_bytes)?;
-                self.digest = *blake3::hash(&encoded).as_bytes();
+                self.digest = self
+                    .encoded_digest
+                    .take()
+                    .expect("completed canonical hashing")
+                    .into_digest();
                 self.validation = None;
                 self.doc = Some(rebuild_start());
                 self.phase = RecoveryPhase::Rebuild;
