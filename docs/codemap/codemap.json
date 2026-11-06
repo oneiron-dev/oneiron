@@ -108947,10 +108947,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/remote/request.rs",
+     "purpose": "Serialized facade requests, spillable before their HTTP body is read",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/remote/response.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -109100,7 +109110,7 @@
      "purpose": "Native SDK host snapshots of the shared vault's engine-limit crossings"
     },
     "remote": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109109,7 +109119,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 23,
+   "source_files": 24,
    "test_files": 8
   },
   "oneiron-retrieval": {
