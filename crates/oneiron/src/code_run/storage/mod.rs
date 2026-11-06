@@ -61,10 +61,17 @@ pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
-    ForkProvenance, ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body,
-    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, finalize_capsule, fork_response,
+    ForkProvenance, ForkRows, actor_gone_in_txn, bind_capsule_answer, capsule_context_body,
+    capsule_request, capsule_route_prompt, capsule_start_body,
+    contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
+    erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
-    step_replay_capsules_in_txn, store_fork_response,
+    refresh_staged_request, route_prompt_at, step_replay_capsules_in_txn, store_fork_execution,
+    store_fork_response,
+};
+pub(crate) use self::replay_capsule::{
+    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
+    owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,

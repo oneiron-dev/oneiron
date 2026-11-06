@@ -79,7 +79,7 @@ mod attribution_audits;
 mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
-mod seal_checks;
+pub(super) mod seal_checks;
 mod type_tree_upkeep;
 mod weave_digest_settings;
 
