@@ -701,19 +701,9 @@ pub(super) fn fold_policy_manifest(
         resolution.owner_policy_rows_dropped = true;
     }
 
-    // A resolved table must stay addressable by a u16 row index: up to 65,536
-    // rows (indices 0..=65535) are valid; the 65,537th row marks the whole
-    // resolution malformed, fail-closing the write gate exactly like any
-    // malformed manifest and refusing the budget-policy accessor. Never wrap
-    // or silently truncate a row index.
-    if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
-        resolution.diagnostics.malformed_manifest_seen = true;
-    }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
-        || resolution.booking_conversion_rows.len() > 128
-    {
-        resolution.diagnostics.malformed_manifest_seen = true;
-    }
+    // No resolved table is refused for its length (FIX 8781): the budget
+    // meter addresses a row by its position, and the hosted-TTS and booking
+    // tables are folded whole. A row is refused only for what it says.
 
     match fold_delegated_grants(&delegated_rows) {
         Some(fold) => resolution.delegation_fold = fold,
