@@ -150,11 +150,29 @@ pub(crate) fn history_births_made_by_erased_in(
     Ok(false)
 }
 
-/// Whether `doc`'s history inserted a birth carrier one of `actors` made,
-/// live or removed since.
+/// Whether the shallow root of `doc` holds a birth carrier one of `actors`
+/// made: a value removed after the root stays in the root's state. A root
+/// that cannot be read counts.
+fn root_births_made_by(doc: &LoroDoc, actors: &BTreeSet<EntityId>) -> bool {
+    if !doc.is_shallow() {
+        return false;
+    }
+    let at_root = doc.fork();
+    if at_root.checkout(&doc.shallow_since_frontiers()).is_err() {
+        return true;
+    }
+    let mut carried = false;
+    map_for_each_bytes(&births(&at_root), |_, bytes| {
+        carried |= maker(bytes).is_some_and(|actor| actors.contains(&actor));
+    });
+    carried
+}
+
+/// Whether `doc`'s history past its shallow root inserted a birth carrier
+/// one of `actors` made, live or removed since.
 fn history_births_made_by(doc: &LoroDoc, actors: &BTreeSet<EntityId>) -> bool {
     let container = ContainerID::new_root(super::ROW_BIRTHS_MAP, ContainerType::Map);
-    let history = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
+    let history = doc.export_json_updates(&doc.shallow_since_vv().to_vv(), &doc.oplog_vv());
     history
         .changes
         .iter()
@@ -202,13 +220,16 @@ pub(crate) fn birth_carriers_remain_in_txn(
             return Ok(true);
         }
     }
-    // A sealed mirror counts as a stored window does (FIX 17210 follow-up).
+    // A sealed mirror counts as a stored window does (FIX 17210 follow-up),
+    // its history and shallow root too: a legal hold over another row can
+    // keep a mirror whole, and its insertion history keeps the birth until
+    // a later pass cuts it.
     crate::world_keys::any_mirror_in(vault, txn, |doc| {
         let mut carried = false;
         map_for_each_bytes(&births(doc), |_, bytes| {
             carried |= maker(bytes).is_some_and(|actor| actors.contains(&actor));
         });
-        carried
+        carried || history_births_made_by(doc, actors) || root_births_made_by(doc, actors)
     })
 }
 
