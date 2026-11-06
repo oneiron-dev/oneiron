@@ -227,9 +227,24 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_with(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let input_rows = self.result_rows();
+        self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -244,7 +259,6 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let input_rows = self.result_rows();
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
         if !inherit.is_empty() {
