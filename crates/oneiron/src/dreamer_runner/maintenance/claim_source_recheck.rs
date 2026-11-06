@@ -438,6 +438,11 @@ async fn ask_judge(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
     };
+    // The judge request quotes the kept mail's words, which the replay
+    // capture's owners would not retire when that mail is erased: this
+    // attempt's steps keep no capture (fix list row 20501).
+    let _uncaptured =
+        crate::self_heal::blocked_reports::UncapturedSteps::hold(ctx.vault, attempt_id);
     Ok(
         match call_as_step(&step_ctx, model.backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
