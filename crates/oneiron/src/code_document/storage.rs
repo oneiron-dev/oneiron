@@ -334,7 +334,11 @@ impl Vault {
                 || receipt.session_id != session.session_id
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
-                || !self.same_edit_in_txn(&mut txn, &session.document_id, &receipt.edit, edit)?
+                // A masked edit's receipt holds its handles, never the
+                // value: a replay offering the value again is not proved the
+                // same edit (a rotated custody record names a new value
+                // under the same handle), so it refuses (FIX 2372).
+                || receipt.edit != *edit
                 || receipt.metadata_edit.as_ref() != metadata
             {
                 return Err(invalid());
@@ -391,12 +395,7 @@ impl Vault {
                     || receipt.session_id != item.session.session_id
                     || receipt.actor != Some(item.actor)
                     || receipt.provenance != item.session.provenance
-                    || !self.same_edit_in_txn(
-                        txn,
-                        &item.session.document_id,
-                        &receipt.edit,
-                        &item.edit,
-                    )?
+                    || receipt.edit != item.edit
                     || receipt.metadata_edit != item.metadata_edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
                 {

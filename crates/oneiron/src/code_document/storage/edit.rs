@@ -86,8 +86,8 @@ impl Vault {
         }
         // The edited file, read whole by the write door under the owner's
         // switch before any snapshot or receipt is written (OF-067). Its
-        // receipt binds the admitted edit's bytes, which a replay is judged
-        // against (`same_edit_in_txn`): a secret the replacement's admission did not
+        // receipt binds the admitted edit's bytes, and a replay must offer
+        // exactly those (see `apply_code_file_edit_once_with`): a secret the replacement's admission did not
         // place (one split across the file and the edit) refuses, unless the
         // file read the same way before the edit.
         let mut stood = false;
@@ -192,27 +192,6 @@ impl Vault {
             &mut Lifted::default(),
         )?;
         Ok(changed.then_some(admitted))
-    }
-
-    /// Whether `held`, the edit an ingress receipt stores, is `offered` again
-    /// (FIX 2372): the same bytes, or `offered` with its replacement admitted
-    /// in this writer exactly as `held` holds it. A value custody already
-    /// holds keeps its handle, so only the same secret reads the same; a
-    /// different one takes a handle of its own and does not match, and the
-    /// caller's refusal drops what its admission wrote.
-    pub(super) fn same_edit_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        document: &[u8; 32],
-        held: &CodeFileEdit,
-        offered: &CodeFileEdit,
-    ) -> Result<bool> {
-        if held == offered {
-            return Ok(true);
-        }
-        Ok(self
-            .admit_code_edit_in_txn(wtxn, document, offered)?
-            .is_some_and(|admitted| admitted == *held))
     }
 
     fn validate_code_file_edit(
