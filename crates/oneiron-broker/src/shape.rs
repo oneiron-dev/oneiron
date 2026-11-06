@@ -105,6 +105,17 @@ pub enum Shape {
     /// top-level body `model_id`, `xi-api-key: <key>`. The reply is audio
     /// bytes, streamed.
     ElevenLabsSpeech,
+    /// [`Self::AnthropicMessages`] asking for server-sent events (FIX
+    /// 15702): the body's top-level `stream` is exactly `true`, and the
+    /// events are relayed as they come.
+    AnthropicMessagesStream,
+    /// [`Self::OpenAiChat`] asking for server-sent events (FIX 15702): the
+    /// body's top-level `stream` is exactly `true`, and the events are
+    /// relayed as they come.
+    OpenAiChatStream,
+    /// [`Self::OpenAiChatUnversioned`] asking for server-sent events (FIX
+    /// 15702), as [`Self::OpenAiChatStream`].
+    OpenAiChatUnversionedStream,
 }
 
 struct Row {
@@ -232,6 +243,21 @@ const ANTHROPIC_MESSAGES: Row = Row {
     auth_prefix: "",
     streams: false,
     redirect: None,
+};
+
+const ANTHROPIC_MESSAGES_STREAM: Row = Row {
+    streams: true,
+    ..ANTHROPIC_MESSAGES
+};
+
+const OPENAI_CHAT_STREAM: Row = Row {
+    streams: true,
+    ..OPENAI_CHAT
+};
+
+const OPENAI_CHAT_UNVERSIONED_STREAM: Row = Row {
+    streams: true,
+    ..OPENAI_CHAT_UNVERSIONED
 };
 
 const OPENAI_IMAGES: Row = openai(
@@ -436,6 +462,45 @@ impl Shape {
             Self::AnthropicModels => &ANTHROPIC_MODELS,
             Self::CartesiaSpeech => &CARTESIA_SPEECH,
             Self::ElevenLabsSpeech => &ELEVENLABS_SPEECH,
+            Self::AnthropicMessagesStream => &ANTHROPIC_MESSAGES_STREAM,
+            Self::OpenAiChatStream => &OPENAI_CHAT_STREAM,
+            Self::OpenAiChatUnversionedStream => &OPENAI_CHAT_UNVERSIONED_STREAM,
+        }
+    }
+
+    /// Whether the shape relays a provider's server-sent events (FIX
+    /// 15702): its request asks for them with a top-level `stream: true`,
+    /// and each batch of its reply is sent on as soon as it is cleared of
+    /// the key, not gathered first.
+    #[must_use]
+    pub const fn relays_events(self) -> bool {
+        matches!(
+            self,
+            Self::AnthropicMessagesStream
+                | Self::OpenAiChatStream
+                | Self::OpenAiChatUnversionedStream
+        )
+    }
+
+    /// The shape of the same endpoint for a request that asks for
+    /// server-sent events, for a shape that has one.
+    #[must_use]
+    pub const fn with_events(self) -> Option<Self> {
+        match self {
+            Self::AnthropicMessages => Some(Self::AnthropicMessagesStream),
+            Self::OpenAiChat => Some(Self::OpenAiChatStream),
+            Self::OpenAiChatUnversioned => Some(Self::OpenAiChatUnversionedStream),
+            _ => None,
+        }
+    }
+
+    /// The one query a path to this shape may end in, or leave out:
+    /// Anthropic's `beta=true`, which Claude Code sends on Messages (FIX
+    /// 15702).
+    const fn optional_query(self) -> Option<&'static str> {
+        match self {
+            Self::AnthropicMessages | Self::AnthropicMessagesStream => Some("beta=true"),
+            _ => None,
         }
     }
 
@@ -485,11 +550,18 @@ impl Shape {
     /// that has one.
     fn match_path(self, path: &str) -> Result<Option<&str>, Refusal> {
         let row = self.row();
-        let path = match row.query {
-            Some(query) => path
+        let path = match (row.query, self.optional_query()) {
+            (Some(query), _) => path
                 .strip_suffix(query)
                 .and_then(|path| path.strip_suffix('?')),
-            None => Some(path),
+            // The optional query is taken off whole or not at all: any other
+            // query stays in the path and fails its segments.
+            (None, Some(query)) => Some(
+                path.strip_suffix(query)
+                    .and_then(|path| path.strip_suffix('?'))
+                    .unwrap_or(path),
+            ),
+            (None, None) => Some(path),
         }
         .ok_or(Refusal::Path)?;
         let segments: Vec<&str> = path
@@ -546,6 +618,13 @@ impl Shape {
             (Body::Form | Body::JsonOrForm, Some(kind)) => form::read_model(kind, body)?,
             _ => return Err(Refusal::Body),
         };
+        // An event-relaying shape carries exactly the request that asks for
+        // events, so its reply is the stream it is framed for.
+        if self.relays_events()
+            && json_member(body, "stream")? != Some(serde_json::Value::Bool(true))
+        {
+            return Err(Refusal::Body);
+        }
         match row.model {
             Selector::Body | Selector::BodyModelId => {
                 named.map(Some).ok_or(Refusal::SelectorMissing)
@@ -620,6 +699,51 @@ fn scan_json_key(body: &[u8], key: &'static str) -> Result<Option<String>, Refus
         .map_err(|_| Refusal::Body)??;
     decoder.end().map_err(|_| Refusal::Body)?;
     Ok(selector)
+}
+
+/// The top-level `key` member of one JSON object, or `None` when it has
+/// none. A repeated key refuses, counted as it is read, an escaped spelling
+/// counting as the key, so the value read is the one every reader of the
+/// bytes reads.
+///
+/// # Errors
+/// [`Refusal::Body`] when the bytes are not one JSON object or repeat `key`.
+pub fn json_member(body: &[u8], key: &'static str) -> Result<Option<serde_json::Value>, Refusal> {
+    let mut decoder = serde_json::Deserializer::from_slice(body);
+    let member = decoder
+        .deserialize_map(MemberVisitor(key))
+        .map_err(|_| Refusal::Body)??;
+    decoder.end().map_err(|_| Refusal::Body)?;
+    Ok(member)
+}
+
+struct MemberVisitor(&'static str);
+
+impl<'de> Visitor<'de> for MemberVisitor {
+    type Value = Result<Option<serde_json::Value>, Refusal>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("one JSON object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut member = None;
+        let mut repeated = false;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == self.0 && !repeated {
+                let value = map.next_value::<serde_json::Value>()?;
+                repeated = member.is_some();
+                member = Some(value);
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(if repeated {
+            Err(Refusal::Body)
+        } else {
+            Ok(member)
+        })
+    }
 }
 
 struct SelectorVisitor(&'static str);
