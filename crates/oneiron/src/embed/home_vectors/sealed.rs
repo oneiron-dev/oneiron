@@ -15,6 +15,9 @@ use super::{ReceivedHomeClaimVector, own_peer_in_txn, vector_for_peer_in_txn};
 use crate::authority::PeerMachine;
 use crate::{EntityId, Error, Result, Vault};
 
+mod origin;
+pub(crate) use origin::SenderSignedHomeClaimVector;
+
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 const EPOCH: u64 = 1;
@@ -112,15 +115,30 @@ impl Vault {
         delivery: &HomeClaimDelivery<'_>,
         copies: &[SealedHomeClaimVector],
     ) -> PreparedHomeClaimDelivery {
+        self.prepare_home_claim_delivery_from(
+            peer,
+            delivery,
+            copies
+                .iter()
+                .map(|copy| self.open_home_claim_vector(peer, delivery, copy)),
+        )
+    }
+
+    // `raw_peer` associates holders with the canonical delivery only. Each
+    // received copy retains its separately authenticated origin for its writer.
+    fn prepare_home_claim_delivery_from(
+        &self,
+        raw_peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        copies: impl IntoIterator<Item = Result<Option<ReceivedHomeClaimVector>>>,
+    ) -> PreparedHomeClaimDelivery {
         let mut prepared = Vec::new();
-        for copy in copies {
-            let result = self
-                .open_home_claim_vector(peer, delivery, copy)
-                .and_then(|received| {
-                    received
-                        .map(|received| received.prepare_response_copy(self))
-                        .transpose()
-                });
+        for received in copies {
+            let result = received.and_then(|received| {
+                received
+                    .map(|received| received.prepare_response_copy(self))
+                    .transpose()
+            });
             match result {
                 Ok(Some(copy)) => prepared.push(Arc::new(copy)),
                 Ok(None) => {
@@ -138,7 +156,7 @@ impl Vault {
         }
         PreparedHomeClaimDelivery {
             vault: self.store.env.path().to_path_buf(),
-            peer,
+            peer: raw_peer,
             window: delivery.window.to_owned(),
             payload_digest: *blake3::hash(delivery.payload).as_bytes(),
             copies: prepared,
