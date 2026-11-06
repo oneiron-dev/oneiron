@@ -1466,6 +1466,16 @@ impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
             format: receipt.format,
             bytes: receipt.bytes,
             digest: receipt.digest,
+            holder_requests: receipt
+                .holder_requests
+                .iter()
+                .map(|request| lift_record("vault.export", request))
+                .collect::<Result<_, _>>()?,
+            notices: receipt
+                .notices
+                .iter()
+                .map(|notice| lift_record("vault.export", notice))
+                .collect::<Result<_, _>>()?,
         })
     }
 }
