@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 4 | 1 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 0 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 0 | 0 |
-| [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 6 | 0 | 0 |
+| [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 7 | 0 | 0 |
 | [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 24 | 0 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 8 | 1 | 0 |
 | [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 0 | 0 |
@@ -59,7 +59,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1652 | 182 | 55 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 631 | 4 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 632 | 4 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 27 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 55 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 13 | 1 | 0 |
@@ -601,6 +601,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `apple` | file | 1 | s | Apple: the data-protection keychain, one generic-password item per slot |
 | `apple_enclave` | file | 1 | m | Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES… |
 | `file` | file | 1 | m | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
+| `linux_tpm` | file | 1 | m | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
 | `memory` | file | 1 | s | Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here |
 | `windows` | file | 1 | s | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
 
@@ -924,7 +925,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `attempt_state` | file | 1 | s | Persisted queued-attempt lifecycle states and their pure predicates |
 | `authority_rows` | file | 1 | s | Authority-log rows carried beside a row being imported |
 | `base_agent` | file | 1 | s | Fixed base-agent principal rows and their immutable write guards |
-| `batch` | file+dir | 43 | m | Store-layer modules of core `batch`; core re-exports each one at its old path |
+| `batch` | file+dir | 44 | m | Store-layer modules of core `batch`; core re-exports each one at its old path |
 | `batch_op` | file | 1 | s | The batch op vocabulary: one write a batch applies, as the engine's batch builder records it |
 | `blob_artifact` | file+dir | 24 | m | Store-layer modules of core `blob_artifact`; core re-exports each one at its old path |
 | `body_envelope` | file+dir | 2 | s | Store-layer modules of core `store::body_envelope`; core re-exports each one at its old path |
