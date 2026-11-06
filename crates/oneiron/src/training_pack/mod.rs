@@ -36,11 +36,11 @@ pub(crate) use promotion::{
     undo_training_role_swap_in_txn,
 };
 pub use question_heads::QuestionHeadBinding;
-pub(crate) use question_heads::erase_question_head_in_txn;
-pub(crate) use question_trials::erase_question_trial_in_txn;
+pub(crate) use question_heads::{drop_question_heads_in_txn, erase_question_head_in_txn};
 pub use question_trials::{
     QuestionHeadTrial, QuestionTrialCase, QuestionTrialInput, QuestionTrialMeasure,
 };
+pub(crate) use question_trials::{drop_question_trials_in_txn, erase_question_trial_in_txn};
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
 pub use types::*;
 

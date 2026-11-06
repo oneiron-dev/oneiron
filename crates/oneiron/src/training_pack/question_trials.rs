@@ -13,7 +13,10 @@
 //! read. The head runs on this host and bills no catalog cost.
 //!
 //! The head wins when the interval's low end is not below minus the noise
-//! (NOT-WORSE = A) and its cost and latency are both lower. A case missing a
+//! (NOT-WORSE = A) and its cost and latency are both lower. A trial pins the
+//! head bound to the question when it opened; a bind takes it only while that
+//! is still so. A head never bills less than another head, so replacing one
+//! bound head with another takes the owner's explicit choice. A case missing a
 //! read, too few families, or an incumbent cost no receipt names leaves the
 //! trial unknown, and an unknown trial never wins.
 
@@ -21,6 +24,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::question_heads::bound_run_in_txn;
 use super::{PinnedCheckpoint, QuestionTarget, SplitSide, TrainingState, invalid};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -32,6 +36,7 @@ use crate::skill_optimize::{
     EstimateGap, EvalExposure, EvalExposureKind, MeasurementMethodPin, PairedScores,
     estimate_paired,
 };
+use crate::store::Store;
 
 pub(super) const QUESTION_TRIALS: SideTable<EntityId, QuestionHeadTrial, Named> =
     SideTable::new(&side_table::TRAINING_PACK_QUESTION_TRIAL);
@@ -51,6 +56,10 @@ pub struct QuestionHeadTrial {
     pub question_version: u32,
     /// The counted serving of the run's sealed held-out cohort it read.
     pub exposure: EvalExposure,
+    /// The run whose head the question version was bound to when the trial
+    /// opened, `None` when none was: the answerer it was paired with. A bind
+    /// takes the trial only while that is still so.
+    pub incumbent_head: Option<EntityId>,
     /// `None` while the host has not recorded its reads.
     pub measured: Option<QuestionTrialMeasure>,
 }
@@ -276,14 +285,35 @@ pub(crate) fn erase_question_trial_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    QUESTION_TRIALS.delete(&vault.store, wtxn, id)?;
+    drop_question_trials_in_txn(&vault.store, wtxn, *id, None)
+}
+
+/// Drops the trials against typed question `question` at `version`, or at
+/// every version when `None`, in the transaction that erases that question
+/// version. Every door that erases a question version calls it, beside
+/// [`super::drop_question_heads_in_txn`] (FIX 3864).
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn drop_question_trials_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    version: Option<u32>,
+) -> Result<()> {
     let dropped: Vec<EntityId> = QUESTION_TRIALS
-        .scan(&vault.store, wtxn)?
+        .scan(store, wtxn)?
         .into_iter()
-        .filter(|(run, trial)| run == id || trial.question == *id)
+        .filter(|(_, trial)| {
+            trial.question == question
+                && version.is_none_or(|version| version == trial.question_version)
+        })
         .map(|(run, _)| run)
         .collect();
     for run in dropped {
-        QUESTION_TRIALS.delete(&vault.store, wtxn, &run)?;
+        QUESTION_TRIALS.delete(store, wtxn, &run)?;
     }
     Ok(())
 }
@@ -370,14 +400,15 @@ impl Vault {
             ));
         }
         let held_out_jsonl = self.read_training_artifact(&run.corpus.held_out)?;
-        let opened = QuestionHeadTrial {
-            question,
-            question_version,
-            exposure: release.exposure.clone(),
-            measured: None,
-        };
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            let opened = QuestionHeadTrial {
+                question,
+                question_version,
+                exposure: release.exposure.clone(),
+                incumbent_head: bound_run_in_txn(&self.store, txn, question, question_version)?,
+                measured: None,
+            };
             QUESTION_TRIALS.put(&self.store, txn, id, &opened)
         })?;
         Ok(QuestionTrialInput {

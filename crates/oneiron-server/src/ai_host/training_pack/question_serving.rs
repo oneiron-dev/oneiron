@@ -12,8 +12,10 @@
 //! read abstains the same way; it never fails the call.
 //!
 //! A head loads once, from custody, every file's hash rechecked as its
-//! bytes are read, and stays loaded under its question for the server's
-//! life; a head bound to the question in its place replaces it. Its rotary
+//! bytes are read, and stays loaded under its question while it is bound
+//! there. A head no binding names any more (unbound, replaced, or its
+//! question erased) is dropped when the owner's bind or unbind door returns,
+//! and otherwise within a minute of the slot's next call. Its rotary
 //! tables cover the longest window it has read; a longer input loads it
 //! again at that length.
 //!
@@ -22,8 +24,9 @@
 //! the one kind a head answers; a receipt then names its abstain as the
 //! Local rung's read.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionCall, DecisionPack, DecisionProvider, DecisionRung,
@@ -43,6 +46,8 @@ use crate::oneironer::QuestionHead;
 /// as a model id (`provider/name@revision`) with the pin's version.
 const QUESTION_HEADS_MODEL: &str = "oneiron/question-heads";
 const QUESTION_HEADS_VERSION: &str = "1";
+/// How often the slot drops the loaded heads no binding names, at most.
+const PRUNE_EVERY: Duration = Duration::from_secs(60);
 /// How an answer names the head that gave it, before its checkpoint hash.
 const QUESTION_HEAD_MODEL_PREFIX: &str = "oneiron/question-head.";
 
@@ -75,6 +80,8 @@ pub(crate) struct QuestionHeadRung {
     /// Each loaded head by its typed question and version, with its
     /// checkpoint's load-set hash.
     heads: Mutex<BTreeMap<(EntityId, u32), LoadedHead>>,
+    /// When the slot last dropped the heads no binding names.
+    pruned_at: Mutex<Instant>,
 }
 
 impl QuestionHeadRung {
@@ -83,6 +90,7 @@ impl QuestionHeadRung {
             vault,
             inner,
             heads: Mutex::new(BTreeMap::new()),
+            pruned_at: Mutex::new(Instant::now()),
         }
     }
 
@@ -179,6 +187,56 @@ impl QuestionHeadRung {
         })
     }
 
+    /// Drops every loaded head no binding names any more, so an unbound,
+    /// replaced or erased head frees its encoder.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or a binding whose checkpoint cannot be hashed.
+    pub(crate) fn prune(&self) -> oneiron::Result<()> {
+        *self
+            .pruned_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Instant::now();
+        if self
+            .heads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+        {
+            return Ok(());
+        }
+        let bound = self
+            .vault
+            .training_question_heads()?
+            .iter()
+            .map(|binding| {
+                Ok((
+                    (binding.question, binding.question_version),
+                    binding.checkpoint.content_hash()?,
+                ))
+            })
+            .collect::<oneiron::Result<BTreeSet<_>>>()?;
+        self.heads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|key, loaded| bound.contains(&(*key, loaded.checkpoint)));
+        Ok(())
+    }
+
+    /// [`Self::prune`] once [`PRUNE_EVERY`] has passed since the last one.
+    fn prune_when_due(&self) {
+        let due = self
+            .pruned_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .elapsed()
+            >= PRUNE_EVERY;
+        if due && let Err(error) = self.prune() {
+            tracing::warn!(%error, "the loaded question heads were not pruned");
+        }
+    }
+
     /// What the seat the slot held before answers `call`; an abstain with
     /// no seat.
     fn seat_decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
@@ -270,6 +328,7 @@ impl DecisionProvider for QuestionHeadRung {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        self.prune_when_due();
         match self.head_or_abstain(call) {
             Some(decision) => Ok(decision),
             None => self.seat_decide(call),
@@ -280,6 +339,7 @@ impl DecisionProvider for QuestionHeadRung {
     /// as before. Otherwise each bound question gets its head's answer and
     /// each other question the seat's, asked alone.
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        self.prune_when_due();
         let calls: Vec<DecisionCall<'_>> = (0..pack.questions.len())
             .filter_map(|index| pack.call(index))
             .collect();
