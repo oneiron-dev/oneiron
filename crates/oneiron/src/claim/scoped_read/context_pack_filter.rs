@@ -1,7 +1,7 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
 use super::access_gate::HeldAuthority;
 use super::*;
-use crate::context_pack::ContextPack;
+use crate::context_pack::{ComposedFieldProducers, ContextPack};
 use crate::serialize::empty_context::{EmptyContext, EmptyReason};
 use crate::serialize::pack_accounting::PackCriticalAccounting;
 
@@ -38,6 +38,26 @@ impl ScopedRead<'_> {
         pack: &mut ContextPack,
         critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<ScopedReadReceipt> {
+        self.filter_context_pack_listing_producers(
+            pack,
+            critical,
+            disclosure,
+            &mut ComposedFieldProducers::default(),
+        )
+    }
+
+    /// [`Self::filter_context_pack_critical_under`], which also records in
+    /// `producers` the messages whose words each TURN it keeps joins as
+    /// `txt` (FIX 1435). Those are the messages the filter released, not a
+    /// new read of the turn's messages. A TURN the filter takes out records
+    /// none. The receipt is the same.
+    pub(crate) fn filter_context_pack_listing_producers(
+        &self,
+        pack: &mut ContextPack,
+        critical: &PackCriticalAccounting,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+        producers: &mut ComposedFieldProducers,
     ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
@@ -100,6 +120,7 @@ impl ScopedRead<'_> {
                     disclosure,
                     std::mem::take(&mut pack.results),
                     &held,
+                    producers,
                 )?;
             let (mut neighbors, neighbor_suppressed, neighbor_rows_suppressed) = self
                 .filter_context_entities(
@@ -109,6 +130,7 @@ impl ScopedRead<'_> {
                     disclosure,
                     std::mem::take(&mut pack.neighbors),
                     &held,
+                    producers,
                 )?;
             let (reachability_claims, reachability_rows) = self
                 .retain_neighbors_reachable_from_results(
@@ -156,6 +178,8 @@ impl ScopedRead<'_> {
                 });
             }
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
+            // A neighbor the reachability cut dropped keeps no entry.
+            producers.retain_returned(pack);
             Ok(self.receipt_for(None, &policy, &filter, suppressed))
         })();
         self.end_recall_plan()?;
@@ -164,6 +188,10 @@ impl ScopedRead<'_> {
 }
 
 impl ScopedRead<'_> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one snapshot's policy, filter, clamp and held authority, plus the producer record"
+    )]
     fn filter_context_entities(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -172,6 +200,7 @@ impl ScopedRead<'_> {
         disclosure: Option<&crate::disclosure::DisclosureContext>,
         entities: Vec<ContextEntity>,
         held: &HeldAuthority,
+        producers: &mut ComposedFieldProducers,
     ) -> Result<(Vec<ContextEntity>, usize, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
@@ -194,7 +223,7 @@ impl ScopedRead<'_> {
                 claims_suppressed += 1;
             }
             if admission.visible()
-                && self.add_turn_content(rtxn, policy, disclosure, &mut entity)?
+                && self.add_turn_content(rtxn, policy, disclosure, &mut entity, producers)?
             {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
@@ -326,13 +355,15 @@ impl ScopedRead<'_> {
     /// a text revision gets the words it was served with. Added after
     /// admission, whose snapshot check compares each field with the turn's
     /// own body. Returns whether the turn stays: under a disclosure clamp,
-    /// only while the clamp still admits each of its messages.
+    /// only while the clamp still admits each of its messages. The messages
+    /// that give `txt` its words are recorded in `producers` (FIX 1435).
     fn add_turn_content(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
         entity: &mut ContextEntity,
+        producers: &mut ComposedFieldProducers,
     ) -> Result<bool> {
         if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
@@ -368,6 +399,7 @@ impl ScopedRead<'_> {
             .released(|message| self.is_entity_readable_with_policy_in(rtxn, policy, message))?;
         if let Some(text) = crate::embed::joined_turn_text(&messages) {
             fields.insert("txt".to_owned(), serde_json::Value::String(text));
+            producers.record_turn_text(entity.id, messages.iter().map(|(message, _)| *message));
             if entity.source_revision_ref.is_some() {
                 entity.source_revision_ref = Some(revision.0);
             }

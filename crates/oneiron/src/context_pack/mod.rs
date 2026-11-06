@@ -5,6 +5,7 @@
 //! sibling file owns one concern. `builder` is the hub that composes them.
 
 mod builder;
+mod composed_producers;
 mod edge_walk;
 mod empty_pack;
 mod hydration;
@@ -29,6 +30,7 @@ mod tests;
 pub use builder::{
     ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack, select_critical_pack_rows,
 };
+pub use composed_producers::ComposedFieldProducers;
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
 pub(crate) use l2_base::L2BaseCache;
 pub use l2_base::L2BaseSummary;

@@ -272,6 +272,11 @@ pub(crate) struct CoreContextPackResponse {
     /// Whether this door lowered the requested result count; always false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) limit_clamped: bool,
+    /// The rows each returned record's composed fields were read from, for
+    /// [`Self::producer_rows`] (FIX 1435); never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    composed_producers: oneiron::context_pack::ComposedFieldProducers,
 }
 
 pub(crate) fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
@@ -358,6 +363,7 @@ pub(crate) fn core_context_pack_response(
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
         limit_clamped: false,
+        composed_producers: oneiron::context_pack::ComposedFieldProducers::default(),
     }
 }
 

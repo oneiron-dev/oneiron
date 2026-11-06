@@ -59,8 +59,11 @@ pub(crate) async fn run_context_pack_builder(
         tracing::error!(kind = ?error.kind(), "core context-pack clamp count failed");
         core_engine_error("core context-pack scoped read failed", error)
     })?;
+    // The rows a TURN's text and a record's reaction lines are read from,
+    // taken from the walks that write them (FIX 1435).
+    let mut composed = oneiron::context_pack::ComposedFieldProducers::default();
     let mut narrowing = pack
-        .filter_scoped_under(scoped_read, disclosure.as_ref())
+        .filter_scoped_listing_producers(scoped_read, disclosure.as_ref(), &mut composed)
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack scoped read failed");
@@ -69,7 +72,7 @@ pub(crate) async fn run_context_pack_builder(
     // A MESSAGE carries its current reactions, read through the same scope
     // and clamp, and that read narrows the pack's receipt (FIX 8669).
     let reactions = scoped_read
-        .attach_reactions_under(&mut pack.value, disclosure.as_ref())
+        .attach_reactions_listing_producers(&mut pack.value, disclosure.as_ref(), &mut composed)
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
@@ -106,6 +109,7 @@ pub(crate) async fn run_context_pack_builder(
         })?;
     let run_id = pack.run_id;
     let pack = pack.value;
+    composed.retain_returned(&pack);
     let projected_memories = projected_memories.map(|mut section| {
         let visible_rows: HashMap<_, _> = pack
             .results
@@ -199,5 +203,6 @@ pub(crate) async fn run_context_pack_builder(
     };
     let mut response = core_context_pack_response(pack, evidence, assembly, narrowing);
     response.pin_narrowing = pin_narrowing;
+    response.composed_producers = composed;
     Ok((response, section, cursor))
 }
