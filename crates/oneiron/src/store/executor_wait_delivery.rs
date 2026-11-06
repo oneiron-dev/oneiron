@@ -67,6 +67,15 @@ pub(crate) fn code_run_wait_delivery_accepts_masked(bytes: &[u8]) -> bool {
 pub(crate) const SETTLED: SideTable<([u8; 1], EntityId), WaitDelivery, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
 
+/// Whether a masked copy of a `CODE_RUN_WAIT_INDEX` row still decodes as
+/// either of its two current stored values, for the historical lift sweep
+/// (FIX 2680): a parked waiter's or a seen-change cursor's be64 generation,
+/// or a settled wait's reply.
+pub(crate) fn code_run_wait_index_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<u64, Raw>(bytes)
+        || crate::side_table::decodes::<WaitDelivery, Raw>(bytes)
+}
+
 /// The rows. Key: id16(wait) + id16(run) + be64(generation).
 pub(crate) const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
     SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);

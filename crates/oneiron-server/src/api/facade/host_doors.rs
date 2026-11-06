@@ -39,6 +39,7 @@ pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.
+pub(crate) use super::ag_ui_file_doors::*;
 pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
