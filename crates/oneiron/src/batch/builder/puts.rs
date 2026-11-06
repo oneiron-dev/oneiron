@@ -232,6 +232,30 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// The archive MESSAGE put (FIX 7777): stages the bytes an
+    /// [`ArchivedMessageAdmission`] carries, and only those, as the witness
+    /// put stages its authorization's. Its only constructor, in the witness
+    /// archive owner, proves them a canonical envelope an import marked, so
+    /// a restored MESSAGE is imported evidence and never a local witness.
+    ///
+    /// [`ArchivedMessageAdmission`]: crate::memory::ArchivedMessageAdmission
+    pub(crate) fn put_archived_message(
+        self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::memory::ArchivedMessageAdmission,
+    ) -> Self {
+        self.put_through(
+            id,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            occurred,
+            learned_at,
+            admission.body(),
+            RawPutDoor::ArchivedMessage,
+        )
+    }
+
     /// Facet rule C's birth door: puts ASSET_TEXT `id`, written from each
     /// ASSET of `sources`, with a `DerivedFrom` edge to every one. A text
     /// this put births is stamped, in the same transaction, with the one
