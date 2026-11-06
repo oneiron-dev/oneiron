@@ -64,6 +64,13 @@ fn row_with_saved(
     run: impl FnOnce(Value) -> MemoryResult<Value>,
     require_saved: bool,
 ) -> (MemoryResult<Value>, Option<bool>) {
+    // A call a budget window paced answers from its held row until its turn
+    // ran (FIX 8753), before any hook runs on it again.
+    if !require_saved
+        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
+    {
+        return (reply, None);
+    }
     let mut notice = None;
     let result = (|| -> MemoryResult<Value> {
         let secret = CustodySecret::lift(verb, &mut args);
