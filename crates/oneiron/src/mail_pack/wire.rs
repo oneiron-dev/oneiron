@@ -206,6 +206,11 @@ pub trait MailProviderWire {
     /// provider's own search language, at most `limit`, trash, spam and
     /// drafts excluded (fix list row 15424). A wire whose provider it cannot
     /// search refuses.
+    ///
+    /// # Errors
+    ///
+    /// `mail_search_not_served` from a wire that cannot search, or the
+    /// provider's own failure.
     fn search_page(
         &self,
         _source: &MailSyncSource,

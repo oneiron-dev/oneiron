@@ -199,7 +199,9 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         page: Option<&str>,
     ) -> Result<MailIdPage> {
         // The caller's own operators, grouped, beside the listing's: trash
-        // and spam are left out by Gmail's default, drafts by the query.
+        // and spam are left out by Gmail's default, drafts by the query. The
+        // search door takes only a query whose parentheses balance, so no
+        // `)` of the caller's closes this group.
         self.listed_ids(source, format!("-in:drafts ({query})"), limit, page)
     }
 

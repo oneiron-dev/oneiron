@@ -16,8 +16,8 @@ use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::landing::{LandOutcome, Landing};
 use super::microsoft365::HttpGraphMailWire;
 use super::pack::require_pack_active_in;
-use super::source::{MailProvider, MailSourceKind, MailSourceStatus, SOURCES};
-use super::state::{OCCURRENCES, occurrence_key};
+use super::source::{MailProvider, MailSourceStatus, SOURCES};
+use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::MailProviderWire;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -68,27 +68,52 @@ pub struct MailSearchReport {
     pub next_page: Option<String>,
 }
 
-/// The query `query`, checked: 1 to 1024 bytes, no control character.
+/// The query `query`, checked: 1 to 1024 bytes, no control character, its
+/// quotes closed and, outside them, its parentheses balanced. So a caller's
+/// `)` never closes the group a wire puts the query in.
 fn valid_query(query: &str) -> MemoryResult<&str> {
     let query = query.trim();
     if query.is_empty()
         || query.len() > MAX_SEARCH_QUERY_BYTES
         || query.chars().any(char::is_control)
+        || !grouped(query)
     {
         return Err(MemoryError::bad_request(format!(
-            "a search query is 1 to {MAX_SEARCH_QUERY_BYTES} bytes, with no control character"
+            "a search query is 1 to {MAX_SEARCH_QUERY_BYTES} bytes, with no control character, \
+             its quotes closed and its parentheses balanced"
         )));
     }
     Ok(query)
+}
+
+/// Whether `query`'s quotes close and, outside them, each `)` closes a `(`
+/// the query opened itself.
+fn grouped(query: &str) -> bool {
+    let mut quoted = false;
+    let mut depth = 0_usize;
+    for c in query.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => {
+                let Some(open) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = open;
+            }
+            _ => {}
+        }
+    }
+    !quoted && depth == 0
 }
 
 impl Vault {
     /// One page of the messages `query` finds in the mailbox source
     /// `source_ref`, through `wire`, each one the vault does not hold yet
     /// landed whole and kept, under the vault owner's write authority. The
-    /// owner must read the mailbox (their own, or a group address they read
-    /// or manage). It reads the provider over blocking HTTP: call it off any
-    /// async runtime.
+    /// owner must read the mailbox: their own, or a group address in whose
+    /// audience they are. Managing a group address is not enough. It reads
+    /// the provider over blocking HTTP: call it off any async runtime.
     ///
     /// # Errors
     ///
@@ -113,10 +138,7 @@ impl Vault {
                 .get(&self.store, &txn, &source_ref)?
                 .filter(|row| row.kind.is_mailbox() && row.status == MailSourceStatus::Active)
                 .ok_or_else(unknown)?;
-            let reads = crate::source_audience::actor_reads_in(self, &txn, &row.audience, actor)?;
-            let manages = row.kind == MailSourceKind::GroupAddress
-                && super::compliance::manages_in(self, &txn, actor)?;
-            if !reads && !manages {
+            if !crate::source_audience::actor_reads_in(self, &txn, &row.audience, actor)? {
                 return Err(unknown());
             }
             row
@@ -132,13 +154,20 @@ impl Vault {
             ..MailSearchReport::default()
         };
         for hit in &hits.messages {
+            // Held whole, or forgotten: nothing to fetch. A message held by
+            // its headers only is fetched whole and lands its body.
             let held = {
                 let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-                OCCURRENCES.contains(
-                    &self.store,
-                    &txn,
-                    &occurrence_key(source_ref, &hit.provider_id),
-                )?
+                OCCURRENCES
+                    .get(
+                        &self.store,
+                        &txn,
+                        &occurrence_key(source_ref, &hit.provider_id),
+                    )?
+                    .is_some_and(|held| {
+                        matches!(held.stage, MailStage::Body)
+                            || matches!(held.presence, MailPresence::Forgotten { .. })
+                    })
             };
             if held {
                 report.same += 1;
@@ -148,7 +177,8 @@ impl Vault {
                 report.skipped += 1;
                 continue;
             };
-            if full.headers.trash_or_spam {
+            // Never trash, spam or a draft, whatever the query found.
+            if !super::importer::copies(&full.headers, None) {
                 report.skipped += 1;
                 continue;
             }
@@ -199,6 +229,11 @@ impl Memory<'_> {
     /// `vault.mail.sources.search` on this device, as its embedded owner:
     /// [`Vault::mail_source_search`]. It reads the provider over blocking
     /// HTTP: call it off any async runtime.
+    ///
+    /// # Errors
+    ///
+    /// No embedded owner on this device, or [`Vault::mail_source_search`]'s
+    /// own.
     pub fn mail_sources_search(
         &self,
         input: &MailSourceSearchRequest,
