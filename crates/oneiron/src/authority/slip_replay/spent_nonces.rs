@@ -1344,7 +1344,7 @@ impl NonceSpend {
         let failures = u64::from(self.failures);
         let event = DiagnosticEvent {
             detector_id: NONCE_SPEND_DETECTOR.to_owned(),
-            event_class: DiagnosticEventClass::ChainVerifyFailure,
+            event_class: DiagnosticEventClass::DurableWriteFailure,
             signal: None,
             actor_class: "system".to_owned(),
             actor_ref: None,
