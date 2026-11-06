@@ -28,6 +28,7 @@ mod connector_elicitation_consent;
 mod connector_elicitation_receipt;
 mod connector_remember;
 mod execution;
+mod raw_body;
 mod recovery;
 mod result_scrub;
 mod scope;
@@ -75,6 +76,7 @@ pub use self::execution::{
 // production builds, so the re-export lives under the same cfg as its callers.
 #[cfg(test)]
 use self::execution::execute_scoped_mcp_outbound_call;
+pub use self::raw_body::{RawOutboundBody, RawOutboundBodyReader};
 pub use self::recovery::{
     AuthorizedRecoveryError, AuthorizedRecoveryReport, StaleConnectorManifestRefusal,
     recover_authorized_outbound_intents,

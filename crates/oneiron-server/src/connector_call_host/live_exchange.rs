@@ -47,7 +47,7 @@ pub(super) fn hand_over(
     round: KeptRound,
     mut continuation: Continuation,
     live: &mut Option<LiveSession>,
-    body: Vec<u8>,
+    body: RawOutboundBody,
     kept: Option<KeptSentValue>,
 ) -> Sent {
     let KeptRound {
