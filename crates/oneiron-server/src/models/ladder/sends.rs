@@ -91,7 +91,7 @@ impl OfferLadder {
             };
             match answered {
                 Ok(mut response) => {
-                    warmth.answered(&self.rests);
+                    warmth.answered(&self.rests, &response.usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
@@ -185,7 +185,7 @@ impl OfferLadder {
                     finish_reason,
                     reply_assertions,
                 } => {
-                    warmth.answered(&self.rests);
+                    warmth.answered(&self.rests, &usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     let done = match permit.settle(CallOutcome::Answered(&usage)) {
                         Ok(_) => {
