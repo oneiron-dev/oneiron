@@ -78,6 +78,7 @@ pub use oneiron_base::calendar_body_screen as safeguard;
 pub mod series;
 pub mod transcript;
 pub mod tz;
+pub(crate) mod windows_zones;
 
 /// Single calendar error home. Later stack layers append variants.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
