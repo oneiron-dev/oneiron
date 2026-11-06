@@ -55,7 +55,9 @@ use super::response_owners::{
 use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::{holds_reply_content, resumed_output_wait, terminal_output_seq};
-use crate::provenance::body::{owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn};
+use crate::provenance::body::{
+    owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
+};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
 use crate::store::result_body_rows::body_handle;
@@ -83,11 +85,14 @@ pub(super) enum ResponseScrub {
 /// is put back in its erased form, past the side-row wall, the reply bodies
 /// it names are released, and its owner row says Erased; then the wait
 /// replies those runs were delivered take their erased form (FIX 5718 part
-/// 2). A record that is stored but does not decode keeps its row as it is,
-/// and the reply bodies of the run its owner row names are released
-/// ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365). Erasing an
-/// erased one again changes nothing. Nothing retires here: the provenance
-/// door's retirement ran before it.
+/// 2). A record that is stored but does not decode names no outputs: the
+/// reply bodies of the run its owner row names are released, each with its
+/// own marks ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365),
+/// then every other body that run holds, and its row keeps none of its
+/// bytes, written over with the erased-unreadable mark, which still decodes
+/// as no record, so nothing replays from it (FIX 6533). Erasing an erased
+/// one again changes nothing. Nothing retires here: the provenance door's
+/// retirement ran before it.
 ///
 /// # Errors
 ///
@@ -132,7 +137,9 @@ pub(crate) fn soft_delete_actor_responses_in_txn(
 /// Erased; then the wait replies its runs were delivered take their erased
 /// form, each membership as its owner row. A record that is stored but does
 /// not decode releases the reply bodies of its owner row's run `run`, which
-/// need not be the replay key, and its row stays as it is.
+/// need not be the replay key; an erase then releases every other body that
+/// run holds and writes the erased-unreadable mark over its row (FIX 6533),
+/// and a soft delete leaves its row as it is.
 fn scrub_actor_responses_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -149,11 +156,17 @@ fn scrub_actor_responses_in_txn(
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             released = release_reply_outputs_in_txn(store, wtxn, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
-        } else if REPLAY_RECORDS.contains(store, wtxn, &record_id)? {
+        } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Stored but not decoded: its reply bodies are its owner row's
-            // run's (FIX 7365).
+            // run's (FIX 7365), which need not be the replay key. An erase
+            // then takes every other body that run holds and the row's
+            // bytes (FIX 6533).
             let held = unreadable_record_reply_occurrences_in_txn(store, wtxn, run)?;
             released = release_occurrences_in_txn(store, wtxn, held)?;
+            if scrub == ResponseScrub::Erase {
+                release_owner_bodies_in_txn(store, wtxn, &run)?;
+                REPLAY_RECORDS.put_erased_unreadable(store, wtxn, &record_id)?;
+            }
         }
         match scrub {
             ResponseScrub::Delete => {
@@ -263,9 +276,11 @@ pub(crate) fn response_erased_in_txn(
 /// soft delete of `actor` left Deleted retires the reply bodies that delete
 /// released too, by the digests its owner row kept, and then says Erased:
 /// its actor link and those bodies go (FIX 6591). A record that is stored
-/// but does not decode retires the reply bodies of its owner row's run
-/// ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365). An id whose
-/// entity is no actor scans nothing.
+/// but does not decode names no outputs: the reply bodies of its owner
+/// row's run go with their marks
+/// ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365), then every
+/// other body that run holds (FIX 6533). An id whose entity is no actor
+/// scans nothing.
 ///
 /// # Errors
 ///
@@ -288,15 +303,19 @@ pub(crate) fn retire_actor_responses_in_txn(
         .map(|(run, body, path)| (run, path, CodeRunRawOutput::of_ref(body).handle))
         .collect();
     let mut deleted = Vec::new();
+    let mut unreadable = Vec::new();
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(run_reply_occurrences_in_txn(store, wtxn, &record)?);
-        } else if REPLAY_RECORDS.contains(store, wtxn, &record_id)? {
-            // Stored but not decoded: its reply bodies are its owner row's
-            // run's (FIX 7365).
+        } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
+            // Stored but not decoded: its bodies are held by its owner row's
+            // run (a decoded record's `run_id`), which need not be the
+            // replay key; its reply bodies first, with their marks (FIX
+            // 7365), then every other one (FIX 6533).
             held.extend(unreadable_record_reply_occurrences_in_txn(
                 store, wtxn, run,
             )?);
+            unreadable.push(run);
         }
         if let Some(released) =
             response_owner_in_txn(store, wtxn, &record_id)?.and_then(ResponseOwner::into_released)
@@ -308,6 +327,15 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (owner, path, handle) in held {
         if let Some(digest) = release_occurrence_in_txn(store, wtxn, owner, path, handle)? {
             digests.entry(owner).or_default().push(digest);
+        }
+    }
+    for run in unreadable {
+        for body in owned_bodies_in_txn(store, wtxn, &run)? {
+            let digest = body.state.held().map(|held| held.blake3);
+            release_body_in_txn(store, wtxn, &run, &body.occurrence)?;
+            if let Some(digest) = digest {
+                digests.entry(run).or_default().push(digest);
+            }
         }
     }
     for released in deleted.iter().flat_map(|(_, _, released)| released) {
@@ -323,6 +351,18 @@ pub(crate) fn retire_actor_responses_in_txn(
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
     }
     Ok(())
+}
+
+/// Whether run `record`'s replay row is stored but does not decode (FIX
+/// 6533). The erased-unreadable mark an erase already wrote counts too:
+/// erasing it again changes nothing.
+fn unreadable_record_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
+    Ok(REPLAY_RECORDS.contains(store, txn, record)?
+        && REPLAY_RECORDS.get_lenient(store, txn, record)?.is_none())
 }
 
 /// Every replay record whose replies are `actor`'s, by its run id, with the
