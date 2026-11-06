@@ -143,6 +143,14 @@ borrowed-part vector or a separate joined string. Non-text parts stay excluded;
 no text or only empty text still follows the original unavailable result.
 Appending can reallocate and is not pre-admitted by this transfer.
 
+Before building the dynamic JSON value, `ai.reply` moves the standing compiled
+text into a local owner and borrows it for the prefix. The standing option and
+its object fields remain present until the original JSON key removal, with an
+empty compiled-text field. This avoids copying that discarded text while
+preserving the original key positions and removal order, including an
+insertion-ordered JSON map. Pack serialization and L2 extraction are unchanged;
+the discarded pack value and the remaining standing metadata still allocate.
+
 This is output custody, not pre-allocation admission. Serialization may still
 allocate before its capacity is recorded, and reallocation may temporarily
 hold old and new backing. Independent MEMORIES disclosure clones, reply JSON

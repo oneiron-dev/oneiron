@@ -110,7 +110,7 @@ async fn reply(
         "companion": input.companion,
     }))
     .map_err(|_| MemoryError::bad_request("invalid reply context controls"))?;
-    let (served, Json(context)) = super::context_board_hydrate(
+    let (served, Json(mut context)) = super::context_board_hydrate(
         read_auth,
         State(Arc::clone(server)),
         Ok(Json(board_request)),
@@ -123,12 +123,13 @@ async fn reply(
     // evidence, then the dynamic board. The structured MEMORIES rows ride
     // the dynamic context too, so the stamp describes exactly the selection
     // sent, including rows the compact board renders as index-only.
-    let mut dynamic = serde_json::to_value(&context).map_err(|_| internal())?;
-    let standing = context
+    // Keep the standing object present until its original JSON removal below.
+    let standing_compiled = context
         .standing
-        .as_ref()
-        .map(|prefix| prefix.compiled.as_str())
-        .unwrap_or("");
+        .as_mut()
+        .map(|prefix| std::mem::take(&mut prefix.compiled));
+    let mut dynamic = serde_json::to_value(&context).map_err(|_| internal())?;
+    let standing = standing_compiled.as_deref().unwrap_or("");
     dynamic
         .as_object_mut()
         .ok_or_else(internal)?
