@@ -25,7 +25,9 @@ use super::super::records::{
 use super::super::replay_bodies::replay_owners;
 use super::super::response_erase::release_occurrence_in_txn;
 use super::CAPSULES;
-use super::spawn_erase::{publish_start_in_txn, republished_start_body, start_bytes_in_txn};
+use super::pieces::PieceScope;
+use super::spawn_erase::{publish_start_in_txn, republished_start_body};
+use super::start_pieces::start_bytes_in_txn;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::{
     OwnedBody, digest_is_held_in_txn, prune_digest_in_rows, queue_pruned_file_in_txn,
@@ -57,7 +59,7 @@ const BODY_RELEASED_ROWS: SideTable<[u8; 32], u64, Named> =
 pub(crate) struct KeptStart {
     /// Its capsule's raw `vault_meta` key.
     pub(crate) row: Vec<u8>,
-    /// The run that owns its body.
+    /// The run that owns its pieces.
     pub(crate) run: EntityId,
     /// The actor whose step it is.
     pub(crate) actor: EntityId,
@@ -74,9 +76,9 @@ pub(crate) fn step_capsule_row(row: &[u8]) -> bool {
 
 /// Every kept step start `txn` holds, by its capsule: a capsule that does
 /// not decode, holds its content no longer, names no start, or whose run
-/// no longer holds its start whole, keeps none. A start whose bytes do not
-/// read is none here, and is reported: it travels as it did (CALLS "an
-/// unread step start travels whole").
+/// no longer holds its manifest and each of its pieces whole, keeps none.
+/// A start whose bytes do not read is none here, and is reported: it
+/// travels as it did (CALLS "an unread step start travels whole").
 ///
 /// # Errors
 ///
@@ -135,10 +137,10 @@ fn kept_start_in_txn(
     let Ok(capsule) = CAPSULES.decode_value(bytes) else {
         return Ok(None);
     };
-    let (Some(actor), Some(start)) = (capsule.content.actor(), &capsule.start) else {
+    let (Some(scope), Some(start)) = (capsule_scope(&capsule), &capsule.start) else {
         return Ok(None);
     };
-    let Some(held) = start_bytes_in_txn(store, txn, capsule.run, start)? else {
+    let Some(held) = start_bytes_in_txn(store, txn, scope, start)? else {
         return Ok(None);
     };
     if *blake3::hash(&held).as_bytes() != start.digest {
@@ -148,11 +150,21 @@ fn kept_start_in_txn(
     row.extend_from_slice(key);
     Ok(Some(KeptStart {
         row,
-        run: capsule.run,
-        actor,
+        run: scope.run,
+        actor: scope.actor,
         digest: start.body.hash,
         bytes: held,
     }))
+}
+
+/// The run and actor whose pieces a capsule's start names (FIX 4192);
+/// `None` for a capsule that holds its content no longer.
+fn capsule_scope(capsule: &StepReplayCapsule) -> Option<PieceScope> {
+    let actor = capsule.content.actor()?;
+    Some(PieceScope {
+        run: capsule.run,
+        actor,
+    })
 }
 
 /// Who owns a kept start's rest (CALLS "step start rest owners"): the actor

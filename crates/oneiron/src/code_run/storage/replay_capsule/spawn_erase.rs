@@ -22,17 +22,18 @@ use std::collections::BTreeSet;
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{ExecutorStepStart, StepStartBody};
 use super::super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, StoredBody, body_drifted, load_whole_body,
-    owned_body,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, StoredBody, owned_body,
 };
 use super::super::response_erase::release_occurrence_in_txn;
 use super::super::spawn_erase::erase_reached_calls;
 use super::CAPSULES;
+use super::pieces::PieceScope;
+use super::start_pieces::start_bytes_in_txn;
 use crate::code_run::{decode_code_run_replay_record, encode_code_run_replay_record};
 use crate::compaction::output::OutputRef;
-use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
+use crate::provenance::body::publish_body_in_txn;
 use crate::side_table::SideKey;
-use crate::store::{BodyMeter, Store, body_key_row_in_txn, erase_bodies_for_owner_in_txn};
+use crate::store::{BodyMeter, Store, erase_bodies_for_owner_in_txn};
 use crate::{EntityId, Error, Result};
 
 /// A capsule's key: its attempt, lease generation and step.
@@ -84,13 +85,15 @@ pub(in crate::code_run::storage) fn erase_spawn_prefixes_in_txn(
             continue;
         };
         // An erased capsule holds no start.
-        if capsule.content.actor().is_none() {
-            continue;
-        }
-        let Some(start) = &capsule.start else {
+        let (Some(actor), Some(start)) = (capsule.content.actor(), &capsule.start) else {
             continue;
         };
-        let Some(held) = start_bytes_in_txn(store, wtxn, capsule.run, start)? else {
+        // FIX 4192: the whole start, put together from its pieces.
+        let scope = PieceScope {
+            run: capsule.run,
+            actor,
+        };
+        let Some(held) = start_bytes_in_txn(store, wtxn, scope, start)? else {
             continue;
         };
         match erased_start(&held, erased)? {
@@ -119,36 +122,6 @@ pub(in crate::code_run::storage) fn erase_spawn_prefixes_in_txn(
         CAPSULES.put(store, wtxn, &key, &capsule)?;
     }
     Ok(())
-}
-
-/// The bytes of `start`, as run `run` holds them, read in `txn`; `None` when
-/// the run no longer holds its occurrence or its bytes are gone or drifted.
-pub(super) fn start_bytes_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    run: EntityId,
-    start: &ExecutorStepStart,
-) -> Result<Option<Vec<u8>>> {
-    if start.erased {
-        return Ok(None);
-    }
-    let output = CodeRunRawOutput {
-        path: start.path.clone(),
-        ..CodeRunRawOutput::of_ref(start.body)
-    };
-    let occurrence = ResultOccurrence::of(Some(run), &output)?.id();
-    if owned_body_in_txn(store, txn, &run, &occurrence)?.is_none() {
-        return Ok(None);
-    }
-    let Some(body) = RAW_OUTPUTS.get(store, txn, &output.handle)? else {
-        return Ok(None);
-    };
-    let key = body_key_row_in_txn(store, txn, &output.raw_blake3)?;
-    match load_whole_body(&output, body, key.as_ref(), || Ok(vec![store.body_dir()?])) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if body_drifted(&error) => Ok(None),
-        Err(error) => Err(error),
-    }
 }
 
 /// The start body `bytes` with each call of its prefix one of `erased`
