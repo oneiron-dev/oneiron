@@ -4,10 +4,10 @@
 //! over that snapshot, never folded into it, and each comes back as its own
 //! exact operation spans. Every value the capture meets, at a shallow root,
 //! in the latest state and in every retained operation, is placed with its
-//! family's codec ([`root_entry`]): each rightful holder takes its own copy
+//! family's codec ([`super::owners::root_entry`]): each rightful holder takes its own copy
 //! (FIX 9128), the actors it names are split out (FIX 9127), and every key,
 //! a deleted one's too, must be one that may stand plaintext
-//! ([`key_refusal`]). A Loro PeerID only writes; the owner handles the
+//! ([`super::owners::key_refusal`]). A Loro PeerID only writes; the owner handles the
 //! capture records are indexes into this capture's own holders.
 //!
 //! A window splits only once its all-open join gives each stored row back
@@ -18,28 +18,29 @@
 //! whole under the vault-wide seal, named: an operation waiting on one the
 //! capture does not hold, an update its window's history no longer wholly
 //! holds, a nested container, a message, a key or value no family reads.
+//!
+//! A room turn row in parts is split from its joined row ([`super::joined_turns`],
+//! FIX 12153): its manifest, part keys and parts become derived slots, and
+//! the proof joins the all-open turn, its actor absent and the turn absent.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::checkpoint::{Capture, Classify, Field, OwnerId, Parts, Payload, SlotKind, Unsupported};
+use loro::checkpoint::{Atom, AtomId, Capture, Parts, Payload, SlotKind, Unsupported};
 use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, LoroValue};
 
-use super::owners::{
-    WINDOW_ROOTS, WithheldKey, key_fill, key_refusal, root_entry, root_fill, withheld_key,
-    withheld_part_key,
-};
+use super::classify::{Classifier, Home, Plan, Refusal};
+use super::joined_turns::{Transport, TurnSource, derived_atom};
+use super::owners::{WINDOW_ROOTS, key_fill, root_fill};
 use super::parts::PartHolders;
 use super::{
-    AtomHome, AtomRef, CapturedSyncRow, Holder, LoroCarrier, LoroRow, LoroSlice, LoroSlot,
-    Placement, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncUnclassified,
-    ValueSplit, WINDOW_ROUND_TRIP, WindowProjection,
+    AtomHome, AtomRef, CapturedSyncRow, DerivedRole, JoinedTurn, LoroCarrier, LoroRow, LoroSlice,
+    LoroSlot, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncUnclassified,
+    WINDOW_ROUND_TRIP, WindowProjection,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{SYNC_U_W, SideKey, WINDOW_SNAPSHOT};
-use crate::store::checkpoint_payload::rows::{
-    ActorPart, OtherClient, OwnerRef, RowLocator, admit_round_trip, bad_part,
-};
+use crate::store::checkpoint_payload::rows::{ActorPart, RowLocator, admit_round_trip, bad_part};
 use crate::sync::loro_support::json_covers_blob;
 use crate::sync::window_rows::WindowUpdateKey;
 
@@ -57,18 +58,12 @@ const NOT_AN_UPDATE: &str = "a window's pending row that is not a Loro update";
 /// shallow root, or one it cannot take.
 const CLIPPED: &str = "an update whose operations the window's history does not all hold";
 
-/// A change's commit message.
-const MESSAGE: &str = "a window change's message, which no window family writes";
-
 /// A split whose all-open join does not give its rows back.
 const NOT_PROVED: &str = "a window history its split does not give back";
 
 /// The member path a value's copy rests at: this, its atom id, then its
 /// place among the value's holders.
 const COPY: &str = "loro";
-
-/// The owner found, when one was, and why a window stays whole.
-type Refusal = (Option<OwnerRef>, SyncUnclassified);
 
 /// One Loro row of a window: where it sits, its family, and its Loro bytes.
 struct LoroIn<'a> {
@@ -192,237 +187,6 @@ fn group(
     Ok(())
 }
 
-/// What one copy of a value goes to. Its index among a capture's homes is
-/// the owner handle the vendored capture records.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Home {
-    Holder(Holder),
-    Structure(Vec<OwnerRef>),
-    Client(OtherClient),
-}
-
-impl Home {
-    fn target(&self) -> (AtomHome, Vec<OwnerRef>) {
-        match self {
-            Self::Holder(holder) => (AtomHome::Owner(holder.owner), holder.dependencies.clone()),
-            Self::Structure(dependencies) => (AtomHome::Structure, dependencies.clone()),
-            Self::Client(client) => (AtomHome::Client(*client), Vec::new()),
-        }
-    }
-}
-
-/// One value or withheld key the capture met, in the order it made its
-/// atoms: its root map and key, its kind, what each of its copies holds,
-/// and its actors.
-struct Plan {
-    root: String,
-    key: String,
-    kind: SlotKind,
-    value: Vec<u8>,
-    split: Option<ValueSplit>,
-}
-
-/// The families' answers to one capture.
-struct Classifier<'o> {
-    owners: &'o dyn SyncPayloadOwners,
-    /// Every part's holders, once a first pass noted the manifests.
-    parts: Option<PartHolders>,
-    /// The first pass's notes, while it runs.
-    noting: Option<PartHolders>,
-    homes: Vec<Home>,
-    plans: Vec<Plan>,
-    refusal: Option<Refusal>,
-    /// A part was met before the manifests were noted.
-    needs_parts: bool,
-}
-
-impl<'o> Classifier<'o> {
-    fn new(owners: &'o dyn SyncPayloadOwners, parts: Option<PartHolders>) -> Self {
-        Self {
-            owners,
-            parts,
-            noting: None,
-            homes: Vec::new(),
-            plans: Vec::new(),
-            refusal: None,
-            needs_parts: false,
-        }
-    }
-
-    /// Notes the first reason the window stays whole.
-    fn refuse(
-        &mut self,
-        owner: Option<OwnerRef>,
-        reason: SyncUnclassified,
-    ) -> Option<Vec<OwnerId>> {
-        if self.refusal.is_none() {
-            self.refusal = Some((owner, reason));
-        }
-        None
-    }
-
-    /// A part's withheld digest key (FIX 10278): one copy under each holder
-    /// a manifest names the part for, the same holders its value goes to,
-    /// whole. Met before the manifests were noted, the capture runs again
-    /// once they are.
-    fn part_key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
-        let placed = match &self.parts {
-            Some(parts) => parts.place(root, key),
-            None => {
-                self.needs_parts = true;
-                return None;
-            }
-        };
-        let holders = match placed {
-            Placement::Owned(holders) => holders,
-            Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
-            _ => return self.refuse(None, SyncUnclassified::OrphanPart),
-        };
-        if holders.is_empty() {
-            return self.refuse(None, SyncUnclassified::NoOwner);
-        }
-        let handles: Vec<OwnerId> = holders
-            .into_iter()
-            .map(|holder| self.handle(Home::Holder(holder)))
-            .collect();
-        self.plans.push(Plan {
-            root: root.to_owned(),
-            key: key.to_owned(),
-            kind: SlotKind::Key,
-            value: key.as_bytes().to_vec(),
-            split: None,
-        });
-        Some(handles)
-    }
-
-    /// The capture-local handle of `home`: equal homes share one, and two
-    /// holders of one owner with other dependencies do not.
-    fn handle(&mut self, home: Home) -> OwnerId {
-        let index = match self.homes.iter().position(|known| *known == home) {
-            Some(index) => index,
-            None => {
-                self.homes.push(home);
-                self.homes.len() - 1
-            }
-        };
-        OwnerId::try_from(index).unwrap_or(OwnerId::MAX)
-    }
-}
-
-impl Classify for Classifier<'_> {
-    fn plain_key(&mut self, root: &str, key: &str) -> bool {
-        if self.noting.is_some() {
-            return true;
-        }
-        match key_refusal(root, key) {
-            None => true,
-            // A key its family withholds is asked for its holders next.
-            Some(_) if withheld_key(root, key).is_some() || withheld_part_key(root, key) => false,
-            Some(reason) => {
-                self.refuse(None, reason);
-                false
-            }
-        }
-    }
-
-    /// A key withheld in an atom of its own (FIX 10279): its holders' copies
-    /// hold it, the actor it names split out, made before any value under it.
-    fn key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
-        if withheld_part_key(root, key) {
-            return self.part_key_holders(root, key);
-        }
-        let Some(WithheldKey { holders, split }) = withheld_key(root, key) else {
-            let reason = key_refusal(root, key).unwrap_or(SyncUnclassified::NoOwner);
-            return self.refuse(None, reason);
-        };
-        if holders.is_empty() {
-            return self.refuse(None, SyncUnclassified::NoOwner);
-        }
-        let handles: Vec<OwnerId> = holders
-            .into_iter()
-            .map(|holder| self.handle(Home::Holder(holder)))
-            .collect();
-        let value = match &split {
-            Some(split) => split.no_one.clone(),
-            None => key.as_bytes().to_vec(),
-        };
-        self.plans.push(Plan {
-            root: root.to_owned(),
-            key: key.to_owned(),
-            kind: SlotKind::Key,
-            value,
-            split,
-        });
-        Some(handles)
-    }
-
-    fn holders(&mut self, field: Field<'_>) -> Option<Vec<OwnerId>> {
-        let Field::Value {
-            root, key, value, ..
-        } = field
-        else {
-            return self.refuse(None, SyncUnclassified::ActorSplit(MESSAGE));
-        };
-        let LoroValue::Binary(bytes) = value else {
-            return self.refuse(None, SyncUnclassified::Undecodable);
-        };
-        let placed = root_entry(root, key, bytes.as_slice(), self.owners);
-        if let Some(noting) = self.noting.as_mut() {
-            noting.note(root, &placed);
-            return Some(vec![0]);
-        }
-        let placed = match placed {
-            Placement::Part => match &self.parts {
-                Some(parts) => parts.place(root, key),
-                None => {
-                    self.needs_parts = true;
-                    return None;
-                }
-            },
-            placed => placed,
-        };
-        let held =
-            |holders: Vec<Holder>| -> Vec<Home> { holders.into_iter().map(Home::Holder).collect() };
-        let (homes, split): (Vec<Home>, Option<ValueSplit>) = match placed {
-            Placement::Owned(owned) => (held(owned), None),
-            Placement::Split {
-                holders: owned,
-                split,
-            } => (held(owned), Some(split)),
-            Placement::Structure { dependencies } => (vec![Home::Structure(dependencies)], None),
-            Placement::Dispatched(client) => (vec![Home::Client(client)], None),
-            Placement::Manifest {
-                holders: owned,
-                joined: None,
-                ..
-            } => (held(owned), None),
-            Placement::Manifest {
-                holders: owned,
-                joined: Some(reason),
-                ..
-            } => return self.refuse(owned.first().map(|holder| holder.owner), reason),
-            Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
-            Placement::Part => return self.refuse(None, SyncUnclassified::OrphanPart),
-        };
-        if homes.is_empty() {
-            return self.refuse(None, SyncUnclassified::NoOwner);
-        }
-        let handles: Vec<OwnerId> = homes.into_iter().map(|home| self.handle(home)).collect();
-        let value = match &split {
-            Some(split) => split.no_one.clone(),
-            None => bytes.to_vec(),
-        };
-        self.plans.push(Plan {
-            root: root.to_owned(),
-            key: key.to_owned(),
-            kind: SlotKind::Value,
-            value,
-            split,
-        });
-        Some(handles)
-    }
-}
-
 /// Why the vendored capture left a window whole, when no family said.
 fn unsupported(why: Unsupported) -> SyncUnclassified {
     match why {
@@ -439,6 +203,7 @@ struct Prepared {
     plans: Vec<Plan>,
     homes: Vec<Home>,
     slices: Vec<LoroSlice>,
+    turn: Option<TurnSource>,
 }
 
 /// Captures and proves one group; nothing is emitted.
@@ -448,15 +213,17 @@ fn prepare(
     owners: &dyn SyncPayloadOwners,
 ) -> std::result::Result<Prepared, Refusal> {
     let (doc, slices) = open(base, rows)?;
-    let mut classifier = Classifier::new(owners, None);
+    let mut classifier = Classifier::new(owners, None, None);
     let mut captured = doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut classifier);
     if classifier.needs_parts {
         // A part's holders are every manifest's in the capture's history:
-        // note them all first, then place.
-        let mut noting = Classifier::new(owners, None);
+        // note them all first, then place. A parted turn row the notes
+        // prove is carried joined (FIX 12153).
+        let mut noting = Classifier::new(owners, None, None);
         noting.noting = Some(PartHolders::default());
         doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut noting);
-        classifier = Classifier::new(owners, noting.noting);
+        let turn = TurnSource::of(&noting.turns);
+        classifier = Classifier::new(owners, noting.noting, turn);
         captured = doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut classifier);
     }
     let parts = match captured {
@@ -465,10 +232,19 @@ fn prepare(
             return Err(classifier.refusal.unwrap_or((None, unsupported(why))));
         }
     };
-    let Classifier { plans, homes, .. } = classifier;
+    let Classifier {
+        plans, homes, turn, ..
+    } = classifier;
     if plans.len() != parts.atoms.len() {
         return Err(not_proved());
     }
+    // A joined turn is carried only with its manifest derived from it.
+    let turn = turn.filter(|_| {
+        plans.iter().any(|plan| {
+            plan.derived
+                .is_some_and(|slot| slot.role == DerivedRole::Manifest)
+        })
+    });
     // Current-map values alone miss historical heads and removed parts.
     // Judge manifest bindings against every value this group captured.
     {
@@ -486,12 +262,13 @@ fn prepare(
             return Err((Some(owner), reason));
         }
     }
-    prove(&doc, rows, &slices, &parts, &plans)?;
+    prove(&doc, rows, &slices, &parts, &plans, turn.as_ref())?;
     Ok(Prepared {
         parts,
         plans,
         homes,
         slices,
+        turn,
     })
 }
 
@@ -544,17 +321,28 @@ fn open(
 }
 
 /// Proves a capture's split against the stored rows: each split value
-/// fills back to its stored bytes with every actor, and the all-open join
-/// rebuilds the captured document, each row cut from it holding its stored
-/// slice, under [`WINDOW_ROUND_TRIP`] fed the join report's verdict.
+/// fills back to its stored bytes with every actor, each slot derived from
+/// the joined turn `turn` is what the all-open turn re-parts to, and the
+/// all-open join of those atoms rebuilds the captured document, each row cut
+/// from it holding its stored slice, under [`WINDOW_ROUND_TRIP`] fed the join
+/// report's verdict. A joined turn's other forms join too: its actor absent,
+/// and the turn absent (FIX 12153).
 fn prove(
     doc: &LoroDoc,
     rows: &[LoroIn<'_>],
     slices: &[LoroSlice],
     parts: &Parts,
     plans: &[Plan],
+    turn: Option<&TurnSource>,
 ) -> std::result::Result<(), Refusal> {
+    let open = turn.map(|turn| &turn.open);
     for (atom, plan) in parts.atoms.iter().zip(plans) {
+        if let Some(derived) = plan.derived {
+            if derived_atom(atom.id, &atom.holders, derived.role, open).as_ref() != Some(atom) {
+                return Err(not_proved());
+            }
+            continue;
+        }
         let stored: &[u8] = match (&atom.payload, plan.kind) {
             (Payload::Value(LoroValue::Binary(stored)), SlotKind::Value) => stored.as_slice(),
             (Payload::Key(key), SlotKind::Key) if *key == plan.key => key.as_bytes(),
@@ -587,7 +375,11 @@ fn prove(
             return Err(not_proved());
         }
     }
-    let joined = LoroDoc::join_root_map_checkpoint(&parts.skeleton, &parts.atoms, &[])
+    let (atoms, erased) = expand(parts, plans, open);
+    if !erased.is_empty() {
+        return Err(not_proved());
+    }
+    let joined = LoroDoc::join_root_map_checkpoint(&parts.skeleton, &atoms, &[])
         .map_err(|_| not_proved())?;
     let rejoined = LoroDoc::from_snapshot(&joined.bytes).map_err(|_| not_proved())?;
     if !same_doc(doc, &rejoined) {
@@ -604,7 +396,55 @@ fn prove(
         });
         proved.map_err(|_| not_proved())?;
     }
+    if let Some(turn) = turn {
+        if !turn.split.actors.is_empty() {
+            let parts_held = usize::try_from(turn.parts).map_err(|_| not_proved())?;
+            let erased_actor =
+                Transport::of(&turn.split.no_one, parts_held).map_err(|_| not_proved())?;
+            joins(parts, plans, Some(&erased_actor))?;
+        }
+        joins(parts, plans, None)?;
+    }
     Ok(())
+}
+
+/// The atoms a join takes, each slot derived from the joined turn made from
+/// `transport`, and the derived slots it erases.
+fn expand(
+    parts: &Parts,
+    plans: &[Plan],
+    transport: Option<&Transport>,
+) -> (Vec<Atom>, Vec<AtomId>) {
+    let mut atoms = Vec::with_capacity(parts.atoms.len());
+    let mut erased = Vec::new();
+    for (atom, plan) in parts.atoms.iter().zip(plans) {
+        let Some(derived) = plan.derived else {
+            atoms.push(atom.clone());
+            continue;
+        };
+        match derived_atom(atom.id, &atom.holders, derived.role, transport) {
+            Some(atom) => atoms.push(atom),
+            None => erased.push(atom.id),
+        }
+    }
+    (atoms, erased)
+}
+
+/// Whether the join of `parts`, each derived slot made from `transport`,
+/// proves its skeleton.
+fn joins(
+    parts: &Parts,
+    plans: &[Plan],
+    transport: Option<&Transport>,
+) -> std::result::Result<(), Refusal> {
+    let (atoms, erased) = expand(parts, plans, transport);
+    let joined = LoroDoc::join_root_map_checkpoint(&parts.skeleton, &atoms, &erased)
+        .map_err(|_| not_proved())?;
+    if joined.report.equivalent {
+        Ok(())
+    } else {
+        Err(not_proved())
+    }
 }
 
 impl Prepared {
@@ -621,6 +461,7 @@ impl Prepared {
             plans,
             homes,
             slices,
+            turn,
         } = self;
         let first = rows
             .first()
@@ -628,6 +469,15 @@ impl Prepared {
             .ok_or_else(bad_part)?;
         let mut slots = Vec::with_capacity(plans.len());
         for (atom, plan) in parts.atoms.iter().zip(plans) {
+            // A derived slot holds no copy: the join makes it (FIX 12153).
+            if plan.derived.is_some() {
+                slots.push(LoroSlot {
+                    copies: Vec::new(),
+                    holes: Vec::new(),
+                    derived: plan.derived,
+                });
+                continue;
+            }
             let mut copies = Vec::with_capacity(atom.holders.len());
             for (place, handle) in atom.holders.iter().enumerate() {
                 let home = usize::try_from(*handle)
@@ -667,8 +517,16 @@ impl Prepared {
                 .split
                 .map(|split| split.actors.into_iter().map(|(field, _)| field).collect())
                 .unwrap_or_default();
-            slots.push(LoroSlot { copies, holes });
+            slots.push(LoroSlot {
+                copies,
+                holes,
+                derived: None,
+            });
         }
+        let joined = match turn {
+            Some(turn) => vec![emit_turn(turn, &first, emit)?],
+            None => Vec::new(),
+        };
         let rows = rows
             .into_iter()
             .zip(slices)
@@ -683,8 +541,56 @@ impl Prepared {
             skeleton: parts.skeleton,
             rows,
             slots,
+            joined,
         })
     }
+}
+
+/// Emits the joined turn `turn`'s copy, the turn naming no one under its
+/// holder with its actor split out beside it, as a whole row's copy is
+/// (FIX 12153), at its own member path.
+fn emit_turn(
+    turn: TurnSource,
+    first: &RowLocator,
+    emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
+) -> Result<JoinedTurn> {
+    let TurnSource {
+        key,
+        parts,
+        holder,
+        split,
+        ..
+    } = turn;
+    let at = first.fragment(format!("{COPY} turn 0 0"));
+    let home = AtomHome::Owner(holder.owner);
+    let actors = split
+        .actors
+        .iter()
+        .map(|(field, actor)| ActorPart {
+            actor_entity: *actor,
+            content_locator: at.clone(),
+            field: field.clone(),
+            bytes: actor.as_bytes().to_vec(),
+        })
+        .collect();
+    let copy = SyncAtom {
+        at: at.clone(),
+        value: split.no_one,
+        dependencies: holder.dependencies.clone(),
+        actors,
+    };
+    let atom = emit(home, copy)?;
+    Ok(JoinedTurn {
+        key,
+        parts,
+        copies: vec![SlotCopy {
+            at,
+            atom,
+            home,
+            dependencies: holder.dependencies,
+        }],
+        holes: split.actors.into_iter().map(|(field, _)| field).collect(),
+    })
 }
 
 /// Whether two documents hold one history and one state: versions,
