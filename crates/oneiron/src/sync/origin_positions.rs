@@ -1,16 +1,21 @@
 //! Row-paired lifecycle helpers for optional same-vault origin-position data.
 //!
-//! These helpers are not a publisher or an importer. In particular, copying
-//! a carrier never installs its position or grants a reader any authority.
+//! The source publisher reads canonical stored facts beside the real carrier.
+//! Copying or publishing data never installs a position or grants authority.
 
-use loro::{LoroDoc, LoroValue};
+use loro::{CommitOptions, LoroDoc, LoroValue};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::record_scope::origin_positions::OriginPosition;
+use crate::federation::record_scope::origin_positions::{self as facts, OriginPosition};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::sync::checkpoint_payload::{OwnerRef, Placement, SyncUnclassified};
 use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
+
+mod import;
+pub(crate) use import::VerifiedOriginPosition;
+pub(in crate::sync) use import::prepare;
+pub use import::{OwnDevicePositionImport, prepare_own_device_push_positions};
 
 pub(crate) const ORIGIN_POSITIONS_MAP: &str = "origin_positions";
 
@@ -104,6 +109,136 @@ pub(in crate::sync) fn drop_unbound(doc: &LoroDoc) -> Result<bool> {
         map_delete(&map, key)?;
     }
     Ok(!stale.is_empty())
+}
+
+/// Mirrors the canonical stored position beside this real source-window
+/// carrier. The caller commits with its normal bridge origin and vector.
+/// Replacing or removing prior facts pins the window before their deletion.
+pub(in crate::sync) fn mirror_local_position(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    window: &crate::sync::types::WindowKey,
+    id: &EntityId,
+) -> Result<bool> {
+    if window.world().is_some() {
+        return Ok(false);
+    }
+    let key = id.to_hex();
+    let carrier = map_get_bytes(&doc.get_map("entities"), &key);
+    let old = has_positions(doc)
+        .then(|| map_get_bytes(&doc.get_map(ORIGIN_POSITIONS_MAP), &key))
+        .flatten();
+    if old.is_none()
+        && !carrier.as_deref().is_some_and(|bytes| {
+            crate::batch::EntityMetadataHeader::parse(bytes).is_some_and(|header| {
+                matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
+                )
+            })
+        })
+    {
+        return Ok(false);
+    }
+    let next = match carrier {
+        Some(carrier) => facts::capture_for_carrier(vault, id, &carrier)?
+            .map(|position| position.encode())
+            .transpose()?,
+        None => None,
+    };
+    if old == next {
+        return Ok(false);
+    }
+    if old.is_some() {
+        crate::sync::window::require_history_free_window(vault, window)?;
+    }
+    match next {
+        Some(bytes) => map_insert_bytes(&doc.get_map(ORIGIN_POSITIONS_MAP), &key, &bytes)?,
+        None => {
+            remove_carrier(doc, id)?;
+        }
+    }
+    Ok(true)
+}
+
+/// Values whose captured birth (owner or source) no longer exists unchanged.
+/// This reads no body, so an actor erase runs it after removing canonical
+/// births, in that SAME writer, including sources from another window.
+pub(in crate::sync) fn stale_birth_keys_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+) -> Result<Vec<String>> {
+    if !has_positions(doc) {
+        return Ok(Vec::new());
+    }
+    let mut stale = Vec::new();
+    for key in doc.get_map(ORIGIN_POSITIONS_MAP).keys() {
+        let Some((position, _)) = bound_position(doc, &key) else {
+            stale.push(key.to_string());
+            continue;
+        };
+        for row in std::iter::once(&position.row).chain(position.sources.iter()) {
+            if facts::birth_digest_in_txn(vault, txn, &row.id)? != row.birth_digest {
+                stale.push(key.to_string());
+                break;
+            }
+        }
+    }
+    Ok(stale)
+}
+
+/// Drops facts that no longer match the current canonical stamp, complete
+/// source set, facets, incarnation or checked body. Erased/replaced facts do
+/// not survive just because their owner carrier's bytes remained unchanged.
+/// The result-body pin precedes the read snapshot; the history pin precedes
+/// every deletion. The normal export/persist caller owns later persistence.
+pub(in crate::sync) fn scrub_stale(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    window: &crate::sync::types::WindowKey,
+) -> Result<bool> {
+    if !has_positions(doc) {
+        return Ok(false);
+    }
+    let _bodies = vault.pin_all_result_bodies();
+    let stale = {
+        let txn = vault.store.env.read_txn()?;
+        let mut stale = Vec::new();
+        for key in doc.get_map(ORIGIN_POSITIONS_MAP).keys() {
+            let keep = if let Some((position, _)) = bound_position(doc, &key) {
+                facts::capture_in_txn(vault, &txn, &position.row.id)?.as_ref() == Some(&position)
+            } else {
+                false
+            };
+            if !keep {
+                stale.push(key.to_string());
+            }
+        }
+        stale
+    };
+    if stale.is_empty() {
+        return Ok(false);
+    }
+    crate::sync::window::require_history_free_window(vault, window)?;
+    let map = doc.get_map(ORIGIN_POSITIONS_MAP);
+    for key in stale {
+        map_delete(&map, &key)?;
+    }
+    doc.commit_with(CommitOptions::new().origin(crate::sync::bridge::BRIDGE_ORIGIN));
+    Ok(true)
+}
+
+/// Removes the exact root keys selected in the actor erase's own snapshot.
+/// The caller preserves the existing history pin, commit and resync order.
+pub(in crate::sync) fn remove_keys(doc: &LoroDoc, keys: &[String]) -> Result<()> {
+    if has_positions(doc) {
+        let map = doc.get_map(ORIGIN_POSITIONS_MAP);
+        for key in keys {
+            map_delete(&map, key)?;
+        }
+    }
+    Ok(())
 }
 
 /// The entire value is payload under its row's owner, with its native source

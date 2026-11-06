@@ -225,13 +225,7 @@ fn row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Opt
     } else {
         (*blake3::hash(&raw).as_bytes(), None)
     };
-    let birth_digest = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, id)?
-        .map(|birth| {
-            rmp_serde::to_vec_named(&birth)
-                .map(|bytes| *blake3::hash(&bytes).as_bytes())
-                .map_err(|_| Error::InvalidConfig("a row birth does not encode".into()))
-        })
-        .transpose()?;
+    let birth_digest = birth_digest_in_txn(vault, txn, id)?;
     Ok(Some(OriginRow {
         id: *id,
         kind: header.entity_type,
@@ -240,4 +234,57 @@ fn row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Opt
         birth_digest,
         file_reference,
     }))
+}
+
+/// The actual stored birth's digest, or unknown, in the caller's snapshot.
+/// This reads no result body and can run in an actor erase's own writer.
+pub(crate) fn birth_digest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    crate::provenance::birth::row_birth_in_txn(&vault.store, txn, id)?
+        .map(|birth| {
+            rmp_serde::to_vec_named(&birth)
+                .map(|bytes| *blake3::hash(&bytes).as_bytes())
+                .map_err(|_| Error::InvalidConfig("a row birth does not encode".into()))
+        })
+        .transpose()
+}
+
+/// The dedicated successful own-device writer checked all current canonical
+/// facts and the ORIGINAL connection key in this same transaction. No ordinary
+/// row replay or decoder can call this as a birth/restamp operation.
+pub(crate) fn install_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    verified: &crate::sync::origin_positions::VerifiedOriginPosition<'_>,
+) -> Result<()> {
+    let position = verified.position();
+    let row = &position.row;
+    // Only the native BASE shape of these two kinds is supported here.
+    // In particular no sender-supplied verbs, audience or broader axes can
+    // turn source-position data into a capability or a nonbase API setting.
+    if !matches!(row.kind, ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT)
+        || position.scope != super::default_stamp(row.kind, row.facet)
+    {
+        return Ok(());
+    }
+    // An immutable prior always wins, including one the current edges do
+    // not validate. This importer never repositions an existing stamp.
+    if SCOPE_RECORD.get(&vault.store, txn, &row.id)?.is_some() {
+        return Ok(());
+    }
+    SCOPE_RECORD.put(
+        &vault.store,
+        txn,
+        &row.id,
+        &super::Stamp {
+            version: 2,
+            kind: row.kind,
+            birth_facet: *row.facet.as_bytes(),
+            scope: position.scope.clone(),
+        },
+    )?;
+    super::bump_scope_revision(&vault.store, txn)
 }

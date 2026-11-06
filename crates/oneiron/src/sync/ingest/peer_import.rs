@@ -21,7 +21,10 @@ use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_EMBEDDING_SETUP, ENTITY_TYPE_MESSAGE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_EMBEDDING_SETUP,
+    ENTITY_TYPE_MESSAGE,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::loro_support::{
     map_delete, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
@@ -34,11 +37,14 @@ pub(in crate::sync) const PEER_ORIGIN_MAP: &str = "peer_origins";
 
 /// The kinds whose door judges a peer's row apart from this vault's own. A
 /// MESSAGE row takes the own-device lane only when no peer's import brought
-/// it, on whichever own machine it lands (FIX 11709).
-const PEER_JUDGED_KINDS: [u8; 3] = [
+/// it, on whichever own machine it lands (FIX 11709). ASSET and ASSET_TEXT
+/// position imports likewise exclude peer-origin owner and source bytes.
+const PEER_JUDGED_KINDS: [u8; 5] = [
     ENTITY_TYPE_AGENT_DEF,
     ENTITY_TYPE_EMBEDDING_SETUP,
     ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_ASSET,
+    ENTITY_TYPE_ASSET_TEXT,
 ];
 
 /// The blake3 digest of the bytes a peer's import brought for one row of a
