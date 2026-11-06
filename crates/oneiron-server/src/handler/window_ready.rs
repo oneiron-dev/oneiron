@@ -85,6 +85,32 @@ pub(super) async fn send_ready_window_requests(
     true
 }
 
+/// The window of `frame` when it is a window `UPDATE` or `REPLACEMENT` whose
+/// bytes the last door could not read in full for `peer` now: a passing
+/// failure, so the ready exchange that made it is asked again on the next
+/// tick instead of standing done. A frame withheld on purpose names none.
+pub(super) fn uninspectable_window(
+    server: &SyncServer,
+    peer: PeerMachine,
+    frame: &[u8],
+) -> Option<WindowKey> {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return None;
+    }
+    let (key, sub_tag, update) = protocol::decode_window_sync(frame.get(1..)?).ok()?;
+    if !matches!(
+        sub_tag,
+        window_sub_tags::UPDATE | window_sub_tags::REPLACEMENT
+    ) {
+        return None;
+    }
+    let verdict =
+        oneiron::sync::window::raw_update_verdict_for(&server.reassert_manager, key, update, peer);
+    (verdict == oneiron::sync::window::UpdateVerdict::Uninspectable)
+        .then(|| WindowKey::try_new(key))
+        .flatten()
+}
+
 /// Whether window `key`'s ready notice may go to this socket at all: an
 /// owner-lane socket the window is pushed to, or one that follows
 /// `WINDOW_INVALIDATE` and forgot the window's subscription; a residence
@@ -146,17 +172,22 @@ fn ready_window_notice(server: &SyncServer, state: &ConnState, key: &WindowKey) 
                     return ReadyNotice::Retry;
                 }
             };
-            if super::window_sync::authorize_promoted_window(
+            match super::window_sync::authorize_promoted_window(
                 server,
                 auth,
                 peer,
                 key,
                 selector,
                 &window.doc,
-            )
-            .is_err()
-            {
-                return ReadyNotice::Withheld;
+            ) {
+                Ok(()) => {}
+                // A store that could not be read now denies nothing: the
+                // notice is owed again on the next tick.
+                Err(protocol::ProtocolError::Persistence(error)) => {
+                    tracing::warn!(window = %key, %error, "ready window grant not read");
+                    return ReadyNotice::Retry;
+                }
+                Err(_) => return ReadyNotice::Withheld,
             }
             jti = auth.jti().map(str::to_owned);
             protocol::encode_window_sync(key.as_str(), window_sub_tags::PROMOTED_INVALIDATE, &[])

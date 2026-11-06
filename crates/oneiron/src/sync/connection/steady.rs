@@ -663,6 +663,10 @@ where
     S: futures_util::Sink<Message> + Unpin,
     S::Error: std::fmt::Display,
 {
+    // A window whose answer could not be judged whole is asked again.
+    for key in client.take_ready_retries() {
+        progress.retry(&key);
+    }
     let requests = match client
         .ready_window_requests(progress, crate::sync::manager::READY_WINDOWS_PER_PASS)
     {
