@@ -71,25 +71,23 @@ pub(super) fn owing_full_listing(cursor: &str) -> String {
 
 /// `batch` as the adapter returns it while the collection names `zone`:
 /// each upserted resource's bytes take `zone` where they name no plain zone
-/// of their own (the bytes the seat archives and parses), and the next
-/// cursor records `zone` beside the DAV token.
+/// of their own, and lose a collection's zone written in before when the
+/// collection names none now (the bytes the seat archives and parses); the
+/// next cursor records `zone` beside the DAV token.
 pub(super) fn zoned_batch(batch: RemoteSyncBatch, zone: Option<&str>) -> RemoteSyncBatch {
     let RemoteSyncBatch {
         next_cursor,
         changes,
     } = batch;
-    let changes = match zone {
-        Some(zone) => changes
-            .into_iter()
-            .map(|change| match change {
-                RemoteCalendarChange::Upsert(object) => {
-                    RemoteCalendarChange::Upsert(zoned_object(object, zone))
-                }
-                other => other,
-            })
-            .collect(),
-        None => changes,
-    };
+    let changes = changes
+        .into_iter()
+        .map(|change| match change {
+            RemoteCalendarChange::Upsert(object) => {
+                RemoteCalendarChange::Upsert(zoned_object(object, zone))
+            }
+            other => other,
+        })
+        .collect();
     RemoteSyncBatch {
         next_cursor: next_cursor
             .map(|token| format!("{CURSOR_ZONE_PREFIX}{}\n{token}", zone.unwrap_or_default())),
@@ -97,10 +95,15 @@ pub(super) fn zoned_batch(batch: RemoteSyncBatch, zone: Option<&str>) -> RemoteS
     }
 }
 
-/// `object` with its bytes headed by `zone` where they name none, and the
-/// convenience hash read from those bytes.
-fn zoned_object(mut object: RemoteCalendarObject, zone: &str) -> RemoteCalendarObject {
-    object.ics = ics_with_calendar_timezone(&object.ics, zone);
+/// `object` with its bytes given the collection's `zone` where they name
+/// none of their own, and the convenience hash read from those bytes when
+/// they changed.
+fn zoned_object(mut object: RemoteCalendarObject, zone: Option<&str>) -> RemoteCalendarObject {
+    let ics = ics_with_calendar_timezone(&object.ics, zone);
+    if ics == object.ics {
+        return object;
+    }
+    object.ics = ics;
     if let Ok(feed) = parse_ics_feed(&object.ics)
         && let Some(event) = feed.events.first()
     {

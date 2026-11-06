@@ -176,11 +176,12 @@ pub struct CalendarWriteOutboxRow {
     /// Per-EVENT hashes captured from the staged resource, before transport I/O.
     /// Receipt settlement uses these members even if local content changes.
     pub component_hashes: Vec<(EntityId, [u8; 32])>,
-    /// The collection zone that heads the staged resource because its source
-    /// names no zone (fix list row 19192). Settlement lands it as each
-    /// all-day member's `calendar.tz`, as a read of the staged bytes does,
-    /// before the passport makes those bytes an echo.
-    pub collection_zone: Option<String>,
+    /// The zone that heads the staged resource: its source's own, else the
+    /// collection's (fix list row 19192); `None` when none heads it.
+    /// Settlement gives each all-day member this zone as its `calendar.tz`,
+    /// as a read of the staged bytes does, before the passport makes those
+    /// bytes an echo.
+    pub resource_zone: Option<String>,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -392,7 +393,7 @@ pub fn write_calendar_event(
         sequence,
         content_hash,
         component_hashes: rendered.component_hashes,
-        collection_zone: rendered.collection_zone,
+        resource_zone: rendered.resource_zone,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -628,26 +629,22 @@ fn finish_remote_applied_write_in_txn(
         &operation.registration().seat,
         &row.uid,
     );
-    // Fix list row 19192 (review of #6397): the collection zone that heads
-    // the staged bytes is event content, which a read of those bytes admits
-    // as each all-day member's `calendar.tz`. The passport below makes the
+    // Fix list row 19192 (reviews of #6397): the zone that heads the staged
+    // bytes, or none, is event content, which a read of those bytes gives
+    // each all-day member as its `calendar.tz`. The passport below makes the
     // next read of the bytes an echo that admits nothing, so the zone lands
-    // here first, under this seat's own property source.
-    let zone_source = row.collection_zone.as_deref().map(|zone| {
-        let prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
-        let record = format!("{prefix}{source_record_id}");
-        (zone, prefix, record)
-    });
+    // here first, under this seat's own property source, and a zone of that
+    // source the bytes no longer carry goes.
+    let zone_prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
+    let zone_record = format!("{zone_prefix}{source_record_id}");
     for &(member, content_hash) in &row.component_hashes {
-        if let Some((zone, prefix, record)) = &zone_source
-            && super::resource::all_day_in_txn(vault, txn, &member)?
-        {
+        if super::resource::all_day_in_txn(vault, txn, &member)? {
             crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
                 vault,
                 txn,
                 member,
-                zone,
-                prefix,
+                row.resource_zone.as_deref(),
+                &zone_prefix,
                 now,
                 |txn, predicate, value| {
                     admit_screened_in_txn(
@@ -655,7 +652,7 @@ fn finish_remote_applied_write_in_txn(
                         txn,
                         member,
                         &CalendarInboundBody::default(),
-                        record,
+                        &zone_record,
                         predicate,
                         value,
                         now,
@@ -735,7 +732,7 @@ pub(super) struct StoredOutboxRow {
     content_hash: [u8; 32],
     component_hashes: Vec<([u8; 16], [u8; 32])>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    collection_zone: Option<String>,
+    resource_zone: Option<String>,
     expected_etag: Option<String>,
     href: Option<String>,
     receipt: Option<RemoteWriteReceipt>,
@@ -762,7 +759,7 @@ impl StoredOutboxRow {
                 .iter()
                 .map(|(member, hash)| (*member.as_bytes(), *hash))
                 .collect(),
-            collection_zone: literal::projection(&row.collection_zone)?,
+            resource_zone: literal::projection(&row.resource_zone)?,
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
             receipt: literal::projection(&row.receipt)?,
@@ -796,7 +793,7 @@ impl StoredOutboxRow {
                     ))
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
-            collection_zone: self.collection_zone,
+            resource_zone: self.resource_zone,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,

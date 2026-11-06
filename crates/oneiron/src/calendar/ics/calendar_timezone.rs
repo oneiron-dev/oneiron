@@ -6,7 +6,9 @@
 //! transition rules. The name alone places the days, through the zone
 //! database, exactly as a VCALENDAR's own `X-WR-TIMEZONE` does.
 
-use super::parse::{calendar_timezone, is_named, plain_zone_name};
+use super::parse::{
+    calendar_timezone, is_named, plain_zone_name, push_collection_zone_line, zone_from_collection,
+};
 
 /// The `TZID` of the one VTIMEZONE the VCALENDAR `value` carries, as a
 /// CalDAV collection's `CALDAV:calendar-timezone` property holds it (RFC
@@ -49,42 +51,62 @@ fn single<T>(mut items: impl Iterator<Item = T>) -> Option<T> {
 /// names no plain zone of its own: the zone a CalDAV collection gives the
 /// resources it carries (fix list row 19192), written into the bytes so the
 /// archived copy, every later parse of it and the content hash all read it.
+/// It is written as a collection's zone ([`push_collection_zone_line`]), so
+/// a later write or pull gives the resource the collection's zone as it is
+/// then, never this one frozen as the resource's own.
 ///
 /// A VCALENDAR's own plain zone stands. Its first `X-WR-TIMEZONE`, when that
-/// one is not plain, is replaced (the parse half reads only the first, so a
-/// line appended after it would never be read); else the zone heads the
-/// VCALENDAR, on the line right after its `BEGIN:VCALENDAR`. Every other byte
-/// is kept as the server sent it. `ics` comes back unchanged when `zone` is
-/// not a plain zone name or `ics` does not parse.
-pub(crate) fn ics_with_calendar_timezone(ics: &[u8], zone: &str) -> Vec<u8> {
-    let (Some(zone), Ok(text)) = (plain_zone_name(zone), std::str::from_utf8(ics)) else {
+/// one is not plain or is a collection's zone written in before, is replaced
+/// (the parse half reads only the first, so a line appended after it would
+/// never be read); else the zone heads the VCALENDAR, on the line right
+/// after its `BEGIN:VCALENDAR`. With no `zone`, a collection's zone written
+/// in before is taken out and nothing is written. Every other byte is kept
+/// as the server sent it. `ics` comes back unchanged when `zone` is not a
+/// plain zone name or `ics` does not parse.
+pub(crate) fn ics_with_calendar_timezone(ics: &[u8], zone: Option<&str>) -> Vec<u8> {
+    let zone = match zone {
+        Some(zone) => match plain_zone_name(zone) {
+            Some(plain) => Some(plain),
+            None => return ics.to_vec(),
+        },
+        None => None,
+    };
+    let Ok(text) = std::str::from_utf8(ics) else {
         return ics.to_vec();
     };
     let unfolded = icalendar::parser::unfold(text);
     let Ok(roots) = icalendar::parser::read_components(&unfolded) else {
         return ics.to_vec();
     };
-    let named: Vec<bool> = roots
+    // Per VCALENDAR: whether it names a plain zone of its own, and whether
+    // its first zone is a collection's written in before.
+    let zones: Vec<(bool, bool)> = roots
         .iter()
         .filter(|root| is_named(root, "VCALENDAR"))
-        .map(|calendar| calendar_timezone(calendar).is_some())
+        .map(|calendar| {
+            let written = zone_from_collection(calendar);
+            (calendar_timezone(calendar).is_some() && !written, written)
+        })
         .collect();
-    let Some(calendars) = root_calendars(text).filter(|found| found.len() == named.len()) else {
+    let Some(calendars) = root_calendars(text).filter(|found| found.len() == zones.len()) else {
         return ics.to_vec();
     };
-    let mut out = String::with_capacity(text.len() + calendars.len() * (zone.len() + 16));
+    let line_bytes = zone.map_or(0, |zone| zone.len() + 48);
+    let mut out = String::with_capacity(text.len() + calendars.len() * line_bytes);
     let mut at = 0;
-    for (calendar, _) in calendars
-        .iter()
-        .zip(named)
-        .filter(|(_, names_zone)| !names_zone)
-    {
-        let (start, end) = calendar.zone.unwrap_or((calendar.head, calendar.head));
-        out.push_str(&text[at..start]);
-        out.push_str("X-WR-TIMEZONE:");
-        out.push_str(zone);
-        out.push_str(calendar.line_end);
-        at = end;
+    for (calendar, (own, written)) in calendars.iter().zip(zones) {
+        if own {
+            continue;
+        }
+        if let Some(zone) = zone {
+            let (start, end) = calendar.zone.unwrap_or((calendar.head, calendar.head));
+            out.push_str(&text[at..start]);
+            push_collection_zone_line(&mut out, zone, calendar.line_end);
+            at = end;
+        } else if written && let Some((start, end)) = calendar.zone {
+            out.push_str(&text[at..start]);
+            at = end;
+        }
     }
     out.push_str(&text[at..]);
     out.into_bytes()
