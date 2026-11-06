@@ -114,7 +114,8 @@ pub fn render_html_template(
 }
 
 /// Native HTML rendering with traversal/layout and operation-owned backing
-/// admitted on `memory`, plus cooperative checks of `work_deadline`.
+/// admitted on `memory`, plus cooperative checks of `work_deadline`, including
+/// native tokenizer steps and token/EOF delivery. Single native calls remain opaque.
 ///
 /// DOM/parser and matcher internals, sorting scratch, font
 /// dictionaries, document/codec objects and output bytes remain unadmitted.
