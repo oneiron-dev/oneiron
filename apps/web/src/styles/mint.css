@@ -1,0 +1,156 @@
+/* ── mint · the vault ceremony (FLOWS §3 #0) ─────────────────────────
+   OUTSIDE the app chassis: no rail, no vault chip, no agent line — the
+   vault does not exist yet. The desk holds one centred column; the
+   ceremony is ONE elevated sheet on it (the print in the tray, same
+   material as main.pane). Steps use the kit .step states; the hairlines
+   between steps are dropped (rule 6: dividers are space). The genesis
+   seal is the page's ONE resting red. No toasts: every act settles into a
+   receipt line in place. ── */
+
+/* body.app is a 100dvh flex column with overflow hidden: the desk scrolls */
+.mint-desk {
+  flex: 1; min-height: 0; width: 100%;
+  overflow-y: auto;
+  position: relative; z-index: 1;
+}
+main.mint {
+  width: 100%; max-width: 640px;
+  margin: 0 auto;
+  padding: 48px 24px 72px;
+  display: flex; flex-direction: column; gap: 22px;
+}
+
+/* ── the minimal masthead: mark + wordmark, a door home. No theme control
+   (theme lives on the settings page, rule 2). ── */
+.mint-mast { display: flex; align-items: center; padding: 0 2px; }
+.mint-mast .brand { display: flex; align-items: center; gap: 9px; color: var(--silver-1); }
+.mint-mast .brand svg { display: block; }
+.mint-mast .word { font-family: var(--serif); font-size: 15.5px; font-weight: 500; transition: color 160ms ease; }
+.mint-mast .brand:hover .word, .mint-mast .brand:focus-visible .word { color: var(--safelight); }
+
+/* ── the sheet ── */
+.mint-sheet {
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule);
+  padding: 30px 34px 34px;
+  display: flex; flex-direction: column; gap: 22px;
+}
+.mint-head { display: flex; flex-direction: column; gap: 10px; }
+.mint-head .spot { width: 120px; height: auto; margin: -4px 0 6px -6px; }
+.mint-head h1 {
+  font-family: var(--serif); font-size: 26px; font-weight: 550;
+  color: var(--silver-1); letter-spacing: -0.01em; line-height: 1.2;
+}
+.mint-head .voice {
+  font-family: var(--serif); font-size: 14.5px; line-height: 1.6;
+  color: var(--silver-2); max-width: 54ch;
+}
+
+/* ── the walk: kit steps, flat, divided by space ── */
+.mint .steps { display: flex; flex-direction: column; }
+.mint .step { border-top: 0; gap: 14px; padding: 13px 0; }
+.mint .step:first-child { padding-top: 6px; }
+.mint .s-mark { font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.mint .s-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.mint .s-title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.mint .step-wait .s-title { color: var(--silver-4); font-weight: 500; }
+.mint .s-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mint .s-note { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); }
+.mint .s-note.faint { color: var(--silver-4); }
+.mint .step-live .s-mark { color: var(--silver-2); }
+
+/* the primary act of a live step reads a rung brighter */
+.mint .act.lead { color: var(--silver-1); }
+.mint .act.lead:hover, .mint .act.lead:focus-visible { color: var(--safelight); }
+.mint .act[disabled] { color: var(--silver-4); cursor: default; }
+.mint .act[disabled]:hover::before, .mint .act[disabled]:hover::after { opacity: 0; }
+
+/* fields ride the 6px rung on the well tint */
+.mint .fld { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.mint input.mfield {
+  font-family: var(--mono); font-size: 12.5px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 7px 11px; width: 100%; min-width: 0;
+  transition: box-shadow 160ms ease;
+}
+.mint input.mfield::placeholder { color: var(--silver-4); }
+.mint input.mfield:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.mint .name-row { display: grid; grid-template-columns: minmax(150px, 190px) 1fr; gap: 12px; }
+@media (max-width: 480px) { .mint .name-row { grid-template-columns: 1fr; } }
+/* settled: the fields cool into one mono line, the name a rung up */
+.mint .named { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-feature-settings: "tnum" 1; }
+.mint .named .vname { font-size: 13px; color: var(--silver-1); }
+.mint .named .vpath { font-size: 11.5px; color: var(--silver-3); }
+
+/* ── the seal: the soul moment, the one resting red ── */
+.mint .seal-row { display: flex; align-items: center; gap: 18px; padding: 4px 0 2px; }
+.mint .gseal { width: 36px; height: 36px; flex: none; display: block; color: var(--safelight); }
+.mint .gseal.in { animation: stamp-in 380ms cubic-bezier(0.2, 1, 0.3, 1) both; }
+@keyframes stamp-in { from { opacity: 0; transform: scale(1.1); } to { opacity: 1; transform: none; } }
+.mint .gen { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.mint .hash-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.mint .hash {
+  font-family: var(--mono); font-size: 13.5px; letter-spacing: 0.08em;
+  color: var(--silver-1); font-feature-settings: "tnum" 1; cursor: default;
+}
+.mint .receipt { display: flex; align-items: baseline; gap: 8px; }
+.mint .receipt .seal { align-self: center; }
+.mint .receipt .meta-line { font-size: 11px; }
+.mint .seal-row .s-note { padding-top: 1px; }
+.mint .minting { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.mint .minting .mpath { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── sources: one-line rows, the act settles into the receipt ── */
+.mint .srcs { display: flex; flex-direction: column; }
+.mint .src-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 6px 8px 6px 6px; margin: 0 -8px 0 -6px; border-radius: 5px;
+  font-family: var(--mono); font-feature-settings: "tnum" 1;
+}
+.mint .src-row .sname { font-size: 12.5px; color: var(--silver-2); white-space: nowrap; }
+.mint .src-row .sdet { font-size: 11px; color: var(--silver-3); white-space: nowrap; }
+.mint .src-row .sact { margin-left: auto; display: flex; align-items: baseline; gap: 10px; }
+.mint .src-row .rcpt { font-size: 11px; color: var(--silver-3); letter-spacing: 0.02em; white-space: nowrap; }
+.mint .src-row.granted .sname { color: var(--silver-1); }
+.mint .step-wait .src-row .sname, .mint .step-wait .src-row .sdet { color: var(--silver-4); }
+
+/* ── the first read: counts tick in mono ── */
+.mint .counts { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; font-family: var(--mono); font-feature-settings: "tnum" 1; }
+.mint .counts .c { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--silver-3); }
+.mint .counts .n { font-size: 13px; color: var(--silver-1); min-width: 2ch; }
+.mint .counts a.c { transition: color 160ms ease; }
+.mint .counts a.c:hover, .mint .counts a.c:focus-visible { color: var(--safelight); }
+.mint .step-wait .counts .n, .mint .step-wait .counts .c { color: var(--silver-4); }
+
+/* ── the first question → the thin answer (an instrument region) ── */
+.mint .ask-row { display: flex; align-items: center; gap: 12px; }
+.mint .ask-row input.mfield { flex: 1; max-width: 400px; }
+.mint .answer {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 12px 14px 13px; margin: 2px 0 0;
+  background: var(--bg-well); border-radius: 6px;
+  animation: land 220ms ease-out both;
+}
+@keyframes land { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.mint .answer .claim { font-size: 14.5px; line-height: 1.5; }
+.mint .answer .withheld { font-size: 11px; color: var(--silver-4); }
+.mint .answer .voice { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-3); padding-top: 2px; }
+
+/* ── the closing act: a plain cta on the 6px rung; the seal keeps the red ── */
+.mint .cta { border-radius: 6px; }
+
+/* ── develop-on-load: 60ms per step, once; reduced motion lands at once.
+   content never ships hidden — the arm class only lands client-side,
+   before first paint. ── */
+.mint.arm .dev { opacity: 0; transform: translateY(3px); }
+.mint.arm.developed .dev {
+  opacity: 1; transform: none;
+  transition: opacity 320ms cubic-bezier(0.23, 1, 0.32, 1),
+              transform 320ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition-delay: calc(var(--i, 0) * 60ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mint.arm .dev { opacity: 1; transform: none; }
+  .mint.arm.developed .dev, .mint .gseal.in, .mint .answer { transition: none; animation: none; }
+}

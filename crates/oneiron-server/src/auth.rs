@@ -31,7 +31,7 @@ mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
 };
-pub(crate) use client_address::ClientAddress;
+pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};
 pub(crate) use machine_proof::{
@@ -223,6 +223,7 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
             return Ok(false);
         }
         vault.sync_state_put_in_write_txn(txn, &key, &[])?;
+        vault.note_non_authority_revoke_in_txn(txn)?;
         Ok(true)
     })?)
 }
@@ -416,9 +417,12 @@ impl CoreAuth {
             && !token.starts_with(CORE_TOKEN_V2_PREFIX)
         {
             return keys
-                .verify(token.as_bytes(), oneiron_vault_contract::now_ts())
+                .verify_with_revocation(token.as_bytes(), oneiron_vault_contract::now_ts())
                 .await
-                .map(Self::from_verified_account_key)
+                .map(|(verified, revoked)| {
+                    crate::http_listener::attach_body_account_key(revoked);
+                    Self::from_verified_account_key(verified)
+                })
                 .map_err(|_| ApiError::unauthorized());
         }
         Self::for_server(headers, server)

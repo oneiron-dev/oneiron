@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{Extensions, HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -177,9 +177,9 @@ impl FacadeRowDoor {
         } else {
             serde_json::from_slice(&bytes).map_err(|_| refused())?
         };
-        // A 202 is a pending hook ask's refusal envelope, not a successful row
-        // answer (FIX 1450); decode its error and hook below as for any refusal.
-        if status.is_success() && status != StatusCode::ACCEPTED {
+        // Only the native pending-ask envelope makes a successful status a
+        // hook stop (FIX 1450); an accepted asynchronous job is a row answer.
+        if status.is_success() && !FacadeApiError::is_pending_ask(status.as_u16(), &body) {
             return Ok(body);
         }
         let text = |pointer: &str| {
@@ -417,15 +417,16 @@ impl AgentVerbDoor for FacadeRowDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::MemorySearch
-                    | SelfEffect::MemoryPutEdge
-                    | SelfEffect::ConsultResult
-                    | SelfEffect::WorkflowDispatch
-            )
-        )
+        Ok((matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+            || matches!(
+                call,
+                RunCall::Bridge(
+                    SelfEffect::MemorySearch
+                        | SelfEffect::MemoryPutEdge
+                        | SelfEffect::ConsultResult
+                        | SelfEffect::WorkflowDispatch
+                )
+            ))
         .then(|| self.read_key.clone()))
     }
 

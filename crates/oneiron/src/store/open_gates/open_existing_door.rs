@@ -221,6 +221,7 @@ impl Store {
             #[cfg(unix)]
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
+            drafter_serving: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::store::result_memory::ResultMemoryPool::new(
                     config
@@ -240,6 +241,7 @@ impl Store {
             proactivity_suspended: Mutex::new(None),
             policy_manifest_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
+            consent_answers: Default::default(),
             notification_updates: tokio::sync::watch::channel(0).0,
             credential_revocations: tokio::sync::watch::channel(0).0,
             container_output: Default::default(),
@@ -265,6 +267,7 @@ impl Store {
             opened_with_writer_lease: false,
         };
         Ok(Self {
+            custody_leaves: Default::default(),
             entities: OverlayDb::canonical(core.raw.entities),
             edges_out: OverlayDb::canonical(core.raw.edges_out),
             edges_in: OverlayDb::canonical(core.raw.edges_in),
