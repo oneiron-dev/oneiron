@@ -19,10 +19,17 @@ pub(super) use super::verify_evidence::evaluate_envelope;
 #[path = "verify_tests_timestamp_evidence.rs"]
 mod verify_tests_timestamp_evidence;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SigHandler {
+    Cades,
+    DocTs,
+    UnsupportedAdbe,
+}
+
 #[derive(Debug)]
 pub(super) struct SigEntry {
     pub(super) field_name: String,
-    pub(super) is_doc_ts: bool,
+    pub(super) handler: SigHandler,
     pub(super) byte_range: [u64; 4],
     /// Decoded `/Contents` bytes (DER CMS followed by zero padding).
     pub(super) contents: Vec<u8>,
@@ -67,17 +74,16 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 /// by hiding broken form state); both chains are followed whole and fail
 /// closed on a dangling or cyclic link.
 ///
-/// `/SubFilter` dispatch (fail-closed): a candidate is evaluated ONLY under
-/// the handler its `/SubFilter` names — `/Sig` requires
-/// `/ETSI.CAdES.detached`, `/DocTimeStamp` requires `/ETSI.RFC3161`. A typed
-/// dictionary with an absent or foreign `/SubFilter` (e.g.
-/// `/adbe.pkcs7.detached`) is SKIPPED, never evaluated as CAdES; a document
-/// left with no evaluable CAdES signature fails verification. The typeless
-/// interop path tolerates an ABSENT `/SubFilter` (that is the shape it
-/// exists for) but a PRESENT one must still name the CAdES handler. The
-/// interop allowance itself is gated on an ABSENT `/Type`: a present
-/// `/Type` naming neither handler — or not even a name — is skipped, never
-/// laundered into CAdES candidacy through the typeless path.
+/// `/SubFilter` dispatch: `/Sig` with `/ETSI.CAdES.detached` and
+/// `/DocTimeStamp` with `/ETSI.RFC3161` use their respective validators.
+/// `/Sig` with `/adbe.pkcs7.detached` is reported with structural evidence
+/// and unsupported crypto checks as `NotRun`, never evaluated as CAdES.
+/// Other absent or foreign typed `/SubFilter` values are skipped. The
+/// typeless interop path tolerates an ABSENT `/SubFilter`; a present one
+/// selects CAdES or the unsupported adbe report. The interop allowance
+/// itself is gated on an ABSENT `/Type`: a present `/Type` naming neither
+/// handler — or not even a name — is skipped, never laundered into CAdES
+/// candidacy through the typeless path.
 ///
 /// The nodes the descent visits are counted for the `[limits]` field-tree
 /// row, a failed descent's too; no count of them stops it (Rule 5).
@@ -194,18 +200,17 @@ fn discover_signatures(
             .ok()
             .map(|o| resolved_name(doc, o))
             .transpose()?;
-        let is_doc_ts = match ty {
-            Some(t) if name_eq(t, b"Sig") => {
-                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.CAdES.detached")) {
-                    continue;
-                }
-                false
-            }
+        let handler = match ty {
+            Some(t) if name_eq(t, b"Sig") => match subfilter {
+                Some(sf) if name_eq(sf, b"ETSI.CAdES.detached") => SigHandler::Cades,
+                Some(sf) if name_eq(sf, b"adbe.pkcs7.detached") => SigHandler::UnsupportedAdbe,
+                _ => continue,
+            },
             Some(t) if name_eq(t, b"DocTimeStamp") => {
                 if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.RFC3161")) {
                     continue;
                 }
-                true
+                SigHandler::DocTs
             }
             // A PRESENT /Type naming neither handler (or not a name at all)
             // is never a candidate: the typeless interop allowance exists
@@ -216,10 +221,12 @@ fn discover_signatures(
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
                 }
-                if subfilter.is_some_and(|sf| !name_eq(sf, b"ETSI.CAdES.detached")) {
-                    continue;
+                match subfilter {
+                    None => SigHandler::Cades,
+                    Some(sf) if name_eq(sf, b"ETSI.CAdES.detached") => SigHandler::Cades,
+                    Some(sf) if name_eq(sf, b"adbe.pkcs7.detached") => SigHandler::UnsupportedAdbe,
+                    _ => continue,
                 }
-                false
             }
         };
         let br_obj = d.get(b"ByteRange").map_err(|_| malformed_input())?;
@@ -267,7 +274,7 @@ fn discover_signatures(
             &mut out,
             SigEntry {
                 field_name,
-                is_doc_ts,
+                handler,
                 byte_range: br,
                 contents: contents.clone(),
             },
