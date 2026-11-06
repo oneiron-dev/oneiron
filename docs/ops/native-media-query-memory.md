@@ -210,9 +210,10 @@ candidate/component vectors, and each fused, blended, reranked and final-stage
 candidate/component vector. Outer slots use their native element sizes; inner
 component buffers are counted separately, once. The final-stage clone and the
 surfaced-score vector own distinct backing even when their entries match.
-Discarded decoded score vectors and components removed by the existing retains
-are not charged. The current buffers remain unchanged until the decoded record
-drops before the caller's lease. An unbound finalizer adds no accounting walk.
+That postmutation count excludes discarded decoded score vectors and the
+components removed by the existing retains. The current buffers remain unchanged
+until the decoded record drops before the caller's lease. An unbound finalizer
+adds no accounting walk.
 
 After the existing empty-reason move and replay-pack metadata assignment, the
 same optional lease also records the current empty-reason string, replay query
@@ -256,6 +257,25 @@ while live. The separate final-stage clone remains in the current trace charge.
 Unbound finalizers add no capacity work. Allocation internals before the new
 post-allocation measurements, pre-growth admission and a full construction peak
 remain outside these charges.
+
+Immediately before the original trace mutations, the same optional lease also
+records the decoded trace's known backing. A shared local calculation counts
+its per-channel slots, every channel and stage candidate vector, and each
+candidate's component vector, using the same capacities and native element sizes
+as the existing current-trace measurement. The trace is a separate owned decode,
+not the top-level score vector, canonical inputs or provisional record clone.
+
+The original retains keep candidate-vector backing while dropping removed
+entries' component buffers; the original final-stage assignment drops its old
+candidate and component buffers. The remembered old trace extent stays charged
+through these operations. The current top-score and trace measurement adds its
+unchanged known total first, then releases only that old trace extent before
+the existing surfaced-score construction transfer. This conservatively holds
+freed backing until the transfer and briefly counts retained backing twice,
+without releasing live backing early or leaving a duplicate final charge.
+An absent trace contributes zero and an unbound finalizer adds no trace walk.
+Initial decoding, clone allocation internals, pre-growth admission and a full
+construction peak remain outside this charge.
 
 The canonical detached finalizer also records its original owned empty-reason
 string and pack metadata before queuing the existing write. The string uses its
