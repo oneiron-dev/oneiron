@@ -30,9 +30,13 @@ forwarded asks, client reassembly, staged-file retention and disk-floor
 accounting are unchanged.
 
 If staging an output fails after the organ has run, the existing failed reply
-keeps the ask receipts collected by that run. Failures before a run still carry
-no ask receipts. The failure kind and detail do not change. Keeping these
-receipts does not retain or replay the completed outcome.
+keeps the ask receipts collected by that run. If staging the encoded result
+fails instead, the host sends an inline failed result with those same receipts;
+it does not need the refusing spool to deliver them. The ordinary transport
+bounds still apply. The original result's guards stay through failure encoding,
+and the failure bytes keep their own actual-capacity record through send.
+Failures before a run still carry no ask receipts. Keeping these receipts does
+not retain or replay the completed outcome.
 
 Outgoing physical reply copies also record their actual vector capacity on
 this host's machine-memory line when it has one. The narrow

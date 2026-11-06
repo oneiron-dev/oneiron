@@ -119,6 +119,30 @@ impl CallReply {
             _frame: None,
         }
     }
+
+    fn staging_failed(self, detail: String) -> Self {
+        let Self {
+            result,
+            _outputs,
+            _copies,
+            _frame,
+        } = self;
+        let asks = match result {
+            PeerResult::Done(outcome) => outcome.receipt.asks,
+            PeerResult::Failed(failure) => failure.asks,
+        };
+        Self {
+            result: PeerResult::Failed(PeerFailure {
+                kind: FailureKind::Failed,
+                detail,
+                organ: None,
+                asks,
+            }),
+            _outputs,
+            _copies,
+            _frame,
+        }
+    }
 }
 
 impl std::fmt::Debug for OrganService {
@@ -265,7 +289,15 @@ impl OrganService {
                                 self.measure_staged(&staging);
                                 carried.map(Reply::Call)
                             }
-                            Err(why) => TrackedReply::untracked(Reply::Refused(why)),
+                            Err(why) => {
+                                let failed = result.staging_failed(why);
+                                let bytes = track_bytes(
+                                    encode(&failed.result)?,
+                                    self.host.floor().as_ref(),
+                                );
+                                bytes
+                                    .map(|bytes| Reply::Call(Carried::Inline(ByteBuf::from(bytes))))
+                            }
                         }
                     }
                     Err(err) => TrackedReply::untracked(Reply::Refused(err.to_string())),
