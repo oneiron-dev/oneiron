@@ -350,6 +350,26 @@ impl Vault {
         review: RepoProposalReview,
         repair_of: Option<EntityId>,
     ) -> Result<RepoProposal> {
+        let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
+            owner,
+            repository,
+            request,
+            review,
+            repair_of,
+            |_| Ok(Ok(())),
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
+    }
+
+    fn propose_repo_mutation_as_owner_checked<R>(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repository: EntityId,
+        request: RepoMutationRequest,
+        review: RepoProposalReview,
+        repair_of: Option<EntityId>,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoProposal, R>> {
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
         let session = request.session_id;
@@ -359,7 +379,7 @@ impl Vault {
             request.op_provenance.intent,
             request.op_provenance.substrate_ref,
         ];
-        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
+        let proposed = self.propose_repo_mutation_checked(
             request,
             review,
             ProposalBase::CurrentCheckout,
@@ -384,10 +404,10 @@ impl Vault {
                 if Some(owner.revalidate_in_txn(self, txn)?) != actor {
                     return Err(invalid("proposal actor is not the authenticated owner"));
                 }
-                Ok(Ok(()))
+                check(txn)
             },
         )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
+        Ok(proposed)
     }
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
