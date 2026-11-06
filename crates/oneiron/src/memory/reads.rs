@@ -734,6 +734,17 @@ impl Memory<'_> {
     }
 }
 
+impl Memory<'_> {
+    /// A room's own Hook `records` in the `vault.receipts` shape
+    /// ([`family_receipt`]), for the receipt tail a verb hook chain in that
+    /// room reads beside base's (FIX 5429).
+    pub(crate) fn room_tail_receipts(
+        records: Vec<crate::receipt::ReceiptRecord>,
+    ) -> Vec<MemoryReceipt> {
+        records.into_iter().map(family_receipt).collect()
+    }
+}
+
 /// One unified-family receipt in the `vault.receipts` shape: the gate
 /// fields it carries, its policy trace as reason codes, and every field it
 /// carries with its trigger, job and principal refs.
