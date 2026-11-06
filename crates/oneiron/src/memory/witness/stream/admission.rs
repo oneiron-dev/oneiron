@@ -301,6 +301,18 @@ impl Memory<'_> {
                         ));
                     }
                     validate_regeneration(self.vault, txn, &state.seed)?;
+                    // A Retry opened after its requester's hard erase stores
+                    // no slip: that erase's one-time scrub of stored seeds
+                    // has already run (FIX 10765, after FIX 10668).
+                    if let Some(action) = state.seed.action.as_mut() {
+                        let requester = action.actor;
+                        if self
+                            .vault
+                            .local_hard_delete_marker_exists_in_txn(txn, &requester)?
+                        {
+                            action.scrub_actor_instrument(&requester);
+                        }
+                    }
                     // Supplied initial content is the first checkpoint.
                     storage::ACTIVE.put(
                         &self.vault.store,
