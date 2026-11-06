@@ -85,20 +85,46 @@ pub(super) fn fact_row(
     grant: &HookGrant,
     entry: &FactEntry,
 ) -> Result<Option<SeenFact>> {
-    if entry.body_hash.is_some() && entry.revision.is_none() {
+    let Some(point) = fact_point(entry) else {
         return Ok(None);
+    };
+    let rows = lane.read(&[point], None)?.value;
+    seen_fact(grant, entry, rows)
+}
+
+/// Read through a lane prepared before opening the caller's snapshot.
+/// Keep its point-read body guard through this read and projection.
+pub(super) fn fact_row_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    grant: &HookGrant,
+    entry: &FactEntry,
+) -> Result<Option<SeenFact>> {
+    let Some(point) = fact_point(entry) else {
+        return Ok(None);
+    };
+    let rows = lane
+        .read_projected_in_txn(txn, &[point], None, |_, rows| Ok::<_, crate::Error>(rows))?
+        .value;
+    seen_fact(grant, entry, rows)
+}
+
+fn fact_point(entry: &FactEntry) -> Option<PointRead<'static>> {
+    if entry.body_hash.is_some() && entry.revision.is_none() {
+        return None;
     }
-    let point = match entry.revision {
+    Some(match entry.revision {
         Some(revision) => PointRead::id(entry.entity).at(ReadMode::Pinned(revision)),
         None => PointRead::id(entry.entity),
-    };
-    let Some(row) = lane
-        .read(&[point], None)?
-        .value
-        .into_iter()
-        .next()
-        .flatten()
-    else {
+    })
+}
+
+fn seen_fact(
+    grant: &HookGrant,
+    entry: &FactEntry,
+    rows: Vec<Option<crate::claim::ReadRow>>,
+) -> Result<Option<SeenFact>> {
+    let Some(row) = rows.into_iter().next().flatten() else {
         return Ok(None);
     };
     let Some(body) = row.body.as_deref() else {
