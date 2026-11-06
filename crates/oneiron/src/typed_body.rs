@@ -394,11 +394,24 @@ fn land_typed_body_fork_in_txn(
 /// Removes `entity`'s typed body, every fork of it and their receipts.
 /// Registered with the per-entity erasers in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
+    discard_local_payload_in_txn(store, txn, entity)?;
+    receipts::erase_in_txn(store, txn, entity)
+}
+
+/// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34 call
+/// 4 = A): `entity`'s typed body, its head and every fork's snapshot go;
+/// its commit receipts stay as identifier-only immutable history. Local
+/// only: no Loro operation, receipt or marker.
+pub(crate) fn discard_local_payload_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
     HEADS.delete(store, txn, entity)?;
     DOCS.delete(store, txn, entity)?;
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     FORK_DOCS.delete_from(store, txn, entity.as_bytes())?;
-    receipts::erase_in_txn(store, txn, entity)
+    Ok(())
 }
 
 impl Vault {
