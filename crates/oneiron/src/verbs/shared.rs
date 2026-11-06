@@ -341,10 +341,19 @@ fn execute_shared_act_into(
     if erase {
         // A held erase runs through its own executor, which binds the
         // record; its receipt then tells the Owners (OF-150).
-        vault
+        let memory = vault
             .memory(executor.revalidate_person(vault)?, EdgeActorClass::Human)
-            .listing_producers(producers)
-            .execute_completed_entity_erase(executor, &input.act_id)?;
+            .listing_producers(producers);
+        // The vault owner carrying out the erase of a Connect guest's PERSON
+        // withdraws its grants, signed by the host's key, as his direct
+        // delete does (FIX 3875, 5317). Another Owner erases as before.
+        let memory = match slips {
+            Some(issuer) if vault.is_live_vault_owner(executor)? => memory
+                .with_owner_authorship(executor)
+                .with_host_slip_issuer(issuer),
+            _ => memory,
+        };
+        memory.execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
             delivery: None,

@@ -594,6 +594,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.code_run_lifts`
+- `vault.secrets.code_run_room_lifts`
 - `vault.secrets.lift_history`
 - `vault.secrets.register`
 - `vault.secrets.rotate`
