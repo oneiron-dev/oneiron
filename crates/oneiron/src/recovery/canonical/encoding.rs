@@ -5,9 +5,9 @@ use serde::{Serialize, Serializer as _};
 
 use super::{
     BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalAssetBodyRef,
-    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalEntity, CanonicalHeadMove,
-    CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalRowBirth,
-    CanonicalSnapshot, CanonicalTombstone,
+    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalDocument, CanonicalEntity,
+    CanonicalHeadMove, CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn,
+    CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -79,7 +79,7 @@ impl CanonicalEncoding {
             ("retained_claim_worlds", &Rows(retained_claim_worlds, false)),
             ("base_edges", &ByteRows(base_edges, false)),
             ("tombstones", &ByteRows(tombstones, false)),
-            ("doc_snapshots", &Rows(doc_snapshots, false)),
+            ("doc_snapshots", &Documents(doc_snapshots)),
             ("entity_documents", &Rows(entity_documents, false)),
             ("document_heads", &Rows(document_heads, false)),
             ("head_move_receipts", &ByteRows(head_move_receipts, false)),
@@ -168,6 +168,63 @@ impl<T: Serialize> Field for Rows<'_, T> {
         write_array_header(out, self.0.len())?;
         *row = Some(RowCursor::default());
         Ok(self.0.is_empty())
+    }
+}
+
+struct Documents<'a>(&'a [CanonicalDocument]);
+
+impl Field for Documents<'_> {
+    fn present(&self) -> bool {
+        true
+    }
+
+    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
+        let Some(cursor) = row else {
+            write_array_header(out, self.0.len())?;
+            *row = Some(RowCursor::default());
+            return Ok(self.0.is_empty());
+        };
+        let CanonicalDocument {
+            entity_id,
+            head,
+            text,
+            title,
+            birth_actor,
+            birth_at,
+            authorship,
+        } = &self.0[cursor.next];
+        if let Some(next) = cursor.bytes.as_mut() {
+            if *next < text.len() {
+                let end = next.saturating_add(blake3::CHUNK_LEN).min(text.len());
+                // The prefix reserved this complete string's output capacity.
+                out.bytes.extend_from_slice(&text.as_bytes()[*next..end]);
+                *next = end;
+                return Ok(false);
+            }
+            write_named(out, "title")?;
+            write_named(out, title)?;
+            write_named(out, "birth_actor")?;
+            write_named(out, birth_actor)?;
+            write_named(out, "birth_at")?;
+            write_named(out, birth_at)?;
+            write_named(out, "authorship")?;
+            write_named(out, authorship)?;
+            cursor.next += 1;
+            cursor.bytes = None;
+            return Ok(cursor.next == self.0.len());
+        }
+        write_struct_header(out, "CanonicalDocument", 7)?;
+        write_named(out, "entity_id")?;
+        write_named(out, entity_id)?;
+        write_named(out, "head")?;
+        write_named(out, head)?;
+        write_named(out, "text")?;
+        rmp::encode::write_str_len(&mut *out, text.len() as u32).map_err(|_| out.refusal())?;
+        if !text.is_empty() {
+            out.reserve_write(text.len()).map_err(|_| out.refusal())?;
+        }
+        cursor.bytes = Some(0);
+        Ok(false)
     }
 }
 

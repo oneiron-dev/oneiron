@@ -290,6 +290,21 @@ struct BoundedWriter {
 }
 
 impl BoundedWriter {
+    fn reserve_write(&mut self, len: usize) -> std::io::Result<()> {
+        if let Err(error) = self.budget.take(len) {
+            self.refused = Some(error);
+            return Err(std::io::ErrorKind::OutOfMemory.into());
+        }
+        let need = self.bytes.len() + len;
+        if need > self.bytes.capacity() {
+            let grown = need
+                .max(self.bytes.capacity().saturating_mul(2))
+                .min(self.budget.limit);
+            self.bytes.reserve_exact(grown - self.bytes.len());
+        }
+        Ok(())
+    }
+
     /// Why a write failed: the budget it would pass, else the encoder.
     fn refusal(&mut self) -> Error {
         self.refused
@@ -300,17 +315,7 @@ impl BoundedWriter {
 
 impl std::io::Write for BoundedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if let Err(error) = self.budget.take(buf.len()) {
-            self.refused = Some(error);
-            return Err(std::io::ErrorKind::OutOfMemory.into());
-        }
-        let need = self.bytes.len() + buf.len();
-        if need > self.bytes.capacity() {
-            let grown = need
-                .max(self.bytes.capacity().saturating_mul(2))
-                .min(self.budget.limit);
-            self.bytes.reserve_exact(grown - self.bytes.len());
-        }
+        self.reserve_write(buf.len())?;
         self.bytes.extend_from_slice(buf);
         Ok(buf.len())
     }
