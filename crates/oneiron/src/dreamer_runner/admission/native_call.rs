@@ -44,6 +44,7 @@ struct NativeCallObligation {
     net_coverage: NativeNetCoverage,
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
     systemone_usage: Option<systemone::SystemOneTerminalUsage>,
+    systemone_response: Option<crate::dreamer_wake::DecisionSystemOneResponse>,
     aggregate_observations: Vec<NativeAggregateObservation>,
     owed_reconciliations: Vec<owed::NativeOwedReconciliation>,
     metered_owed_observations: Vec<metered_owed::NativeMeteredOwedObservation>,
@@ -163,6 +164,7 @@ pub(crate) fn retain_native_call_in_txn(
         net_coverage: NativeNetCoverage::Unknown,
         house_completions: None,
         systemone_usage: None,
+        systemone_response: None,
         aggregate_observations: Vec::new(),
         owed_reconciliations: Vec::new(),
         metered_owed_observations: Vec::new(),
@@ -180,6 +182,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.net_coverage = NativeNetCoverage::Unknown;
         original.house_completions = None;
         original.systemone_usage = None;
+        original.systemone_response = None;
         original.aggregate_observations.clear();
         original.owed_reconciliations.clear();
         original.metered_owed_observations.clear();

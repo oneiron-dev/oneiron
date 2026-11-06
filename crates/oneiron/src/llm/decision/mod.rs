@@ -2,7 +2,7 @@
 
 pub use crate::dreamer_wake::{
     DecisionAnswerQuantity, DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource,
-    DecisionCompletionObservation, DecisionCompletionResponse,
+    DecisionCompletionObservation, DecisionCompletionResponse, DecisionSystemOneResponse,
 };
 
 mod answer_actor;

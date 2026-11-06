@@ -64,3 +64,46 @@ impl DreamerRunnerStore<'_> {
         invoice_native_call_in_txn(self.vault, wtxn, origin, units)
     }
 }
+
+impl DreamerRunnerStore<'_> {
+    /// Source-only write: no invoice, settlement, payment or coverage changes.
+    pub(crate) fn record_native_systemone_response_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        origin: AdmittedCallId,
+        response: &crate::dreamer_wake::DecisionSystemOneResponse,
+    ) -> Result<()> {
+        let Some(mut row) = CALLS.get(&self.vault.store, &*wtxn, &origin)? else {
+            return Err(invalid_dreamer_runner(
+                "native call has no original admission",
+            ));
+        };
+        match &row.systemone_response {
+            None => {
+                row.systemone_response = Some(response.clone());
+                CALLS.put(&self.vault.store, wtxn, &origin, &row)
+            }
+            Some(original) if original == response => Ok(()),
+            _ => Err(invalid_dreamer_runner(
+                "native System One raw responses differ",
+            )),
+        }
+    }
+
+    pub(crate) fn native_systemone_response(
+        &self,
+        origin: AdmittedCallId,
+        boot: [u8; 16],
+        line: &str,
+        lease: &str,
+    ) -> Result<Option<crate::dreamer_wake::DecisionSystemOneResponse>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(row) = CALLS.get(&self.vault.store, &rtxn, &origin)? else {
+            return Ok(None);
+        };
+        if row.boot != boot || row.line != line || row.lease != lease {
+            return Err(invalid_dreamer_runner("native original admission differs"));
+        }
+        Ok(row.systemone_response)
+    }
+}
