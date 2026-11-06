@@ -49,3 +49,28 @@ pub(crate) fn canonical_judge_label_in_txn(
         label,
     }))
 }
+
+impl crate::claim::ScopedRead<'_> {
+    /// The native label at its physical ask key, with this read's receipt.
+    /// An absent or unadmitted row answers `None` without an existence count.
+    pub fn judge_label(
+        &self,
+        ask_id: [u8; 32],
+    ) -> Result<crate::claim::ScopedReadResult<Option<JudgeLabel>>> {
+        let vault = self.vault();
+        self.persist_grant_clock()?;
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+        let _custody = vault.store.gate_custody_read_guard()?;
+        let txn = vault.store.env.read_txn()?;
+        self.read_projected_in_txn(&txn, &[], None, |txn, _| {
+            let Some(row) = canonical_judge_label_in_txn(vault, txn, &ask_id)? else {
+                return Ok(None);
+            };
+            if self.native_judge_label_admitted_in_txn(txn, &row)? {
+                Ok(Some(row.into_label()))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+}
