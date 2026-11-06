@@ -20,6 +20,10 @@
 //! (memory-only handlers, like `verify`); the prepared output is admitted
 //! by digest, page count and format bound before it is returned.
 
+mod inspect;
+
+pub use inspect::{PdfInspectionError, inspect_pdf_region_until};
+
 use std::collections::BTreeMap;
 
 use oneiron::blob_artifact::esign::render::{
@@ -32,11 +36,11 @@ use sha2::{Digest, Sha256};
 
 use super::observe::{measure_asks, measure_input, measure_output};
 use super::{
-    FailureReply, HostedSealer, PDF, PDF_FORMAT_BYTES, REVISIONS, VERB_INSPECT, VERB_PREPARE,
-    from_value, reply_invalid, to_value,
+    FailureReply, HostedSealer, PDF, PDF_FORMAT_BYTES, REVISIONS, SealSettings, VERB_INSPECT,
+    VERB_PREPARE, from_value, reply_invalid, to_value,
 };
 use crate::handlers::AskHandlers;
-use crate::host::CallMeasure;
+use crate::host::{CallMeasure, OrganHost};
 use crate::resource_memory::MemoryGrow;
 use crate::spec::{LentInput, OrganTier};
 
@@ -44,7 +48,9 @@ use crate::spec::{LentInput, OrganTier};
 const PREPARED_OUTPUT: &str = "prepared.pdf";
 
 #[derive(Serialize)]
-struct InspectArgs {}
+struct InspectArgs {
+    stream_decode_bytes: u64,
+}
 
 #[derive(Serialize)]
 struct PrepareArgs {
@@ -155,6 +161,54 @@ enum PrepareReply {
     Failed(FailureReply),
 }
 
+/// Inspect through the existing isolated seal port without a signing key.
+/// Only the memory handler is supplied; trust anchors and fetch settings
+/// are unused. This blocks its thread under the supplied call settings.
+pub fn inspect_pdf_pages_via_organ(
+    host: &OrganHost,
+    vault: &oneiron::Vault,
+    settings: &SealSettings,
+    bytes: &[u8],
+) -> Result<Vec<PageGeometry>, EsignSealerError> {
+    let args = to_value(&InspectArgs {
+        stream_decode_bytes: vault.esign_stream_decode_bytes(),
+    })
+    .map_err(|_| reply_invalid())?;
+    measure_input(vault, bytes);
+    let lent = vec![LentInput {
+        media_type: PDF.to_owned(),
+        bytes: bytes.to_vec(),
+    }];
+    let memory = MemoryGrow;
+    let handlers = AskHandlers::none().with(ASK_MEMORY_GROW, &memory);
+    let (reply, _) = super::observe::sized_call(
+        host,
+        vault,
+        settings.call(VERB_INSPECT, 1, args),
+        lent,
+        &handlers,
+        &mut CallMeasure::default(),
+    )?;
+    inspected_pages(vault, &reply)
+}
+
+fn inspected_pages(
+    vault: &oneiron::Vault,
+    reply: &oneiron_organ_protocol::Value,
+) -> Result<Vec<PageGeometry>, EsignSealerError> {
+    match from_value(reply)? {
+        InspectReply::Inspected { pages } => Ok(pages
+            .into_iter()
+            .map(|page| PageGeometry {
+                crop: page.crop,
+                rotation: page.rotation,
+                user_unit: page.user_unit,
+            })
+            .collect()),
+        InspectReply::Failed(failure) => Err(failure.into_error(vault)),
+    }
+}
+
 impl HostedSealer<'_> {
     /// One `seal.inspect` call over `bytes`, in a process of its own: the
     /// PDF's page geometry, in page order. Its one handler reserves its
@@ -165,26 +219,7 @@ impl HostedSealer<'_> {
         &self,
         bytes: &[u8],
     ) -> Result<Vec<PageGeometry>, EsignSealerError> {
-        let args = to_value(&InspectArgs {}).map_err(|_| reply_invalid())?;
-        measure_input(self.vault, bytes);
-        let lent = vec![LentInput {
-            media_type: PDF.to_owned(),
-            bytes: bytes.to_vec(),
-        }];
-        let memory = MemoryGrow;
-        let handlers = AskHandlers::none().with(ASK_MEMORY_GROW, &memory);
-        let (reply, _) = self.sized_call(self.call(VERB_INSPECT, 1, args), lent, &handlers)?;
-        match from_value(&reply)? {
-            InspectReply::Inspected { pages } => Ok(pages
-                .into_iter()
-                .map(|page| PageGeometry {
-                    crop: page.crop,
-                    rotation: page.rotation,
-                    user_unit: page.user_unit,
-                })
-                .collect()),
-            InspectReply::Failed(failure) => Err(failure.into_error(self.vault)),
-        }
+        inspect_pdf_pages_via_organ(self.host, self.vault, &self.settings, bytes)
     }
 
     /// One `seal.prepare` call over `original` for `request`, in a process

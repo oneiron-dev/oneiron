@@ -74,6 +74,7 @@ pub(in crate::models) async fn open_turn(
         launch: launch.clone(),
         epoch: epoch.to_owned(),
         worker: route.worker.clone(),
+        ledger: super::super::session_device_ledger(&route.worker),
     };
     let ops = serves(&worker_id, &place).await?;
     let path = manifest.messages().get(..cut)?;
@@ -104,6 +105,8 @@ pub(in crate::models) async fn open_turn(
             return None;
         }
     };
+    // What the session's prepared tail gave this turn (I1 = C).
+    super::prepare::forked(&binding, forked.prepared.as_ref());
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
     {
         let mut workers = registry::lock();
@@ -116,7 +119,7 @@ pub(in crate::models) async fn open_turn(
             .sessions
             .get_mut(&binding)
             .filter(|session| session.handle == opened.target.handle)?;
-        session.residency = forked.residency;
+        session.observe(forked.residency);
         session.stale = stale;
         session.phase = Phase::Ready;
         // A restored session's first attach below the frontier it published
@@ -191,6 +194,7 @@ async fn serves(worker_id: &str, place: &Place) -> Option<Ops> {
                     restore: capability.serves(SessionOp::Restore),
                     snapshot: capability.serves(SessionOp::Export)
                         && capability.serves(SessionOp::Import),
+                    prepare: capability.serves(SessionOp::Prepare),
                 }),
                 _ => Serves::No,
             };
@@ -344,7 +348,7 @@ async fn resident(
             if let Some(session) = registry::current(&mut workers, worker_id, place)
                 .and_then(|worker| worker.sessions.get_mut(binding))
             {
-                session.residency = restored.residency;
+                session.observe(restored.residency);
             }
             Some(opened)
         }
@@ -378,12 +382,19 @@ async fn create(
         op_id: policy::next_op_id(),
     };
     let created: SessionCreated = send(place, SessionOp::Create, &body, None).await.ok()?;
+    let target = SessionTarget {
+        handle: created.handle,
+        binding: key.binding(),
+    };
     let session = Session {
         key: key.clone(),
         handle: created.handle,
         generation: created.generation,
         published: None,
         residency: SessionResidency::default(),
+        // No residency report was observed for it yet: its row starts
+        // unreported, never a fabricated default.
+        owner: registry::mint_owner(place, key.anchor.vault, target, None),
         pending: None,
         stale: None,
         path: Vec::new(),
@@ -404,7 +415,7 @@ async fn create(
             worker.sessions.insert(key.binding(), session);
             None
         } else {
-            Some(worker.owe(key.anchor.vault, session.target(), session.residency))
+            Some(worker.owe_session(session))
         }
     };
     if let Some((target, at)) = refused {
