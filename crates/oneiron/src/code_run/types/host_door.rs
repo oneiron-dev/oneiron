@@ -192,6 +192,18 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
+    /// `Express`, its trailing bubble included) with `destination`, where
+    /// the run's storage lands it. A door that rules on speech wherever it
+    /// lands admits it as [`Self::admit_run_call`] admits the bridge call.
+    fn admit_run_speech(
+        &self,
+        effect: SelfEffect,
+        _destination: RunSpeechDestination,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(effect))
+    }
+
     /// The verified read key a host turn's hooks use, independently of the
     /// host's System write attribution. `None` is a typed no-read answer, not
     /// permission to reconstruct an actor or System lane (FIX 9841).
@@ -312,4 +324,15 @@ pub enum RunCall {
     /// A read of the run's own recorded output: by its context reference, or
     /// a resumed write's kept answer, read back from its receipt.
     RecordedOutput,
+}
+
+/// Where a run's speech lands, as its storage writes it
+/// (`ExecutorStorage::speech_destination`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSpeechDestination {
+    /// The run's own derived conversation on canonical storage
+    /// (`canonical_speech_conversation_id_for_run`): part of the run's record.
+    OwnRunConversation,
+    /// The room of the off-record session the run is bound to.
+    SessionRoom,
 }

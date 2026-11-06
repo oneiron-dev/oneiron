@@ -613,6 +613,16 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Where `witness_executor_message` lands the run's speech: on
+    /// canonical storage the run's own derived conversation, on session
+    /// storage the session's room. Its door admits the speech by it.
+    pub(crate) const fn speech_destination(&self) -> crate::code_run::RunSpeechDestination {
+        match self {
+            Self::Canonical(_) => crate::code_run::RunSpeechDestination::OwnRunConversation,
+            Self::Session(_) => crate::code_run::RunSpeechDestination::SessionRoom,
+        }
+    }
+
     /// `request` is the model request the run's executor bound before the
     /// call, host-owned; the report keeps it for its code fix (FIX 2343), and
     /// its run's read worlds as `read_worlds` seals its ledger (FIX 6130).
