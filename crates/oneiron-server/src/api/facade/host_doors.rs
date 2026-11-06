@@ -21,6 +21,7 @@ mod authority_clock;
 mod diary;
 mod media;
 mod packs;
+mod proactivity;
 pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
@@ -31,6 +32,7 @@ pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
+pub(crate) use self::proactivity::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 
@@ -39,6 +41,7 @@ pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.
+pub(crate) use super::ag_ui_file_doors::*;
 pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
@@ -227,6 +230,8 @@ pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+// The drafter's owner and agent doors (FIX 12569), likewise.
+pub(crate) use super::drafter_doors::*;
 pub(crate) use super::eval_doors::*;
 pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;

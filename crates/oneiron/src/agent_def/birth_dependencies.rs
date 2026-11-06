@@ -47,10 +47,11 @@ pub(super) fn bind_inputs(
     Ok(())
 }
 pub(super) fn retire_input(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     input: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let mut children = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut pending = vec![*input];
@@ -82,16 +83,17 @@ pub(super) fn retire_input(
         super::birth_custody::mark_birth_source_retired(store, txn, child)?;
     }
     for child in children {
-        retire_birth_source_holder_in_txn(store, txn, &child)?;
+        retire_birth_source_holder_in_txn(write, txn, &child)?;
     }
     Ok(())
 }
 /// Tombstone-first erasure has no live row to deindex, but still retires inputs.
 pub(crate) fn retire_birth_sources_for_entity_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     input: &EntityId,
 ) -> Result<()> {
-    retire_input(store, txn, input)?;
-    retire_birth_source_holder_in_txn(store, txn, input)
+    let store = write.store;
+    retire_input(write, txn, input)?;
+    retire_birth_source_holder_in_txn(write, txn, input)
 }
