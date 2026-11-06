@@ -358,6 +358,8 @@ pub struct StoreCore {
     /// Content-free, per-vault: bumped after each commit that may have
     /// changed an admitted policy manifest (FIX 11402). Never persisted.
     pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
+    /// Content-free, per-vault terminal hook-ask changes, published after commit.
+    pub(crate) verb_hook_ask_updates: tokio::sync::watch::Sender<u64>,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.

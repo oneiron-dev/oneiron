@@ -63,6 +63,7 @@ pub(crate) use self::vad_postcommit::queue_room_join;
 pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
+pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,
