@@ -25,6 +25,11 @@ impl VerifiedOwnDeviceLane {
     pub(in crate::batch) fn machine_for(&self, _id: &EntityId, _data: &[u8]) -> Option<EntityId> {
         match *self {}
     }
+
+    /// Never answers: there is no lane to ask.
+    pub(in crate::batch) fn authored_by(&self) -> Option<EntityId> {
+        match *self {}
+    }
 }
 
 /// One entity put through the `apply_put` chokepoint.
