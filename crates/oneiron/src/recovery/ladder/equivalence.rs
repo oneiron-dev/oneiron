@@ -1,5 +1,5 @@
 //! Pure equality of one owned recapture after native pad normalization.
-//! Payload bytes, titles and fields resume one byte per existing work unit.
+//! Payload bytes, titles and field names resume one byte per existing work unit.
 
 use crate::error::Result;
 use crate::note::{NoteFork, NoteReviewBundle};
@@ -14,6 +14,7 @@ pub(in crate::recovery) struct CanonicalComparison {
     next: usize,
     byte: usize,
     payload: PayloadPart,
+    record_field: usize,
     bundle: BundleComparison,
 }
 
@@ -72,6 +73,7 @@ impl CanonicalComparison {
             next: 0,
             byte: 0,
             payload: PayloadPart::First,
+            record_field: 0,
             bundle: BundleComparison::default(),
         }
     }
@@ -158,6 +160,7 @@ impl CanonicalComparison {
                     &mut self.next,
                     &mut self.byte,
                     &mut self.payload,
+                    &mut self.record_field,
                 )?,
                 Group::DocumentHeads,
             ),
@@ -254,6 +257,7 @@ impl CanonicalComparison {
             self.next = 0;
             self.byte = 0;
             self.payload = PayloadPart::First;
+            self.record_field = 0;
             self.bundle = BundleComparison::default();
         }
         Ok(matches!(self.group, Group::Complete))
@@ -341,6 +345,7 @@ fn compare_entity_documents(
     next: &mut usize,
     byte: &mut usize,
     payload: &mut PayloadPart,
+    record_field: &mut usize,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalEntityDocument {
@@ -381,17 +386,34 @@ fn compare_entity_documents(
         }
         return Ok(false);
     }
-    if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
-        compare_value(metadata, expected_metadata)?;
-        compare_value(summary_meta, expected_summary_meta)?;
-        compare_value(record_fields, expected_record_fields)?;
-        compare_value(birth_actor, expected_birth_actor)?;
-        compare_value(birth_at, expected_birth_at)?;
-        compare_value(history, expected_history)?;
-        *next += 1;
-        *byte = 0;
-        *payload = PayloadPart::First;
+    if *payload == PayloadPart::Second {
+        if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
+            compare_value(metadata, expected_metadata)?;
+            compare_value(summary_meta, expected_summary_meta)?;
+            *payload = PayloadPart::Third;
+            *byte = 0;
+        }
+        return Ok(false);
     }
+    compare_value(&record_fields.len(), &expected_record_fields.len())?;
+    if let Some(field) = record_fields.get(*record_field) {
+        if compare_bytes(
+            field.as_bytes(),
+            expected_record_fields[*record_field].as_bytes(),
+            byte,
+        )? {
+            *record_field += 1;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    compare_value(birth_actor, expected_birth_actor)?;
+    compare_value(birth_at, expected_birth_at)?;
+    compare_value(history, expected_history)?;
+    *next += 1;
+    *byte = 0;
+    *payload = PayloadPart::First;
+    *record_field = 0;
     Ok(false)
 }
 
