@@ -21,9 +21,10 @@
 //! no origin beside them (FIX 12113): the lane also asks for the writer's
 //! proof of the exact bytes (`message_writer`), which the import carries in
 //! the window beside the row, and names the machine that proof verifies.
-//! Nothing here outlives the import: recovery, window open and every later
-//! pass replay persisted bytes with no live proof of who sent them, so none
-//! of them mints a lane.
+//! That proof is durable, so a later window pass that retries a row the
+//! import left waiting on a dependency (FIX 20830) reads it from the window
+//! and mints the lane again for the exact bytes it verifies. A trusted
+//! recovery pass and a ladder run outside a window's own passes mint none.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,6 +58,11 @@ pub(crate) struct VerifiedOwnDeviceLane {
     /// The writer proof that verified, which the put records so this
     /// machine passes it on beside the row.
     proof: Vec<u8>,
+    /// The actor the row's `AuthoredBy` edge names in the window the import
+    /// landed, when it names exactly one (FIX 9600): the author a companion
+    /// row is judged by. The edge lands in a later pass than the row; the
+    /// import brought both at once.
+    authored_by: Option<EntityId>,
 }
 
 impl VerifiedOwnDeviceLane {
@@ -64,6 +70,11 @@ impl VerifiedOwnDeviceLane {
     /// when this lane vouches for another row or other bytes.
     pub(crate) fn machine_for(&self, id: &EntityId, data: &[u8]) -> Option<EntityId> {
         (self.row == *id && self.body == digest(data)).then_some(self.machine)
+    }
+
+    /// The actor this lane's row's window names as its author, if one.
+    pub(crate) fn authored_by(&self) -> Option<EntityId> {
+        self.authored_by
     }
 
     /// The writer proof of row `id` with body `data`, or `None` when this
@@ -110,7 +121,9 @@ fn is_message(blob: &[u8]) -> bool {
 /// Runs `land`, which imports `update` into `doc`, the live document of the
 /// window `key`. Under `import`, each MESSAGE row `update` itself inserts
 /// takes the own-device lane in the doors `land` runs on this thread. With no
-/// import, no door `land` runs mints a lane, whatever import encloses it.
+/// import, no door `land` runs mints one from a span, whatever import
+/// encloses it; a row whose window carries a writer proof that verifies is
+/// the writer's either way (FIX 20830).
 pub(in crate::sync) fn with_own_device_import<T>(
     vault: &Vault,
     import: Option<&OwnDeviceImport>,
@@ -224,13 +237,14 @@ fn may_insert_message(key: &WindowKey, doc: &LoroDoc, meta: &ImportBlobMetadata)
     key.world().is_none() && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
 }
 
-/// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
-/// own-device import on this thread brought exactly these bytes into the
-/// window `ctx` lands, no federation peer's import brought them, and the
-/// writer proof the window carries beside them verifies (FIX 12113). A
+/// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: the
+/// writer proof the window `ctx` lands carries beside these exact bytes
+/// verifies (FIX 12113), and no federation peer's import brought them. An
+/// own-device import on this thread that brought them names its proof; a
+/// window pass that retries the row reads it from the window (FIX 20830). A
 /// trusted recovery pass, a ladder run outside a window's own passes, a put
-/// of other bytes than the ones sent, and a row with no proof that verifies
-/// take none.
+/// of other bytes than the ones in the window, and a row with no proof that
+/// verifies take none.
 pub(super) fn lane_in_txn(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -257,9 +271,22 @@ pub(super) fn lane_in_txn(
                     .map(|proof| (span.machine, proof.clone()))
             })
     });
-    let Some((relay, proof)) = relayed else {
-        return Ok(None);
+    // A row this import did not bring, one a later pass retries after it
+    // waited on a dependency or an older operation this import completed, is
+    // the writer's on the proof its window carries for these exact bytes
+    // (FIX 20830): the proof, not a live connection, says an own machine
+    // wrote them.
+    let (relay, proof) = match relayed {
+        Some((relay, proof)) => (Some(relay), proof),
+        None => (
+            None,
+            ctx.carrier_doc()
+                .and_then(|doc| super::message_writer::carried_proof(doc, id)),
+        ),
     };
+    if relay.is_none() && proof.is_none() {
+        return Ok(None);
+    }
     // A federation peer's row stays the peer's, whichever own machine relays
     // it: the origin its window carries for these bytes is recorded by now.
     if super::peer_row_in_txn(ctx.vault, wtxn, ctx.window_key, id, blob)? {
@@ -276,14 +303,71 @@ pub(super) fn lane_in_txn(
     let (Some(machine), Some(proof)) = (writer, proof) else {
         tracing::debug!(
             ?relay,
-            "an own machine relayed a MESSAGE row with no writer proof that verifies"
+            "a MESSAGE row in a window pass with no writer proof that verifies"
         );
         return Ok(None);
+    };
+    let authored_by = match ctx.residence {
+        Some(Residence::Quarantine(doc) | Residence::Forward { doc, .. }) => {
+            authored_by_in_window(ctx, wtxn, doc, id)?
+        }
+        None => None,
     };
     Ok(Some(VerifiedOwnDeviceLane {
         machine,
         row: *id,
         body: digest(data),
         proof,
+        authored_by,
     }))
+}
+
+/// The actor the `AuthoredBy` edge of MESSAGE `id` names in `doc`, the
+/// window the import landed, judged as the edge pass will judge that edge:
+/// its carrier decodes as an `AuthoredBy` value, neither end is tombstoned
+/// in the window, and the edge resides in it. `None` when no such edge is
+/// there, when one of the row's author carriers does not decode, or when
+/// they name more than one author: a row the edge pass would leave with no
+/// author takes none here.
+fn authored_by_in_window(
+    ctx: &IngestCtx<'_>,
+    wtxn: &heed::RwTxn<'_>,
+    doc: &LoroDoc,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    let mut named = None;
+    let mut sound = true;
+    map_for_each_value_bytes(&doc.get_map("edges"), |key, value| {
+        let Some((source, kind, target)) = crate::sync::bridge::parse_edge_key(key) else {
+            return;
+        };
+        if source != *id || kind != crate::EdgeKind::AuthoredBy {
+            return;
+        }
+        let decodes =
+            value.is_some_and(|bytes| crate::edge::decode_edge_value_for_kind(kind, bytes).is_ok());
+        if !decodes || named.replace(target).is_some_and(|prior| prior != target) {
+            sound = false;
+        }
+    });
+    let Some(actor) = named.filter(|_| sound) else {
+        return Ok(None);
+    };
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    if tombstones.contains(id) || tombstones.contains(&actor) {
+        return Ok(None);
+    }
+    let Some(window) = WindowKey::try_new(ctx.window_key) else {
+        return Ok(None);
+    };
+    let resides = crate::sync::types::edge_belongs_to_window_in(
+        ctx.vault,
+        wtxn,
+        doc,
+        &tombstones,
+        id,
+        &actor,
+        &window,
+    )?;
+    Ok(resides.then_some(actor))
 }
