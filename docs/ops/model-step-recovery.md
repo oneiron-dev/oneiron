@@ -161,3 +161,27 @@ or proof that an aggregate charged that interval. It creates no payment, credit,
 new funding reservation or extra settlement. The actual executor/driver inclusion
 join, paid-fact checks, interval deduplication on the same real guard, and native
 House producer coverage remain separate work before automatic payment activation.
+
+### Original House admission in runtime settlement capture
+
+A captured scoped read carries an opaque source from its original pass deadline
+and attempt. Carrying the source allocates nothing. A stronger House read draws
+its own original invocation only after its native permit and dispatch exist,
+before its reader starts. It does not reuse the generated first read's invocation,
+request hash, run instance or model-call index. The initial packed read and its
+full-vocabulary retries keep their existing single permit and settlement.
+
+The permit keeps the actual issuing guard and opaque lease, not a reconstructed
+public lease id. Its settlement capture attaches that handle only to the captured
+runtime receipt clones, after settlement. The host's ordinary receipt sink still
+gets the original receipt without the handle. Serialization omits the runtime
+attachment because guard and lease tokens do not survive serialization. Missing
+original lines and allocation failures remain unknown; they do not refuse the
+existing read or become zero usage.
+
+The scoped caller can sample the exact retained lease on its issuing guard. This
+is GROSS meter data, not a native NET invoice, paid receipt or durable inclusion
+proof. This carrier does not register native House input hashes or NET invoices.
+Those actual producer hooks and the executor/driver coverage join remain separate
+work. Automatic payment and the existing generated-only opening policy are
+unchanged.
