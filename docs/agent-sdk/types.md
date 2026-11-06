@@ -2383,10 +2383,12 @@ class Oneiron:
             """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
         def projection(self, spec: Facade.SharedMemberRequest) -> Facade.MemberProjection:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
-        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
         def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
+        def invitation_code(self, spec: Facade.InvitationCodeRequest) -> Facade.InvitationCode:
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -2397,6 +2399,8 @@ class Oneiron:
             """The caller's own pending invitations into a shared vault."""
         def accept(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee accepts their own invitation and joins the shared vault at its role."""
+        def accept_with_credential(self, spec: Facade.SharedInvitationAcceptWithCredentialRequest) -> Facade.SharedInvitationAcceptedWithCredential:
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
         def decline(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:

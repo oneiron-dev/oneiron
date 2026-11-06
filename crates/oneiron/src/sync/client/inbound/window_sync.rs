@@ -11,6 +11,7 @@ use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
+use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
@@ -621,7 +622,8 @@ impl SyncClient {
             let landed = crate::sync::ingest::with_record_document_import(
                 &self.vault,
                 own_device,
-                (&key, &window.doc),
+                &key,
+                &window.doc,
                 payload,
                 || {
                     crate::sync::ingest::with_own_device_import(

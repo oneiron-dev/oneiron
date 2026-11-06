@@ -92,6 +92,8 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+#[cfg(feature = "sync")]
+pub(crate) mod shared_replica_bootstrap;
 mod home_candidacy;
 mod home_pick;
 mod host_action;
@@ -350,6 +352,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
