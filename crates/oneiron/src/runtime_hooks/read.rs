@@ -109,7 +109,7 @@ pub(super) fn fact_row_in_txn(
     seen_fact(grant, entry, rows)
 }
 
-fn fact_point(entry: &FactEntry) -> Option<PointRead<'static>> {
+pub(super) fn fact_point(entry: &FactEntry) -> Option<PointRead<'static>> {
     if entry.body_hash.is_some() && entry.revision.is_none() {
         return None;
     }
