@@ -6,9 +6,61 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use loro::LoroDoc;
 
 use super::SyncClient;
+use crate::Vault;
+use crate::authority::PeerMachine;
 use crate::embed::home_vectors::{HomeClaimDelivery, PreparedHomeClaimSend};
 use crate::sync::transport::{TransportError, WindowPadBinding, WindowPadKind};
 use crate::sync::window::PreparedWindowPads;
+
+/// A response frame and its original optional-copy evidence travel together.
+/// The required bytes can be inspected without turning serialized copies into a grant.
+pub struct PreparedSyncFrame {
+    frame: Vec<u8>,
+    release: Option<WindowClaimCopyRelease>,
+}
+
+impl PreparedSyncFrame {
+    /// Required bytes only. An optional-only continuation has no required bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        let required = self
+            .release
+            .as_ref()
+            .map_or(self.frame.len(), |release| release.required_prefix());
+        &self.frame[..required]
+    }
+
+    /// Takes required bytes only; an optional-only continuation returns empty.
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        if let Some(release) = &mut self.release {
+            release.stage(&mut self.frame);
+        }
+        self.frame
+    }
+
+    pub(crate) fn for_policy(&self) -> &[u8] {
+        &self.frame
+    }
+
+    pub(crate) fn release(mut self, vault: &Vault, peer: PeerMachine) -> Option<Vec<u8>> {
+        if let Some(release) = &mut self.release {
+            release.stage(&mut self.frame);
+            release.recheck(vault, peer);
+            if release.retained() {
+                self.frame.extend_from_slice(&release.suffix);
+            }
+        }
+        (!self.frame.is_empty()).then_some(self.frame)
+    }
+}
+
+impl From<Vec<u8>> for PreparedSyncFrame {
+    fn from(frame: Vec<u8>) -> Self {
+        Self {
+            frame,
+            release: None,
+        }
+    }
+}
 
 struct WindowClaimCopies {
     window: String,
@@ -18,17 +70,14 @@ struct WindowClaimCopies {
 }
 
 impl WindowClaimCopies {
-    fn current(&self, client: &SyncClient) -> bool {
+    fn current(&self, vault: &Vault, peer: PeerMachine) -> bool {
         let delivery = HomeClaimDelivery {
             window: &self.window,
             payload: &self.payload,
         };
-        self.sends.iter().all(|send| {
-            matches!(
-                send.copy_for(&client.vault, client.home_peer, &delivery),
-                Ok(Some(_))
-            )
-        })
+        self.sends
+            .iter()
+            .all(|send| matches!(send.copy_for(vault, peer, &delivery), Ok(Some(_))))
     }
 
     fn encode(&self, client: &SyncClient) -> Option<Vec<u8>> {
@@ -74,8 +123,8 @@ impl WindowClaimCopyRelease {
         self.suffix = frame.split_off(self.required_prefix);
     }
 
-    pub(crate) fn recheck(&self, client: &SyncClient) {
-        if !self.copies.current(client) {
+    pub(crate) fn recheck(&self, vault: &Vault, peer: PeerMachine) {
+        if !self.copies.current(vault, peer) {
             self.abandon();
         }
     }
@@ -119,6 +168,22 @@ pub(crate) struct PreparedWindowClaimSend {
 }
 
 impl SyncClient {
+    pub(crate) fn prepared_window_reply(
+        &self,
+        window: &str,
+        payload: &[u8],
+        context: &LoroDoc,
+    ) -> Result<Vec<PreparedSyncFrame>, TransportError> {
+        let prepared = self.prepare_window_send(window, payload, Some(context))?;
+        let prepared = self.prepare_window_claim_send(
+            prepared,
+            window,
+            crate::sync::transport::window_sub_tags::UPDATE,
+            Some(context),
+        );
+        prepared.reply_frames(self, None, payload)
+    }
+
     pub(crate) fn prepare_window_claim_send(
         &self,
         prepared: PreparedWindowPads,
@@ -163,6 +228,20 @@ impl SyncClient {
 }
 
 impl PreparedWindowClaimSend {
+    pub(crate) fn reply_frames(
+        &self,
+        client: &SyncClient,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+    ) -> Result<Vec<PreparedSyncFrame>, TransportError> {
+        let (frames, _, releases) = self.send_frames(client, queue_seq, raw, false)?;
+        Ok(frames
+            .into_iter()
+            .zip(releases)
+            .map(|(frame, release)| PreparedSyncFrame { frame, release })
+            .collect())
+    }
+
     fn encoded_frames(
         &self,
         queue_seq: Option<u64>,

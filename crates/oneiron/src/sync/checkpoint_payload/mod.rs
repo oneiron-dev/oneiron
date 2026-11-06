@@ -519,6 +519,8 @@ pub(crate) struct SyncRestoreRows {
     pub(crate) markers: Vec<(RowLocator, Vec<u8>)>,
     /// What each window carrier's join proved.
     pub(crate) verdicts: Vec<LoroVerdict>,
+    /// Opened native source data for the original applying transaction.
+    pub(crate) record_sources: Vec<record_documents::opened::OpenedWindowRecordSources>,
 }
 
 /// Places every row of `rows` (KS7-3a): each sealed row's atoms go to
