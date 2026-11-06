@@ -30,12 +30,12 @@ pub(super) use budget::ByteBudget;
 pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
 pub(super) use budget::held_bytes;
-pub(super) use containers::ExpectedContainers;
 pub use capture::capture_canonical_window;
 pub(crate) use capture::{
     CanonicalCapture, StoreCapturedCanonical, capture_canonical_window_from_store,
     capture_canonical_window_within, prepare_artifact_pads,
 };
+pub(super) use containers::ExpectedContainers;
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
