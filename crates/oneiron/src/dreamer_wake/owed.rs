@@ -175,9 +175,18 @@ fn settle_owed_calls_in_txn(
     let mut charged = 0u64;
     let mut dropped = 0u64;
     for ((attempt, step_hash), row) in calls {
-        if store.step_charge_marked_in_txn(&*wtxn, attempt, &step_hash)? {
-            sums.entry((attempt, row.line)).or_insert(0);
-            continue;
+        if let Some(claim_id) =
+            crate::llm::model_step::step_terminal_claim_in_txn(vault, &*wtxn, attempt, &step_hash)?
+        {
+            let receipt = crate::model_step_context::StepReceipt {
+                attempt_id: attempt,
+                step_hash,
+                claim_id,
+            };
+            if store.step_charge_marked_in_txn(&*wtxn, receipt)? {
+                sums.entry((attempt, row.line)).or_insert(0);
+                continue;
+            }
         }
         let usage = crate::llm::settled_step_usage_in_txn(vault, &*wtxn, attempt, &step_hash)
             .map_err(|_| Error::InvalidClaimBody("owed wake call step usage did not decode"))?;

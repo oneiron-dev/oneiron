@@ -225,12 +225,7 @@ pub async fn run_task_realize(
         Ok(StepOutcome::Finished {
             response, binding, ..
         }) => {
-            charges.record_terminal(
-                ctx.vault,
-                binding.attempt_id,
-                binding.step_hash,
-                &response.usage,
-            )?;
+            charges.record_terminal(ctx.vault, binding, &response.usage)?;
             (response, binding)
         }
         Ok(StepOutcome::Trapped { .. }) => {

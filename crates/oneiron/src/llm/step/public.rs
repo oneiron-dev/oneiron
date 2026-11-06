@@ -261,11 +261,12 @@ async fn submit(
     };
     row.result = Some(match outcome {
         Ok(StepOutcome::Finished {
-            response, memoized, ..
+            binding,
+            response,
+            memoized,
+            ..
         }) => {
-            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
-                Error::InvalidClaimBody("finished model step has no terminal claim"),
-            )?;
+            let claim = binding.claim_id;
             let json = if matches!(
                 row.input.request.envelope.response_format,
                 ResponseFormat::Json { .. }

@@ -171,7 +171,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                             response, memoized, binding, ..
                         }) => {
                             if let Err(error) =
-                                charges.record_terminal(ctx.vault, binding.attempt_id, binding.step_hash, &response.usage)
+                                charges.record_terminal(ctx.vault, binding, &response.usage)
                             {
                                 if !memoized {
                                     charges.record_usage(&response.usage);

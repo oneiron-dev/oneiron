@@ -7,7 +7,7 @@ use crate::attempt_queue::{
 };
 use crate::dreamer_wake::WakeTrigger;
 use crate::error::{Error, Result};
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::side_table::{self, Raw, SideTable};
 
 use super::codec::{
@@ -624,7 +624,7 @@ impl<'a> DreamerRunnerStore<'a> {
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
-        step_bindings: &[StepEffectBinding],
+        step_bindings: &[StepReceipt],
     ) -> Result<()> {
         self.requeue_deferred(
             admitted,
@@ -644,7 +644,7 @@ impl<'a> DreamerRunnerStore<'a> {
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
-        step_bindings: &[StepEffectBinding],
+        step_bindings: &[StepReceipt],
     ) -> Result<()> {
         self.requeue_deferred(
             admitted,
@@ -662,7 +662,7 @@ impl<'a> DreamerRunnerStore<'a> {
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
-        step_bindings: &[StepEffectBinding],
+        step_bindings: &[StepReceipt],
         reason: &str,
     ) -> Result<()> {
         let source = &admitted.status.attempt;

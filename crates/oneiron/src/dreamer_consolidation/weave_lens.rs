@@ -101,12 +101,9 @@ async fn lens_step(
                 binding,
                 ..
             }) => {
-                if let Err(error) = charges.record_terminal(
-                    step_ctx.vault,
-                    binding.attempt_id,
-                    binding.step_hash,
-                    &response.usage,
-                ) {
+                if let Err(error) =
+                    charges.record_terminal(step_ctx.vault, binding, &response.usage)
+                {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }

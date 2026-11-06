@@ -20,7 +20,7 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::llm::call_as_step_checked;
-use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepOutcome, StepReceipt};
 use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -62,7 +62,7 @@ struct MergeInput {
 pub(super) struct MergeResult {
     pub(super) outputs: Vec<EntityId>,
     pub(super) completed_units: u64,
-    pub(super) step_bindings: Vec<StepEffectBinding>,
+    pub(super) step_bindings: Vec<StepReceipt>,
     /// The listed children's retry chunks this merge read (FIX 7495), so no
     /// later merge under the same parent reads them again.
     #[serde(default)]
@@ -385,12 +385,8 @@ impl ConsolidationExecutor<'_> {
                     binding,
                     ..
                 }) => {
-                    if let Err(error) = charges.record_terminal(
-                        ctx.vault,
-                        binding.attempt_id,
-                        binding.step_hash,
-                        &response.usage,
-                    ) {
+                    if let Err(error) = charges.record_terminal(ctx.vault, binding, &response.usage)
+                    {
                         if !memoized {
                             charges.record_usage(&response.usage);
                         }

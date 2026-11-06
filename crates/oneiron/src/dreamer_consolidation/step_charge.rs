@@ -10,7 +10,7 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::model_step_context::{StepEffectBinding, StepOutcome};
+use crate::model_step_context::{StepOutcome, StepReceipt};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
@@ -20,7 +20,7 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 #[derive(Default)]
 pub(super) struct StepChargeTally {
     pub(super) units: u64,
-    pub(super) step_bindings: Vec<StepEffectBinding>,
+    pub(super) step_bindings: Vec<StepReceipt>,
 }
 
 impl StepChargeTally {
@@ -96,11 +96,7 @@ impl StepChargeTally {
                 .iter()
                 .copied()
                 .filter(|binding| {
-                    *binding
-                        != StepEffectBinding {
-                            attempt_id,
-                            step_hash,
-                        }
+                    binding.attempt_id != attempt_id || binding.step_hash != step_hash
                 })
                 .collect(),
         })
@@ -130,11 +126,7 @@ impl StepChargeTally {
                 .iter()
                 .copied()
                 .filter(|binding| {
-                    *binding
-                        != StepEffectBinding {
-                            attempt_id,
-                            step_hash,
-                        }
+                    binding.attempt_id != attempt_id || binding.step_hash != step_hash
                 })
                 .collect(),
         })
@@ -143,16 +135,11 @@ impl StepChargeTally {
     pub(super) fn record_terminal(
         &mut self,
         vault: &Vault,
-        attempt_id: AttemptId,
-        step_hash: [u8; 32],
+        binding: StepReceipt,
         usage: &LlmUsage,
     ) -> Result<()> {
-        let binding = StepEffectBinding {
-            attempt_id,
-            step_hash,
-        };
         if self.step_bindings.contains(&binding)
-            || DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt_id, &step_hash)?
+            || DreamerRunnerStore::new(vault).checkpoint_step_charged(binding)?
         {
             return Ok(());
         }
@@ -168,20 +155,13 @@ impl StepChargeTally {
     pub(super) fn record_terminal_metered(
         &mut self,
         ctx: &WakeAttemptContext<'_>,
-        attempt_id: AttemptId,
-        step_hash: [u8; 32],
+        binding: StepReceipt,
         usage: &LlmUsage,
     ) -> Result<()> {
         let tallied = self.step_bindings.len();
-        self.record_terminal(ctx.vault, attempt_id, step_hash, usage)?;
+        self.record_terminal(ctx.vault, binding, usage)?;
         if self.step_bindings.len() > tallied {
-            ctx.note_terminal_step_charge(
-                StepEffectBinding {
-                    attempt_id,
-                    step_hash,
-                },
-                usage_units(usage),
-            );
+            ctx.note_terminal_step_charge(binding, usage_units(usage));
         }
         Ok(())
     }
@@ -247,7 +227,7 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
 /// settles identically whichever arm accounts it (FIX 12487 round 1).
 pub(super) enum SliceFate {
     Finished {
-        binding: StepEffectBinding,
+        binding: StepReceipt,
         response: LlmResponse,
         failure_policy: Option<DreamerFailureDecision>,
     },
@@ -273,12 +253,7 @@ pub(super) fn tally_slice_outcome(
             failure_policy,
             ..
         }) => {
-            charges.record_terminal(
-                vault,
-                binding.attempt_id,
-                binding.step_hash,
-                &response.usage,
-            )?;
+            charges.record_terminal(vault, binding, &response.usage)?;
             SliceFate::Finished {
                 binding,
                 response,

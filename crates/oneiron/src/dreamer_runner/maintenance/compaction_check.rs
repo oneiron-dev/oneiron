@@ -47,7 +47,7 @@ use crate::inbox::{
 use crate::inference_context::HostInferenceContext;
 use crate::llm::call_as_step;
 use crate::model_binding::ModelRole;
-use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepOutcome, StepReceipt};
 use crate::model_step_error::DurableStepResult;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
@@ -352,7 +352,7 @@ struct Judging {
     response: LlmResponse,
     memoized: bool,
     step_hash: [u8; 32],
-    binding: StepEffectBinding,
+    binding: StepReceipt,
     /// What it spent: nothing when memoized, paid for by the pass that
     /// asked it.
     units: u64,
@@ -422,8 +422,7 @@ async fn ask_judge(
 
 /// The judge's answer and whether it was memoized, or how the attempt
 /// waits for one.
-type StepAnswer =
-    std::result::Result<(LlmResponse, bool, StepEffectBinding), DreamerAttemptExecution>;
+type StepAnswer = std::result::Result<(LlmResponse, bool, StepReceipt), DreamerAttemptExecution>;
 
 /// [`StepAnswer`] from the durable step's outcome: nothing was spent before
 /// it, so a step that did not finish parks with only its own spend.
