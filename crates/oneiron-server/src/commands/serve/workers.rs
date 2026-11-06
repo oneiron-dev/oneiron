@@ -256,8 +256,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
-    // Installed ICS feeds poll on their own cadence (FIX 7846).
-    workers.push(crate::calendar_host::spawn_ics_feed_polls(
+    // Installed ICS feeds and queued CalDAV syncs poll on their own cadence.
+    workers.push(crate::calendar_host::spawn_calendar_polls(
         Arc::clone(&sync_server),
         admitted(),
     ));

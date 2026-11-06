@@ -370,7 +370,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let booking_conversion_rows = match single_map_value(&entries, "booking_conversion") {
         MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
-        MapValue::Present(Value::Array(rows)) if rows.len() <= 128 => rows
+        MapValue::Present(Value::Array(rows)) => rows
             .iter()
             .map(|row| {
                 let json: serde_json::Value = rmpv::ext::from_value(row.clone()).ok()?;

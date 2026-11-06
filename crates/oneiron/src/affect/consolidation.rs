@@ -241,6 +241,14 @@ impl Vault {
                 });
             }
         }
+        // A tagger mood read from text its turn no longer shows is stale (FIX 10169):
+        // it is averaged only when no current mood is, so a stale read never pulls a
+        // current one, and a claim whose turns were all edited before their retag keeps
+        // the moods it has, each recorded as stale (FIX 10706).
+        let (current, stale): (Vec<_>, Vec<_>) = evidence_turns
+            .into_iter()
+            .partition(|item| !item.annotation.freshness.is_some_and(|fresh| fresh.stale));
+        let evidence_turns = if current.is_empty() { stale } else { current };
 
         let (semantic_edges, structural_edges_skipped) =
             self.claim_vad_incident_edges_in_txn(wtxn, claim_id)?;

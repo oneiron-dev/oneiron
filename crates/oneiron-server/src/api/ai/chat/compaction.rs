@@ -42,9 +42,9 @@ use crate::models::RoleCall;
 /// What a self agent's answer brings to its breakpoint.
 pub(crate) struct AnswerBreakpoint {
     mode: ChatSelfMode,
-    /// The log a chat turn's request was assembled from; a reused prefix
-    /// carries none and seals no flight.
-    log: Option<ChatLog>,
+    /// The log the request was assembled from, with whether it also opens
+    /// a compaction flight. A reused prefix carries no log.
+    log: Option<BreakpointLog>,
     locality: CallerLocality,
     reader: WriteActor,
     instructions_digest: Option<String>,
@@ -57,6 +57,21 @@ pub(crate) struct AnswerBreakpoint {
     /// The craft rows the host's snapshot read for the request (FIX 9439):
     /// a chat turn's seed keeps them beside its request.
     craft: Vec<ManifestEntry>,
+}
+
+/// An ordinary turn compacts its log; an action only captures its exact
+/// target-bound request for a later Retry.
+enum BreakpointLog {
+    Compact(ChatLog),
+    CaptureOnly(ChatLog),
+}
+
+impl BreakpointLog {
+    fn log(&self) -> &ChatLog {
+        match self {
+            Self::Compact(log) | Self::CaptureOnly(log) => log,
+        }
+    }
 }
 
 /// A chat turn's self mode and the log its caller read.
@@ -152,7 +167,7 @@ impl SelfChat {
         let instructions_digest = self.mode.instructions().map(digest_hex);
         AnswerBreakpoint {
             mode: self.mode,
-            log: Some(self.log),
+            log: Some(BreakpointLog::Compact(self.log)),
             locality,
             reader,
             instructions_digest,
@@ -161,6 +176,43 @@ impl SelfChat {
             craft,
         }
     }
+}
+
+/// Captures only a board-less Retry's exact target-bound call. It keeps no
+/// flight and changes neither this request nor its admission.
+pub(crate) fn action_breakpoint(
+    ai: &AiHandle,
+    vault: &Vault,
+    action: &TurnActionAttempt,
+    agent: EntityId,
+    log: ChatLog,
+    craft: Vec<ManifestEntry>,
+    assembled: &[LlmMessage],
+    admitted: &RoleCall,
+) -> Option<AnswerBreakpoint> {
+    if action.action != TurnAction::Retry
+        || serde_json::to_vec(&admitted.request.messages).ok()?
+            != serde_json::to_vec(assembled).ok()?
+    {
+        return None;
+    }
+    let mode = ai.chat_self_mode(vault, agent)?;
+    let instructions_digest = mode.instructions().map(digest_hex);
+    let (actor, class) = action.requester().ok()?;
+    Some(AnswerBreakpoint {
+        mode,
+        log: Some(BreakpointLog::CaptureOnly(log)),
+        locality: if action.off_device {
+            CallerLocality::OffDevice
+        } else {
+            CallerLocality::OnDevice
+        },
+        reader: WriteActor::new(actor, class),
+        instructions_digest,
+        source: None,
+        recalled: false,
+        craft,
+    })
 }
 
 /// Marks where a self turn's request ends, as its fork marks it (FIX 4930).
@@ -223,14 +275,14 @@ pub(super) fn enter(
             capture_seed(
                 mode.agent(),
                 reader,
-                log,
+                log.log(),
                 instructions_digest,
                 craft,
                 admitted,
             )
         }),
     };
-    if let Some(log) = log {
+    if let Some(BreakpointLog::Compact(log)) = log {
         let call = ChatBreakpointCall {
             vault: Arc::clone(vault),
             mode,
