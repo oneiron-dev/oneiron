@@ -252,11 +252,22 @@ impl UnfinalizedContextPack<'_> {
                 return Err(error);
             }
         };
+        let mut surfaced_memory = self
+            .telemetry_memory
+            .as_ref()
+            .map(crate::host_memory::MachineMemory::empty_lease);
         let surfaced_result_ids: Vec<[u8; 16]> = pack
             .results
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        if let Some(memory) = surfaced_memory.as_mut() {
+            memory.materialized(
+                0,
+                (surfaced_result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         // BASE-ONLY by construction: `run_unfinalized_with_telemetry` refuses
         // a room's assembly precisely because this finalize has no channel to
         // carry a room's registration failure, and the base arm's posture is
@@ -318,12 +329,23 @@ impl UnfinalizedContextPack<'_> {
     /// best-effort posture: its caller has a `Result` to carry the failure,
     /// so even a base-vault finalize failure must fail this read.
     pub fn finish_post_filter(mut self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let mut surfaced_memory = self
+            .telemetry_memory
+            .as_ref()
+            .map(crate::host_memory::MachineMemory::empty_lease);
         let surfaced_result_ids: Vec<[u8; 16]> = self
             .value
             .results
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        if let Some(memory) = surfaced_memory.as_mut() {
+            memory.materialized(
+                0,
+                (surfaced_result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         let telemetry_run_id = self.telemetry_run_id.take();
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {

@@ -263,6 +263,17 @@ provisional record and the later decoded record are not this allocation.
 Session-overlay and admitted-base finalizers borrow their caller's IDs without
 making this copy, so their input handling is unchanged.
 
+The original surfaced-ID vectors in the structured, projected, post-filter and
+serialized pack terminals have their own optional local leases on the same
+supplied host-memory line. Each lease is declared before the original vector
+collect or serializer call. After that same operation, it records the vector's
+actual capacity using the native ID element size. The original vector or
+serialized telemetry owner drops before the lease, including on an earlier
+finalization error. Serialized results return bytes and stats or a receipt,
+not the telemetry's ID vector. No input copy or borrowed-slice charge is added.
+Unbound terminals add no capacity work. These original allocations remain
+distinct from the detached input copy and later decoded-record copies.
+
 After the existing finalizer decodes a retrieval row, the same optional lease
 also records four stable parts of that decoded record: the actual slot
 capacities of its signal, degradation and policy-decision vectors, using their
