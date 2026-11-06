@@ -319,13 +319,16 @@ impl RpcReply {
     /// The frames as `conn`'s send door takes them: each chunk of a result
     /// carries the rows the release judges again (DEC-0005).
     pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {
-        let Some(rows) = self.rows else {
-            return self.frames;
-        };
-        self.frames
-            .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
-            .collect()
+        self.queued_frames(conn).collect()
+    }
+
+    pub(crate) fn queued_frames(self, conn: u32) -> impl Iterator<Item = Vec<u8>> {
+        let request_id = self.request_id;
+        let rows = self.rows;
+        self.frames.into_iter().map(move |frame| match &rows {
+            Some(rows) => routing::wrap(conn, request_id, 0, rows.as_deref(), frame),
+            None => frame,
+        })
     }
 }
 

@@ -43,3 +43,19 @@ All raw chunks remain retained until the terminal reply. The decoder can also
 allocate a field-sized scratch buffer and the parsed JSON value. Removing the
 assembled concatenation is not a total memory or peak-allocation guarantee, and
 it does not complete end-to-end streaming.
+
+## Routing queued frames
+
+The ordinary asynchronous facade RPC path routes each already encoded frame as
+it enqueues it on the existing reply channel. It does not first build a second
+complete vector of routed frames. Callers that need a frame batch still collect
+the same iterator.
+
+All result frames are still encoded before the first success frame is enqueued.
+An encoding failure therefore keeps the original single-refusal behavior; no
+partially encoded success is introduced. The per-request frame order, routing
+rows and downstream release checks are unchanged.
+
+The existing reply channel is unbounded, and the encoded result batch is still
+retained before enqueue. Lazy routing does not establish a queue bound or finish
+end-to-end streaming.
