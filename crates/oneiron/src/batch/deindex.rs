@@ -320,6 +320,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
     crate::embed::delete_media_vectors_in_txn(store, wtxn, id)?;
+    // FIX 9398: and every room's staged copies of them.
+    crate::embed::drop_room_media_copies_in_txn(store, wtxn, id);
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
