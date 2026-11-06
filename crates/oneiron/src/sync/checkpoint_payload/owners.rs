@@ -179,6 +179,11 @@ pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwn
         return match crate::ports::checkpoint::entity_row_placement(value) {
             EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
             EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            // Only an identity-topology carrier is one, and no such kind
+            // takes this branch.
+            EntityRowPlacement::Actor(_) => {
+                Placement::unclassified(Some(owner), SyncUnclassified::UnknownKind)
+            }
             EntityRowPlacement::Unclassified(reason) => {
                 Placement::unclassified(Some(owner), unclassified(reason))
             }
