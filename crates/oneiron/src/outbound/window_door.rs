@@ -188,6 +188,11 @@ fn outbound_delivery_window_context(
     )?
     .channel(channel)
     .interrupt_surface(interrupt_surface);
+    if request.delivery_window_clock.is_some()
+        && let Some(zone) = request.delivery_window_iana_timezone.as_deref()
+    {
+        context = context.iana_timezone(zone);
+    }
     if let Some(surface) = request.delivery_window_degrade_to.as_ref() {
         context = context.degrade_to(surface.clone());
     }
@@ -221,7 +226,7 @@ fn outbound_delivery_window_channel(intent: &OutboundIntent) -> String {
 
 /// Derive wall-clock minute from the selected host offset.
 pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -> u16 {
-    (((epoch_secs / 60) as i64 + i64::from(utc_offset_minutes)).rem_euclid(1440)) as u16
+    crate::calendar::tz::local_minute_of_day_at(epoch_secs, utc_offset_minutes)
 }
 
 // "the single local_minute_of_day currently applies to ALL subjects' claims — counterparty windows evaluate against the caller's clock. Real fix = subject tz as a vault fact (locale claim on actor/counterparty); rides the ONE-1751 claims direction, NOT this ticket."

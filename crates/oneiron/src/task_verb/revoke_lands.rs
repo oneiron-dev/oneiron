@@ -681,6 +681,21 @@ pub fn decodes<T: DeserializeOwned>(value: &Value) -> bool {
     <T as serde::Deserialize>::deserialize(value).is_ok()
 }
 
+/// A call-scoped notice of the restrictive target changes its hooks made or
+/// ignored. Transports can return it beside the typed result, including when
+/// a post hook refuses that result. It carries no invocation or caller id.
+#[must_use]
+pub fn caller_notice(pre: &VerbHookPre) -> Option<String> {
+    let landing = pre
+        .landing
+        .as_ref()
+        .filter(|landing| !landing.notes.is_empty())?;
+    Some(clip(
+        &format!("{}: {}", pre.call().verb, landing.notes.join("; ")),
+        NOTICE_DETAIL_MAX,
+    ))
+}
+
 /// Tells the vault's owners, in their inbox, what hooks changed or what was
 /// ignored on a restrictive call that ran (FIX 5076): one Finding per owner
 /// per logical call, keyed by its invocation, naming the verb, the
