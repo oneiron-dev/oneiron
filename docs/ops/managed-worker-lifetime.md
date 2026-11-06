@@ -93,8 +93,12 @@ whose backend holds the routes captured when the runtime was built and no HTTP
 sender, so a call it cannot send natively is not sent. The provider's own
 offer is unchanged: native when the current launch has a socket, HTTP
 otherwise, an OwnServer route either way. A call takes the on-device offer
-only when its route is on device; it never falls back to HTTP. Only free work
-(a local payer, no key) gets it, so charging is unchanged, and the reranker
-keeps its HTTP route, so the device-only reranking guard still sends it a
-device-only row empty. Other Unix targets retain their existing transport
-semantics: no PID check, no on-device offer.
+only when its route is on device; it never falls back to HTTP. The on-device
+offer keeps the provider offer's payer, key custody and rates, so charging is
+unchanged: free work (a local payer, no key) stays free, and a paid
+provider's call is charged to its payer under its run's budget line, as its
+own-server call is. A local-payer keyless provider at locality `third_party`
+gets no on-device offer, because on device its paid calls would turn free.
+The reranker keeps its HTTP route, so the device-only reranking guard still
+sends it a device-only row empty. Other Unix targets retain their existing
+transport semantics: no PID check, no on-device offer.
