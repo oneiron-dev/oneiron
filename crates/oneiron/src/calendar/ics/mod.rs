@@ -48,6 +48,7 @@ pub(crate) use self::calendar_timezone::{ics_vtimezone_tzid, ics_with_calendar_t
 pub(crate) use self::emit::emit_imip_ics_with_organizer_zones;
 pub(crate) use self::parse::{
     InviteIcsIdentity, ics_calendar_timezone, invite_identity, plain_zone_name,
+    push_collection_zone_line,
 };
 
 // Lets the moved bodies keep their `super::...` paths verbatim.

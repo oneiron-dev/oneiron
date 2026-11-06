@@ -133,6 +133,52 @@ pub(super) fn calendar_timezone<'c>(
         .and_then(|prop| plain_zone_name(prop.val.as_str()))
 }
 
+/// The parameter that marks an `X-WR-TIMEZONE` as a CalDAV collection's
+/// zone the engine wrote into a resource that names none (fix list row
+/// 19192), never a zone the resource names its own.
+const COLLECTION_ZONE_PARAM: &str = "X-ONEIRON-ZONE-SOURCE";
+
+/// That parameter's one value.
+const COLLECTION_ZONE_PARAM_VALUE: &str = "COLLECTION";
+
+/// Whether the first `X-WR-TIMEZONE` of `calendar`, the one
+/// [`calendar_timezone`] reads, is a collection's zone the engine wrote in
+/// ([`push_collection_zone_line`]) rather than one the resource names.
+pub(super) fn zone_from_collection(calendar: &icalendar::parser::Component<'_>) -> bool {
+    calendar
+        .properties
+        .iter()
+        .find(|prop| prop.name.as_str().eq_ignore_ascii_case("X-WR-TIMEZONE"))
+        .is_some_and(|prop| {
+            prop.params.iter().any(|param| {
+                param
+                    .key
+                    .as_str()
+                    .eq_ignore_ascii_case(COLLECTION_ZONE_PARAM)
+                    && param.val.as_ref().is_some_and(|value| {
+                        value
+                            .as_str()
+                            .eq_ignore_ascii_case(COLLECTION_ZONE_PARAM_VALUE)
+                    })
+            })
+        })
+}
+
+/// Appends the content line that writes a CalDAV collection's `zone` into a
+/// VCALENDAR (fix list row 19192), ended by `line_end`: an `X-WR-TIMEZONE`
+/// that every parse reads like any other, marked so that a later write or
+/// pull tells it from a zone the resource names its own and gives the
+/// resource the collection's zone as it is then.
+pub(crate) fn push_collection_zone_line(out: &mut String, zone: &str, line_end: &str) {
+    out.push_str("X-WR-TIMEZONE;");
+    out.push_str(COLLECTION_ZONE_PARAM);
+    out.push('=');
+    out.push_str(COLLECTION_ZONE_PARAM_VALUE);
+    out.push(':');
+    out.push_str(zone);
+    out.push_str(line_end);
+}
+
 /// `zone`, trimmed, when it is a plain zone name: ASCII letters, digits,
 /// spaces and `/_+-.`, at most 64 bytes. The one rule every calendar zone
 /// name crosses, whether a VCALENDAR or a CalDAV collection gives it (fix
@@ -152,6 +198,9 @@ pub(crate) fn plain_zone_name(zone: &str) -> Option<&str> {
 /// calendar's all-day events (fix list row 17868); `None` when that
 /// calendar names none, no calendar carries `uid`, or `input` does not
 /// parse. A feed of several calendars gives each event its own calendar's.
+/// A collection's zone the engine wrote in is not the calendar's own (fix
+/// list row 19192): `None` for it, so a write takes the collection's zone as
+/// it is now.
 pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
     let text = std::str::from_utf8(input).ok()?;
     let unfolded = icalendar::parser::unfold(text);
@@ -167,6 +216,7 @@ pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
                         .is_some_and(|prop| prop.val.as_str() == uid)
             })
         })
+        .filter(|calendar| !zone_from_collection(calendar))
         .and_then(calendar_timezone)
         .map(str::to_owned)
 }

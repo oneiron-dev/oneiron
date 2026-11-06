@@ -89,9 +89,11 @@ pub(super) fn sequence_floor(
 pub(super) struct RenderedResource {
     pub(super) ics: Vec<u8>,
     pub(super) component_hashes: Vec<(EntityId, [u8; 32])>,
-    /// The collection zone that heads the resource because the source names
-    /// no zone (fix list row 19192); `None` when no collection zone heads it.
-    pub(super) collection_zone: Option<String>,
+    /// The zone that heads the resource: the source's own, else the
+    /// collection's (fix list row 19192); `None` when none heads it. A read
+    /// of these bytes gives each all-day member this zone, and so does the
+    /// settled write.
+    pub(super) resource_zone: Option<String>,
 }
 
 /// Renders the resource for `uid` from the EVENT claims, over `source`.
@@ -126,8 +128,11 @@ pub(super) fn render(
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
     // The source's zone heads the resource again, so its all-day events keep
     // their days through a write-back and its reading back (fix list row
-    // 17868); else the collection's own zone does (fix list row 19192), and
-    // the settled write lands that zone as `calendar.tz` too.
+    // 17868); else the collection's zone as it is now does (fix list row
+    // 19192), marked as the collection's so a later pull or write never
+    // takes it for the resource's own, and the settled write lands it as
+    // `calendar.tz` too. A collection's zone written into the source before
+    // is not the source's own.
     let source_zone =
         source.and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid));
     let collection_zone = if source_zone.is_some() {
@@ -137,10 +142,12 @@ pub(super) fn render(
             .and_then(crate::calendar::ics::plain_zone_name)
             .map(str::to_owned)
     };
-    if let Some(zone) = source_zone.as_deref().or(collection_zone.as_deref()) {
+    if let Some(zone) = source_zone.as_deref() {
         out.push_str("X-WR-TIMEZONE:");
         out.push_str(zone);
         out.push_str("\r\n");
+    } else if let Some(zone) = collection_zone.as_deref() {
+        crate::calendar::ics::push_collection_zone_line(&mut out, zone, "\r\n");
     }
     for &event in &member_ids {
         let rendered = String::from_utf8(render_component(vault, &event, uid, sequence, now)?)
@@ -236,7 +243,7 @@ pub(super) fn render(
     Ok(RenderedResource {
         ics,
         component_hashes,
-        collection_zone,
+        resource_zone: source_zone.or(collection_zone),
     })
 }
 

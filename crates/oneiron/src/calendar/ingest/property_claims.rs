@@ -73,22 +73,22 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
     Ok(owed)
 }
 
-/// Lands `zone` as `event_ref`'s `calendar.tz` from `source_prefix` in the
-/// caller's writer, as [`reconcile`] lands the zone an all-day event
+/// Gives `event_ref` `zone` as its `calendar.tz` from `source_prefix` in the
+/// caller's writer, as [`reconcile`] gives an all-day event the zone it
 /// inherits (fix list row 19192). A live claim from that source that holds
 /// `zone` stays and no second one is admitted; else `admit` admits `zone`.
-/// Any other `calendar.tz` from that source is retracted. No other property
-/// moves, so a newer local edit stays.
+/// Any other `calendar.tz` from that source is retracted, every one when
+/// `zone` is `None`. No other property moves, so a newer local edit stays.
 pub(in crate::calendar) fn reconcile_zone_in_txn<E: From<crate::Error>>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     event_ref: EntityId,
-    zone: &str,
+    zone: Option<&str>,
     source_prefix: &str,
     now: u64,
     admit: impl FnOnce(&mut heed::RwTxn<'_>, &str, Value) -> Result<EntityId, E>,
 ) -> Result<(), E> {
-    let desired = Value::from(zone);
+    let desired = zone.map(Value::from);
     let mut held = false;
     let mut stale = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, &event_ref)? {
@@ -96,14 +96,14 @@ pub(in crate::calendar) fn reconcile_zone_in_txn<E: From<crate::Error>>(
             && body.predicate == PREDICATE_CALENDAR_TZ
             && held_from_source(&body, source_prefix)
         {
-            if body.value == desired {
+            if desired.as_ref() == Some(&body.value) {
                 held = true;
             } else {
                 stale.push(id);
             }
         }
     }
-    if !held {
+    if !held && let Some(desired) = desired {
         admit(&mut *txn, PREDICATE_CALENDAR_TZ, desired)?;
     }
     for id in stale {
