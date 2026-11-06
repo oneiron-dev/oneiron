@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use super::base::SyncClient;
 use super::own_device::OwnDeviceImport;
+use crate::EntityId;
 pub(super) use crate::embed::home_vectors::copy_scope::with_home_claim_copies;
 use crate::embed::home_vectors::retained::PreparedHomeClaimResponse;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
-use crate::{EntityId, Vault};
 
 /// Keeps the original sender and actual native leases through deferral and heal.
 /// Dropping this unacknowledged update releases its holders; it is not a receipt.
