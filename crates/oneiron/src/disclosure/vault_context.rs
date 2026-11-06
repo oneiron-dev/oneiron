@@ -260,6 +260,7 @@ impl Vault {
                 end: learned_at,
             },
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,
@@ -426,17 +427,19 @@ impl DisclosureContext {
         if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
             return Ok(false);
         }
-        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
+        let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
         // A NOTE sits at one world it is in that the clearance holds
         // (FIX-LIST 9433).
         let held = [&self.disclosable.clearance().worlds];
-        let Some(record_scope) = note_world::blob_scope_held_at(store, rtxn, *id, &raw, &held)?
+        let Some(record_scope) =
+            note_world::blob_scope_held_at(store, rtxn, *id, &row.encode(), &held)?
         else {
             return Ok(false);
         };
-        Ok(self.disclosable.admits(&record_scope))
+        Ok(self.disclosable.admits(&record_scope)
+            && super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)?)
     }
 
     /// A withdrawn record never reaches anyone but the owner (P3): a deleted,
