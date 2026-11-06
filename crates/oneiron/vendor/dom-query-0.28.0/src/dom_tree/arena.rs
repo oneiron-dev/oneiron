@@ -39,6 +39,7 @@ impl Tree {
         Ok((
             Self {
                 nodes: RefCell::new(nodes),
+                parser_text: None,
             },
             guard,
         ))

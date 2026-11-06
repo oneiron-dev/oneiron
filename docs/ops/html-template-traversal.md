@@ -193,3 +193,20 @@ payloads. A stopped parse drops its partial parser and DOM before returning the
 first typed error. Diagnostic formatting, allocating later copies and other
 private payloads remain unadmitted; this does not complete FIX 9615 or bound
 opaque native work.
+
+Native parser text insertion constructs its final atomic or non-atomic DOM
+payload with the caller's native tendril reservation before creating a node.
+Coalescing reserves the actual mutable DOM text destination before appending
+UTF-8 bytes; zero new node slots does not imply zero payload allocation. Both
+paths retain admission in that same native allocation header, including full
+old-plus-new growth, reported capacity and last-owner free-before-release.
+A refused construction creates no node. A refused append is distinct from
+"not a text node" and returns from the native sink before fallback or sibling
+insertion. The caller retains the first typed failure and exposes it before
+later budget checkpoints to the checked driver's existing error channel; the
+driver drops the partial parser and DOM instead of returning success.
+Ordinary parser calls keep their original wrapping and coalescing behavior.
+This covers parser text insertion, not later DOM setters, ordinary allocating
+clones or mutations, incoming token and pending-table text buffers, callback
+metadata, other private payloads or allocator-private overhead. Those gaps and
+opaque native work keep full FIX 9615 PART; no default cap or timer is added.
