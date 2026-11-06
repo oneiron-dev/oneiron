@@ -148,6 +148,7 @@ pub mod consent;
 pub mod consent_graduation;
 pub mod federation;
 pub(crate) mod gate;
+pub use gate::code_consent_settlement;
 pub use gate::policy_manifest_doors;
 pub mod policy_model;
 pub mod receipt;
