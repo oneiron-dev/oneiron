@@ -74,9 +74,9 @@ pub(super) enum DraftPass {
     Failed(DraftFailure, StewardshipDraftRequest),
 }
 
-/// Draft every eligible source first. A call failure with multiple sources
-/// tries smaller drafts and synthesis; the existing newest-source rescue
-/// remains available if that fails.
+/// Draft every eligible source first. A call or scheduling failure with
+/// multiple sources tries smaller drafts and synthesis; the existing
+/// newest-source rescue remains available if that fails.
 ///
 /// # Errors
 ///
@@ -97,7 +97,9 @@ pub(super) async fn draft_pass(
     if failure.stage.inputs_may_move() && current != *draft {
         return Ok(DraftPass::Moved(current));
     }
-    if failure.stage == DraftStage::Call && current.request.evidence.len() > 1 {
+    if matches!(failure.stage, DraftStage::Call | DraftStage::Schedule)
+        && current.request.evidence.len() > 1
+    {
         match fold::draft_fold(vault, runtime, drafter, &current).await? {
             DraftPass::Failed(fold_failure, latest) => {
                 failure = fold_failure;

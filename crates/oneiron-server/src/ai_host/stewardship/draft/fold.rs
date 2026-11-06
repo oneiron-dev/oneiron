@@ -42,8 +42,12 @@ pub(super) async fn draft_fold(
         let parts = [left, right];
         let joined = joined_request(draft, &parts);
         match generate_draft(vault, runtime, drafter, &joined, &parts).await {
-            Ok(answer) => answers.push(answer),
-            Err(failure) if failure.stage == DraftStage::Call => {
+            Ok(answer) if !answer.text.trim().is_empty() => answers.push(answer),
+            Ok(_)
+            | Err(DraftFailure {
+                stage: DraftStage::Call,
+                ..
+            }) => {
                 answers.extend(parts);
                 return schedule_parts(vault, draft, answers);
             }
