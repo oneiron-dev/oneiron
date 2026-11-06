@@ -95,6 +95,25 @@ pub(super) struct ReceiptRow {
 /// the receipts, so an actor's erase leaves every fold whole (FIX 3520). An
 /// operation with a metadata change binds the text edit and that change
 /// together under its own domain (G4 PR2); a text edit keeps its stamp.
+/// Whether `held`, the edit an ingress receipt stores, is `offered` again: the
+/// same bytes, or `offered` with its replacement as the write door admitted
+/// it, each secret it placed standing as its handle (FIX 2372). Every other
+/// field is compared exactly. Nothing is minted.
+fn same_edit(held: &CodeFileEdit, offered: &CodeFileEdit) -> Result<bool> {
+    if held == offered {
+        return Ok(true);
+    }
+    Ok(held.path == offered.path
+        && held.start == offered.start
+        && held.end == offered.end
+        && held.expected == offered.expected
+        && held.new_path == offered.new_path
+        && crate::batch::secret_scan::admitted_from(
+            &rmpv::Value::from(held.replacement.as_str()),
+            &rmpv::Value::from(offered.replacement.as_str()),
+        )?)
+}
+
 fn op_stamp(
     operation: &str,
     session: &str,
@@ -334,7 +353,7 @@ impl Vault {
                 || receipt.session_id != session.session_id
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
-                || receipt.edit != *edit
+                || !same_edit(&receipt.edit, edit)?
                 || receipt.metadata_edit.as_ref() != metadata
             {
                 return Err(invalid());
@@ -391,7 +410,7 @@ impl Vault {
                     || receipt.session_id != item.session.session_id
                     || receipt.actor != Some(item.actor)
                     || receipt.provenance != item.session.provenance
-                    || receipt.edit != item.edit
+                    || !same_edit(&receipt.edit, &item.edit)?
                     || receipt.metadata_edit != item.metadata_edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
                 {
