@@ -213,7 +213,8 @@ pub(crate) use self::transition::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::{
-    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
+    CustodyPieces, completed_custody_groups_in_txn, holds_custody_carrier_in_txn,
+    keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
