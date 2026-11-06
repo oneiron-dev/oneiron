@@ -71,6 +71,12 @@ side_tables! {
     /// erase or retirement and by its actor's erase. Key: id16 (request ref).
     CHANNEL_IDENTITY_LIFECYCLE_REQUEST: VaultMeta b"channel_identity_lifecycle_request:v1:" Named
         => crate::channel_identity_lifecycle::erase_lifecycle_request_actor_in_txn;
+    /// Quarantined arrival metadata or an erased marker, keyed by line/call digest32.
+    CHANNEL_IDENTITY_PHONE_ARRIVAL: VaultMeta b"channel_identity_phone_arrival:v1:" Named Authored [accepts: crate::phone_line::arrival_accepts_masked]
+        => crate::phone_line::erase_arrival_actor_in_txn;
+    /// Owner-enabled line settings, keyed by ChannelIdentity id16. No read grant is minted.
+    CHANNEL_IDENTITY_PHONE_LINE: VaultMeta b"channel_identity_phone_line:v1:" Named Engine
+        => crate::phone_line::erase_line_actor_in_txn;
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;
@@ -526,6 +532,10 @@ side_tables! {
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored [accepts: crate::context_board::context_board_plugin_block_accepts_masked];
+    /// One actor's own board layout (BOARD-LAYOUT): the live layout its board
+    /// renders under and its one pending batch. Key: id16 (actor).
+    CONTEXT_BOARD_LAYOUT: VaultMeta b"context_board.layout.v1:" Named Engine
+        => crate::context_board::erase_board_layout_actor_in_txn;
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].

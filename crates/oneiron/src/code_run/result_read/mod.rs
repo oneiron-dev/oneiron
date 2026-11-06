@@ -42,7 +42,7 @@ use serde_json::{Value, json};
 const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 /// Bytes one read of a body takes at most.
-const READ_PIECE_BYTES: usize = 1 << 20;
+pub(super) const READ_PIECE_BYTES: usize = 1 << 20;
 
 /// Bytes of a body's head its card's shape is sniffed from.
 const SHAPE_HEAD_BYTES: usize = 64 * 1024;

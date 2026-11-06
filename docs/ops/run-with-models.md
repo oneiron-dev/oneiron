@@ -653,7 +653,7 @@ call whose socket will not open, or that carries audio, goes out over
 `responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
-`key_secret` OpenAI or xAI provider uses the credential broker's per-call Responses socket: the broker upgrades `/v1/responses`, relays the checked create frame and strips every event, and holds no key between calls. The whole turn is bound at admission; a chained turn the provider no longer holds goes whole once on the same socket. Stored-chain resume works as above, with no broker-socket pool. Chat HTTP is the fallback when an upgrade or initial create is not accepted; a 4xx other than 408 or 429 latches that provider to chat until restart. Idle pooling above remains `key_env`-only. Broker Responses sockets use WebPKI roots; a private-CA origin falls back to chat.
+`key_secret` OpenAI or xAI provider uses the credential broker's per-call Responses socket: the broker upgrades `/v1/responses`, relays the checked create frame and strips every event, and holds no key between calls. The whole turn is bound at admission; a chained turn the provider no longer holds goes whole once on the same socket. Stored-chain resume works as above, with no broker-socket pool. Chat HTTP is the fallback when an upgrade or initial create is not accepted; a 4xx other than 408 or 429 latches that provider to chat until restart. Idle pooling above remains `key_env`-only. Broker Responses sockets use the same WebPKI, platform and configured `extra_roots` trust as HTTPS; private-CA providers can use the Responses socket without falling back to chat for a missing trust anchor.
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
@@ -1858,8 +1858,12 @@ and the broker checks it against the exchange's own shape before the key is
 read at the custody door. That covers an image (JSON, or a form with
 references), an edit, speech, a transcription, an embedding, a video's start,
 poll, clip and removal, and the Gemini API's generate, job start, operation
-poll and file. An embedding among them goes in the provider's `embed_shape`,
+poll and file. A `key_secret` `cartesia` or `elevenlabs` provider's speech
+rung sends the same exchange its direct rung sends: the same headers, voice,
+24 kHz PCM16 ask and characters charge, through the broker's speech shape for
+that wire. An embedding among them goes in the provider's `embed_shape`,
 whichever of the four shapes it names. The broker adds the key: Bearer on the OpenAI-compatible paths,
+`x-api-key` on Cartesia's speech path, `xi-api-key` on ElevenLabs', and
 `x-goog-api-key` on the Gemini API's. A JSON or form request is at most
 16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
 up to 512 MiB, and are checked for the key, never rewritten: a reply that
@@ -2003,7 +2007,11 @@ OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
 with its key in `x-api-key` and a `Cartesia-Version` header (`2026-08-14`
 unless `headers` names one). An `elevenlabs` provider speaks ElevenLabs'
 `POST /v1/text-to-speech/{voice}` with its key in `xi-api-key`. Either one
-serves the speech seat only, never a role or another media seat. Each call
+serves the speech seat only, never a role or another media seat. Either one
+may name its key with `key_secret` instead of `key_env`: its speech rung
+then sends the same exchange through the credential broker (§2), the key
+read at the custody door. Clone, verification and delete calls stay on the
+direct wire and need `key_env`. Each call
 names a voice, typed or as the `voice` param (these wires have no default
 voice), is asked for raw 24 kHz PCM16, comes back as a WAV, and is charged
 its characters. Name the providers `cartesia` and `elevenlabs_flash` to
