@@ -156,6 +156,9 @@ pub enum ReadWorldUnknown {
     RetainedResult,
     /// A wait's reply reached the run.
     WaitReply,
+    /// A self-written summary carried words from its home's rows into the
+    /// run (FIX 7087).
+    SelfWrittenSummary,
     /// A served row's world could not be proved in the read that served it.
     Unproved,
     /// A ledger write failed.

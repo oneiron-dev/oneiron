@@ -65,7 +65,8 @@ impl<'a> HostSelfDispatcher<'a> {
     /// the host task. A run whose host builds its task declares nothing, and
     /// its ledger never reads complete, since that task may carry rows no
     /// capture noted. Every other cause the run meets marks the ledger as
-    /// before.
+    /// before. A self-written summary that wore the run's home marks it when
+    /// it lands (FIX 7087).
     #[must_use]
     pub fn with_caller_task(mut self, run: EntityId, task: &str) -> Self {
         self.caller_task = Some((run, task.to_owned()));
