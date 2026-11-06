@@ -15,6 +15,7 @@ use crate::dreamer_runner::DreamerParkCause;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::Result;
 use crate::llm::decision::AskTo;
+use crate::llm::run_admission::{LeaseUnit, RunEvent};
 use crate::model_decision::{DecisionAnswer, DecisionRung, EvidenceVersion};
 use crate::model_step_context::DurableStepContext;
 use crate::model_step_error::DurableStepError;
@@ -267,6 +268,21 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 &mut receipts,
             )
             .await;
+            // Native pricing quantities are separate from the generated step's usage.
+            // Keep them even when a later durable receipt lookup parks this attempt.
+            for receipt in &receipts {
+                let RunEvent::Settled {
+                    native_quantity, ..
+                } = &receipt.event
+                else {
+                    continue;
+                };
+                if native_quantity.unit == LeaseUnit::tokens() {
+                    charges.record_units(u64::try_from(native_quantity.units).unwrap_or(u64::MAX));
+                } else {
+                    tracing::warn!("arc opening native settlement has non-token pricing units");
+                }
+            }
             let fresh = backend.fresh.load(Ordering::Relaxed);
             for usage in &cut_usage {
                 charges.record_usage(usage);
