@@ -52,8 +52,12 @@ A local named re-export with no reachable binding is unresolved.
 
 For CommonJS, the extractor recognizes top-level direct assignments to
 `module.exports`, `module.exports.name`, `module.exports["name"]`, `exports.name`
-and `exports["name"]`. Lexically shadowed `module` or `exports` is not a wrapper
-export. Rebinding `exports` does not replace the module value. Replacing
+and `exports["name"]`. Uninitialized root `var module` and `var exports`
+redeclare the CommonJS wrapper parameters, including hoisted or repeated
+redeclarations. Direct simple `var` initializers update the same alias state in
+source order. Lexical and function shadows remain distinct from wrapper bindings.
+Destructured, conditional and loop-carried initializer flows are not modeled.
+Rebinding `exports` does not replace the module value. Replacing
 `module.exports` detaches its old `exports` alias; an explicit reassignment to the
 current module value reconnects it. Whole object-literal replacements contribute
 static own keys and replace the preceding declared keys. A colon `__proto__`

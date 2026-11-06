@@ -2,9 +2,13 @@
 use super::{Binding, Module};
 use oxc_ast::{
     AstKind,
-    ast::{AssignmentTarget, Expression, MemberExpression, Program, Statement},
+    ast::{
+        AssignmentTarget, BindingPattern, Expression, IdentifierReference, MemberExpression,
+        Program, Statement,
+    },
 };
 use oxc_semantic::Semantic;
+use oxc_syntax::symbol::{SymbolFlags, SymbolId};
 use std::collections::BTreeSet;
 
 enum Target {
@@ -23,6 +27,32 @@ pub(super) fn collect(
     let mut commonjs = program.source_type.is_commonjs();
     let mut accounted = BTreeSet::new();
     for statement in &program.body {
+        if let Statement::VariableDeclaration(declaration) = statement
+            && declaration.kind.is_var()
+        {
+            for declaration in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(binding) = &declaration.id else {
+                    continue;
+                };
+                let Some(value) = &declaration.init else {
+                    continue;
+                };
+                if !binding
+                    .symbol_id
+                    .get()
+                    .is_some_and(|symbol| wrapper_symbol(symbol, semantic))
+                {
+                    continue;
+                }
+                if binding.name == "exports" {
+                    alias = (native_module && whole_value(value, semantic, &mut accounted))
+                        || (alias && wrapper(value, "exports", semantic, &mut accounted));
+                } else if binding.name == "module" {
+                    native_module = false;
+                }
+            }
+            continue;
+        }
         let Statement::ExpressionStatement(statement) = statement else {
             continue;
         };
@@ -55,17 +85,14 @@ pub(super) fn collect(
             continue;
         };
         if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
-            if identifier.name == "exports" && semantic.is_reference_to_global_variable(identifier)
-            {
+            if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
                 alias = assignment.operator.is_assign()
                     && ((native_module
                         && whole_value(&assignment.right, semantic, &mut accounted))
                         || (alias
-                            && global(&assignment.right, "exports", semantic, &mut accounted)));
+                            && wrapper(&assignment.right, "exports", semantic, &mut accounted)));
                 accounted.insert((identifier.span.start, identifier.span.end));
-            } else if identifier.name == "module"
-                && semantic.is_reference_to_global_variable(identifier)
-            {
+            } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
                 native_module = false;
                 accounted.insert((identifier.span.start, identifier.span.end));
             }
@@ -104,7 +131,7 @@ pub(super) fn collect(
                 // `exports` alias no longer points at it.
                 let value = assignment.right.get_inner_expression();
                 if whole_value(value, semantic, &mut accounted)
-                    || (alias && global(value, "exports", semantic, &mut accounted))
+                    || (alias && wrapper(value, "exports", semantic, &mut accounted))
                 {
                     continue;
                 }
@@ -158,7 +185,7 @@ pub(super) fn collect(
             continue;
         };
         if matches!(identifier.name.as_str(), "module" | "exports")
-            && semantic.is_reference_to_global_variable(identifier)
+            && wrapper_reference(identifier, semantic)
             && !accounted.contains(&(identifier.span.start, identifier.span.end))
         {
             module.unresolved.insert(format!(
@@ -177,16 +204,16 @@ fn target(
     accounted: &mut BTreeSet<(u32, u32)>,
 ) -> Option<Target> {
     let object = member.object().get_inner_expression();
-    if native_module && global(object, "module", semantic, accounted) {
+    if native_module && wrapper(object, "module", semantic, accounted) {
         return (member.static_property_name() == Some("exports")).then_some(Target::Whole);
     }
-    if global(object, "exports", semantic, accounted) {
+    if wrapper(object, "exports", semantic, accounted) {
         return alias.then(|| Target::Property(member.static_property_name().map(str::to_owned)));
     }
     let object = object.as_member_expression()?;
     if native_module
         && object.static_property_name() == Some("exports")
-        && global(object.object(), "module", semantic, accounted)
+        && wrapper(object.object(), "module", semantic, accounted)
     {
         return Some(Target::Property(
             member.static_property_name().map(str::to_owned),
@@ -204,10 +231,10 @@ fn whole_value(
         return false;
     };
     member.static_property_name() == Some("exports")
-        && global(member.object(), "module", semantic, accounted)
+        && wrapper(member.object(), "module", semantic, accounted)
 }
 
-fn global(
+fn wrapper(
     expression: &Expression<'_>,
     name: &str,
     semantic: &Semantic<'_>,
@@ -216,9 +243,51 @@ fn global(
     let Expression::Identifier(identifier) = expression.get_inner_expression() else {
         return false;
     };
-    if identifier.name != name || !semantic.is_reference_to_global_variable(identifier) {
+    if identifier.name != name || !wrapper_reference(identifier, semantic) {
         return false;
     }
     accounted.insert((identifier.span.start, identifier.span.end));
     true
+}
+
+fn wrapper_reference(identifier: &IdentifierReference<'_>, semantic: &Semantic<'_>) -> bool {
+    if semantic.is_reference_to_global_variable(identifier) {
+        return true;
+    }
+    identifier.reference_id.get().is_some_and(|reference| {
+        semantic
+            .scoping()
+            .get_reference(reference)
+            .symbol_id()
+            .is_some_and(|symbol| wrapper_symbol(symbol, semantic))
+    })
+}
+
+fn wrapper_symbol(symbol: SymbolId, semantic: &Semantic<'_>) -> bool {
+    let scoping = semantic.scoping();
+    if scoping.symbol_scope_id(symbol) != scoping.root_scope_id()
+        || scoping.symbol_flags(symbol) != SymbolFlags::FunctionScopedVariable
+    {
+        return false;
+    }
+    // A root var redeclares a wrapper parameter. Only direct initializers
+    // are modeled; conditional, destructured and loop-carried writes are not.
+    scoping.symbol_declarations(symbol).all(|node| {
+        let AstKind::VariableDeclarator(declarator) = semantic.nodes().kind(node) else {
+            return false;
+        };
+        let AstKind::VariableDeclaration(declaration) = semantic.nodes().parent_kind(node) else {
+            return false;
+        };
+        matches!(declarator.id, BindingPattern::BindingIdentifier(_))
+            && !matches!(
+                semantic.nodes().parent_kind(declaration.node_id.get()),
+                AstKind::ForInStatement(_) | AstKind::ForOfStatement(_)
+            )
+            && (declarator.init.is_none()
+                || matches!(
+                    semantic.nodes().parent_kind(declaration.node_id.get()),
+                    AstKind::Program(_)
+                ))
+    })
 }
