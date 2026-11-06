@@ -8088,7 +8088,7 @@
      "path": "src/batch/secret_scan/mask/carrier.rs",
      "purpose": "The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -15922,7 +15922,7 @@
      "path": "src/code_document/storage/edit.rs",
      "purpose": "The one shared writer of a code document operation (moved from `storage.rs`, G4 PR2): the edit's span…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
