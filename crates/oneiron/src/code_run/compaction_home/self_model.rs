@@ -53,16 +53,31 @@ pub(crate) fn erase_self_model_binding_actor_in_txn(
     Ok(())
 }
 
-/// Binds `actor` to `summary`, or clears its binding with `None`.
+/// Binds `actor` to `summary`, or clears its binding with `None`. A
+/// binding that no longer names the SUMMARY it named withdraws, in the same
+/// write, every self-written summary of `actor` that wore the old one
+/// (FIX 4817): their home pin no longer stands.
 fn put_binding_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     summary: Option<EntityId>,
 ) -> Result<()> {
+    let previous = bound_self_model_in(&vault.store, txn, &actor)?;
     match summary {
-        Some(summary) => SELF_MODEL_BINDING.put(vault, txn, &actor, &SelfModelBinding { summary }),
-        None => SELF_MODEL_BINDING.delete(vault, txn, &actor).map(|_| ()),
+        Some(summary) => {
+            SELF_MODEL_BINDING.put(vault, txn, &actor, &SelfModelBinding { summary })?;
+        }
+        None => {
+            SELF_MODEL_BINDING.delete(vault, txn, &actor)?;
+        }
+    }
+    match previous {
+        Some(old) if Some(old) != summary => {
+            let custody = crate::secret_custody::CustodyWrite::of(vault);
+            crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, &old)
+        }
+        _ => Ok(()),
     }
 }
 
