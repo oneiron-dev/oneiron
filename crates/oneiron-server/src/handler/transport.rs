@@ -496,6 +496,22 @@ where
     /// process, the sink's own queue included, is revocable.
     #[must_use]
     pub(super) async fn send_binary(&mut self, data: Vec<u8>) -> bool {
+        self.send_binary_with_release(data, None).await
+    }
+
+    pub(super) async fn send_binary_released(
+        &mut self,
+        data: Vec<u8>,
+        release: &(dyn Fn() -> bool + Sync),
+    ) -> bool {
+        self.send_binary_with_release(data, Some(release)).await
+    }
+
+    async fn send_binary_with_release(
+        &mut self,
+        data: Vec<u8>,
+        release: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> bool {
         // The codec frame wraps here, after the internal routing tag is gone
         // and before any consult, so every outbound kind gets it and the
         // threshold below is judged on the bytes that will be queued.
@@ -526,6 +542,10 @@ where
             .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
+            return false;
+        }
+        if release.is_some_and(|release| !release()) {
+            self.abort();
             return false;
         }
         if self.credential_revoked() {
@@ -563,11 +583,18 @@ where
         // that stops reading must not be able to park a send past a revocation.
         // A silent peer parks here exactly as it would park the flush below:
         // the wait moved earlier, it did not become a refusal.
-        if !self.guarded_drain("draining owed control frames").await {
+        if !self
+            .guarded_drain("draining owed control frames", release)
+            .await
+        {
             return false;
         }
         // A FRESH consult: the drain above is an unbounded wait, so the consult
         // that preceded it may be arbitrarily stale by now.
+        if release.is_some_and(|release| !release()) {
+            self.abort();
+            return false;
+        }
         if self.credential_revoked() {
             tracing::warn!(
                 conn_id = self.conn_id,
@@ -598,7 +625,7 @@ where
         // is pending and this unique borrow is held: no read can be polled in
         // that window, so tungstenite's automatic pong/close flush cannot drain
         // it. That is the whole of the read-half defence.
-        self.guarded_flush().await
+        self.guarded_flush(release).await
     }
 
     /// Wraps one outbound frame for the peer's codecs, when it is big enough
@@ -619,8 +646,12 @@ where
     /// while only control frames are pending. That distinction is in the log
     /// line and nowhere else: both are unbounded waits on the same sink, and
     /// both must abort rather than park past a revocation.
-    async fn guarded_drain(&mut self, what: &'static str) -> bool {
-        self.guarded_flush_loop(what).await
+    async fn guarded_drain(
+        &mut self,
+        what: &'static str,
+        release: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> bool {
+        self.guarded_flush_loop(what, release).await
     }
 
     /// Drains the queued frame, re-consulting the registry at every park.
@@ -631,8 +662,9 @@ where
     /// and can be performed by another process entirely (the operator CLI),
     /// so it cannot arrive as an in-process wakeup: observing it means
     /// re-reading the registry, which means getting control back.
-    async fn guarded_flush(&mut self) -> bool {
-        self.guarded_flush_loop("a frame awaited flush").await
+    async fn guarded_flush(&mut self, release: Option<&(dyn Fn() -> bool + Sync)>) -> bool {
+        self.guarded_flush_loop("a frame awaited flush", release)
+            .await
     }
 
     /// The guarded wait both drains share.
@@ -640,7 +672,11 @@ where
     /// One loop rather than two: the pre-handover drain and the post-handover
     /// flush park on the same sink under the same rules, and two copies of a
     /// security wait drift.
-    async fn guarded_flush_loop(&mut self, what: &'static str) -> bool {
+    async fn guarded_flush_loop(
+        &mut self,
+        what: &'static str,
+        release: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> bool {
         loop {
             // BEFORE the poll, not only after it. `start_send` is a synchronous
             // queue-and-return, so a revocation landing between the pre-handover
@@ -650,6 +686,10 @@ where
             // consult ever runs. Checking only at a park makes the guard depend
             // on the peer being slow, which is exactly backwards: the fast peer
             // is the one that gets the frame.
+            if release.is_some_and(|release| !release()) {
+                self.abort();
+                return false;
+            }
             if self.credential_revoked() {
                 tracing::warn!(
                     conn_id = self.conn_id,

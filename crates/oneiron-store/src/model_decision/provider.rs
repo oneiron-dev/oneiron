@@ -5,9 +5,10 @@ use super::{
     invalid, paired_valid,
 };
 use oneiron_contracts::{EntityId, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderDecision {
     pub answer: DecisionAnswer,
     pub probability: Option<f64>,
@@ -23,8 +24,9 @@ pub struct ProviderDecision {
 
 /// A yes/no reading beside the answer ("does this need more thinking?" or "ask a
 /// person?"). It is never an answer option.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PairedAnswer {
+    #[serde(with = "super::codec::entity")]
     pub question: EntityId,
     pub question_version: u32,
     /// P(yes).

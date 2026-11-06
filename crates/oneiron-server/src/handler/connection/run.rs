@@ -119,6 +119,8 @@ pub(super) async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let human_recipients = crate::livequery::connection::Hub::for_server(&server).private_human();
+    let (human_registration, mut human_rx) = human_recipients.register(conn_id);
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
@@ -165,6 +167,12 @@ pub(super) async fn handle_connection(
     // sit queued in this channel — or blocked mid-`send` — across the very
     // revocation that should have stopped it.
     loop {
+        human_registration.bind(
+            conn_state
+                .bound_auth
+                .as_ref()
+                .filter(|_| transport.peer_codecs().decodes_private_human()),
+        );
         let event = tokio::select! {
             biased;
             // OF-237: the engine's stop ends the loop at its wait.
@@ -173,6 +181,7 @@ pub(super) async fn handle_connection(
             // the subscription. Drain those direct frames before a concurrent
             // broadcast can overtake their causal prefix on this socket.
             direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
+            pending = human_rx.recv() => ConnEvent::PrivateHuman(pending),
             Some(answered) = verb_calls.join_next(), if !verb_calls.is_empty() => {
                 ConnEvent::Answered(answered)
             }
@@ -388,6 +397,35 @@ pub(super) async fn handle_connection(
                         app_connection.replay_after_lag();
                         tracing::warn!(conn_id, missed = n, "subscriber lagged — resynced");
                     }
+                }
+                continue;
+            }
+            ConnEvent::PrivateHuman(pending) => {
+                let Some(pending) = pending else {
+                    break;
+                };
+                let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
+                    continue;
+                };
+                let Some(frame) = pending.release(
+                    &server,
+                    auth,
+                    conn_state.locality,
+                    conn_state.peer_machine(server.vault()),
+                    protocol::TAG_PRIVATE_HUMAN,
+                ) else {
+                    continue;
+                };
+                transport.app_jti = auth.jti().map(str::to_owned);
+                let physical_frame = frame.clone();
+                let locality = conn_state.locality;
+                let peer = conn_state.peer_machine(server.vault());
+                let release = || pending.permits(&server, auth, locality, peer, &physical_frame);
+                let sent = transport.send_binary_released(frame, &release).await;
+                transport.app_jti = None;
+                drop(pending);
+                if !sent {
+                    break;
                 }
                 continue;
             }
@@ -698,6 +736,8 @@ pub(super) async fn handle_connection(
         }
     }
 
+    drop(human_registration);
+    drop(human_rx);
     // OF-237: the socket closes, then every verb RPC it admitted runs to its
     // end; none is aborted. Only after them does its place in an embedded
     // engine's drain go, so no worker stops under one.

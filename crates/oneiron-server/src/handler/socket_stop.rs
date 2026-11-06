@@ -48,6 +48,18 @@ impl StoppingTransport {
             .unwrap_or(false)
     }
 
+    /// The same stop and native physical checks, with this call's release.
+    pub(super) async fn send_binary_released(
+        &mut self,
+        data: Vec<u8>,
+        release: &(dyn Fn() -> bool + Sync),
+    ) -> bool {
+        self.stop
+            .until(self.transport.send_binary_released(data, release))
+            .await
+            .unwrap_or(false)
+    }
+
     /// [`GuardedTransport::send_unguarded_close_frame`], given up once the
     /// engine stops.
     pub(super) async fn send_unguarded_close_frame(&mut self, close: WsMessage) {

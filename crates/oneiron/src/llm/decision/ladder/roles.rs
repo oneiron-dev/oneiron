@@ -10,10 +10,12 @@ use crate::llm::decision::{
 use crate::{EntityId, Result as VaultResult};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HumanDecisionRequest {
     pub question: DecisionQuestion,
+    #[serde(with = "crate::llm::decision::codec::entity")]
     pub principal: EntityId,
+    #[serde(with = "crate::llm::decision::codec::entities")]
     pub evidence: Vec<EntityId>,
     pub reason: HumanAskReason,
     pub prior: Option<ProviderDecision>,
@@ -24,6 +26,7 @@ pub struct HumanDecisionRequest {
     /// Who the ask goes to, as the caller bound it ([`DecisionLadder::ask_to`](super::DecisionLadder::ask_to)).
     pub to: AskTo,
     /// The work the ask decides, as the caller named it ([`DecisionLadder::correlation`](super::DecisionLadder::correlation)).
+    #[serde(with = "crate::llm::decision::codec::optional_entity")]
     pub correlation: Option<EntityId>,
 }
 

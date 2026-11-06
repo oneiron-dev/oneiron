@@ -35,6 +35,7 @@ struct Session {
 pub(crate) struct Hub {
     server: Weak<SyncServer>,
     sessions: Mutex<BTreeMap<String, Arc<Session>>>,
+    private_human: Arc<crate::api::private_human::Recipients>,
     budget: Arc<super::budget::Budget>,
     session_line: Admission<String>,
     subscription_line: Admission<String>,
@@ -60,6 +61,7 @@ impl Hub {
         let hub = Arc::new(Self {
             server: Arc::downgrade(server),
             sessions: Mutex::new(BTreeMap::new()),
+            private_human: Arc::default(),
             budget: super::budget::Budget::new(Arc::clone(&server.retained), questions.clone()),
             session_line: Admission::new(
                 LimitRow::LiveSessions,
@@ -77,6 +79,10 @@ impl Hub {
         hubs.insert(key, Arc::downgrade(&hub));
         refresh_loop::spawn(hub.clone(), server.vault().subscribe_notification_updates());
         hub
+    }
+
+    pub(crate) fn private_human(&self) -> Arc<crate::api::private_human::Recipients> {
+        Arc::clone(&self.private_human)
     }
 
     /// The served handle of `server`, through the hub its sockets share: a
