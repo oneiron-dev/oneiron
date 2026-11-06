@@ -22,6 +22,12 @@ pub(super) const OCCURRENCES: SideTable<(EntityId, [u8; 32]), MailOccurrence, Na
 /// and the BLAKE3 of the provider's id. The value is the provider's id.
 pub(super) const BODY_QUEUE: SideTable<(EntityId, u64, [u8; 32]), String, Named> =
     SideTable::new(&side_table::MAIL_PACK_BODY_QUEUE);
+/// The header-only revisions a later body superseded, each owed its delete
+/// (FIX 15413): by the source, the BLAKE3 of the provider's id and the
+/// revision's MESSAGE. The value is when it was owed. A row leaves once the
+/// MESSAGE's delete returns.
+pub(super) const HEADER_RETIREMENTS: SideTable<(EntityId, [u8; 32], EntityId), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_HEADER_RETIREMENT);
 /// The rows each provider message landed as, so an erase of any of them
 /// reaches the message: by the row (its CONVERSATION, TURN or a MESSAGE
 /// revision), the source and the BLAKE3 of the provider's id. The value is
@@ -117,10 +123,6 @@ pub(super) struct MailOccurrence {
     pub(super) searched: bool,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
-    /// The header-only revisions the body superseded, owed their delete
-    /// (FIX 15413): each leaves once its delete returns.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) superseded_headers: Vec<EntityId>,
 }
 
 /// The key of the provider message `provider_id` of `source`.
@@ -153,7 +155,6 @@ impl MailOccurrence {
         self.rfc_message_id = None;
         self.from = None;
         self.subject = None;
-        self.superseded_headers.clear();
         self.updated_at = at;
     }
 }
@@ -173,17 +174,20 @@ pub(super) fn record_occurrence_rows_in_txn(
     Ok(())
 }
 
-/// Takes `rows` out of the erase reach of the provider message keyed `key`,
-/// so a superseded header revision's delete leaves the message as it stands
-/// (FIX 15413).
-pub(super) fn release_occurrence_rows_in_txn(
+/// Owes each of `headers`, the header-only revisions of the provider
+/// message keyed `key` its body superseded, a delete, and takes them out of
+/// the message's erase reach, so that delete leaves the message as it
+/// stands (FIX 15413).
+pub(super) fn owe_header_retirements_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &(EntityId, [u8; 32]),
-    rows: &[EntityId],
+    headers: &[EntityId],
+    at: u64,
 ) -> Result<()> {
-    for row in rows {
-        OCCURRENCE_ROWS.delete(&vault.store, txn, &(*row, key.0, key.1))?;
+    for header in headers {
+        OCCURRENCE_ROWS.delete(&vault.store, txn, &(*header, key.0, key.1))?;
+        HEADER_RETIREMENTS.put(&vault.store, txn, &(key.0, key.1, *header), &at)?;
     }
     Ok(())
 }

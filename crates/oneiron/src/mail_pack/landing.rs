@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
-    occurrence_key, record_occurrence_rows_in_txn, release_occurrence_rows_in_txn,
+    occurrence_key, owe_header_retirements_in_txn, record_occurrence_rows_in_txn,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -249,9 +249,6 @@ impl<'v> Landing<'v> {
         let text = content(headers, full.and_then(|full| full.body_text.as_deref()));
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let key = occurrence_key(source, &headers.provider_id);
-        // A header revision an earlier body superseded and whose delete did
-        // not return goes first (FIX 15413).
-        super::header_retire::retire_superseded_headers(vault, &key);
         let (prior, order) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
@@ -372,16 +369,19 @@ impl<'v> Landing<'v> {
                 searched,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
-                superseded_headers: Vec::new(),
             });
             // The body supersedes the header-only revisions before it (FIX
             // 15413): they leave the message's erase reach, so their delete
             // does not forget it, and are owed that delete, which runs once
             // this landing commits.
             if stage == MailStage::Body && occurrence.stage == MailStage::Headers {
-                let headers_only = occurrence.messages.clone();
-                release_occurrence_rows_in_txn(vault, wtxn, &key, &headers_only)?;
-                occurrence.superseded_headers.extend(headers_only);
+                owe_header_retirements_in_txn(
+                    vault,
+                    wtxn,
+                    &key,
+                    &occurrence.messages,
+                    self.imported_at,
+                )?;
             }
             occurrence.messages.push(message);
             occurrence.content_hashes.push(hash.clone());
@@ -428,7 +428,7 @@ impl<'v> Landing<'v> {
         });
         match landed {
             Ok(_) => {
-                super::header_retire::retire_superseded_headers(vault, &key);
+                super::header_retire::retire_superseded_headers(vault, source);
                 Ok(LandOutcome::Landed)
             }
             Err(error) if error.code == MEMORY_CODE_INTERNAL => Err(error),
