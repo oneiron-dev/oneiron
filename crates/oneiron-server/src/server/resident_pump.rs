@@ -513,7 +513,7 @@ fn claim(
                 let claimed = Claimed {
                     task: resident_task(&status, &resident, briefing.clone()),
                     agent,
-                    qa_thread_ref: resident.home_message_ref,
+                    qa_thread_ref: resident.home_conversation_ref,
                     wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
