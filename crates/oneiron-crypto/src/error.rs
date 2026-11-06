@@ -155,8 +155,8 @@ pub enum Error {
         requested: Argon2Cost,
         budget: Argon2Cost,
     },
-    /// The KDF work memory could not be allocated.
-    #[error("could not allocate the KDF work memory")]
+    /// Crypto work memory could not be allocated.
+    #[error("could not allocate crypto work memory")]
     OutOfMemory,
     /// The header parsed, but its bytes are not the one canonical encoding.
     #[error("header is not in canonical encoding")]
