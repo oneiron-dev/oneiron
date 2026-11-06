@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use super::claim_stale::ReadFilterInput;
 use super::{Memory, MemoryError, MemoryResult};
-use crate::claim::{ClaimLifecycleStatus, ClaimReadStatus, ScopedReadResult};
+use crate::claim::{ClaimLifecycleStatus, ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
-use crate::provenance::{EdgeRef, SupersessionStatus};
+use crate::provenance::{EdgeRef, StoredProvenanceClaim, SupersessionStatus};
+use crate::vault::{ReadMode, RevisionRef};
 
 /// `vault.edges.provenance` input: one directed edge, named by its two
 /// endpoint refs and its kind.
@@ -155,8 +156,11 @@ impl Memory<'_> {
     /// included, newest first by the claims' own precedence. One snapshot
     /// binds the read: the edge's endpoints and exact pair must pass the
     /// caller's admission, then each claim is read as an ordinary point read
-    /// under the request's filter. Read suffices: the reader need not be the
-    /// author. A missing or withheld edge reads empty, with the same receipt.
+    /// under the request's filter, and a claim whose author or cited source
+    /// revision this lane may not read is withheld whole. Read suffices: the
+    /// reader need not be the author. An endpoint name that resolves to no
+    /// record, and a missing or withheld edge, read empty with the same
+    /// receipt; only a malformed request is refused.
     pub fn edge_provenance(
         &self,
         request: &EdgeProvenanceRequest,
@@ -169,17 +173,24 @@ impl Memory<'_> {
         })?;
         let filter = request.filter.as_ref().map(ReadFilterInput::to_filter);
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let source = self.resolve_ref_in_lane(&lane, &request.source_ref)?;
-        let target = self.resolve_ref_in_lane(&lane, &request.target_ref)?;
-        let edge = EdgeRef::new(source, kind, target);
+        let endpoint = |reference: &str| -> MemoryResult<Option<crate::EntityId>> {
+            Ok(self
+                .read_target(reference, ReadMode::Live)?
+                .map(|(id, _)| id))
+        };
+        let edge = match (
+            endpoint(&request.source_ref)?,
+            endpoint(&request.target_ref)?,
+        ) {
+            (Some(source), Some(target)) => Some(EdgeRef::new(source, kind, target)),
+            _ => None,
+        };
         let audit: RefCell<Option<crate::provenance::EdgeProvenanceAudit>> = RefCell::new(None);
         lane.edge_claims_projected(
-            source,
-            kind,
-            target,
+            edge.as_ref(),
             filter.as_ref(),
-            |txn| -> MemoryResult<Vec<crate::EntityId>> {
-                let found = self.vault.edge_provenance_audit_in_txn(txn, &edge)?;
+            |txn, edge| -> MemoryResult<Vec<crate::EntityId>> {
+                let found = self.vault.edge_provenance_audit_in_txn(txn, edge)?;
                 let ids = found.cohort.iter().map(|(claim, _)| claim.id).collect();
                 *audit.borrow_mut() = Some(found);
                 Ok(ids)
@@ -197,7 +208,9 @@ impl Memory<'_> {
                         )
                         .into());
                     }
-                    if let Some(row) = row {
+                    if let Some(row) = row
+                        && cited_refs_readable_in(self.vault, &lane, txn, &claim)?
+                    {
                         admitted.push((claim, lifecycle, row));
                     }
                 }
@@ -214,9 +227,9 @@ impl Memory<'_> {
                         Ok(EdgeProvenanceView {
                             claim_ref: claim.id.to_hex(),
                             short_ref: self.short_ref_of_in_txn(txn, &claim.id)?,
-                            source_ref: edge.source.to_hex(),
-                            edge_kind: edge.kind.name().to_owned(),
-                            target_ref: edge.target.to_hex(),
+                            source_ref: claim.subject.source.to_hex(),
+                            edge_kind: claim.subject.kind.name().to_owned(),
+                            target_ref: claim.subject.target.to_hex(),
                             actor_entity_ref: record.actor_entity_ref.to_hex(),
                             actor_class: claim.actor_class.into(),
                             source_revision_ref: record
@@ -246,4 +259,36 @@ impl Memory<'_> {
             },
         )
     }
+}
+
+/// Whether `lane` may read, in `txn`, every record `claim` names beside its
+/// edge: its actor, and the document its `source_revision_ref` cites, at that
+/// revision. A cited revision no record retains proves no read and fails, as
+/// an unreadable one does, so the claim is withheld whole.
+fn cited_refs_readable_in(
+    vault: &crate::Vault,
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    claim: &StoredProvenanceClaim,
+) -> MemoryResult<bool> {
+    if !lane
+        .entities_readable_in_txn(txn, &[claim.record.actor_entity_ref])?
+        .into_iter()
+        .all(|readable| readable)
+    {
+        return Ok(false);
+    }
+    let Some(revision) = claim.record.source_revision_ref else {
+        return Ok(true);
+    };
+    let revision = RevisionRef(revision);
+    let Some(document) = vault.revision_record_in(txn, revision)? else {
+        return Ok(false);
+    };
+    Ok(lane
+        .get_entities_parts_with_mode_in_txn(txn, &[document], ReadMode::Pinned(revision))?
+        .into_iter()
+        .next()
+        .flatten()
+        .is_some())
 }

@@ -191,6 +191,21 @@ impl Vault {
     ) -> Result<Option<EntityId>> {
         resolve_reference(self, txn, reference, revision)
     }
+
+    /// The record that retains `revision` in `txn` (FIX 3959), named by the
+    /// revision alone: how a provenance audit finds the document an
+    /// `edge.provenance` Claim's `source_revision_ref` cites. `None` when no
+    /// record retains it, as for an opaque legacy value.
+    pub(crate) fn revision_record_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        revision: RevisionRef,
+    ) -> Result<Option<EntityId>> {
+        let Some(id) = super::storage::IDENTITY.get(&self.store, txn, &revision.0)? else {
+            return Ok(None);
+        };
+        Ok(read_entity_revision_in_txn(self, txn, &id, ReadMode::Pinned(revision))?.map(|_| id))
+    }
 }
 
 fn resolve_reference(
