@@ -13,9 +13,10 @@
 //!   preview (the default) shows the request and sends nothing. Each write
 //!   leaves two Gate records: its intent before the send and its outcome
 //!   after ([`SHEETS_EFFECT_REASON`]).
-//! * **Agent callers only.** The caller must be an agent: a code-mode run, a
-//!   pumped agent run, or an agent's own MCP or HTTP credential. The owner's
-//!   own doors set the connector up and never call it.
+//! * **Any bound caller.** A code-mode run, a pumped agent run, an agent's
+//!   own MCP or HTTP credential, or the owner. A write from an anonymous
+//!   off-record session is refused, as a secret grant is: the token's use
+//!   keeps Gate records.
 //! * **Ships as a pack.** It runs only while the engine pack `oneiron.sheets`
 //!   is installed Active and its `sheets` connection's check is Verified,
 //!   and each tool only while the owner allows the permission its grant
@@ -49,7 +50,6 @@ use crate::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorToolSchema, ResolvedConnectorManifest,
     normalize_connector_key,
 };
-use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult, verify_actor_binding};
 use crate::outbound_consent::tool_call::MutationIntent;
@@ -82,8 +82,6 @@ const SHEETS_SUMMARY: &str = "Google Sheets: read sheets and cell values, and wr
 
 /// No such tool.
 const TOOL_UNKNOWN: &str = "connector_tool_unknown";
-/// The caller is not an agent.
-const AGENT_CALLERS_ONLY: &str = "sheets_agent_callers_only";
 /// The pack is not installed Active, or its connection is not checked.
 const CONNECTION_NOT_CHECKED: &str = "sheets_connection_not_checked";
 /// The owner did not allow the permission the tool's grant names.
@@ -108,9 +106,6 @@ pub fn call_google_sheets(
     let Some(tool) = SheetsTool::parse(&input.tool) else {
         return Ok(refused(TOOL_UNKNOWN));
     };
-    if memory.actor_class() != EdgeActorClass::Agent {
-        return Ok(refused(AGENT_CALLERS_ONLY));
-    }
     let vault = memory.vault();
     verify_actor_binding(vault, memory.actor(), memory.actor_class())?;
     let call = match SheetsCall::parse(tool, &input.arguments) {
