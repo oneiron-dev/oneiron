@@ -1070,6 +1070,8 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
 vaultProductivityTree(input: unknown): unknown
+vaultIngestAgUiImport(input: unknown): unknown
+vaultIngestAgUiRead(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
