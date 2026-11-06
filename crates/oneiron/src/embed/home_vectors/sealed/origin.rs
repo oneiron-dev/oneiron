@@ -36,7 +36,7 @@ pub(crate) struct PreparedHomeClaimSend {
     vault_id: [u8; 32],
     recipient: PeerMachine,
     recipient_encryption_key: Vec<u8>,
-    source: Vec<u8>,
+    vector: super::super::HomeClaimVector,
     signed: SenderSignedHomeClaimVector,
 }
 
@@ -45,9 +45,9 @@ impl PreparedHomeClaimSend {
         self.signed.release_rows()
     }
 
-    /// Rechecks the actual source and original native keys at release. The
-    /// socket must also judge every release row for its real destination.
-    /// Do not queue the returned copy and treat this snapshot as a later grant.
+    /// Rechecks the complete selected default vector, all original release
+    /// rows and native keys for the actual recipient at release. Do not queue
+    /// the returned copy and treat this snapshot as a later grant.
     pub(crate) fn into_copy_for(
         self,
         vault: &Vault,
@@ -86,8 +86,15 @@ impl PreparedHomeClaimSend {
         else {
             return Ok(None);
         };
-        if current.source != self.source || current.release_rows != self.signed.copy.release_rows {
+        if current != self.vector {
             return Ok(None);
+        }
+        let destination = crate::settings::ReadDestination::toward(recipient);
+        let withheld = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
+        for row in self.release_rows() {
+            if crate::settings::device_only_withholds(&vault.store, &txn, &withheld, row)? {
+                return Ok(None);
+            }
         }
         Ok(Some(self.signed))
     }
@@ -140,7 +147,7 @@ impl Vault {
             vault_id,
             recipient: peer,
             recipient_encryption_key: prepared.recipient_encryption_key,
-            source: prepared.source,
+            vector: prepared.vector,
             signed: SenderSignedHomeClaimVector { copy, signature },
         }))
     }
@@ -183,6 +190,25 @@ impl Vault {
             return Ok(None);
         }
         self.open_home_claim_vector(origin, delivery, &signed.copy)
+    }
+
+    /// Opens optional wire copies against the original envelope, before its
+    /// payload is translated for native import. Malformed copies are a miss.
+    pub(crate) fn prepare_relayed_home_claim_copy_bytes(
+        &self,
+        raw_peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        bytes: &[u8],
+    ) -> Vec<std::sync::Arc<super::super::retained_copy::PreparedHomeClaimCopy>> {
+        if bytes.is_empty() {
+            return Vec::new();
+        }
+        let Ok(copies) = rmp_serde::from_slice::<Vec<SenderSignedHomeClaimVector>>(bytes) else {
+            tracing::debug!("derived home CLAIM copy bytes did not decode; raw import unchanged");
+            return Vec::new();
+        };
+        self.prepare_relayed_home_claim_delivery(raw_peer, delivery, &copies)
+            .into_copies_for(self, raw_peer, delivery)
     }
 
     /// Prepares optional copies without lending their sender proof to raw

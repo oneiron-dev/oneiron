@@ -127,6 +127,40 @@ pub(crate) fn with_home_claim_copies<T>(
     landed
 }
 
+/// A late optional tail can fill only an already-admitted native pending
+/// job. Each holder rechecks its exact canonical source and native custody
+/// in this same writer. No raw delivery is replayed and no job is created.
+pub(crate) fn retain_pending_copies(
+    vault: &Vault,
+    window: &WindowKey,
+    copies: &[Arc<PreparedHomeClaimCopy>],
+) {
+    if copies.is_empty() {
+        return;
+    }
+    let ids: std::collections::BTreeSet<_> = copies.iter().map(|copy| copy.entity_id()).collect();
+    with_home_claim_copies(vault, window, copies, || {
+        let observation = observe_writer(vault, window.as_str());
+        let result = vault.with_write_txn_grouped(|txn| {
+            for id in &ids {
+                if crate::sync::queue::has_pending_embed_job_in_txn(&vault.store, txn, id)? {
+                    retain_copies_in_txn(vault, txn, window.as_str(), id);
+                }
+            }
+            Ok(())
+        });
+        if let Some(observation) = observation {
+            observation.finish(&result);
+        }
+        if let Err(error) = result {
+            tracing::debug!(
+                error = ?error.kind(),
+                "late derived home CLAIM writer returned an error; not a rollback receipt"
+            );
+        }
+    });
+}
+
 /// Selects the actual in-memory holders, not a permission or a serialized
 /// instance id. Their retainer still checks the current peer, exact canonical
 /// source and native response obligations in the real writer.

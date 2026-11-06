@@ -200,6 +200,7 @@ impl SyncClient {
         &mut self,
         key: &WindowKey,
         envelope: ReceivedWindowPadEnvelope,
+        copies: super::HomeClaimCopies,
     ) -> Result<(), TransportError> {
         // The own-device import's bound on one update (FIX 8247).
         if envelope.payload.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
@@ -212,6 +213,7 @@ impl SyncClient {
             key: key.clone(),
             envelope,
             from: self.home_peer,
+            copies,
         });
         if self.staged_world_bytes() > MAX_DECODED_PAYLOAD_BYTES && self.staged_world_count() > 1 {
             self.deferred_sealed_updates.pop();
@@ -363,6 +365,7 @@ impl SyncClient {
             }
             progressed = true;
             // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
+            let copy_delivery = Some(*blake3::hash(&deferred.envelope.payload).as_bytes());
             if let Some(payload) = deferred
                 .envelope
                 .into_payload()
@@ -373,7 +376,8 @@ impl SyncClient {
                         key,
                         bytes: payload.to_vec(),
                         from: deferred.from,
-                        copies: Vec::new(),
+                        copies: deferred.copies,
+                        copy_delivery,
                     },
                 );
             }

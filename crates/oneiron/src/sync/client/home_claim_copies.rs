@@ -11,6 +11,8 @@ use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
 
+pub(in crate::sync::client) type HomeClaimCopies = Vec<Arc<PreparedHomeClaimCopy>>;
+
 /// Keeps the original sender and actual native leases through deferral and heal.
 /// Dropping this unacknowledged update releases its holders; it is not a receipt.
 #[derive(Clone)]
@@ -19,6 +21,8 @@ pub(crate) struct StagedWorldUpdate {
     pub(crate) bytes: Vec<u8>,
     pub(crate) from: crate::authority::PeerMachine,
     pub(crate) copies: Vec<Arc<PreparedHomeClaimCopy>>,
+    /// Original wire bytes, before native repo-copy translation; data only.
+    pub(crate) copy_delivery: Option<[u8; 32]>,
 }
 
 impl SyncClient {
