@@ -94,7 +94,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                 }
                 Ok(())
             })
-            .one(html)?
+            .one_str(html)?
     } else {
         parser.one(html)?
     };
