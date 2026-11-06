@@ -466,11 +466,21 @@ buffers drop before the same caller lease, which conservatively retains their
 known charge until it drops. Ordinary unbound cleanup keeps the same native
 operations without capacity accounting.
 
-Other turn-index buffers, outcome cleanup buffers and remaining trace-fork
-cleanup storage remain outside these charges. The full cleanup order and errors
-stay unchanged, as do exclusions for raw row copies, decoded values, overlay
-copies, database pages, transaction scratch and allocation peaks. No extra encode,
-copy, lease, admission, wait or configured limit is introduced.
+The third outcome cleanup records its original run-prefix vector's actual
+capacity on that same optional lease. The prefix drops before age cleanup,
+as before. After the original successful full-key collection, the typed table
+reports the collected vector's actual outer backing and each retained full
+key's actual capacity once, before the first delete. It keeps the original
+borrowed-key loop, database branches, error behavior, order and returned count.
+All collected keys drop before the caller lease, including errors and unwind;
+their charge stays conservative until that lease drops. Unbound callers share
+the same native body with a no-op capacity observer.
+
+Other turn-index buffers and remaining trace-fork and outcome cleanup storage
+remain outside these charges. The full cleanup order and errors stay unchanged,
+as do exclusions for decoded values, transient raw values and unretained row
+copies, overlay copies, database pages, transaction scratch and allocation peaks. No extra encode, copy, lease,
+admission, wait or configured limit is introduced.
 
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,

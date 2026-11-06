@@ -807,7 +807,15 @@ pub(super) fn stage_retrieval_run_delete_with_memory(
         run_id,
         memory.as_deref_mut(),
     )?;
-    RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
+    if let Some(memory) = memory.as_deref_mut() {
+        let prefix = retrieval_outcome_run_prefix(run_id);
+        memory.materialized(0, prefix.capacity() as u64);
+        RETRIEVAL_OUTCOME.delete_from_with_key_capacity(target, wtxn, &prefix, |bytes| {
+            memory.materialized(0, bytes);
+        })?;
+    } else {
+        RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
+    }
     super::retention::delete_retrieval_age_with_memory(
         target,
         wtxn,
