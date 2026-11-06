@@ -855,19 +855,22 @@ impl StepRunner {
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
-        if !continuation
+        let capture_completed = continuation
             .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed)
-        {
+            .is_some_and(|saved| saved.progress.cursor.capture_completed);
+        let capture = |request: &LlmRequest| {
+            if capture_completed {
+                return None;
+            }
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
-                &request,
+                request,
                 sources,
-            );
-        }
+            )
+        };
         let may_send = || {
             live.book_and_revise();
             true
@@ -935,25 +938,31 @@ impl StepRunner {
                 &run,
                 &live,
                 request,
+                capture,
                 continuation
                     .as_ref()
                     .map(|saved| (saved.progress.cursor.clone(), saved.progress.wait.clone())),
                 &mut save,
             ),
             None => {
+                let staged = capture(&request);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
-                    .map(|(response, binding)| StepConversation::Answered {
-                        response,
-                        binding,
-                        tool_rounds: false,
-                        request: final_request,
+                    .map(|(response, binding)| {
+                        if let Some(staged) = staged {
+                            staged.finalize(vault, binding.rung.clone(), binding.route.clone());
+                        }
+                        StepConversation::Answered {
+                            response,
+                            binding,
+                            tool_rounds: false,
+                            request: final_request,
+                        }
                     })
                     .map_err(StepConversationFault::Model)
             }
         };
-        oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         if !matches!(&generated, Ok(StepConversation::HookPending(_))) {

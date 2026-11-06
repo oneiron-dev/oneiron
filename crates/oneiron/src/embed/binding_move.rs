@@ -24,6 +24,8 @@
 
 use std::collections::BTreeSet;
 
+mod stock;
+
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 

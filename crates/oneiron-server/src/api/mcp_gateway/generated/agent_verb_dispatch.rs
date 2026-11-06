@@ -14,6 +14,7 @@ pub(super) async fn execute_mcp_agent_verb(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5402,6 +5403,7 @@ pub(crate) async fn execute_agent_verb_input(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5453,6 +5455,7 @@ async fn execute_agent_verb_listing(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5565,12 +5568,13 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
-        .map_err(mcp_facade_error)?;
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
 }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
