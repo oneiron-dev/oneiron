@@ -11,8 +11,10 @@ pub(super) struct AppCookies<'a> {
 }
 
 impl<'a> AppCookies<'a> {
-    pub(super) fn new(root: &'a str) -> Self {
+    pub(super) fn new(authority: &str, root: &'a str) -> Self {
         let mut digest = blake3::Hasher::new_derive_key("oneiron artifact backend cookies v1");
+        digest.update(authority.as_bytes());
+        digest.update(&[0]);
         digest.update(root.as_bytes());
         Self {
             root,
