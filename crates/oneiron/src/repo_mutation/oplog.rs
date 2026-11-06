@@ -74,6 +74,8 @@ pub(super) struct StoredPreparedCommit {
 pub(super) struct StoredRepoMutationOplogEntry {
     pub(super) schema_version: u8,
     pub(super) repo_ref: String,
+    /// The exact requested reference before checkout-root admission.
+    pub(super) requested_repo_ref: String,
     pub(super) seq: u64,
     pub(super) operation_kind: String,
     pub(super) operation_subject: Option<String>,
@@ -131,13 +133,18 @@ impl Vault {
 
     /// Reads the durable oplog for a repo in sequence order. If a local
     /// checkout cannot be resolved, existing rows under that exact recorded
-    /// repository identity remain readable. Aliases still need the checkout.
+    /// repository identity remain readable. An exact requested reference can
+    /// also use its recorded, unambiguous checkout-root binding.
     pub fn repo_mutation_oplog(&self, repo_ref: &RepoRef) -> Result<Vec<RepoMutationOplogEntry>> {
         let repo_root = match resolve_mutable_repo_root(repo_ref) {
             Ok(root) => root,
             Err(error) => {
                 if matches!(repo_ref, RepoRef::LocalFolder { .. }) {
                     let entries = self.repo_mutation_oplog_for_canonical(repo_ref)?;
+                    if !entries.is_empty() {
+                        return Ok(entries);
+                    }
+                    let entries = self.repo_mutation_oplog_for_recorded_request(repo_ref)?;
                     if !entries.is_empty() {
                         return Ok(entries);
                     }
@@ -163,15 +170,55 @@ impl Vault {
         &self,
         repo_ref: &RepoRef,
     ) -> Result<Vec<StoredRepoMutationOplogEntry>> {
-        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
         let rtxn = self.store.env.read_txn()?;
+        self.stored_repo_mutation_oplog_in_txn(&rtxn, repo_ref)
+    }
+
+    fn stored_repo_mutation_oplog_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        repo_ref: &RepoRef,
+    ) -> Result<Vec<StoredRepoMutationOplogEntry>> {
+        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
         let mut entries: Vec<StoredRepoMutationOplogEntry> = OPLOG
-            .scan_from(&self.store, &rtxn, repo_key_hash.as_bytes())?
+            .scan_from(&self.store, rtxn, repo_key_hash.as_bytes())?
             .into_iter()
             .map(|(_, entry)| entry)
             .collect();
         entries.sort_by_key(|entry| entry.seq);
         Ok(entries)
+    }
+
+    fn repo_mutation_oplog_for_recorded_request(
+        &self,
+        requested: &RepoRef,
+    ) -> Result<Vec<RepoMutationOplogEntry>> {
+        let requested = requested.canonical();
+        let rtxn = self.store.env.read_txn()?;
+        let mut canonical = None;
+        for row in OPLOG.iter_from(&self.store, &rtxn, &[])? {
+            let (_, row) = row?;
+            if row.requested_repo_ref == requested
+                && !retain_recorded_repo(&mut canonical, &row.repo_ref)?
+            {
+                return Ok(Vec::new());
+            }
+        }
+        for row in super::proposal::PROPOSAL.iter_from(&self.store, &rtxn, &[])? {
+            let (_, row) = row?;
+            if row.requested_repo_ref == requested
+                && !retain_recorded_repo(&mut canonical, &row.repo)?
+            {
+                return Ok(Vec::new());
+            }
+        }
+        let Some(canonical) = canonical else {
+            return Ok(Vec::new());
+        };
+        self.stored_repo_mutation_oplog_in_txn(&rtxn, &canonical)?
+            .into_iter()
+            .map(public_oplog_entry)
+            .collect()
     }
 
     pub(super) fn recover_prepared_repo_mutations_locked(
@@ -490,6 +537,16 @@ pub(crate) fn erase_oplog_actor_in_txn(
         OPLOG.put(&vault.store, wtxn, &key, &entry)?;
     }
     Ok(())
+}
+
+/// A request reused for different roots proves no single offline selector.
+fn retain_recorded_repo(canonical: &mut Option<RepoRef>, recorded: &str) -> Result<bool> {
+    let recorded = RepoRef::parse(recorded)?;
+    if let Some(previous) = canonical {
+        return Ok(same_repository(previous, &recorded));
+    }
+    *canonical = Some(recorded);
+    Ok(true)
 }
 
 fn repo_key_hash(repo_key: &str) -> String {

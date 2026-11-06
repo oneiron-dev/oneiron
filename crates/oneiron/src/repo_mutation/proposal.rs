@@ -99,6 +99,8 @@ pub struct RepoProposal {
     #[serde(with = "entity_serde")]
     pub id: EntityId,
     pub repo: String,
+    /// The exact requested reference bound to `repo` by admission.
+    pub requested_repo_ref: String,
     pub actor: actor_erase::ProposalActor,
     #[serde(with = "entity_serde")]
     pub session: EntityId,

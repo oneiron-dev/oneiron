@@ -110,6 +110,7 @@ impl Vault {
         let row = RepoProposal {
             id: EntityId::now(),
             repo: repo.canonical(),
+            requested_repo_ref: request.repo_ref.canonical(),
             actor: actor_erase::ProposalActor::Actor(actor),
             session,
             provenance_claim,
@@ -246,6 +247,7 @@ impl Vault {
         let row = RepoProposal {
             id: EntityId::now(),
             repo: repo.canonical(),
+            requested_repo_ref: request.repo_ref.canonical(),
             actor: actor_erase::ProposalActor::Actor(actor),
             session,
             provenance_claim,
