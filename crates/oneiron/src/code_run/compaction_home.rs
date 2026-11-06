@@ -12,6 +12,11 @@
 //! a part was read from keeps the live revision its words were read at, in
 //! the same snapshot, so what wore it lands, serves and keeps its words only
 //! while each row still reads at it ([`crate::compaction::CompactionHomeRef`]).
+//!
+//! FIX 4571: the voice wears the persona scenario its host selected on the
+//! binding ([`CompactionHostBinding::with_placement_scenario`]), else the
+//! PERSON baseline. The scenario FACET is a persona input row like any other,
+//! so an edit to it withdraws the worn home too.
 
 mod self_model;
 
@@ -27,7 +32,7 @@ use crate::compaction::{
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::memory::DiaryReadOutcome;
+use crate::memory::{DiaryReadOutcome, Memory};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::subject_model::SubjectKind;
 use crate::tokenizer::count_context_pack_tokens;
@@ -46,6 +51,10 @@ pub struct CompactionHostBinding {
     actor: WriteActor,
     locality: CallerLocality,
     read_proof: Option<VerifiedSlip>,
+    /// The persona scenario FACET the home's voice wears (FIX 4571): only
+    /// [`Self::with_placement_scenario`] sets it, from the host's own
+    /// authenticated placement. `None` wears the PERSON baseline.
+    scenario: Option<EntityId>,
 }
 
 impl CompactionHostBinding {
@@ -59,6 +68,43 @@ impl CompactionHostBinding {
     #[must_use]
     pub const fn locality(&self) -> CallerLocality {
         self.locality
+    }
+
+    /// The binding with the persona scenario its home's voice wears (FIX
+    /// 4571): `facet`, the FACET its host authenticated the run's placement
+    /// in, kept only when it is an explicit persona scenario of the run's own
+    /// PERSON, as the persona compile recognizes one under the run's own
+    /// Grant at its caller's place. Any other facet, one that read cannot
+    /// prove, or none keeps the PERSON baseline. A host passes its own
+    /// placement only: never a tool's or a model's words, a label or a
+    /// searched scenario.
+    #[must_use]
+    pub fn with_placement_scenario(mut self, vault: &Vault, facet: Option<EntityId>) -> Self {
+        let scenario = facet.filter(|facet| owns_scenario(vault, &self, *facet));
+        self.scenario = scenario;
+        self
+    }
+}
+
+/// Whether `facet` is an explicit persona scenario of `host`'s own PERSON,
+/// read as its home's voice is: under its own Grant at its caller's place
+/// (FIX 4571). An actor with no readable identity owns none.
+fn owns_scenario(vault: &Vault, host: &CompactionHostBinding, facet: EntityId) -> bool {
+    let Ok(identity) = resolve_compaction_identity(vault, host) else {
+        return false;
+    };
+    home_memory(vault, host, identity.agent)
+        .read_lane(ClaimReadStatus::Surfaceable)
+        .is_ok_and(|read| read.owns_persona_scenario(&identity.person, facet))
+}
+
+/// The agent's own memory a home is read through: its Grant, at the place
+/// its caller sits, under the credential it proved, when it proved one.
+fn home_memory<'v>(vault: &'v Vault, host: &CompactionHostBinding, agent: EntityId) -> Memory<'v> {
+    let memory = vault.memory(agent, EdgeActorClass::Agent).at(host.locality);
+    match &host.read_proof {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
     }
 }
 
@@ -77,6 +123,7 @@ pub fn bind_compaction_caller(
         actor,
         locality,
         read_proof,
+        scenario: None,
     }
 }
 
@@ -192,7 +239,8 @@ pub const fn compaction_home_budget(
 }
 
 /// Reads `host`'s home through the existing doors under its own Grant
-/// (FIX 4465): its voice through the persona compile, its self-model as the
+/// (FIX 4465): its voice through the persona compile, wearing the scenario
+/// its host selected or the PERSON baseline (FIX 4571), its self-model as the
 /// SUMMARY its binding names through its own scoped SUMMARY read (FIX 4570),
 /// its lessons as the admitted active `actor.lesson` and
 /// `actor.failure_mode` claims about it, its diary through the diary door as
@@ -204,12 +252,7 @@ pub fn load_compaction_home(
     host: &CompactionHostBinding,
 ) -> Result<CompactionHome, SelfCompactionUnavailable> {
     let identity = resolve_compaction_identity(vault, host)?;
-    let mut memory = vault
-        .memory(identity.agent, EdgeActorClass::Agent)
-        .at(host.locality);
-    if let Some(proof) = &host.read_proof {
-        memory = memory.with_read_proof(proof);
-    }
+    let memory = home_memory(vault, host, identity.agent);
     let read = memory
         .read_lane(ClaimReadStatus::Surfaceable)
         .map_err(|_| SelfCompactionUnavailable::IdentityUnreadable)?;
@@ -218,7 +261,9 @@ pub fn load_compaction_home(
         items: Vec::new(),
         absent: Vec::new(),
     };
-    match read.compile_persona(&identity.person, None) {
+    // A selected scenario that no longer reads or belongs to this PERSON
+    // leaves the voice absent, never another mask (FIX 4571).
+    match read.compile_persona(&identity.person, host.scenario) {
         Ok(persona) => home.items.push(HomeItem {
             part: HomePart::Voice,
             rows: persona

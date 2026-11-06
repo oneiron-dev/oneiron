@@ -96,6 +96,17 @@ pub struct CompiledPersona {
     pub receipt: ScopedReadReceipt,
 }
 
+/// An explicit scenario mask its PERSON owns, as one scoped read proved it
+/// (FIX 4571): the mask's patch, when its FACET was learned, the live
+/// revision the FACET read at, and the receipts of the FACET and edge reads
+/// that proved it, in that order.
+struct OwnedScenario {
+    patch: JsonValue,
+    learned_at: u64,
+    revision: Option<RevisionRef>,
+    receipts: [ScopedReadReceipt; 2],
+}
+
 use crate::serialize::person_identity::object;
 
 impl PersonaChange {
@@ -295,9 +306,63 @@ fn merge_patch(target: &mut JsonValue, patch: &JsonValue) {
 }
 
 impl ScopedRead<'_> {
+    /// Whether `facet` is an explicit persona scenario `person` owns, as
+    /// [`Self::compile_persona`] recognizes one under this read (FIX 4571):
+    /// a FACET of kind scenario whose schema-1 mask names `person` and holds
+    /// an object patch, reached by `person`'s own HasFacet edge. A facet this
+    /// read cannot read or prove is none.
+    #[must_use]
+    pub fn owns_persona_scenario(&self, person: &EntityId, facet: EntityId) -> bool {
+        self.owned_persona_scenario(person, facet).is_ok()
+    }
+
+    /// `facet` as an explicit scenario mask `person` owns, read and checked
+    /// under this read: the one recognition [`Self::compile_persona`] and
+    /// [`Self::owns_persona_scenario`] share (FIX 4571).
+    fn owned_persona_scenario(&self, person: &EntityId, facet: EntityId) -> Result<OwnedScenario> {
+        let parts = self.read_revisions(&[PointRead::id(facet)])?.single();
+        let Some((
+            ReadRow {
+                entity_type: kind,
+                learned_at,
+                body: Some(data),
+                ..
+            },
+            revision,
+        )) = parts.value
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        if kind != ENTITY_TYPE_FACET {
+            return Err(Error::InvalidEntityType(kind));
+        }
+        let entries = body_fields(&data)?;
+        let mask: ScenarioWire = from_value(field(&entries, SCENARIO_KEY)?)?;
+        let edges = self.edges_out(person)?;
+        if mask.schema_version != 1
+            || mask.person_ref.0 != *person
+            || field(&entries, "kind")?.as_str() != Some("scenario")
+            || !edges
+                .value
+                .unwrap_or_default()
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == facet)
+        {
+            return Err(invalid_companion("scenario does not belong to PERSON"));
+        }
+        object(&mask.patch)?;
+        Ok(OwnedScenario {
+            patch: mask.patch,
+            learned_at,
+            revision,
+            receipts: [parts.receipt, edges.receipt],
+        })
+    }
+
     /// Replays approved identity changes on the current PERSON baseline. Pending, retracted,
     /// superseded, scoped-away and unauthorized changes cannot enter the result.
-    /// The optional scenario is applied last and must belong to this PERSON.
+    /// The optional scenario is applied last and must belong to this PERSON,
+    /// as [`Self::owns_persona_scenario`] recognizes one (FIX 4571).
     /// Each input keeps the revision its read saw (FIX 4817).
     pub fn compile_persona(
         &self,
@@ -372,43 +437,14 @@ impl ScopedRead<'_> {
             at = at.max(changed_at);
         }
         if let Some(facet) = scenario {
-            let parts = self.read_revisions(&[PointRead::id(facet)])?.single();
-            receipt.restrict_with(&parts.receipt);
-            let Some((
-                ReadRow {
-                    entity_type: kind,
-                    learned_at,
-                    body: Some(data),
-                    ..
-                },
-                facet_revision,
-            )) = parts.value
-            else {
-                return Err(Error::EntityNotFound);
-            };
-            if kind != ENTITY_TYPE_FACET {
-                return Err(Error::InvalidEntityType(kind));
+            let owned = self.owned_persona_scenario(person, facet)?;
+            for read in &owned.receipts {
+                receipt.restrict_with(read);
             }
-            let entries = body_fields(&data)?;
-            let mask: ScenarioWire = from_value(field(&entries, SCENARIO_KEY)?)?;
-            let edges = self.edges_out(person)?;
-            receipt.restrict_with(&edges.receipt);
-            if mask.schema_version != 1
-                || mask.person_ref.0 != *person
-                || field(&entries, "kind")?.as_str() != Some("scenario")
-                || !edges
-                    .value
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == facet)
-            {
-                return Err(invalid_companion("scenario does not belong to PERSON"));
-            }
-            object(&mask.patch)?;
-            merge_patch(&mut value, &mask.patch);
+            merge_patch(&mut value, &owned.patch);
             inputs.push(facet);
-            input_revisions.push(facet_revision);
-            at = at.max(learned_at);
+            input_revisions.push(owned.revision);
+            at = at.max(owned.learned_at);
         }
         Ok(CompiledPersona {
             person: *person,

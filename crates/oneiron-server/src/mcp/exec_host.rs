@@ -689,6 +689,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .take(run_id)
                 .or_else(|| {
                     caller_compaction_seat(
+                        &vault,
                         provider.as_ref(),
                         request.actor,
                         write_actor,
