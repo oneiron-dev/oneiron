@@ -65,10 +65,16 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         summary: "Redeems a pairing link (pairing::redeem, routes.rs:218) with no bearer: the code, holder, binding key and signature, plus the machine enrolment for a machine link and the possession proof for a re-pair. Answers the slip token, pin, home and reach.",
         body: Some(redeem_body),
         answer: paired_answer,
-        refusals: &[(
-            "401",
-            "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every redeem check refuses unauthenticated).",
-        )],
+        refusals: &[
+            (
+                "401",
+                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every redeem check refuses unauthenticated).",
+            ),
+            (
+                "429",
+                "TOO_MANY_ATTEMPTS: this client address made more redemptions than limits.pairing_redeem_free_failures that no success answered, and waits before its next code is read (FIX 12477); Retry-After and details.retryAfterSecs name the wait.",
+            ),
+        ],
         owner_bearer: false,
         auth_header: false,
     },

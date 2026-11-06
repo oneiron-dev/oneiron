@@ -1,15 +1,16 @@
-//! Private Git execution view, derived only from an admitted repository profile.
+//! Core half of `git_wire::execution_scope`: its store-layer items live in `oneiron_store::git_wire::execution_scope` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-
-use tempfile::TempDir;
+pub(crate) use oneiron_store::git_wire::execution_scope::*;
 
 use super::GitWireProcessEnv;
 use super::failure::invalid;
 use super::repository_profile::{AdmittedRepoProfile, RefBackend};
 use crate::error::Result;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use tempfile::TempDir;
 
 pub(super) struct PreparedGitExecution {
     shadow: TempDir,
@@ -144,23 +145,4 @@ impl PreparedGitExecution {
             .map_err(|error| error.error)?;
         Ok(())
     }
-}
-
-fn link_if_present(common: &Path, shadow: &Path, name: &str) -> Result<()> {
-    let source = common.join(name);
-    if source.exists() {
-        link_common_entry(&source, &shadow.join(name))?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn link_common_entry(source: &Path, target: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(source, target)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn link_common_entry(_source: &Path, _target: &Path) -> Result<()> {
-    Err(invalid("isolated Git execution requires a supported host"))
 }

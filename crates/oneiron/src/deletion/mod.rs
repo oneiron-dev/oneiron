@@ -1,7 +1,7 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
-pub(crate) mod archive_role;
+pub(crate) use oneiron_store::deletion::archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
 mod checkpoint_payload;
@@ -11,9 +11,13 @@ mod coop_request;
 mod coop_succession;
 mod delete;
 #[cfg(feature = "sync")]
-pub(crate) mod delete_bearing_update;
+pub(crate) use oneiron_store::deletion::delete_bearing_update;
 mod derived_rows;
 mod erase;
+mod exhaust_erase;
+pub(crate) use exhaust_erase::{
+    erase_owned_byoa_exhausts_in_txn, erase_restored_byoa_exhausts_in_txn,
+};
 mod gate;
 mod identity_event_stamps;
 mod legal_hold;
@@ -30,7 +34,7 @@ mod tombstone;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
 #[cfg(feature = "sync")]
-pub(crate) mod window_document_format;
+pub(crate) use oneiron_store::deletion::window_document_format;
 // A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
@@ -110,7 +114,10 @@ pub use actor_fields::{
 pub(crate) use actor_fields::{ActorErasureWriter, names_no_actor};
 
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
-pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
+pub(crate) use actor_fields::{
+    hard_erased_ids_in, rerun_actor_scrubs_in_txn, restore_erased_payload_targets_in_txn,
+};
+pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
 // A due owner-confirmed erase rechecks its pending row (FIX 6337).
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
@@ -129,7 +136,9 @@ pub(crate) use receipt_final::{
 };
 pub(crate) use receipt_grammar::validate_redaction_receipt_body;
 // This device attests only the erase receipts it made (FIX 2596).
-pub(crate) use receipt_origin::receipt_attested_by_this_device_in_txn;
+pub(crate) use receipt_origin::{
+    receipt_attested_by_this_device_in_txn, requeue_successor_sweeps_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{

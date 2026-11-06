@@ -91,9 +91,17 @@ fn tear_lens_rows_in_txn(
         if Some(id) == prompt {
             crate::note::delete_document_in_txn(&vault.store, wtxn, &id)?;
         }
-        crate::provenance::erase_row_provenance_in_txn(&vault.store, wtxn, &id, true)?;
-        let (existed, vector, graph, neighbors) =
-            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        crate::provenance::erase_row_provenance_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            &id,
+            true,
+        )?;
+        let (existed, vector, graph, neighbors) = crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            &id,
+        )?;
         if !existed {
             continue;
         }
