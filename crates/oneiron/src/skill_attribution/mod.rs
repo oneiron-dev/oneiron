@@ -199,4 +199,5 @@ pub use trace::{
 
 pub use self::judge_supersession::{
     DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
+    supersede_displaced_judge_receipts_with_positions,
 };
