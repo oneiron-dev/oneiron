@@ -17,7 +17,8 @@ use std::time::Instant;
 
 use oneiron::EntityId;
 use oneiron::code_run::{
-    CacheBoundary, CompactionHome, LiveCompactionFork, compaction_home_budget, mark_cache_boundary,
+    CacheBoundary, CompactionHome, LiveCompactionFork, LiveForkRung, compaction_home_budget,
+    mark_cache_boundary,
 };
 use oneiron::compaction::{
     CompactionCheck, CompactionHomeRef, CompactionRefusal, CompactionRequest,
@@ -49,7 +50,9 @@ pub(super) enum LiveBind {
 /// run's latest completed call, and that call as the rung sent it is its
 /// prefix (FIX 4933): never the rung the walk would take now, and never a
 /// wait for a call not sent yet. The room and, under `auto`, the warmth are
-/// read for that rung and that prefix now, before the flight is sealed.
+/// read for that rung and that prefix now, before the flight is sealed: the
+/// room against that rung's raw configured context, with the prefix, which
+/// holds the rung's prompt, counted once (FIX 4932).
 /// The answering rung witnesses no source of the prefix, so its sources
 /// stay unknown (FIX 9463). A forced fork that a route refuses, a run with
 /// no completed call, or a rung its live route no longer takes now binds
@@ -83,7 +86,7 @@ pub(super) fn bind_live_compaction_fork(
     if rung.offer.locality > row.locality {
         return unbound(SelfCompactionUnavailable::RouteWiderThanPolicy);
     }
-    let Some(mut room) = route.live_compaction_room(&request, summary_token_budget) else {
+    let Some(mut room) = route.live_compaction_room(&rung, &request, summary_token_budget) else {
         return unbound(SelfCompactionUnavailable::ModelNotServed);
     };
     if let LiveBind::WhileWarm { cold_room } = how {
@@ -106,13 +109,19 @@ pub(super) fn bind_live_compaction_fork(
 }
 
 impl ServedCompactionBackend {
-    /// `live_compaction_room`: what the live model's context leaves the
-    /// compaction's own input once the immutable prefix, the instruction and
-    /// its frame, and the reply's reserve are counted (FIX 4465 C). The home
-    /// takes only what the sealed window leaves after that. `None` when no
-    /// context is known for the model.
-    fn live_compaction_room(&self, prefix: &LlmRequest, summary_token_budget: u64) -> Option<u64> {
-        let context = *self.allowances.get(&prefix.model)?;
+    /// `live_compaction_room`: what `rung`'s raw configured context leaves
+    /// the compaction's own input once the immutable prefix (its rung's
+    /// prompt already first), the instruction and its frame, and the reply's
+    /// reserve are each counted once (FIX 4465 C, FIX 4932). The home takes
+    /// only what the sealed window leaves after that. `None` when no context
+    /// is configured for the rung.
+    fn live_compaction_room(
+        &self,
+        rung: &LiveForkRung,
+        prefix: &LlmRequest,
+        summary_token_budget: u64,
+    ) -> Option<u64> {
+        let context = self.live_rung_context(rung)?;
         let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
         Some(
             context
@@ -121,6 +130,17 @@ impl ServedCompactionBackend {
                 .saturating_sub(self.prompt_tokens)
                 .saturating_sub(frame),
         )
+    }
+
+    /// `live_rung_context` (FIX 4932): the raw configured context of the
+    /// provider `rung` names, when one of its configured rungs serves the
+    /// model `rung`'s offer binds. Never an allowance that already took a
+    /// rung's prompt out, and never another route's minimum for that model.
+    fn live_rung_context(&self, rung: &LiveForkRung) -> Option<u64> {
+        self.rung_contexts
+            .get(&rung.provider)?
+            .get(&rung.offer.model)
+            .copied()
     }
 
     /// The fork's request: the live request unchanged, its end marked as a
@@ -161,9 +181,11 @@ impl ServedCompactionBackend {
     /// One call of a live flight (FIX 4465 C): the fork's request, admitted
     /// on the live role as exactly its rung's model under that role's clamp,
     /// sent on the captured rung alone, waiting on its own offer but never
-    /// falling back to another, then dressed in the agent's home in what the
-    /// live model's context leaves. A rung the live route no longer admits
-    /// at the captured offer is stale, and nothing is sent. `while_warm`
+    /// falling back to another, held to that rung's raw configured context,
+    /// the one its room was read against (FIX 4932), then dressed in the
+    /// agent's home in what that context leaves. A rung the live route no
+    /// longer admits at the captured offer is stale, and nothing is sent; a
+    /// rung with no configured context is not served. `while_warm`
     /// is the first call of a flight under a row on `auto` (FIX 6029): it
     /// goes out only while the captured prefix is still warm, and `None`
     /// says it went cold first, or could not be admitted or bound, before
@@ -191,19 +213,23 @@ impl ServedCompactionBackend {
         let Some(ladder) = admitted.ladder.live_fork_ladder(fork.rung()) else {
             return unsent(SelfCompactionUnavailable::LiveForkStale.refusal());
         };
+        // The rung just found again at its offer is the one whose context
+        // holds the call (FIX 4932).
+        let Some(context) = self.live_rung_context(fork.rung()) else {
+            return unsent(SelfCompactionUnavailable::ModelNotServed.refusal());
+        };
         let call = RoleCall {
             request: admitted.request,
             ladder: Arc::new(ladder),
         };
-        let dispatch = if while_warm {
-            Dispatch::WhileWarm(fork)
-        } else {
-            Dispatch::Exact
-        };
         self.send(
             started,
             call,
-            dispatch,
+            Dispatch::Live {
+                fork,
+                context,
+                while_warm,
+            },
             // The live prefix's complete input set is not witnessed yet;
             // only the home can contribute rows to this call (FIX 6999).
             None,

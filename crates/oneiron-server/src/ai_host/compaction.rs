@@ -222,6 +222,7 @@ impl CodeModeCompaction {
         };
         let prompt_tokens = oneiron::count_context_pack_tokens(&prompt) as u64;
         let allowances = input_allowances(models, runtime);
+        let rung_contexts = rung_contexts(models);
         let served = |key: String, role: ModelRole, seat: &crate::models::Seat| {
             Arc::new(ServedCompactionBackend {
                 key,
@@ -234,6 +235,7 @@ impl CodeModeCompaction {
                 prompt: prompt.clone(),
                 prompt_tokens,
                 allowances: allowances.clone(),
+                rung_contexts: rung_contexts.clone(),
                 handle: tokio::runtime::Handle::current(),
             })
         };
@@ -549,6 +551,32 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
     allowances
 }
 
+/// The raw configured context a live fork's rung is held to, by provider and
+/// then by the model its offer binds (FIX 4932). See [`rung_contexts`].
+type RungContexts = BTreeMap<String, BTreeMap<ModelId, u64>>;
+
+/// The raw configured context of each provider, for each model one of its
+/// configured rungs names (FIX 4932): the provider's whole context, with no
+/// rung's prompt taken out. A live fork's captured prefix already holds its
+/// rung's prompt, so the fork is held to this and counts that prompt once,
+/// in its own input. Every other call keeps [`input_allowances`].
+fn rung_contexts(models: &ModelsConfig) -> RungContexts {
+    let mut contexts = RungContexts::new();
+    for rung in models.roles.values().flatten() {
+        let Some(provider) = models.providers.get(&rung.model.provider) else {
+            continue;
+        };
+        let Ok(model) = rung.model.engine_id(&provider.revision) else {
+            continue;
+        };
+        contexts
+            .entry(rung.model.provider.clone())
+            .or_default()
+            .insert(model, provider.context_tokens);
+    }
+    contexts
+}
+
 /// Each pass runs on its own thread; the run never waits for it. A pass
 /// takes its place in line when it is spawned and waits its credential's
 /// turn past the bound (round-robin across credentials, so one credential's
@@ -641,6 +669,9 @@ struct ServedCompactionBackend {
     /// See [`input_allowances`]. A model id not here is trusted with no
     /// window.
     allowances: BTreeMap<ModelId, u64>,
+    /// See [`rung_contexts`]: what a live fork's call is held to, chosen by
+    /// its captured rung's provider and offer binding (FIX 4932).
+    rung_contexts: RungContexts,
     handle: tokio::runtime::Handle,
 }
 
