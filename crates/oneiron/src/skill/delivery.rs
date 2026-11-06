@@ -11,9 +11,13 @@
 //!
 //! A witness is made from what the producer returned. It is never inferred
 //! from the rows an answer was served from, nor from a stored value's
-//! sources: neither proves that the answer holds a skill's bytes. The run's
-//! host keeps a witness as a delivery only once its guest read the answer as
-//! the producer made it (`engine_executor` host, FIX 3608).
+//! sources: neither proves that the answer holds a skill's bytes. Beside the
+//! bodies it binds the BLAKE3 of the producer's answer as JSON
+//! ([`WitnessedAnswer`]): a verb hook's redaction inside the verb's door,
+//! or any other change on the way to the run, leaves the answer the run got
+//! another one, which delivers nothing. The run's host keeps a witness as a
+//! delivery only for the answer the producer made, once its guest read it
+//! (`engine_executor` host, FIX 3608).
 
 use std::sync::{Arc, Mutex};
 
@@ -84,6 +88,21 @@ impl SkillBodyWitness {
     }
 }
 
+/// What one producer witnessed of the answer it made (FIX 3608): the BLAKE3
+/// of the answer as JSON ([`answer_digest`]), and each skill body the answer
+/// carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WitnessedAnswer {
+    pub(crate) answer: [u8; 32],
+    pub(crate) bodies: Vec<SkillBodyWitness>,
+}
+
+/// The BLAKE3 of `json`, an answer's JSON bytes: what a witness binds and
+/// what the run's host checks the answer it got against.
+pub(crate) fn answer_digest(json: &[u8]) -> [u8; 32] {
+    *blake3::hash(json).as_bytes()
+}
+
 /// An answer a native producer made that carries skill bodies (FIX 3608).
 pub(crate) trait CarriesSkillBodies {
     /// Each skill body the answer carries, as its producer made it.
@@ -116,16 +135,17 @@ impl CarriesSkillBodies for SkillLibraryRestoreReceipt {
     }
 }
 
-/// Where one code-run call's producer puts the skill bodies its answer
-/// carries (FIX 3608): shared by the call's write origin and the run's
-/// dispatcher, and closed once the dispatcher takes them, so nothing a
-/// producer witnesses later joins the call's.
+/// Where one code-run call's producer puts what it witnessed of its answer
+/// (FIX 3608): shared by the call's write origin and the run's dispatcher,
+/// and closed once the dispatcher takes it, so nothing a producer witnesses
+/// later joins the call's. A call's producer answers once; a second witness
+/// in one call leaves the call with none.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SkillBodyCapture(Arc<Mutex<SkillBodyState>>);
 
 #[derive(Debug, Default)]
 struct SkillBodyState {
-    bodies: Vec<SkillBodyWitness>,
+    witnessed: Option<WitnessedAnswer>,
     closed: bool,
 }
 
@@ -136,23 +156,28 @@ impl PartialEq for SkillBodyCapture {
 }
 
 impl SkillBodyCapture {
-    /// Keeps `body`, one skill body the call's answer carries, while the
-    /// capture is open.
-    pub(crate) fn witness(&self, body: SkillBodyWitness) {
-        if let Ok(mut state) = self.0.lock()
-            && !state.closed
-        {
-            state.bodies.push(body);
+    /// Keeps `witnessed`, what the call's producer witnessed of its answer,
+    /// while the capture is open; a second witness closes it with none.
+    pub(crate) fn witness(&self, witnessed: WitnessedAnswer) {
+        let Ok(mut state) = self.0.lock() else {
+            return;
+        };
+        if state.closed {
+            return;
         }
+        if state.witnessed.is_some() {
+            state.witnessed = None;
+            state.closed = true;
+            return;
+        }
+        state.witnessed = Some(witnessed);
     }
 
     /// Closes the capture and takes what it kept; none when its lock was
     /// poisoned, so no delivery is kept for the call.
-    pub(crate) fn finish(&self) -> Vec<SkillBodyWitness> {
-        let Ok(mut state) = self.0.lock() else {
-            return Vec::new();
-        };
+    pub(crate) fn finish(&self) -> Option<WitnessedAnswer> {
+        let mut state = self.0.lock().ok()?;
         state.closed = true;
-        std::mem::take(&mut state.bodies)
+        state.witnessed.take()
     }
 }

@@ -549,7 +549,8 @@ impl RecordingJsHost<'_, '_> {
         let view = self.gated_write.take_hook_view();
         // The skill bodies its producer witnessed, held while the guest's
         // reply may still carry them whole (FIX 3608).
-        self.hold_delivery(seq, view.is_some());
+        let given = dispatched.as_ref().ok().map(|(outcome, _)| outcome);
+        self.hold_delivery(seq, view.is_some(), given);
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
