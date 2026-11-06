@@ -195,7 +195,7 @@ pub fn canonical_lexical_query_hint(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<LexicalQueryHintValue>> {
-    if lexical_query_hint_target(body)?.is_none() {
+    if !id.has_derived_stamp() || lexical_query_hint_target(body)?.is_none() {
         return Ok(None);
     }
     let hint = decode_lexical_query_hint_value(&body.value)?;

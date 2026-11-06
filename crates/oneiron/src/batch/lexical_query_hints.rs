@@ -315,7 +315,7 @@ pub(super) fn lexical_query_hint_for_replayed_put(
     replicated: bool,
     data: &[u8],
 ) -> Result<Option<(EntityId, String)>> {
-    if !replicated || entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+    if !replicated || entity_type != crate::registry::ENTITY_TYPE_CLAIM || !id.has_derived_stamp() {
         return Ok(None);
     }
     let body = crate::write_envelope::claim_body::decode_claim_body(data, true)?;
@@ -469,18 +469,22 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
     Ok(result)
 }
 
-/// Every hint CLAIM of `target`, attached or still waiting for it: the whole
-/// CLAIM type stream is read, and a row is kept when its body is a lexical
-/// query hint for `target` stored under its own derived id. Past the scan's
-/// threshold row it raises one check and reads on, so no hint of `target` is
-/// left behind.
+/// Every hint CLAIM of `target`, attached or still waiting for it. Only a
+/// CLAIM is a hint target, so any other row has none. For a CLAIM the whole
+/// CLAIM type stream is read; a row with the derive stamp is kept when its
+/// body is a lexical query hint for `target` stored under its own derived
+/// id. Past the scan's threshold row it raises one check and reads on, so no
+/// hint of `target` is left behind.
 pub(super) fn lexical_query_hint_claim_ids_for_target(
     store: &Store,
     wtxn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
     let mut hint_ids = Vec::new();
+    if !stored_entity_is_claim_type(store, wtxn, target)? {
+        return Ok(hint_ids);
+    }
+    let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
     for candidate in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         store,
         wtxn,
@@ -488,6 +492,9 @@ pub(super) fn lexical_query_hint_claim_ids_for_target(
         None,
     )? {
         let candidate = candidate?;
+        if !candidate.has_derived_stamp() {
+            continue;
+        }
         rows.row();
         let Some(body) = stored_claim_body(store, wtxn, &candidate)? else {
             continue;
@@ -519,6 +526,16 @@ pub(super) fn stored_entity_is_lexical_query_hint_claim(
     };
     Ok(body.predicate
         == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT)
+}
+
+fn stored_entity_is_claim_type(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("entity header"));
+    };
+    Ok(header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
 }
 
 pub(super) fn stored_claim_body(
