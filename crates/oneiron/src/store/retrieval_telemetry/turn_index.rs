@@ -34,8 +34,23 @@ pub(super) fn delete(
     txn: &mut RwTxn<'_>,
     record: &RetrievalRunRecord,
 ) -> Result<()> {
+    delete_with_memory(target, txn, record, None)
+}
+
+pub(super) fn delete_with_memory(
+    target: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    record: &RetrievalRunRecord,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
     if let Some(key) = key(record) {
-        TURN_INDEX.delete(target, txn, &key)?;
+        if let Some(memory) = memory {
+            TURN_INDEX.delete_with_key_capacity(target, txn, &key, |bytes| {
+                memory.materialized(0, bytes);
+            })?;
+        } else {
+            TURN_INDEX.delete(target, txn, &key)?;
+        }
     }
     Ok(())
 }
