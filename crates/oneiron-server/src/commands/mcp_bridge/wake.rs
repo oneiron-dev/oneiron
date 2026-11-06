@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::{Bridge, Refusal};
+use crate::wake_adapters::board_stream::BoardDelivery;
 
 /// Poll cadence and request bound for this small handoff, independent of
 /// the potentially much longer deadline of an agent's tool call.
@@ -18,19 +19,28 @@ const WAKE_POLL_TIMEOUT: Duration = Duration::from_secs(8);
 pub(super) struct WakePump(tokio::task::JoinHandle<()>);
 
 impl WakePump {
+    /// Polls this host instance's wakes on [`WAKE_POLL_INTERVAL`] and hands
+    /// each batch to its adapters, with the wakes an earlier batch left
+    /// undelivered (FIX 6187). What no adapter took comes back from
+    /// `Instance::deliver` and is kept here, one wake per existing
+    /// `event_ref`, for the next poll on the same cadence; a failed poll
+    /// offers the kept wakes alone. The kept batch lives in this process
+    /// only: the TASK in the vault stays the durable source, and a bridge
+    /// that exits drops it.
     pub(super) fn start(bridge: Arc<Bridge>, path: &Path) -> anyhow::Result<Self> {
         let instance = crate::wake_adapters::Instance::load(path)?;
         let runtime = tokio::runtime::Handle::try_current()?;
         Ok(Self(runtime.spawn(async move {
             let mut failed = false;
+            let mut undelivered = BoardDelivery::default();
             loop {
                 let polling = Arc::clone(&bridge);
                 let key = instance.key.clone();
                 let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
-                match polled {
+                let delivery = match polled {
                     Ok(Ok(delivery)) => {
                         failed = false;
-                        instance.deliver(delivery, &bridge.named_env).await;
+                        delivery
                     }
                     Ok(Err(refusal)) => {
                         if !failed {
@@ -40,14 +50,18 @@ impl WakePump {
                             );
                         }
                         failed = true;
+                        BoardDelivery::default()
                     }
                     Err(error) => {
                         if !failed {
                             eprintln!("oneiron wake poll did not finish: {error}");
                         }
                         failed = true;
+                        BoardDelivery::default()
                     }
-                }
+                };
+                let offered = delivery.merge_undelivered(std::mem::take(&mut undelivered));
+                undelivered = instance.deliver(offered, &bridge.named_env).await;
                 tokio::time::sleep(WAKE_POLL_INTERVAL).await;
             }
         })))
