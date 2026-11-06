@@ -552,8 +552,10 @@ impl Memory<'_> {
             };
             let actor = self.write_actor();
             let outcome = self.with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| {
-                    let outcome = self.vault().edit_note_in_txn(txn, note, &edit, actor)?;
+                content.update_note(note, |txn, lane| {
+                    let outcome = self
+                        .vault()
+                        .edit_note_in_txn(txn, note, &edit, actor, lane)?;
                     if matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
                         run_lifecycle::observe_append_in_txn(self, txn, session, pad)?;
                     }
