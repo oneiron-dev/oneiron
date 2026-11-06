@@ -55,6 +55,14 @@ signed authority act and FEDERATION_GRANT row. The ordinary consent registry
 and `vault.agents.grants.revoke` own that row. There is no second app grant
 store, automatic grant, agent-definition ceiling or new approval step.
 
+The native principal-standing check also recognizes this exact live app
+PERSON as class `agent`, unless it is archived. It then requires the same
+single live owner grant that names that principal and the work's exact verb,
+under the same snapshot, clock, owner and pact rules as other agent work.
+It does not union grants or use the human PERSON branch. This makes the
+native standing primitive available to work that already calls it; it does
+not enqueue an app callback or add the guest action transport.
+
 The empty-verb bootstrap slip stays empty. A grant row does not widen it: a
 caller also needs an owner-issued credential whose own scope admits the call.
 The normal credential and dispatcher checks still apply. This identity/grant
