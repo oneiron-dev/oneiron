@@ -1888,6 +1888,12 @@ def outputs():
             encoder = {
                 'vault.claims.review': 'claim_output::review',
                 'vault.claims.vetting': 'claim_output::review',
+                'vault.claims.settle': 'claim_output::settlement',
+                'vault.claims.list': 'claim_output::list',
+                'vault.claims.list_filtered': 'claim_output::list',
+                'vault.claims.history': 'claim_output::list',
+                'vault.claims.read_filtered': 'claim_output::read',
+                'vault.memory.signal_extraction.result': 'claim_output::extraction',
                 'vault.kv.get': 'key_value_output::get',
                 'vault.kv.put': 'key_value_output::put',
                 'vault.kv.search': 'key_value_output::search',

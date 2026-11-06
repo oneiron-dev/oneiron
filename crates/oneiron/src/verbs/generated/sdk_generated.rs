@@ -25297,7 +25297,9 @@ pub fn invoke(
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
         }
         "vault.claims.review" => claim_output::review(vault_claims_review(memory, decode(value)?)?),
-        "vault.claims.settle" => encode(vault_claims_settle(memory, decode(value)?)?),
+        "vault.claims.settle" => {
+            claim_output::settlement(vault_claims_settle(memory, decode(value)?)?)
+        }
         "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
         "vault.craft_candidates.answer" => {
             encode(vault_craft_candidates_answer(memory, decode(value)?)?)
@@ -26021,11 +26023,15 @@ pub fn invoke(
         "vault.calendar.transcript.ingest" => {
             encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
         }
-        "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
+        "vault.claims.list" => claim_output::list(vault_claims_list(memory, decode(value)?)?),
         "vault.claims.demote" => encode(vault_claims_demote(memory, decode(value)?)?),
-        "vault.claims.list_filtered" => encode(vault_claims_list_filtered(memory, decode(value)?)?),
-        "vault.claims.read_filtered" => encode(vault_claims_read_filtered(memory, decode(value)?)?),
-        "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
+        "vault.claims.list_filtered" => {
+            claim_output::list(vault_claims_list_filtered(memory, decode(value)?)?)
+        }
+        "vault.claims.read_filtered" => {
+            claim_output::read(vault_claims_read_filtered(memory, decode(value)?)?)
+        }
+        "vault.claims.history" => claim_output::list(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
         "vault.writes.critical_confirm.pending" => encode(vault_writes_critical_confirm_pending(
             memory,
@@ -26224,10 +26230,9 @@ pub fn invoke(
         "vault.memory.signal_extraction" => {
             encode(vault_memory_signal_extraction(memory, decode(value)?)?)
         }
-        "vault.memory.signal_extraction.result" => encode(vault_memory_signal_extraction_result(
-            memory,
-            decode(value)?,
-        )?),
+        "vault.memory.signal_extraction.result" => claim_output::extraction(
+            vault_memory_signal_extraction_result(memory, decode(value)?)?,
+        ),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "vault.channel_identities.provision" => {
             encode(vault_channel_identities_provision(memory, decode(value)?)?)
