@@ -23,10 +23,11 @@
 //! persist and compaction scrubs again ([`super::refresh_and_scrub`]), so a
 //! loaded copy that has not merged the removal, or a peer's copy that brings
 //! a revision back, never ships one. A stored window that does not rebuild
-//! does not stop the erase (fix list row 17209): it is pinned history-free
-//! and owed the sweep's compaction, which keeps its row, and so counts it as
-//! not done, until a pass compacts it; nothing ships from it meanwhile,
-//! since an export rebuilds it first and scrubs it then.
+//! does not stop the erase (fix list row 17209): it is pinned history-free,
+//! its queued sends go but the delete-bearing, it is marked for a full
+//! resync, and it is owed the sweep's compaction, which keeps its row, and so
+//! counts it as not done, until a pass compacts it; nothing ships from it
+//! meanwhile, since an export rebuilds it first and scrubs it then.
 
 use std::collections::BTreeSet;
 
@@ -76,7 +77,13 @@ pub(crate) fn erase_carriers_in_txn(
                     "an erased actor's source audience carriers: stored window does not rebuild; \
                      pinned and owed its compaction"
                 );
-                HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
+                // As a rewrite does: its queued sends go but the
+                // delete-bearing, so no earlier revision leaves from the
+                // queue, and peers take it whole again.
+                let label = key.as_str().to_owned();
+                HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label, &[1u8])?;
+                crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &label)?;
+                WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &label, &[1u8])?;
                 crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, &key)?;
                 continue;
             }
