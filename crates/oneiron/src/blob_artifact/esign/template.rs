@@ -115,8 +115,8 @@ pub fn render_html_template(
 }
 
 /// Native HTML rendering with node-arena, parse-error-vector, open-element,
-/// temporary-buffer, tag-name, attribute-name, traversal/layout and operation-owned
-/// backing admitted on `memory`, plus cooperative checks of `work_deadline`,
+/// temporary-buffer, tag-name, attribute-name, native comment payload, traversal/layout
+/// and operation-owned backing admitted on `memory`, plus cooperative checks of `work_deadline`,
 /// including native tokenizer steps and token/EOF delivery.
 ///
 /// Transitive DOM heap, other private parser storage and matcher internals, sorting scratch,

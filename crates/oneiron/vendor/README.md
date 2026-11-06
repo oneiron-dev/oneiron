@@ -91,8 +91,22 @@ are separate, unadmitted allocations. On refusal the failed push is skipped and
 the first typed error is retained; the current parser step, including private
 unadmitted work, may continue until the next checkpoint or guarded node operation.
 
+`tendril-0.5.1/` is the matching same-version production snapshot, with both
+upstream licences and archive hash in its `PROVENANCE.md`. Additive fallible
+slice construction and reserve APIs admit real native backing before allocation
+and settle its reported capacity before copying. A `Send + Sync` reservation
+lives in the native shared header. Last-owner drop extracts it, frees the header
+and backing, then returns admission. Ordinary unadmitted APIs remain available;
+ordinary allocating copies/growth can create separate unadmitted backing.
+The checked parser's optional comment reservation runs before every actual UTF-8
+char/slice append. Native comment emission moves the admitted tendril through
+the existing token/sink into DOM comment storage, including the owned atomic
+wrapper conversion. Its reservation follows that backing, not parser completion.
+Other payloads, the boxed guard's metadata and allocator-private overhead remain
+outside this backing admission.
+
 Callbacks use the caller's memory and work deadline, not a node-count/content
-limit or a new timer. Attribute, retained atom/tendril, other parser-stack, lookahead and owned
-diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
+limit or a new timer. Attributes, retained atoms and other tendril payloads, other
+parser stacks, lookahead and owned diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
 allocator surplus before settlement and opaque codec calls still prevent a
 global heap or hard wall-time bound. This snapshot does not complete FIX 9615.

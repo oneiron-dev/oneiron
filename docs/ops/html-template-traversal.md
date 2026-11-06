@@ -146,3 +146,30 @@ then drops the partial tree and returns the same original error. The ordinary
 checkpoint. Existing token-conversion and insertion-mode rule bodies are not
 duplicated or changed. Internal recursion, creation, formatting and adoption
 work within one insertion-mode step remains non-preemptible and unadmitted.
+
+## Native storage admission
+
+The caller-memory path now reserves the actual DOM node arena and parse-error
+vector before growth. Separate parser-owned reservations cover the private
+open-element vector and temporary/tag-name/attribute-name String backing.
+Strings and parser vectors free before their reservations; their parser-only
+reservations release at parsing completion rather than during rendering.
+The Document keeps its node and error-vector backing through rendering and drop.
+Owned diagnostic strings, interned atoms and other private payloads remain separate.
+
+Comment payloads use the native tendril allocation rather than a length proxy or
+separate scratch copy. Before each actual UTF-8 append, the checked tokenizer
+reserves a full native replacement while the old backing is still live, then
+settles the reported allocation extent before copying. That extent includes
+the shared header and rounding. Refusal leaves the old value intact and stops
+before the failed append through the same first typed error channel.
+
+The emitted comment moves through the existing native token and sink into DOM
+comment storage. Its shared allocation header retains the caller reservation
+through those moves, native clones and long subtendrils. The last owner extracts
+the reservation, frees the native header/backing, then returns admission.
+Owned atomic-wrapper conversion preserves that same allocation. Ordinary APIs
+remain unadmitted; their allocating copies/growth can create new unadmitted
+backing. The boxed guard's metadata, allocator-private overhead, other tendril
+payloads and opaque native work remain outside this slice. This is not complete
+HTML heap admission or a hard wall-time bound; FIX 9615 remains PART.
