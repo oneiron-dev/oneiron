@@ -1,10 +1,10 @@
 //! Checked append decisions shared by direct and Memory transaction doors.
 
+use super::super::made_by::{default_version_made_by, validate_version_made_by_in_txn};
 use super::{
     BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactAppendOutcome, BlobArtifactBody,
-    BlobArtifactVersion, BlobVersionProvenance, VERSIONS, default_version_made_by,
-    read_blob_artifact_head_in_txn, read_blob_artifact_highwater_in_txn,
-    validate_version_made_by_in_txn,
+    BlobArtifactVersion, BlobVersionProvenance, VERSIONS, read_blob_artifact_head_in_txn,
+    read_blob_artifact_highwater_in_txn,
 };
 use crate::Vault;
 use crate::blob_artifact::native_output::NativeOutput;
