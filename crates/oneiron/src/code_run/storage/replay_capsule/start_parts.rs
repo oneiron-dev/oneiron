@@ -265,7 +265,7 @@ pub(crate) fn release_step_start_in_txn(
 /// The body `digest` once no descriptor holds it: an inline row of its
 /// own goes, a file to the collector. A row that holds its body on its own
 /// stays.
-fn drop_unheld_body_in_txn(
+pub(super) fn drop_unheld_body_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     digest: &[u8; 32],

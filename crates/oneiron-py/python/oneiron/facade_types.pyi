@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4574 declarations.
+Census: 1262 facade rows, 4582 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -6049,6 +6049,7 @@ class SlateHolderNarrow(TypedDict):
     actor: str
     at: int
 class SlateRow(TypedDict):
+    settings_act: EntityId
     draft: SlateDraftRow
     owner_override: NotRequired[SlateOwnerOverride | None]
     holder_narrow: NotRequired[SlateHolderNarrow | None]
@@ -10973,6 +10974,64 @@ CodeConsentSettlementEligibility = CodeConsentSettlementEligibilityAllPowerHolde
 class CodeConsentSettlementRow(TypedDict):
     version: int
     eligible: CodeConsentSettlementEligibility
+class PolicyGrantMapEntry(TypedDict):
+    key: PolicyGrantValue
+    value: PolicyGrantValue
+class PolicyGrantExtension(TypedDict):
+    tag: int
+    data: list[int]
+class PolicyGrantValueNil(TypedDict):
+    kind: Literal["nil"]
+class PolicyGrantValueBoolean(TypedDict):
+    kind: Literal["boolean"]
+    value: bool
+class PolicyGrantValueInteger(TypedDict):
+    kind: Literal["integer"]
+    value: str
+class PolicyGrantValueFloat32(TypedDict):
+    kind: Literal["float32"]
+    value: list[int]
+class PolicyGrantValueFloat64(TypedDict):
+    kind: Literal["float64"]
+    value: list[int]
+class PolicyGrantValueString(TypedDict):
+    kind: Literal["string"]
+    value: str
+class PolicyGrantValueRawString(TypedDict):
+    kind: Literal["raw_string"]
+    value: list[int]
+class PolicyGrantValueBinary(TypedDict):
+    kind: Literal["binary"]
+    value: list[int]
+class PolicyGrantValueArray(TypedDict):
+    kind: Literal["array"]
+    value: list[PolicyGrantValue]
+class PolicyGrantValueMap(TypedDict):
+    kind: Literal["map"]
+    value: list[PolicyGrantMapEntry]
+class PolicyGrantValueExtension(TypedDict):
+    kind: Literal["extension"]
+    value: PolicyGrantExtension
+PolicyGrantValue = PolicyGrantValueNil | PolicyGrantValueBoolean | PolicyGrantValueInteger | PolicyGrantValueFloat32 | PolicyGrantValueFloat64 | PolicyGrantValueString | PolicyGrantValueRawString | PolicyGrantValueBinary | PolicyGrantValueArray | PolicyGrantValueMap | PolicyGrantValueExtension
+class PolicyScopedGrantRow(TypedDict):
+    actor_class: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    effector: str
+    scope: Scope
+    selectors: NotRequired[PolicyGrantValue | None]
+    budget: NotRequired[PolicyGrantValue | None]
+    receipt_required: bool
+class TeacherProbeHolderFloor(TypedDict):
+    holder_ref: str
+    min_f1_millionths: int
+class TeacherProbePolicy(TypedDict):
+    probe_id: str
+    min_f1_millionths: int
+    holders: NotRequired[list[TeacherProbeHolderFloor]]
+class SheetAnswerLimit(TypedDict):
+    artifact_ref: NotRequired[str | None]
+    sheet: NotRequired[str | None]
+    max_count: int
 class PolicyManifest(TypedDict):
     schema_version: str
     pack_id: str
@@ -10987,6 +11046,9 @@ class PolicyManifest(TypedDict):
     auto_checker: NotRequired[str | None]
     slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
     code_consent_settlement: NotRequired[CodeConsentSettlementRow | None]
+    scoped_grants: NotRequired[list[PolicyScopedGrantRow] | None]
+    teacher_probe: NotRequired[TeacherProbePolicy | None]
+    sheet_answer_limits: NotRequired[list[SheetAnswerLimit] | None]
 class PolicyManifestView(TypedDict):
     manifest_ref: str
     body_hash: str
@@ -12638,15 +12700,19 @@ class CodeWaitTarget(TypedDict):
     step_hash: str
     effect_digest: str
 CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+CodeWaitRememberScope = Literal["connection", "asking_lineage"]
 class CodeWaitResolveRequest(TypedDict):
     target: CodeWaitTarget
     answer: CodeWaitChoice
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
+    remembered_grant_ref: NotRequired[str | None]
     decision_ref: str
     answered_at_ms: int
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
