@@ -284,7 +284,10 @@ impl Vault {
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
         let now = self.store.clock.now_recorded_at();
         let copies = match slip.transferred_bounds() {
-            None => self.removal_exports_in_txn(&txn, person, now)?,
+            None => {
+                let kept = self.removal_exports_in_txn(&txn, person, now)?;
+                self.removal_export_copies_in_txn(&txn, kept)?
+            }
             Some(bounds) => self.transferred_exports_in_txn(
                 &mut txn,
                 issuer,
@@ -325,7 +328,10 @@ impl Vault {
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
         let now = self.store.clock.now_recorded_at();
         let copy = match slip.transferred_bounds() {
-            None => self.removal_export_in_txn(&txn, person, receipt_id, now)?,
+            None => match self.removal_export_in_txn(&txn, person, receipt_id, now)? {
+                Some(stored) => self.removal_export_copy_in_txn(&txn, stored, None)?,
+                None => None,
+            },
             Some(bounds) => self
                 .transferred_exports_in_txn(
                     &mut txn,
