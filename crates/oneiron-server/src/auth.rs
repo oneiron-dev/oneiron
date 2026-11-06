@@ -28,6 +28,7 @@ mod managed_person;
 mod managed_request;
 mod operator_credential;
 mod seat_credential_helper;
+mod seat_model_door;
 mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
@@ -49,6 +50,7 @@ pub(crate) use operator_credential::{
 pub(crate) use seat_credential_helper::{
     SEAT_CREDENTIAL_HELPER_PATH, SEAT_SLIP_HEADER, seat_credential_helper_routes,
 };
+pub(crate) use seat_model_door::seat_model_door_routes;
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
