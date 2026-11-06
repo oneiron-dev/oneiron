@@ -2,7 +2,7 @@
 use super::DocumentRegistry;
 use crate::note::{NoteOperation, NoteOperationReceipt, PendingNoteRequest};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::sync::transport::{decode_document, document_sub_tags, encode_document};
+use crate::sync::transport::{decode_unsplit_document, document_sub_tags, encode_unsplit_document};
 use crate::{EntityId, Result};
 
 /// Durable pending semantic NOTE-operation request (`qn:e:{id}:{request_id}`).
@@ -59,8 +59,7 @@ impl DocumentRegistry {
                     let admitted =
                         crate::note::admit_note_operation_in_txn(&self.vault, txn, id, operation)?;
                     let bytes = admitted.encode()?;
-                    let frame = encode_document(id, document_sub_tags::NOTE_OPS, &bytes)
-                        .into_result()
+                    let frame = encode_unsplit_document(id, document_sub_tags::NOTE_OPS, &bytes)
                         .map_err(|_| denied())?;
                     let pending = PendingNoteRequest {
                         input,
@@ -115,7 +114,7 @@ impl DocumentRegistry {
                 .ok_or_else(denied)?
                 .frame;
             let body = frame.get(1..).ok_or_else(denied)?;
-            let request = decode_document(body).map_err(|_| denied())?;
+            let request = decode_unsplit_document(body).map_err(|_| denied())?;
             let operation = NoteOperation::decode(request.payload)?;
             let digest = blake3::hash(&operation.encode()?);
             if digest.as_bytes() != &receipt.command_hash {
