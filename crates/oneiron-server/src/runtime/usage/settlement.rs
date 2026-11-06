@@ -236,7 +236,10 @@ impl VaultUsage {
                     UsageEventOrigin::Engine,
                     source_rows,
                 ) {
-                    Ok(raw) => self.record_settlement(raw, &idempotency_key),
+                    Ok(raw) => {
+                        self.capture_prepared_price(receipt.instance, &raw);
+                        self.record_settlement(raw, &idempotency_key);
+                    }
                     Err(error) => {
                         tracing::error!(
                             vault_id = %self.vault_id,

@@ -260,7 +260,7 @@ impl Job<'_> {
             Leg::Incumbent | Leg::Retest => &arms.incumbent,
         };
         let prompt = legs::task_text(task);
-        let (answer, served, serving_offer) = match arms.generate(
+        let (answer, served, serving_offer, call_price) = match arms.generate(
             self.server,
             self.vault,
             &self.run,
@@ -272,7 +272,8 @@ impl Job<'_> {
                 text,
                 served,
                 serving_offer,
-            } => (text, served, serving_offer),
+                call_price,
+            } => (text, served, serving_offer, call_price),
             Generated::Unavailable(reason) => return Ok(EvalLegRecord::unavailable(reason)),
         };
         // The answer is made from the case's task, so it records the case's
@@ -294,6 +295,7 @@ impl Job<'_> {
             )),
             served,
             serving_offer,
+            call_price,
             ..EvalLegRecord::default()
         };
         match score::score(
