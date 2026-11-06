@@ -566,20 +566,20 @@ impl CodeModeBackend {
             };
             let answered = if seat_bound {
                 call.ladder
-                    .generate_exact_recorded_while(&run, call.request, None, &may_send)
+                    .generate_exact_recorded_streamed_while(&run, call.request, None, &may_send)
                     .await
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
                 let (response, binding) = call
                     .ladder
-                    .generate_recorded_while(&run, call.request, None, &may_send)
+                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
                     .await?;
                 planned.answered(&run, binding.rung.model.clone());
                 Ok((response, binding))
             } else {
                 call.ladder
-                    .generate_recorded_while(&run, call.request, None, &may_send)
+                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
                     .await
             };
             if answered.is_ok() {
