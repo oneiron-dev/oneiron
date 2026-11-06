@@ -37,6 +37,7 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "oauth_jwks_uri",
     "oauth_resource_indicator",
     "kit_bundle_public_urls",
+    "git_door_base",
     "allow_unauthenticated",
     "allowed_origins",
     "artifact_domains",

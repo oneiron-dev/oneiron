@@ -22,12 +22,24 @@
 //! `models/native_exl3`), its qualification asks there, and its activity
 //! poll reads its stats there.
 //!
+//! A vault's own drafter (FIX 14976) is handed to a managed EXL3 worker by
+//! the same row replacement, with the vault's private load set as the
+//! draft, and only where this process launches the worker for its one vault
+//! (`drafter_binding`). The hosted row stays the configured one. The
+//! drafter evaluator launches incarnations of that row with each arm's
+//! draft, never hosted, so no route reaches them (`evaluator_incarnation`,
+//! FIX 14975).
+//!
 //! The media workers, VoxCPM2 speech and local ASR, are supervised the same
 //! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
 //! lease from before its admission through its renders, its partial
 //! settlement or its cancellation, and the worker runs one inference at a
 //! time.
 mod bundle;
+mod drafter_binding;
+// FIX 14975: the drafter evaluator's incarnations of the vault's own row.
+#[cfg(unix)]
+mod evaluator_incarnation;
 mod install;
 mod launch_manifest;
 mod launcher;
@@ -48,7 +60,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CacheDigest, CallSchedule, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
+    CacheDigest, CallSchedule, SchedulingCapability, VaultRef, WorkClass, WorkerKind, WorkerMode,
     WorkerStatus,
 };
 use oneiron_driver::{
@@ -60,9 +72,20 @@ use oneiron_driver::{
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
 use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
+#[cfg(unix)]
+pub(super) use launch_manifest::NativeLaunch;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 
+pub(super) use drafter_binding::{
+    DraftSeat, clear_vault_drafts, draft_seat, drafter_training_work, launch_records,
+    replace_draft, retrain_target, vault_drafts,
+};
+#[cfg(unix)]
+pub(super) use evaluator_incarnation::{
+    EvaluatorDraft, EvaluatorIncarnation, EvaluatorSeat, evaluator_seat, launch_evaluator,
+    retire_vault_evaluators,
+};
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
@@ -103,6 +126,10 @@ struct Hosted {
     worker: InferenceWorker,
     /// A managed launch's record slot, which names its native socket.
     slot: Option<Arc<LaunchSlot>>,
+    /// The vault's own draft its supervisor launches with in place of the
+    /// row's stock one (FIX 14976, `drafter_binding`); `None` for stock. The
+    /// row itself stays the configured one.
+    draft: Option<Arc<crate::models::VaultLoadSet>>,
 }
 
 impl Hosted {
@@ -133,9 +160,19 @@ pub(super) struct ExternalWorker {
 pub(super) struct NativeRoute {
     pub(super) worker: InferenceWorker,
     slot: Arc<LaunchSlot>,
+    wire_model: String,
 }
 
 impl NativeRoute {
+    #[cfg(unix)]
+    pub(super) fn native_launch(&self) -> Option<NativeLaunch> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()?
+            .native_launch(&self.wire_model)
+    }
+
     /// The current launch's native socket and the digest of its launch
     /// manifest; `None` when it has no socket.
     pub(super) fn launch(&self) -> Option<(PathBuf, String)> {
@@ -408,6 +445,32 @@ fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
         .cloned()
 }
 
+/// The device ledger of the actual managed worker `worker` names
+/// (FIX10370): the hosted row with its id AND its instance, resolved
+/// under the workers lock before any registry lock; `None` where the
+/// row is unknown, replaced, or launches on no device. Never the
+/// latest row for the id, which a replaced config may already own.
+fn session_device_ledger(worker: &InferenceWorker) -> Option<Arc<DeviceLedger>> {
+    let host = HOST.get()?;
+    let device = host
+        .lock()
+        .values()
+        .find(|hosted| {
+            hosted.worker.spec().worker_id == worker.spec().worker_id
+                && hosted.worker.same_instance(worker)
+        })?
+        .row
+        .launch
+        .as_ref()?
+        .device
+        .clone()?;
+    host.ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&device)
+        .cloned()
+}
+
 /// Runs the driver-owned restartable idle unload for one pressure victim.
 async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
     let worker = HOST.get().and_then(|host| {
@@ -518,6 +581,7 @@ pub(super) fn configure(
                         provider: provider.clone(),
                         worker: worker.clone(),
                         slot,
+                        draft: None,
                     };
                     match workers.insert(row.id.clone(), hosted) {
                         Some(old) => {
@@ -536,6 +600,9 @@ pub(super) fn configure(
             statuses.push(worker.status());
         }
     }
+    // FIX 14976: a row started, or replaced with stock, may serve a served
+    // vault's drafter binding; each vault's drafter host serves it again.
+    let moved = !started.is_empty() || !replaced.is_empty();
     for worker in started {
         host.begin(&worker);
     }
@@ -550,7 +617,59 @@ pub(super) fn configure(
             });
         }
     }
+    if moved {
+        super::drafter_serving::workers_configured();
+    }
     statuses
+}
+
+/// The mounted vault's session ownership facts, aggregated per device and
+/// worker (FIX10370). Reads the cached ledgers' snapshots and filters to
+/// `vault` before aggregating; takes no registry lock and names no
+/// handle, binding, epoch or conversation.
+pub(crate) fn session_allocations_for_vault(
+    vault: &VaultRef,
+) -> Vec<super::status::SessionAllocationStatus> {
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let ledgers = host
+        .ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut rows: BTreeMap<(String, String), super::status::SessionAllocationStatus> =
+        BTreeMap::new();
+    for ledger in ledgers {
+        let snapshot = ledger.snapshot();
+        for allocation in snapshot
+            .session_allocations
+            .iter()
+            .filter(|allocation| allocation.vault == *vault)
+        {
+            let row = rows
+                .entry((snapshot.device.clone(), allocation.worker_id.clone()))
+                .or_insert_with(|| super::status::SessionAllocationStatus {
+                    device: snapshot.device.clone(),
+                    worker_id: allocation.worker_id.clone(),
+                    sessions: 0,
+                    reported_sessions: 0,
+                    reported_unique_bytes: Some(0),
+                });
+            row.sessions += 1;
+            if allocation.report.is_some() {
+                row.reported_sessions += 1;
+            }
+            let measured = allocation.report.and_then(|report| report.unique_bytes);
+            row.reported_unique_bytes = match (row.reported_unique_bytes, measured) {
+                (Some(total), Some(bytes)) => Some(total.saturating_add(bytes)),
+                _ => None,
+            };
+        }
+    }
+    rows.into_values().collect()
 }
 
 /// The native route of the managed EXL3 worker a call on `provider` with
@@ -571,6 +690,7 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         NativeRoute {
             worker: hosted.worker.clone(),
             slot: Arc::clone(hosted.native_slot()?),
+            wire_model: hosted.row.binding.model.clone(),
         }
     };
     route.launch().is_some().then_some(route)

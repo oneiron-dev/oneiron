@@ -6,12 +6,16 @@
 //! door's place, after four checks in order: the exact lent verb
 //! (`scoped_child_call_allowed`), a registered adapter
 //! (`scoped_child_service_admission`), the scoped door's Grant check, and
-//! the job still live at its claimed generation. A write keeps its receipt
+//! the job still live at its claimed generation. The child's live cutoff
+//! (FIX 8233) is checked again as the adapter's work starts, before a
+//! write's receipt is reserved, and the adapter gets it with the call's
+//! context, to stop at while it waits. A write keeps its receipt
 //! at its place in its step on the run's route, reserved before the adapter
 //! runs: the same write made again in a resumed step gets its kept answer
 //! back and runs nothing; a changed one fails closed. Nothing here asks
 //! where the caller, the child or the vault runs.
 
+use crate::code_run::READER_TASK_SETTLED;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::scoped_child::{
     SCOPED_CHILD_PORT_NOT_LENT, ScopedChildCallContext, scoped_child_call_allowed,
@@ -28,10 +32,6 @@ use super::super::{ExecutorCallSite, HostSelfDispatcher};
 use super::{
     KeptWrite, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN, VERB_HOOK_STOPPED, answered, never_ran_mark,
 };
-
-/// What a port call answers once the child's job settled, or was claimed
-/// again since its dispatcher bound it.
-const READER_TASK_SETTLED: &str = "reader_task_settled";
 
 impl HostSelfDispatcher<'_> {
     /// `call` from a scoped child: refused unless its loan lent the verb and
@@ -73,6 +73,11 @@ impl HostSelfDispatcher<'_> {
         let invocation = self.verb_invocation(&parked, site)?;
         let origin = origin.with_hook_ask(self.parked_ask(&parked, site)?);
         let ctx = ScopedChildCallContext::new(self, child, spec);
+        // The checks above may have taken the child's last moments: its
+        // live cutoff is read again before any adapter work (FIX 8233).
+        if ctx.live_cutoff_reached() {
+            return Ok(refused(READER_TASK_SETTLED));
+        }
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             return Ok(answered(ports.call(&ctx, &call, &origin, invocation)?));
         };
