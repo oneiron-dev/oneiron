@@ -29,8 +29,7 @@ use super::records::REPLAY_RECORDS;
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
 use super::wait_holders::{
-    hold_settled_for_caller_in_txn, holder_erased_in_txn, holder_erased_routed, join_wait_in_txn,
-    join_wait_routed,
+    holder_erased_in_txn, holder_erased_routed, join_wait_in_txn, join_wait_routed,
 };
 use crate::code_run::ExecutorStorage;
 use crate::llm::{DreamerTrapKind, TrapRef};
@@ -476,9 +475,11 @@ impl<'a> WaitDeliveries<'a> {
     /// [`Self::deliver`], `reply` kept beside `rows`, the rows its settler
     /// listed it derived from (FIX 5455): the resumed run counts them among
     /// its own, and `connector.call_status` lists them. A canonical wait
-    /// that is a connector call's, by its ref, holds its settled reply for
-    /// the call's caller in the same commit (FIX 5718 part 3): that
-    /// caller's erase reaches the copy `connector.call_status` reads.
+    /// that is a connector call's holds its settled reply for the call's
+    /// caller in the same commit (FIX 5718 part 3). The canonical settlement
+    /// writes that membership, so every canonical settle shares it (FIX
+    /// 6656): that caller's erase reaches the copy `connector.call_status`
+    /// reads.
     pub fn deliver_listing(
         &self,
         wait_id: EntityId,
@@ -486,17 +487,7 @@ impl<'a> WaitDeliveries<'a> {
         rows: Option<&[EntityId]>,
         now_ms: u64,
     ) -> Result<usize> {
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
-        };
-        let Some(caller) = connector_call_caller(vault, wait_id)? else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
-        };
-        vault.with_write_txn_grouped(|txn| {
-            let delivered = deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)?;
-            hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?;
-            Ok(delivered)
-        })
+        self.storage.deliver_wait(wait_id, reply, rows, now_ms)
     }
 
     /// Registers a run as parked on `key`'s wait; `true` when its reply is
@@ -534,16 +525,6 @@ impl WaitDeliveries<'_> {
             ExecutorStorage::Session(_) => Ok(None),
         }
     }
-}
-
-/// The actor whose connector call `wait_id` is, by the call's ref, when its
-/// caller is an actor (FIX 5718 part 3): `connector.call_status` reads the
-/// wait's settled reply for that caller. `None` for any other wait.
-fn connector_call_caller(vault: &Vault, wait_id: EntityId) -> Result<Option<EntityId>> {
-    let state = vault
-        .connector_call_state(&wait_id)
-        .map_err(|error| Error::InvalidConfig(format!("connector call state: {error}")))?;
-    Ok(state.and_then(|state| EntityId::from_hex(&state.principal_ref).ok()))
 }
 
 /// Leads a run's seen-change row: `c` + wait + run → the highest option-void
