@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4580 generated types.
+// UniFFI census: 1262 facade rows, 4581 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -28462,6 +28462,24 @@ pub enum OfferAnswer {
     Postpone,
 }
 
+/// `oneiron::skill_optimize::offer::snapshot::OfferAnswerAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum OfferAnswerAuthority {
+    #[serde(rename = "owner")]
+    Owner {
+        #[serde(rename = "owner")]
+        owner: String,
+        #[serde(rename = "authentication")]
+        authentication: String,
+    },
+    #[serde(rename = "stock_policy")]
+    StockPolicy {
+        #[serde(rename = "revision")]
+        revision: String,
+    },
+}
+
 /// `oneiron::skill_optimize::offer::snapshot::OfferIntent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfferIntent {
@@ -28495,10 +28513,8 @@ pub struct OfferAnswerRecord {
     pub offer: String,
     #[serde(rename = "answer")]
     pub answer: OfferAnswer,
-    #[serde(rename = "owner")]
-    pub owner: String,
-    #[serde(rename = "authentication")]
-    pub authentication: String,
+    #[serde(rename = "authority")]
+    pub authority: OfferAnswerAuthority,
     #[serde(rename = "offer_digest")]
     pub offer_digest: String,
     #[serde(rename = "intent", default, skip_serializing_if = "Option::is_none")]

@@ -201,11 +201,24 @@ pub enum OfferIntent {
 pub struct OfferAnswerRecord {
     pub offer: EntityId,
     pub answer: OfferAnswer,
-    pub owner: EntityId,
-    pub authentication: String,
+    pub authority: OfferAnswerAuthority,
     pub offer_digest: String,
     pub intent: Option<OfferIntent>,
     pub at: u64,
+}
+
+/// A person's present answer and a saved policy's automatic answer are
+/// different authorities. A policy revision is never an authentication id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OfferAnswerAuthority {
+    Owner {
+        owner: EntityId,
+        authentication: String,
+    },
+    StockPolicy {
+        revision: EntityId,
+    },
 }
 
 /// What an offer check concluded, so readers tell a verified promise from

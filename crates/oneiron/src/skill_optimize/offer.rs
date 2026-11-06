@@ -38,9 +38,9 @@ mod measurement;
 mod snapshot;
 
 pub use self::snapshot::{
-    ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,
-    OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence, OfferIntent, OfferModelPin,
-    OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft, union_source_rows,
+    ComputeDestination, OfferAnswer, OfferAnswerAuthority, OfferAnswerRecord, OfferCandidate,
+    OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence, OfferIntent,
+    OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft, union_source_rows,
 };
 use self::snapshot::{amount, digest, invalid, measure_offer, named, refs};
 
@@ -337,13 +337,24 @@ pub(crate) fn settle_training_offer_in_txn(
         _ => None,
     };
     if let Some(OfferIntent::Switch { seat, from, to }) = &intent {
-        super::offer_switch::apply_switch_in_txn(vault, txn, actor, offer, seat, from, to, at)?;
+        super::offer_switch::apply_switch_in_txn(
+            vault,
+            txn,
+            super::offer_switch::SwitchOwner::Actor(actor),
+            offer,
+            seat,
+            from,
+            to,
+            at,
+        )?;
     }
     let record = OfferAnswerRecord {
         offer: *offer,
         answer,
-        owner: actor,
-        authentication: format!("{:?}", owner.decision_id()),
+        authority: OfferAnswerAuthority::Owner {
+            owner: actor,
+            authentication: format!("{:?}", owner.decision_id()),
+        },
         offer_digest: row.digest,
         intent,
         at,

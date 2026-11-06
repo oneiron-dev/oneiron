@@ -225,9 +225,9 @@ pub(crate) use self::labels::{
     judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
-    ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
-    OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence, OfferIntent,
-    OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
+    ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerAuthority, OfferAnswerRecord,
+    OfferCandidate, OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence,
+    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
     eval_authoring_skill_id, offer_skill_cell, pending_training_offers, record_offer_check,
     record_training_offer, training_offer, training_offer_checks, training_offer_skill_id,
     training_offers, union_source_rows,

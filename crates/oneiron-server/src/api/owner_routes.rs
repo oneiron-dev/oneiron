@@ -110,6 +110,7 @@ pub(super) mod shared_training_setup_routes;
 pub(super) mod skill_judge_routes;
 pub(super) mod space_posting_routes;
 pub(super) mod steer_routes;
+pub(super) mod stock_autoapprove_routes;
 mod stream_recovery_routes;
 mod support_grant_routes;
 mod support_repair_routes;
@@ -165,6 +166,7 @@ fn owner_tables() -> OwnerTable {
         machine_routes::owner_table(),
         model_setting_routes::owner_table(),
         room_thread_setting_routes::owner_table(),
+        stock_autoapprove_routes::owner_table(),
         backup_setting_routes::owner_table(),
         board_layout_setting_routes::owner_table(),
         widen_proposal_routes::owner_table(),
