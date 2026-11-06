@@ -5,7 +5,7 @@
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::memory::HostWriteOrigin;
-use crate::skill::{SkillBodyCapture, SkillBodyWitness};
+use crate::skill::{SkillBodyCapture, SkillBodyWitness, WitnessedAnswer, answer_digest};
 use crate::task_verb::sdk::AgentVerb;
 
 impl HostSelfDispatcher<'_> {
@@ -35,22 +35,27 @@ impl HostSelfDispatcher<'_> {
         origin.with_skill_bodies(capture)
     }
 
-    /// Keeps `body`, the skill body the leader's pattern load answers with,
-    /// when its answer carries a file of it exactly.
-    pub(super) fn witness_skill_body(&self, body: Option<SkillBodyWitness>) {
+    /// Keeps `body`, the skill body the leader's pattern load carries in
+    /// `answer`, the JSON it answers with, when the answer carries a file of
+    /// it exactly.
+    pub(super) fn witness_skill_body(
+        &self,
+        answer: &serde_json::Value,
+        body: Option<SkillBodyWitness>,
+    ) {
         let capture = SkillBodyCapture::default();
         if let Some(body) = body {
-            capture.witness(body);
+            capture.witness(WitnessedAnswer {
+                answer: answer_digest(answer.to_string().as_bytes()),
+                bodies: vec![body],
+            });
         }
         *self.skill_bodies.borrow_mut() = Some(capture);
     }
 
-    /// The skill bodies the last call's producer witnessed, taken once: the
-    /// capture closes, so nothing its producer witnesses later joins them.
-    pub(crate) fn take_skill_bodies(&self) -> Vec<SkillBodyWitness> {
-        self.skill_bodies
-            .take()
-            .as_ref()
-            .map_or_else(Vec::new, SkillBodyCapture::finish)
+    /// What the last call's producer witnessed of its answer, taken once:
+    /// the capture closes, so nothing its producer witnesses later joins it.
+    pub(crate) fn take_skill_bodies(&self) -> Option<WitnessedAnswer> {
+        self.skill_bodies.take()?.finish()
     }
 }

@@ -345,9 +345,10 @@ impl HostSelfDispatcher<'_> {
             )?),
             SelfLeaderCall::Pattern { skill } => {
                 let loaded = self.reload_leader_pattern(skill, &planner.executor, at)?;
+                let answer = pattern_json(&loaded);
                 // The pattern's files its answer carries exactly (FIX 3608).
-                self.witness_skill_body(pattern_witness(&loaded));
-                pattern_json(&loaded)
+                self.witness_skill_body(&answer, pattern_witness(&loaded));
+                answer
             }
             SelfLeaderCall::Split { leader, slice } => {
                 return self.dispatch_leader_split(leader, slice);
