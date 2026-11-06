@@ -10,8 +10,9 @@ use crate::side_table::{CodecError, RawValue};
 use super::super::constants::{
     DREAMER_BUDGET_KEYS, DREAMER_BUDGET_RESERVATION_KEYS,
     DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION, DREAMER_BUDGET_SCHEMA_VERSION, KEY_ATTEMPT_ID,
-    KEY_BUDGET_ID, KEY_CREATED_AT, KEY_OVERDRAFT_UNITS, KEY_OWED_CALLS, KEY_OWED_UNITS,
-    KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS, KEY_UPDATED_AT,
+    KEY_BIRTH_GENERATION, KEY_BUDGET_ID, KEY_CREATED_AT, KEY_OVERDRAFT_UNITS, KEY_OWED_CALLS,
+    KEY_OWED_UNITS, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS,
+    KEY_UPDATED_AT,
 };
 use super::super::types::{DreamerBudgetRecord, DreamerBudgetReservation};
 use super::{
@@ -169,6 +170,13 @@ fn encode_budget_reservation(record: &DreamerBudgetReservation) -> Result<Vec<u8
             encode_attempt_id(record.attempt_id),
         ),
         (
+            Value::from(KEY_BIRTH_GENERATION),
+            record
+                .birth_generation
+                .map(Value::from)
+                .unwrap_or(Value::Nil),
+        ),
+        (
             Value::from(KEY_RESERVED_UNITS),
             Value::from(record.reserved_units),
         ),
@@ -191,6 +199,7 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
     let mut schema_version = None;
     let mut budget_id = None;
     let mut attempt_id = None;
+    let mut birth_generation = None;
     let mut reserved_units = None;
     let mut owed_units = None;
     let mut created_at = None;
@@ -224,6 +233,21 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
             KEY_ATTEMPT_ID => {
                 attempt_id = Some(decode_attempt_id(value)?);
             }
+            KEY_BIRTH_GENERATION => {
+                birth_generation = Some(if value.is_nil() {
+                    None
+                } else {
+                    Some(
+                        u32::try_from(expect_u64(
+                            value,
+                            "dreamer birth_generation must be an integer or nil",
+                        )?)
+                        .map_err(|_| {
+                            invalid_dreamer_runner("dreamer birth_generation exceeds u32")
+                        })?,
+                    )
+                });
+            }
             KEY_RESERVED_UNITS => {
                 reserved_units = Some(expect_u64(
                     value,
@@ -255,6 +279,8 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
     let record = DreamerBudgetReservation {
         budget_id: budget_id.ok_or(invalid_dreamer_runner("missing dreamer budget_id"))?,
         attempt_id: attempt_id.ok_or(invalid_dreamer_runner("missing dreamer job_id"))?,
+        birth_generation: birth_generation
+            .ok_or(invalid_dreamer_runner("missing dreamer birth_generation"))?,
         reserved_units: reserved_units
             .ok_or(invalid_dreamer_runner("missing dreamer reserved_units"))?,
         owed_units: owed_units.ok_or(invalid_dreamer_runner("missing dreamer owed_units"))?,

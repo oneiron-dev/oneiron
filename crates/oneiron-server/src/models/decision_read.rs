@@ -453,6 +453,7 @@ impl DecisionReader {
         let execution = execution_mode(&body);
         let observation = observations.and_then(|observations| {
             observations.push(oneiron::llm::decision::DecisionCompletionObservation {
+                input_body_hash: *blake3::hash(body.to_string().as_bytes()).as_bytes(),
                 requested_prompts,
                 response: None,
             });
