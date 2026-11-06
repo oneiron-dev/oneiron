@@ -24,7 +24,7 @@ pub use membership::{
 };
 #[cfg(all(unix, feature = "sync"))]
 pub(crate) use removal_file::removal_archive_body_keys_in_txn;
-pub(crate) use removal_file::{removal_archive_bindings_in_rows, removal_archive_receipts_in_rows};
+pub(crate) use removal_file::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;

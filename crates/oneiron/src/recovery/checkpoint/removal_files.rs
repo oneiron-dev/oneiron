@@ -1,14 +1,16 @@
 //! Kept removal archives across a restore over the live vault (FIX 3679).
 //!
 //! An archive's row is Live: the live vault's row wins, and one it no
-//! longer keeps stays absent. Its bytes are a body file owned by its removal
-//! receipt, and that file's descriptor, digest holder and instance row are
+//! longer keeps stays absent. Its bytes are a body file held under its
+//! removal receipt's archive owner, and that file's descriptor, digest
+//! holder and instance row are
 //! content, restored from the image. Here they follow the row: each live
 //! archive keeps its exact descriptor and holder as the live vault holds
 //! them; the restore lands its file from the live vault when the image
 //! carries none of its digest, under the instance the live rows bind it to,
 //! which joins the image's rows so the restore's custody plan requires it;
-//! and a receipt descriptor no live archive names goes, an image row's and
+//! and an archive owner's descriptor no live archive names goes, an image
+//! row's and
 //! an opened payload's alike. An archive whose file cannot come with it
 //! goes with a warning, rather than stand over a file the copy lacks. A
 //! restore beside the vault, or one with no live vault, keeps the image's
@@ -48,9 +50,9 @@ struct LiveFile {
 /// What a restore over the live vault carries of its kept removal archives
 /// ([`carry_live`]), until the restored rows commit.
 pub(super) struct LiveArchives {
-    /// Every receipt the image or the live vault keeps an archive under:
-    /// the owners whose descriptors this restore settles.
-    receipts: BTreeSet<EntityId>,
+    /// The archive owner of every receipt the image or the live vault keeps
+    /// an archive under: the owners whose descriptors this restore settles.
+    owners: BTreeSet<EntityId>,
     /// Each kept archive's descriptor and digest-holder rows, raw, as the
     /// live vault holds them, by key.
     wanted: BTreeMap<Vec<u8>, Vec<u8>>,
@@ -71,8 +73,8 @@ fn row_at<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]> {
 /// the image carries none of its digest; the instance row the file is bound
 /// under joins the image's rows. A row whose descriptor `current` no longer
 /// holds as named, or whose digest the image binds under another instance,
-/// goes. `image_receipts` are the receipts the image kept archives under
-/// before the carry replaced its archive rows.
+/// goes. `image_owners` are the archive owners of the receipts the image
+/// kept archives under before the carry replaced its archive rows.
 ///
 /// # Errors
 ///
@@ -80,15 +82,15 @@ fn row_at<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]> {
 pub(super) fn carry_live(
     image: &mut CheckpointImage,
     current: &Vault,
-    image_receipts: BTreeSet<EntityId>,
+    image_owners: BTreeSet<EntityId>,
 ) -> Result<LiveArchives> {
     let rows = image
         .databases
         .get_mut("vault_meta")
         .ok_or_else(codec_error)?;
     let carried = crate::federation::removal_archive_bindings_in_rows(rows);
-    let mut receipts = image_receipts;
-    receipts.extend(carried.iter().map(|(_, binding)| binding.receipt));
+    let mut owners = image_owners;
+    owners.extend(carried.iter().map(|(_, binding)| binding.owner));
     // Pinned and guarded before the read that finds the files, held until
     // they land.
     let pin = current.pin_all_result_bodies();
@@ -100,7 +102,7 @@ pub(super) fn carry_live(
     let mut gone = BTreeSet::new();
     let mut key_rows = Vec::new();
     for (row, binding) in carried {
-        let descriptor = BODY.key_bytes(&(binding.receipt, binding.occurrence));
+        let descriptor = BODY.key_bytes(&(binding.owner, binding.occurrence));
         let holder = BODY_DIGEST.key_bytes(&(binding.body.blake3, binding.occurrence));
         let complete = BodyState::Complete {
             body: binding.body.clone(),
@@ -183,7 +185,7 @@ pub(super) fn carry_live(
     merged.extend(key_rows);
     *rows = merged.into_iter().collect();
     Ok(LiveArchives {
-        receipts,
+        owners,
         wanted,
         files,
         _pin: pin,
@@ -263,7 +265,8 @@ impl LiveArchives {
     /// Settles the archive descriptors in `txn`, the restore's writer, once
     /// its rows and opened payload have landed: each kept archive's
     /// descriptor and holder stand as the live vault holds them, and every
-    /// other descriptor of a receipt this restore settles is released, its
+    /// other descriptor of an archive owner this restore settles is
+    /// released, its
     /// file queued for the collector when nothing else holds its digest.
     /// What an erase owed or retired is the Live state's, carried already.
     ///
@@ -274,8 +277,8 @@ impl LiveArchives {
         for (key, value) in &self.wanted {
             store.vault_meta.put(txn, key, value)?;
         }
-        for receipt in &self.receipts {
-            for body in owned_bodies_in_txn(store, txn, receipt)? {
+        for owner in &self.owners {
+            for body in owned_bodies_in_txn(store, txn, owner)? {
                 if !self
                     .wanted
                     .contains_key(&BODY.key_bytes(&(body.owner, body.occurrence)))
