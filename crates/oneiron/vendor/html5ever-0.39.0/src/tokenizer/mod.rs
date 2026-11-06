@@ -167,6 +167,9 @@ pub struct Tokenizer<Sink> {
     /// Current comment.
     current_comment: RefCell<StrTendril>,
 
+    /// Preflight the actual comment tendril before any payload growth.
+    comment_reservation: Option<Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>>,
+
     /// Current doctype token.
     current_doctype: RefCell<Doctype>,
 
@@ -214,6 +217,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             current_attr_name: RefCell::new(TextBuffer::new()),
             current_attr_value: RefCell::new(StrTendril::new()),
             current_comment: RefCell::new(StrTendril::new()),
+            comment_reservation: None,
             current_doctype: RefCell::new(Doctype::default()),
             last_start_tag_name: RefCell::new(start_tag_name),
             temp_buf: RefCell::new(TextBuffer::new()),
@@ -271,6 +275,37 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             self.stopped.set(true);
             return false;
         }
+        true
+    }
+
+    pub(crate) fn set_comment_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>,
+    ) {
+        self.comment_reservation = Some(reservation);
+    }
+
+    fn push_comment(&self, character: char) -> bool {
+        let mut comment = self.current_comment.borrow_mut();
+        if let Some(reservation) = &self.comment_reservation {
+            if !reservation(&mut comment, character.len_utf8()) {
+                self.stopped.set(true);
+                return false;
+            }
+        }
+        comment.push_char(character);
+        true
+    }
+
+    fn append_comment(&self, value: &str) -> bool {
+        let mut comment = self.current_comment.borrow_mut();
+        if let Some(reservation) = &self.comment_reservation {
+            if !reservation(&mut comment, value.len()) {
+                self.stopped.set(true);
+                return false;
+            }
+        }
+        comment.push_slice(value);
         true
     }
 
@@ -760,8 +795,16 @@ macro_rules! shorthand (
     });
     ( $me:ident : push_value $c:expr               ) => ( $me.current_attr_value.borrow_mut().push_char($c)   );
     ( $me:ident : append_value $c:expr             ) => ( $me.current_attr_value.borrow_mut().push_tendril($c));
-    ( $me:ident : push_comment $c:expr             ) => ( $me.current_comment.borrow_mut().push_char($c)      );
-    ( $me:ident : append_comment $c:expr           ) => ( $me.current_comment.borrow_mut().push_slice($c)     );
+    ( $me:ident : push_comment $c:expr             ) => ({
+        if !$me.push_comment($c) {
+            return ProcessResult::Suspend;
+        }
+    });
+    ( $me:ident : append_comment $c:expr           ) => ({
+        if !$me.append_comment($c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : emit_comment                     ) => ( $me.emit_current_comment()                          );
     ( $me:ident : clear_comment                    ) => ( $me.current_comment.borrow_mut().clear()            );
     ( $me:ident : create_doctype                   ) => ( *$me.current_doctype.borrow_mut() = Doctype::default() );

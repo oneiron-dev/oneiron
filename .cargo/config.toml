@@ -17,6 +17,7 @@ pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
 lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
 html5ever = { path = "crates/oneiron/vendor/html5ever-0.39.0" }
 dom_query = { path = "crates/oneiron/vendor/dom-query-0.28.0" }
+tendril = { path = "crates/oneiron/vendor/tendril-0.5.1" }
 
 # cmake 4 refuses a bundled CMakeLists that declares a minimum below 3.5
 # (expat-sys's libexpat does), so the macOS and phone-target builds pin the

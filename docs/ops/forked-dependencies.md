@@ -164,6 +164,18 @@ and every local source change.
   admitted by this API. No node-count or content-size cap is added. The separately locked 0.27.0
   package stays on the registry. See the snapshot's `PROVENANCE.md`.
 
+- `tendril` 0.5.1, `crates/oneiron/vendor/tendril-0.5.1` (MIT OR Apache-2.0):
+  additive fallible native slice/reserve APIs admit the reported backing extent,
+  including header and rounding, before payload use. The shared native header
+  retains the caller reservation until after last-owner backing free. Fallible
+  replacements keep old and new allocations admitted through the copy; ordinary
+  APIs remain unadmitted and keep their copying behavior. The checked HTML comment
+  producer reserves before each real UTF-8 append and moves that same native
+  backing into DOM comment storage. Other tendril/DOM payloads, boxed guard
+  metadata, allocator-private overhead and opaque intervals remain unadmitted.
+  Package version, production dependencies and features are unchanged. See the
+  snapshot's `PROVENANCE.md`; no content-size cap or new timer is added.
+
 ## Licences and attribution
 
 No source of either project is copied into this repository; the upstream licence texts ship in
