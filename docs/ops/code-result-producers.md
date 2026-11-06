@@ -57,8 +57,9 @@ field. Cards include it only when known. It is not a grant, producer-origin proo
 MIME type, JSON-syntax claim, or a ranged chunk's `utf8`/`base64` transport choice.
 A fresh byte measurement can establish the encoding when bytes are republished;
 producer step/effect metadata still keeps its original replay values. Raw-put
-byte validation preserves supplied optional metadata before its existing full
-byte comparisons, without certifying the supplied encoding's origin.
+byte validation accepts an explicit unknown encoding. A supplied known encoding
+must match the actual byte measurement in the existing full comparison; it does
+not replace that measured fact or certify a producer's identity.
 
 MIME type remains unknown here. A JSON encoder's output can pass through a raw
 custody sweep before publication, so the encoder alone does not prove that the
