@@ -13108,7 +13108,7 @@ impl AgentVerb {
                 "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."
             }
             Self::VaultCodeSymbolsRelease => {
-                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."
+                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."
             }
             Self::VaultCodeProposalSubmit => {
                 "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."

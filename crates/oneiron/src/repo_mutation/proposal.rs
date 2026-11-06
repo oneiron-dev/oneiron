@@ -36,6 +36,8 @@ mod files;
 mod guards;
 pub(super) mod persist;
 mod queue_review;
+mod receipts;
+mod repair;
 pub(crate) mod resolve_handles;
 mod review;
 mod run;
@@ -48,6 +50,13 @@ pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
 pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
 pub(super) use submit::ProposalBase;
+
+// The proposal and queue receipts (FIX 4338) and the repair link (FIX 4364).
+pub(crate) use receipts::{
+    proposal_admission_receipt_in_txn, put_receipt_once_in_txn, receipt_body, receipt_field,
+    stored_receipt_in_txn,
+};
+pub use repair::RepoProposalReplacement;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -147,6 +156,11 @@ pub struct RepoProposal {
     /// Empty for a trusted, run or bundle proposal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub opener_lineage: Vec<[u8; 32]>,
+    /// The failed proposal this one replaces (FIX 4364, CODE-CUSTODY-04),
+    /// fixed at submission beside its `repo.proposal_replacement` link;
+    /// `None` for an ordinary proposal and a resolved successor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<EntityId>,
 }
 
 pub use crate::store::repo_proposal_record::RepoProposalOperation;
@@ -318,19 +332,23 @@ impl Vault {
             ProposalBase::CurrentCheckout,
             None,
             None,
+            None,
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
     }
 
     /// Owner doors revalidate their proof in the proposal's writer, not in a
-    /// separate preflight transaction. Engine admission stays shared.
+    /// separate preflight transaction. Engine admission stays shared. A
+    /// `repair_of` source makes the proposal that failed proposal's
+    /// replacement, judged in the same writer (FIX 4364).
     pub(crate) fn propose_repo_mutation_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         repository: EntityId,
         request: RepoMutationRequest,
         review: RepoProposalReview,
+        repair_of: Option<EntityId>,
     ) -> Result<RepoProposal> {
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
@@ -347,6 +365,7 @@ impl Vault {
             ProposalBase::CurrentCheckout,
             None,
             Some(owner),
+            repair_of,
             |txn| {
                 guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
                 if let Some(session) = session {

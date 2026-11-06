@@ -2630,7 +2630,7 @@ class Oneiron:
         def renew(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolLeaseView:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
         def release(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolsReleased:
-            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
     class _VaultCodeWaitsVerbs:

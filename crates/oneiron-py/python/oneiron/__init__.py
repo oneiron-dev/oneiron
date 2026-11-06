@@ -4119,7 +4119,7 @@ class Oneiron:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_renew(json.dumps(spec))))
         def release(self, spec):
-            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_release(json.dumps(spec))))
         def definitions(self, spec):
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""

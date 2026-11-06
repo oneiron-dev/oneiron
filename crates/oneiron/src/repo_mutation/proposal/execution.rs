@@ -43,6 +43,9 @@ pub(in crate::repo_mutation) fn for_operation(
     Ok(Some(row))
 }
 
+/// Sets the proposal bound to `repo`'s operation `seq` to that operation's
+/// finished `status`, in the oplog's final writer, and keeps the attempt's
+/// completion receipt (FIX 4338): applied or failed for this attempt alone.
 pub(in crate::repo_mutation) fn finish(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -88,5 +91,7 @@ pub(in crate::repo_mutation) fn finish(
         }
         put_journal_claim(vault, txn, id, row.actor.id(), &claim, row.created_at)?;
     }
+    // This attempt's own completion receipt, kept as history (FIX 4338).
+    super::receipts::record_attempt_in_txn(vault, txn, &row, repo, seq, status)?;
     store(vault, txn, &row)
 }
