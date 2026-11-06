@@ -121,10 +121,14 @@ Every prefix assignment must read the current native whole slot or the wrapper
 `exports` binding when it already aliases that current value. The final element
 must read the same slot or that already-aliased wrapper. For example,
 `module.exports = (module.exports = exports, module.exports)` preserves the
-current value when `exports` already aliases it. Either form preserves the declared keys and the
-existing wrapper alias; it neither replaces the value nor reconnects a detached
-`exports` binding. Mixing current reads and fresh prefix values, or ending a
-current-only prefix with a fresh value, keeps the ordinary fallback.
+current value when `exports` already aliases it. Either current-valued final
+preserves the declared keys and the existing wrapper alias; it neither replaces
+the value nor reconnects a detached `exports` binding. A fresh final expression
+instead replaces the current value once. For example,
+`module.exports = (module.exports = module.exports, {b: 2})` contributes `b` and
+detaches the old wrapper alias. The same object-literal, function, arrow and class
+rules apply to that final value, including unresolved interior references.
+Mixing current reads and fresh prefix values keeps the ordinary fallback.
 
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and other sequence-valued terminals keep
