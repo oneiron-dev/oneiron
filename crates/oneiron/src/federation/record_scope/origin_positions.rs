@@ -123,7 +123,8 @@ pub(crate) fn capture_in_txn(
 
 /// Whether the current canonical row, native full source set, facets and
 /// checked file facts equal the captured facts in this same transaction.
-/// This does not authenticate a carrier or install a scope stamp.
+/// The caller pins result bodies before opening the transaction and holds
+/// that pin through this read. This does not authenticate or install a stamp.
 pub(crate) fn matches_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
