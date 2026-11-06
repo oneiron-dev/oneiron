@@ -7,7 +7,9 @@
 //! The claim takes the run's executor lease on its run TASK in its write
 //! (FIX 4747, `super::run_task`): a run another machine holds or settled,
 //! or whose run TASK stands but does not read, ends here unrun, and a
-//! closing process claims nothing.
+//! closing process claims nothing. A spawned child has no run TASK of its
+//! own: its claim takes no lease and runs it under a fence on its root's
+//! (REVIEW-6638).
 
 use super::resident::{resident_run_id, resident_run_input};
 use super::run_task::{
@@ -120,7 +122,8 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         }
         let qa_thread_ref = self.run_thread_in(&queue, &txn, &row)?;
-        // FIX 4747: the run's executor lease, taken in this write. A run
+        // FIX 4747: the run's executor lease, taken in this write; a spawned
+        // child's claim only fences it on its root's (REVIEW-6638). A run
         // another machine holds or settled, or whose run TASK does not read,
         // ends unrun, with no fence and no change to its run TASK; a closing
         // process claims nothing and the row stays queued.
@@ -368,13 +371,11 @@ impl AgentDispatcher<'_> {
     }
 }
 
-/// The row as an agent run of this pump, or `None` when it is another
-/// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
-/// is gone, or a resident's inbox wake.
 /// Whether the agent run pump is the one that claims `row` (FIX 4747): an
 /// agent-def dispatch row it reads, other than a resident agent's TASK-root
 /// run, which the resident pump runs. Only such a run takes the executor
-/// lease at its claim, so only its dispatch mints a run TASK.
+/// lease at its claim, so only its dispatch mints a run TASK, and only when
+/// it is a root: a spawned child runs under its root's (REVIEW-6638).
 pub(super) fn agent_pump_claims_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -390,6 +391,9 @@ pub(super) fn agent_pump_claims_in(
             .is_some()))
 }
 
+/// The row as an agent run of this pump, or `None` when it is another
+/// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
+/// is gone, or a resident's inbox wake.
 fn agent_run_row(
     queue: &AttemptQueue<'_>,
     txn: &heed::RoTxn<'_>,
