@@ -4,9 +4,11 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use oneiron::Vault;
-use oneiron::outbound_consent::{RawOutboundBody, ZeroizingBufReader};
+use oneiron::outbound_consent::RawOutboundBody;
 use serde_json::Value;
 use zeroize::Zeroizing;
+
+mod event_value;
 
 pub(super) enum Data {
     Memory(Zeroizing<String>),
@@ -116,8 +118,8 @@ impl Data {
             })),
             Self::Spooled { file, .. } => {
                 let body = RawOutboundBody::from_spooled_file(file).map_err(|_| ())?;
-                match serde_json::from_reader(ZeroizingBufReader::new(body.reader())) {
-                    Ok(message) => Ok(Some((message, body))),
+                match event_value::read(body.reader()) {
+                    Ok(message) => Ok(message.map(|message| (message, body))),
                     Err(error) if error.is_io() => Err(()),
                     Err(_) => Ok(None),
                 }
