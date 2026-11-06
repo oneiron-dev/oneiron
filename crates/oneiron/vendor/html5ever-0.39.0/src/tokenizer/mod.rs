@@ -164,6 +164,9 @@ pub struct Tokenizer<Sink> {
     /// Current attribute value.
     current_attr_value: RefCell<StrTendril>,
 
+    /// Preflight the actual attribute-value tendril before any payload growth.
+    attribute_value_reservation: Option<Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>>,
+
     /// Current comment.
     current_comment: RefCell<StrTendril>,
 
@@ -216,6 +219,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             current_tag_attrs: RefCell::new(vec![]),
             current_attr_name: RefCell::new(TextBuffer::new()),
             current_attr_value: RefCell::new(StrTendril::new()),
+            attribute_value_reservation: None,
             current_comment: RefCell::new(StrTendril::new()),
             comment_reservation: None,
             current_doctype: RefCell::new(Doctype::default()),
@@ -274,6 +278,40 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
         if !self.current_attr_name.borrow_mut().push_char(character) {
             self.stopped.set(true);
             return false;
+        }
+        true
+    }
+
+    pub(crate) fn set_attribute_value_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>,
+    ) {
+        self.attribute_value_reservation = Some(reservation);
+    }
+
+    fn push_value(&self, character: char) -> bool {
+        let mut value = self.current_attr_value.borrow_mut();
+        if let Some(reservation) = &self.attribute_value_reservation {
+            if !reservation(&mut value, character.len_utf8()) {
+                self.stopped.set(true);
+                return false;
+            }
+        }
+        value.push_char(character);
+        true
+    }
+
+    fn append_value(&self, text: &StrTendril) -> bool {
+        let mut value = self.current_attr_value.borrow_mut();
+        if let Some(reservation) = &self.attribute_value_reservation {
+            if !reservation(&mut value, text.len()) {
+                self.stopped.set(true);
+                return false;
+            }
+            // Copy into the preflighted backing, not a shared input interval.
+            value.push_slice(text);
+        } else {
+            value.push_tendril(text);
         }
         true
     }
@@ -793,8 +831,16 @@ macro_rules! shorthand (
             return ProcessResult::Suspend;
         }
     });
-    ( $me:ident : push_value $c:expr               ) => ( $me.current_attr_value.borrow_mut().push_char($c)   );
-    ( $me:ident : append_value $c:expr             ) => ( $me.current_attr_value.borrow_mut().push_tendril($c));
+    ( $me:ident : push_value $c:expr               ) => ({
+        if !$me.push_value($c) {
+            return ProcessResult::Suspend;
+        }
+    });
+    ( $me:ident : append_value $c:expr             ) => ({
+        if !$me.append_value($c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : push_comment $c:expr             ) => ({
         if !$me.push_comment($c) {
             return ProcessResult::Suspend;
@@ -1886,7 +1932,13 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             match self.state.get() {
                 states::Data | states::RawData(states::Rcdata) => self.emit_char(c),
 
-                states::AttributeValue(_) => go!(self: push_value c),
+                states::AttributeValue(_) => {
+                    #[cfg(feature = "trace_tokenizer")]
+                    trace!("  push_value c");
+                    if !self.push_value(c) {
+                        return;
+                    }
+                },
 
                 _ => panic!(
                     "state {:?} should not be reachable in process_char_ref",

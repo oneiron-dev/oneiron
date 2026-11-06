@@ -71,6 +71,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
         let tag_name = Mutex::new(Backing::new(budget.clone()));
         let attribute_name = Mutex::new(Backing::new(budget.clone()));
+        let attribute_value_budget = budget.clone();
         let comment_budget = budget.clone();
         parser
             .with_open_elements_reservation(move |elements, additional| {
@@ -96,6 +97,17 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .reserve_string(text, additional)
+            })
+            .with_attribute_value_reservation(move |value, additional| {
+                let additional =
+                    u32::try_from(additional).map_err(|_| ContentTemplateError::Overflow)?;
+                value
+                    .try_reserve_with_reservation(
+                        additional,
+                        |bytes| reserve(&attribute_value_budget, bytes),
+                        Backing::resize,
+                    )
+                    .map_err(tendril_error)
             })
             .with_comment_reservation(move |comment, additional| {
                 let additional =
