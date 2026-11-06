@@ -136,12 +136,31 @@ impl SyncClient {
             if mine.is_empty() {
                 continue;
             }
-            let supplied = mine.iter().any(|body| {
-                EntityId::from_bytes(body.entity).is_ok_and(|id| bodies.contains_key(&id))
-            });
+            // Rows of this part that are live now and still need the text the
+            // part carried for them: the confirmation kept text only for rows
+            // live then. A row born through another lane while owed here
+            // takes it unless it already holds one; its debt ends only once
+            // the text is kept, on every path below.
+            let mut keep = Vec::new();
+            let mut absent = Vec::new();
+            for body in mine {
+                let id = EntityId::from_bytes(body.entity)
+                    .map_err(|_| TransportError::InvalidPayload("owed body row"))?;
+                if self.row_present(body.entity)? {
+                    if carried_born_with(&self.vault, &id)
+                        .map_err(map_federated_admission_err)?
+                        .is_empty()
+                    {
+                        keep.push(id);
+                    }
+                } else {
+                    absent.push((id, body));
+                }
+            }
+            let supplied = absent.iter().any(|(id, _)| bodies.contains_key(id));
             // Today's policy for the admitted part, as the confirmation
             // checked it: a part it now refuses lands nothing and keeps its
-            // bodies owed.
+            // absent bodies owed.
             let admitted_now = supplied
                 && match revalidate_admitted_federated_claims(
                     &self.vault,
@@ -157,75 +176,61 @@ impl SyncClient {
                         false
                     }
                 };
-            if !admitted_now {
-                for body in mine {
-                    if !self.row_present(body.entity)? {
+            if admitted_now {
+                let admitted =
+                    crate::sync::schema::create_window_doc("federation-staged-bodies", key);
+                admitted.import(&part.update).map_err(|_| {
+                    TransportError::InvalidPayload("admitted body references unreadable")
+                })?;
+                let refs = bound_refs(&admitted);
+                let entities = admitted.get_map("entities");
+                self.ensure_window(key.as_str())?;
+                for (id, body) in absent {
+                    let found = refs.iter().find(|bound| bound.id == id);
+                    let carrier = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
+                    let (Some(bytes), Some(bound), Some(carrier)) =
+                        (bodies.get(&id), found, carrier)
+                    else {
+                        owed.push(body.clone());
+                        continue;
+                    };
+                    let lane = AssetBodyLane::FederationReceive { role: receipt.role };
+                    let vault = std::sync::Arc::clone(&self.vault);
+                    let born = watch_births(&vault, &[(id, carrier.clone())], || {
+                        with_manager_peer(&self.manager, lane, |peer| {
+                            land_carried_body(peer, key, bound, bytes)
+                        })
+                        .map(|_| ())
+                    });
+                    match born {
+                        Ok(born) if born.contains(&id) => {
+                            let released = release_staged_landed_stamps(
+                                &vault,
+                                key,
+                                &receipt_id,
+                                (id, carrier),
+                            )
+                            .map_err(map_federated_admission_err)?;
+                            self.import_released_stamps(key.as_str(), released)?;
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, entity = %id.to_hex(), "owed staged asset body not landed");
+                        }
+                    }
+                    if self.row_present(body.entity)? {
+                        landed.push(id);
+                        keep.push(id);
+                    } else {
                         owed.push(body.clone());
                     }
                 }
-                continue;
+            } else {
+                owed.extend(absent.into_iter().map(|(_, body)| body.clone()));
             }
-            let admitted = crate::sync::schema::create_window_doc("federation-staged-bodies", key);
-            admitted.import(&part.update).map_err(|_| {
-                TransportError::InvalidPayload("admitted body references unreadable")
-            })?;
-            let refs = bound_refs(&admitted);
-            let entities = admitted.get_map("entities");
-            self.ensure_window(key.as_str())?;
-            // Rows of this part that are live now and still need the text
-            // the part carried for them: the confirmation kept text only for
-            // rows live then.
-            let mut keep = Vec::new();
-            for body in mine {
-                let id = EntityId::from_bytes(body.entity)
-                    .map_err(|_| TransportError::InvalidPayload("owed body row"))?;
-                if self.row_present(body.entity)? {
-                    // Born through another lane while owed here: the part's
-                    // text is kept unless the row already holds one.
-                    if carried_born_with(&self.vault, &id)
-                        .map_err(map_federated_admission_err)?
-                        .is_empty()
-                    {
-                        keep.push(id);
-                    }
-                    continue;
-                }
-                let found = refs.iter().find(|bound| bound.id == id);
-                let carrier = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
-                let (Some(bytes), Some(bound), Some(carrier)) = (bodies.get(&id), found, carrier)
-                else {
-                    owed.push(body.clone());
-                    continue;
-                };
-                let lane = AssetBodyLane::FederationReceive { role: receipt.role };
-                let vault = std::sync::Arc::clone(&self.vault);
-                let born = watch_births(&vault, &[(id, carrier.clone())], || {
-                    with_manager_peer(&self.manager, lane, |peer| {
-                        land_carried_body(peer, key, bound, bytes)
-                    })
-                    .map(|_| ())
-                });
-                match born {
-                    Ok(born) if born.contains(&id) => {
-                        let released =
-                            release_staged_landed_stamps(&vault, key, &receipt_id, (id, carrier))
-                                .map_err(map_federated_admission_err)?;
-                        self.import_released_stamps(key.as_str(), released)?;
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(%error, entity = %id.to_hex(), "owed staged asset body not landed");
-                    }
-                }
-                if self.row_present(body.entity)? {
-                    landed.push(id);
-                    keep.push(id);
-                } else {
-                    owed.push(body.clone());
-                }
-            }
-            // Before the work settles: the last owed body landed drops the
-            // content, the only retained copy of this text.
+            // Before the work settles: the last owed body gone drops the
+            // content, the only retained copy of this text. A keep that
+            // fails returns before the settle, so work and content stay.
             let carried: Vec<CarriedText> = part
                 .born_with
                 .iter()
