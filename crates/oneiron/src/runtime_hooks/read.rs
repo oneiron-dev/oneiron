@@ -79,7 +79,8 @@ pub(super) fn history_admission(
 }
 
 /// Reads the fact's entity under `lane` and `grant`. `None` is withheld or
-/// gone: the hook may not see this fact.
+/// gone: the hook may not see this fact. Live delivery and live replay both
+/// pass here, so a watcher fact fires only on a row the grant shows.
 pub(super) fn fact_row(
     lane: &ScopedRead<'_>,
     grant: &HookGrant,
@@ -112,6 +113,12 @@ pub(super) fn fact_row(
         return Ok(None);
     }
     if row.entity_type != ENTITY_TYPE_CLAIM {
+        // A watcher's TASK or identity row (FIX 4749) passes the grant as
+        // any row the hook reads does: it carries no world and no predicate,
+        // so a grant that names either does not show it.
+        if entry.kind.is_watcher_source() && !grant_view::shows_row(grant, &row)? {
+            return Ok(None);
+        }
         return Ok(Some(SeenFact {
             claim: None,
             claim_json: Value::Null,
