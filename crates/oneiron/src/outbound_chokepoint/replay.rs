@@ -420,7 +420,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             // A turn program's send settles its step in the Done commit,
             // with the body its transport returned (DOOR-141 PR2); any
             // other send writes nothing more, and nothing here fails it.
-            let body = transport.settled_result();
+            let body = transport.take_settled_result();
             let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
                 crate::dreamer_runner::settle_program_outbound_in_txn(
                     vault,

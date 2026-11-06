@@ -51,8 +51,8 @@ use std::time::{Duration, Instant};
 use oneiron::connector_key::{ConnectorCallRoute, SlateDisposition};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorQuestion,
-    FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
-    UntrustedToolResult, zeroize_json,
+    FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundBody,
+    RawOutboundResult, UntrustedToolResult, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
@@ -330,7 +330,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.provider_wait = sent.provider_wait;
         OutboundTransportResult {
             outcome: sent.outcome,
-            raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
+            raw_result: RawOutboundResult::with_body(sent.body, sent.error, None, None),
         }
     }
 
@@ -538,6 +538,7 @@ struct Declared<'a> {
 
 /// One MCP session's worth of requests for one frozen call.
 struct Exchange<'a> {
+    vault: &'a Vault,
     client: &'a reqwest::blocking::Client,
     endpoint: &'a str,
     revision: &'a str,
@@ -575,6 +576,7 @@ impl<'a> Exchange<'a> {
             );
         }
         Some(Self {
+            vault,
             client,
             endpoint: view.endpoint(),
             revision,
@@ -746,19 +748,20 @@ impl<'a> Exchange<'a> {
             return Sent::refused_status(status, response.headers());
         }
         let deadline = asks_on_stream.then(|| Instant::now() + CALL_TIMEOUT);
-        let mut stream = match open_reply(response, CALL_ID, deadline) {
-            Ok(Reply::Json(Some((message, body)))) => {
-                return self.call_answered(message, body, live, value);
-            }
-            Ok(Reply::Json(None)) | Err(()) => {
-                return Sent::ambiguous("connector_reply_unreadable");
-            }
-            Ok(Reply::Stream(stream)) => stream,
-        };
+        let mut stream =
+            match reply_read::open_spooled_reply(response, CALL_ID, deadline, self.vault) {
+                Ok(Reply::Json(Some((message, body)))) => {
+                    return self.call_answered(message, body, live, value);
+                }
+                Ok(Reply::Json(None)) | Err(()) => {
+                    return Sent::ambiguous("connector_reply_unreadable");
+                }
+                Ok(Reply::Stream(stream)) => stream,
+            };
         loop {
             match stream.next(CALL_ID) {
                 Ok(StreamEvent::Answer(message, body)) => {
-                    return self.call_answered(message, body, live, value);
+                    return self.call_answered(message, body.into(), live, value);
                 }
                 Ok(StreamEvent::Request(request)) => {
                     let declared = self
@@ -802,11 +805,14 @@ impl<'a> Exchange<'a> {
                         request_id,
                         last_event_id,
                     };
-                    let body = request.to_string().into_bytes();
+                    let mut body = request.to_string().into_bytes();
+                    if let Some(value) = value {
+                        value.clear_bytes(&mut body);
+                    }
                     // Its question, id and body are read out (FIX 11861).
                     zeroize_json(request);
                     let kept = value.map(SentValue::keep);
-                    return hand_over(declared, round, continuation, live, body, kept);
+                    return hand_over(declared, round, continuation, live, body.into(), kept);
                 }
                 Ok(StreamEvent::End) | Err(()) => {
                     return Sent::ambiguous("connector_reply_unreadable");
@@ -821,10 +827,19 @@ impl<'a> Exchange<'a> {
     fn call_answered(
         &self,
         mut message: Value,
-        body: Vec<u8>,
+        mut body: RawOutboundBody,
         live: &mut Option<LiveSession>,
         value: Option<&SentValue<'_>>,
     ) -> Sent {
+        if let Some(value) = value {
+            body = match body.cleared_json(self.vault, value) {
+                Ok(body) => body,
+                Err(_) => {
+                    zeroize_json(message);
+                    return Sent::ambiguous("connector_reply_unreadable");
+                }
+            };
+        }
         if let Some(declared) = self
             .elicitation
             .as_ref()
