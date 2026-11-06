@@ -129,29 +129,61 @@ impl NativeReadAnswer {
 /// the read.
 pub(crate) struct NativeReadBody {
     args: Value,
-    controls: Map<String, Value>,
+    controls: RouteControls,
 }
 
 impl NativeReadBody {
-    /// `body` split at `controls`, the names of the route's own members.
-    pub(crate) fn split(body: Value, controls: &[&str]) -> Self {
+    /// `body` split at `names`, the names of the route's own members.
+    pub(crate) fn split(body: Value, names: &'static [&'static str]) -> Self {
         let mut args = match body {
             Value::Object(args) => args,
             body => {
                 return Self {
                     args: body,
-                    controls: Map::new(),
+                    controls: RouteControls {
+                        names,
+                        given: Map::new(),
+                    },
                 };
             }
         };
-        let controls = controls
+        let given = names
             .iter()
             .filter_map(|name| args.shift_remove_entry(*name))
             .collect();
         Self {
             args: Value::Object(args),
-            controls,
+            controls: RouteControls { names, given },
         }
+    }
+}
+
+/// A direct native HTTP read's route controls (FIX 1435): every name the
+/// route keeps as its own, and the ones the caller's request gave. A
+/// control the caller left out stays left out.
+#[derive(Clone)]
+struct RouteControls {
+    names: &'static [&'static str],
+    given: Map<String, Value>,
+}
+
+impl RouteControls {
+    /// The route body a rewrite is admitted and read from: the rewritten
+    /// native `args` beside the caller's own controls, so a control the
+    /// caller left out stays out. A rewrite that names one of the route's
+    /// controls, or is not a JSON object, is refused, as the route refuses
+    /// a body it does not decode: hook data never sets a control, so no
+    /// request a hook's ask saves carries one either.
+    fn joined(&self, args: &Value) -> Result<Value, ApiError> {
+        let Value::Object(args) = args else {
+            return Err(body_refusal());
+        };
+        if self.names.iter().any(|name| args.contains_key(*name)) {
+            return Err(body_refusal());
+        }
+        let mut body = args.clone();
+        body.extend(self.given.clone());
+        Ok(Value::Object(body))
     }
 }
 
@@ -198,7 +230,7 @@ where
     Fut: Future<Output = Result<NativeReadAnswer, NativeReadError>>,
 {
     let NativeReadBody { args, controls } = body;
-    let durable = controls.is_empty();
+    let durable = controls.given.is_empty();
     let admit = Arc::new(admit);
     // The last rewrite `admit` accepted, beside the request it admitted.
     let accepted: Arc<Mutex<Option<(Value, T)>>> = Arc::new(Mutex::new(None));
@@ -206,7 +238,8 @@ where
         let (admit, controls, accepted) =
             (Arc::clone(&admit), controls.clone(), Arc::clone(&accepted));
         Arc::new(move |_: &str, rewritten: &Value| -> Result<(), String> {
-            let request = joined(rewritten, &controls)
+            let request = controls
+                .joined(rewritten)
                 .and_then(|body| admit(&body))
                 .map_err(|refused| refused.message().to_owned())?;
             *accepted.lock().unwrap_or_else(PoisonError::into_inner) =
@@ -309,29 +342,16 @@ fn released_completed(
 async fn readmitted<T, A>(
     admit: Arc<A>,
     args: &Value,
-    controls: Map<String, Value>,
+    controls: RouteControls,
 ) -> Result<T, ApiError>
 where
     T: Send + 'static,
     A: Fn(&Value) -> Result<T, ApiError> + Send + Sync + 'static,
 {
     let args = args.clone();
-    tokio::task::spawn_blocking(move || joined(&args, &controls).and_then(|body| admit(&body)))
+    tokio::task::spawn_blocking(move || controls.joined(&args).and_then(|body| admit(&body)))
         .await
         .map_err(|_| ApiError::internal_server_error("native read admission did not finish"))?
-}
-
-/// The route body a rewrite is admitted and read from: the rewritten native
-/// `args` beside the caller's own `controls`. A control that a rewrite
-/// names gives way to the caller's own. A rewrite that is not a JSON object
-/// is refused, as the route refuses a body it does not decode.
-fn joined(args: &Value, controls: &Map<String, Value>) -> Result<Value, ApiError> {
-    let Value::Object(args) = args else {
-        return Err(body_refusal());
-    };
-    let mut body = args.clone();
-    body.extend(controls.clone());
-    Ok(Value::Object(body))
 }
 
 /// `body` decoded as a route's own request type, refused as the route
