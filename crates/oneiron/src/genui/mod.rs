@@ -7,6 +7,7 @@
 mod consent_cards;
 mod consent_eval;
 mod failure_card;
+mod failure_card_coach;
 mod failure_card_validation;
 mod offer_card;
 mod project_proposal;
