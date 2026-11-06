@@ -90,6 +90,8 @@ impl ResultRead {
             // The arm's own results: an arm reads for its own run, never
             // for another caller, so its refs name the occurrence.
             foreign: false,
+            // An arm reads no scoped child's results (FIX 8233).
+            live_cutoff: None,
         })
     }
 

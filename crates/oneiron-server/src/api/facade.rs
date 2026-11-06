@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod admission_doors;
 mod affect_doors;
+mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
 #[path = "facade/generated/agent_verbs.rs"]
@@ -84,6 +85,7 @@ mod deck_creation_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
+mod drafter_doors;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;

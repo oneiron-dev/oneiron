@@ -1,0 +1,12 @@
+# Explicit Linux x86_64 checker config; not loaded unless selected by --config.
+# Published from engine 73994df04a6708a93b7b1cecd40a0fa73f97cd5b.
+# Match the engine/guest protocol and host fence before deployment; see README.md.
+[merge_queue]
+checker_backend = "isolated"
+runtime = "/usr/bin/docker"
+image = "ghcr.io/oneiron-dev/oneiron-queue-checker@sha256:6a29372e1df3cd3bc440d7c16635e326616c47f6503c8312ed3a60f46dc5993f"
+
+[merge_queue.toolchain]
+rust = "rustc 1.96.1 (31fca3adb 2026-06-26)"
+cargo = "cargo 1.96.1 (356927216 2026-06-26)"
+cargo_lock = "sha256:daaf587d1e960af654a1e3f6d4d62d4097d7afa07a62c47b984a0bd8ad3025f5"
