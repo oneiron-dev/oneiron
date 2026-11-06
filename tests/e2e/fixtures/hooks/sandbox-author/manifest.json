@@ -488,7 +488,7 @@
         "revision": "hooks05-sandbox-author-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "cba2c43a4b3d414004182683219099fd5105cc300817563c8e921d4dbeb5ab89",
+      "sha256": "d966f74d9bfc8a445b506735af9687c03f0c790c16c3d3bbcb8ca9dafbd6ffc4",
       "expectedFacts": {
         "packPath": "control/hooks/progress-control/HOOK.md",
         "runtime": "engine-owned quickjs-hook.wasm; no external effects",
