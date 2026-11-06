@@ -276,14 +276,6 @@ fn hung_up(stream: &UnixStream) -> bool {
     )
 }
 
-/// Resolves once the daemon closes its end of the call's socket, or writes
-/// past its one call: either way it reads no more of the reply.
-async fn daemon_closed(reading: &mut tokio::net::unix::ReadHalf<'_>) {
-    use tokio::io::AsyncReadExt as _;
-    let mut byte = [0_u8; 1];
-    let _ = reading.read(&mut byte).await;
-}
-
 /// Serves one call within its `deadline`. A frame that cannot be read gets
 /// no reply: the daemon counts the call as lost. A git exchange runs on its
 /// own terms from its header on: no call deadline, an idle bound and the
@@ -316,24 +308,6 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
         } else {
             call.header.check(&call.body)
         };
-        if call.header.shape.relays_events() {
-            // A relayed event stream ends when the daemon stops reading it,
-            // even while the provider is quiet: its send is dropped, and the
-            // provider's connection with it (FIX 15702).
-            let (mut reading, mut writing) = stream.split();
-            let send = std::pin::pin!(sender.stream(
-                &call.header,
-                checked,
-                call.body,
-                call.whole,
-                &call.secret,
-                &mut writing,
-                deadline,
-            ));
-            let closed = std::pin::pin!(daemon_closed(&mut reading));
-            let _ = futures_util::future::select(send, closed).await;
-            return;
-        }
         sender
             .stream(
                 &call.header,
