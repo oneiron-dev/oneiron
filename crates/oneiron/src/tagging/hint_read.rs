@@ -61,6 +61,19 @@ impl QueuedHintRead {
         }
     }
 
+    pub(super) fn hold_room_turns(&self, vault: &Vault) -> Vec<crate::claim::TurnTerms> {
+        match self {
+            Self::Caller {
+                readers,
+                unknown: false,
+            } => readers
+                .iter()
+                .filter_map(|reader| reader.hold_room_turn(vault))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn open<'v>(&self, vault: &'v Vault) -> MemoryResult<Option<Vec<ScopedRead<'v>>>> {
         match self {
             Self::Caller {

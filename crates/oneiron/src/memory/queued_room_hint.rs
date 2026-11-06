@@ -86,6 +86,12 @@ impl QueuedRoomHintReader {
         self.caller == actor
     }
 
+    pub(super) fn hold_turn(&self, vault: &Vault) -> Option<TurnTerms> {
+        vault
+            .queued_room_hints
+            .resolve(vault.store.open_nonce, self.turn)
+    }
+
     pub(super) fn bind<'v>(&self, memory: Memory<'v>) -> MemoryResult<Option<Memory<'v>>> {
         let Some(terms) = memory
             .vault

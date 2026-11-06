@@ -20,16 +20,24 @@ and personal/held position travel as private data, beside an opaque reference
 to the original shared monotonic turn terms in this vault open. No room roster,
 peer read key or authority is serialized.
 
-The live reference is weak: a queued job does not extend the original turn's
-lifetime. If that original position is gone, or the vault has reopened, the
-worker keeps the full candidate set. This supports only a still-live original
-room turn, not complete durable room context. While it exists, the worker uses
+The stored reference is weak while a marker waits in the queue. A claim pins
+its still-live captured room terms in the reconciler's existing held entry,
+before its lease commits. That entry keeps the SAME terms through preparation,
+inference and settlement, even if the original request ends meanwhile. A failed
+lease commit removes the newly inserted hold. A dropped or failed preparation
+keeps the entry for the existing hand-back path; successful settlement or
+hand-back removes it. A recovered lease does not recreate an original turn.
+These pins do not follow a queued retry or checkpoint successor: this is
+claimed-job custody, not complete queued or durable room context.
+
+If the original position is already gone at claim, or the vault has reopened,
+the worker keeps the full candidate set. While the terms exist, the worker uses
 the native room/thread constructor and its current standing, roster and peer
 keys. It meets the current terms into the SAME original shared terms, never a
 snapshot or a fork. Later narrowing observed by the original turn therefore
 still binds the queued reader. The saving reader holds those shared terms
 through its native per-row checks. Weak entries are pruned on capture and open;
-no strong queued turn, new retention cap or writer refusal is added.
+no idle queued strong owner, new retention cap or writer refusal is added.
 
 The destination keeps its original on/off-device flag and every carried machine
 and proof key, including unknown destinations and proof facts not yet used on
@@ -64,7 +72,9 @@ each must admit a hint's sources and candidate in the same saving snapshot.
 A hint never combines permissions from different readers. If the marker's
 context changed after the worker prepared its readers, the saving transaction
 uses no optional hint. Retry successors carry the current persisted payload,
-and a checkpoint rekey carries its current caller context too.
+and a checkpoint rekey carries its current caller context too. Recovery rehomes
+also carry the decoded caller context, including when the marker stays paused;
+they do not replace it with an internal-only reader.
 
 Internal-only markers retain their existing aggregate hint selection. Shadow
 mode does not open an optional hint reader. This does not serialize a general
