@@ -194,7 +194,8 @@ fn outcome_holds_reply(outcome: &SelfDispatchOutcome) -> bool {
         | SelfDispatchOutcome::InferenceDefaults(_)
         | SelfDispatchOutcome::TaskWaitSet(_)
         | SelfDispatchOutcome::Summarize(_)
-        | SelfDispatchOutcome::Leader(_) => true,
+        | SelfDispatchOutcome::Leader(_)
+        | SelfDispatchOutcome::StoredReply(_) => true,
         SelfDispatchOutcome::TaskAskStatus(status) => matches!(
             status,
             TaskAskStatus::Settled(_) | TaskAskStatus::WorldPrivacy(_)
