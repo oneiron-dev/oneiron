@@ -225,7 +225,7 @@ pub(super) fn setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &IntentLedgerRecord,
-    actor: EntityId,
+    actor: Option<EntityId>,
 ) -> Result<SlateDisposition, IntentLedgerError> {
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(SlateDisposition::Auto);
@@ -246,7 +246,7 @@ pub(super) fn setting_in_txn(
             txn,
             key_ref,
             &key,
-            Some(actor),
+            actor,
             &record.server,
             &record.tool,
         )?
