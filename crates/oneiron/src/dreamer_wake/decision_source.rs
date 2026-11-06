@@ -102,6 +102,38 @@ pub struct DecisionAnswerQuantity {
     pub tokens_predicted: Option<u64>,
 }
 
+/// Actual System One response fields before logical answer validation.
+/// Missing fields stay unknown; this is neither an invoice nor a paid fact.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionSystemOneResponse {
+    pub status: u16,
+    pub model_matches: Option<bool>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+impl DecisionSystemOneResponse {
+    /// Failed-read evidence from a matching successful HTTP response only.
+    /// This does not turn the logical failure into a terminal invoice.
+    pub fn observed_usage(&self) -> Option<oneiron_model::llm::LlmUsage> {
+        if !(200..300).contains(&self.status) || self.model_matches != Some(true) {
+            return None;
+        }
+        let mut usage = oneiron_model::llm::LlmUsage::zero();
+        usage.input.total = self.input_tokens?;
+        usage.output.total = self.output_tokens?;
+        usage.raw_provider = serde_json::json!({
+            "status": self.status,
+            "model_matches": self.model_matches,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "terminal_invoice": false,
+        });
+        Some(usage)
+    }
+}
+
 /// A native producer whose original admission was retained before its read.
 /// Recording its response quantity never pays or authorizes the call.
 pub struct DecisionCallInvoice<'a> {
@@ -166,6 +198,17 @@ impl DecisionCallInvoice<'_> {
                 completions,
             )?;
             crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, self.origin, units)
+        })
+    }
+
+    /// Retains raw source fields on the same original call without invoicing it.
+    pub fn record_systemone_response(
+        &self,
+        response: &DecisionSystemOneResponse,
+    ) -> crate::Result<()> {
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                .record_native_systemone_response_in_txn(wtxn, self.origin, response)
         })
     }
 
@@ -275,6 +318,25 @@ impl DecisionCallAdmission {
             return Ok(None);
         };
         crate::dreamer_runner::DreamerRunnerStore::new(&vault).native_terminal_usage(
+            self.origin,
+            self.boot,
+            line,
+            self.lease.id(),
+        )
+    }
+
+    /// Reads raw System One response source, independently of invoice state.
+    pub fn systemone_response(&self) -> crate::Result<Option<DecisionSystemOneResponse>> {
+        let Some(vault) = self.meter_vault.get().and_then(Weak::upgrade) else {
+            return Ok(None);
+        };
+        if vault.active_wakes.boot() != self.boot {
+            return Ok(None);
+        }
+        let Some(line) = self.line.as_deref() else {
+            return Ok(None);
+        };
+        crate::dreamer_runner::DreamerRunnerStore::new(&vault).native_systemone_response(
             self.origin,
             self.boot,
             line,
