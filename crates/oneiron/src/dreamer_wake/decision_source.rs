@@ -169,6 +169,18 @@ impl DecisionCallInvoice<'_> {
         })
     }
 
+    /// Retains the successful System One response's aggregate counters and
+    /// invoice together. No House prompt split or minimum output is inferred.
+    pub fn record_systemone_usage(
+        &self,
+        usage: &oneiron_model::llm::LlmUsage,
+    ) -> crate::Result<()> {
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                .record_native_systemone_usage_in_txn(wtxn, self.origin, usage)
+        })
+    }
+
     /// Records the native terminal quantity, not a quote or a GROSS meter delta.
     pub fn record_usage(&self, usage: &oneiron_model::llm::LlmUsage) -> crate::Result<()> {
         let units = usage
@@ -250,7 +262,7 @@ impl DecisionCallAdmission {
         })
     }
 
-    /// Reads only this original admission's retained, fully observed House invoice.
+    /// Reads only this original admission's retained, fully observed native invoice.
     /// Unknown response quantities stay absent; this neither settles nor pays a call.
     pub fn terminal_usage(&self) -> crate::Result<Option<oneiron_model::llm::LlmUsage>> {
         let Some(vault) = self.meter_vault.get().and_then(Weak::upgrade) else {
@@ -262,7 +274,7 @@ impl DecisionCallAdmission {
         let Some(line) = self.line.as_deref() else {
             return Ok(None);
         };
-        crate::dreamer_runner::DreamerRunnerStore::new(&vault).native_house_terminal_usage(
+        crate::dreamer_runner::DreamerRunnerStore::new(&vault).native_terminal_usage(
             self.origin,
             self.boot,
             line,
