@@ -3,11 +3,13 @@
 
 mod carriers;
 mod history;
+mod metadata;
 
 use carriers::{
     compare_container_manifests, compare_named_rows, compare_payload_rows, compare_schema_manifest,
 };
 use history::HistoryComparison;
+use metadata::MetadataComparison;
 
 use crate::error::Result;
 use crate::note::{NoteFork, NoteReviewBundle};
@@ -25,6 +27,7 @@ pub(in crate::recovery) struct CanonicalComparison {
     byte: usize,
     payload: PayloadPart,
     record_field: usize,
+    metadata: MetadataComparison,
     history: HistoryComparison,
     bundle: BundleComparison,
 }
@@ -34,6 +37,8 @@ enum PayloadPart {
     First,
     Second,
     Third,
+    Fourth,
+    Fifth,
 }
 
 #[derive(Default)]
@@ -85,6 +90,7 @@ impl CanonicalComparison {
             byte: 0,
             payload: PayloadPart::First,
             record_field: 0,
+            metadata: MetadataComparison::default(),
             history: HistoryComparison::default(),
             bundle: BundleComparison::default(),
         }
@@ -124,7 +130,7 @@ impl CanonicalComparison {
             row_births,
             withdrawn_cutoffs,
             asset_body_refs,
-        } = &self.actual;
+        } = &mut self.actual;
         let (done, next_group) = match self.group {
             Group::Window => (
                 compare_bytes(window.as_bytes(), wanted.window.as_bytes(), &mut self.byte)?,
@@ -194,6 +200,7 @@ impl CanonicalComparison {
                     &mut self.byte,
                     &mut self.payload,
                     &mut self.record_field,
+                    &mut self.metadata,
                     &mut self.history,
                 )?,
                 Group::DocumentHeads,
@@ -331,6 +338,7 @@ impl CanonicalComparison {
             self.byte = 0;
             self.payload = PayloadPart::First;
             self.record_field = 0;
+            self.metadata = MetadataComparison::default();
             self.history = HistoryComparison::default();
             self.bundle = BundleComparison::default();
         }
@@ -414,12 +422,13 @@ fn compare_documents(
 }
 
 fn compare_entity_documents(
-    actual: &[CanonicalEntityDocument],
+    actual: &mut [CanonicalEntityDocument],
     wanted: &[CanonicalEntityDocument],
     next: &mut usize,
     byte: &mut usize,
     payload: &mut PayloadPart,
     record_field: &mut usize,
+    metadata_state: &mut MetadataComparison,
     history_state: &mut HistoryComparison,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
@@ -434,7 +443,7 @@ fn compare_entity_documents(
         birth_actor,
         birth_at,
         history,
-    }) = actual.get(*next)
+    }) = actual.get_mut(*next)
     else {
         return Ok(true);
     };
@@ -463,10 +472,20 @@ fn compare_entity_documents(
     }
     if *payload == PayloadPart::Second {
         if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
-            compare_value(metadata, expected_metadata)?;
-            compare_value(summary_meta, expected_summary_meta)?;
             *payload = PayloadPart::Third;
             *byte = 0;
+        }
+        return Ok(false);
+    }
+    if *payload == PayloadPart::Third {
+        if metadata_state.advance(metadata, expected_metadata)? {
+            *payload = PayloadPart::Fourth;
+        }
+        return Ok(false);
+    }
+    if *payload == PayloadPart::Fourth {
+        if metadata_state.advance(summary_meta, expected_summary_meta)? {
+            *payload = PayloadPart::Fifth;
         }
         return Ok(false);
     }
