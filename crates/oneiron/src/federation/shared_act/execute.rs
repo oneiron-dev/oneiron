@@ -1,7 +1,8 @@
 //! Executing a matured delete-the-vault, ownership-transfer or owner-removal act.
 
-use super::membership::MemberMove;
+use super::membership::{MemberMove, UnsignedExecution};
 use super::*;
+use crate::authority::{MembershipExecutionCause, MembershipHandover};
 
 impl Vault {
     /// Execute a completed `delete_vault`, `transfer_ownership` or
@@ -14,7 +15,12 @@ impl Vault {
     /// the capability slips of anyone who lost a role are revoked with it,
     /// and the host signs an ownership change into the authority log as an
     /// `OwnerHandover` naming the act and its receipt. Without `slips`, this
-    /// install's own live host issuer does both (FIX 5898).
+    /// install's own live host issuer does both (FIX 5898). With no issuer
+    /// at all, the change still lands, and its handover and the withdrawals
+    /// of the Grants an owner's signed mint made wait as one pending record
+    /// this install signs as their carrier, in this writer when it can and
+    /// on a later pass otherwise; the receipt says it is pending until that
+    /// record counts (FIX 12335).
     /// An export-first removal, once its executor and starter stand as live
     /// Owners holding the act's verb (FIX 3217), exports what its target
     /// could read before the writer opens, records that export's digest in
@@ -46,10 +52,7 @@ impl Vault {
                 .map(|frozen| (member, records.len() as u64, frozen, ids))
             })
             .transpose()?;
-        let own_issuer = match slips {
-            Some(_) => None,
-            None => self.load_host_slip_issuer().ok(),
-        };
+        let own_issuer = self.membership_issuer(slips);
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -102,8 +105,10 @@ impl Vault {
             Some(receipt_id.clone()),
         )?;
         // The grant ids an Owner handover wrote and retired, for its signed
-        // entry (FIX 5765).
+        // entry (FIX 5765), and the signed-mint Grants it deleted with no
+        // signed withdrawal (FIX 12335).
         let mut handover_ids = (Vec::new(), Vec::new());
+        let mut unsigned_withdrawals = Vec::new();
         let effect = match kind {
             SharedActKind::DeleteVault => {
                 let plan: DeleteVaultPlan = decode(&act.payload)?;
@@ -149,8 +154,10 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
+                unsigned_withdrawals = unsigned;
                 Effect {
                     change: SharedVaultChange::OwnershipTransferred {
                         from: plan.from,
@@ -185,8 +192,10 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
+                unsigned_withdrawals = unsigned;
                 Effect {
                     change: SharedVaultChange::OwnerRemoved {
                         target: plan.target,
@@ -200,45 +209,82 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
-        let mut authority_entry = None;
-        if let Some(issuer) = slips {
-            let handover = match &effect.change {
-                SharedVaultChange::OwnershipTransferred {
-                    from,
-                    to,
-                    from_keeps,
-                } => Some((OwnerHandoverCause::Transfer, from, Some(to), from_keeps)),
-                SharedVaultChange::OwnerRemoved {
-                    target,
-                    successor,
-                    target_keeps,
-                } => Some((
-                    OwnerHandoverCause::Removal,
-                    target,
-                    successor.as_ref(),
-                    target_keeps,
-                )),
-                _ => None,
-            };
-            if let Some((cause, from, to, keeps)) = handover {
-                let (affected_grants, retired_own_device_grants) = handover_ids;
-                authority_entry = Some(self.append_owner_handover_in_txn(
-                    &mut txn,
-                    issuer,
-                    OwnerHandover {
-                        shared_vault: act.vault_id,
-                        cause,
-                        from: hex_id(from)?,
-                        to: to.map(|to| hex_id(to)).transpose()?,
-                        from_keeps: keeps.map(|role| role.as_str().to_owned()),
-                        act: Some(act.id.clone()),
-                        proof: None,
-                        authorizer: None,
-                        receipt: receipt_id.clone(),
-                        affected_grants,
-                        retired_own_device_grants,
-                    },
-                )?);
+        let handover = match &effect.change {
+            SharedVaultChange::OwnershipTransferred {
+                from,
+                to,
+                from_keeps,
+            } => Some((
+                OwnerHandoverCause::Transfer,
+                MembershipExecutionCause::TransferOwnership,
+                from,
+                Some(to),
+                from_keeps,
+            )),
+            SharedVaultChange::OwnerRemoved {
+                target,
+                successor,
+                target_keeps,
+            } => Some((
+                OwnerHandoverCause::Removal,
+                MembershipExecutionCause::RemoveOwner,
+                target,
+                successor.as_ref(),
+                target_keeps,
+            )),
+            _ => None,
+        };
+        let mut record = ChangeRecord::Unnamed;
+        if let Some((cause, execution_cause, from, to, keeps)) = handover {
+            let from = hex_id(from)?;
+            let to = to.map(|to| hex_id(to)).transpose()?;
+            let from_keeps = keeps.map(|role| role.as_str().to_owned());
+            let (affected_grants, retired_own_device_grants) = handover_ids;
+            match slips {
+                Some(issuer) => {
+                    record = ChangeRecord::Signed(self.append_owner_handover_in_txn(
+                        &mut txn,
+                        issuer,
+                        OwnerHandover {
+                            shared_vault: act.vault_id,
+                            cause,
+                            from,
+                            to,
+                            from_keeps,
+                            act: Some(act.id.clone()),
+                            proof: None,
+                            authorizer: None,
+                            receipt: receipt_id.clone(),
+                            affected_grants,
+                            retired_own_device_grants,
+                        },
+                    )?);
+                }
+                // No issuer signs the handover or the withdrawals: the
+                // carrier's record of both is kept pending (FIX 12335). An
+                // issuer that signs the handover passed `require_host`, as
+                // each withdrawal it signed did, so none is left unsigned.
+                None => {
+                    record = self.file_membership_execution_in_txn(
+                        &mut txn,
+                        act.vault_id,
+                        &receipt_id,
+                        actor,
+                        now,
+                        UnsignedExecution {
+                            cause: execution_cause,
+                            member: from,
+                            act: Some(act.id.clone()),
+                            withdrawn_grants: unsigned_withdrawals,
+                            handover: Some(MembershipHandover {
+                                to,
+                                from_keeps,
+                                affected_grants,
+                                retired_own_device_grants,
+                            }),
+                        },
+                    )?;
+                }
             }
         }
         let mut export_records: Option<Vec<crate::EntityId>> = None;
@@ -262,7 +308,7 @@ impl Vault {
             owners,
             effect,
             summary,
-            authority_entry,
+            record,
             None,
             now,
         )?;
