@@ -303,6 +303,22 @@ pub(crate) fn erase_proposal_actor_in_txn(
             PROPOSAL.put(&vault.store, wtxn, &id, &proposal)?;
         }
     }
+    // A receipt that names the erased settler is scrubbed even when no
+    // proposal row points at it any more, such as one whose proposal an
+    // earlier erase of its proposer deleted.
+    let receipts: Vec<EntityId> = vault
+        .claims_with_predicate_in_txn(wtxn, "repo.proposal_settlement")?
+        .into_iter()
+        .filter(|(_, body)| {
+            matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)| {
+                key.as_str() == Some("actor") && value.as_str() == Some(critic.as_str())
+            }))
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for receipt in receipts {
+        erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
+    }
     if gone.is_empty() {
         return Ok(());
     }
