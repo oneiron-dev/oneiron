@@ -84,6 +84,15 @@ impl CheckpointEmbedder {
         }))
     }
 
+    /// Frozen document-side features before the provider's final rounding.
+    /// A projection trains on exactly the chain output it will consume.
+    pub(crate) fn training_features(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+        Ok(self
+            .inner
+            .embed_raw(texts, super::Side::Document, None, super::Priority::Bulk)?
+            .rows)
+    }
+
     pub(crate) fn model_id(&self) -> &str {
         self.checkpoint.model.as_str()
     }
