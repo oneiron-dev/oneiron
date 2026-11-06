@@ -192,7 +192,7 @@ impl Vault {
         run_ref: &str,
         resources: &Resources,
     ) -> Result<EditOutcome> {
-        let ops = bundle.ops()?;
+        let plan = EditPlan::new(bundle.ops()?);
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
         let batch_size = policy
@@ -226,14 +226,14 @@ impl Vault {
         let outcome = self.propose_blob_artifact_edit(
             artifact_id,
             &session,
-            &EditPlan::new(ops.clone()),
+            &plan,
             run_ref,
         )?;
         Ok(match outcome {
             EditOutcome::Proposed(mut proposal) => {
                 // The session's applied-op manifest must agree with the ask;
                 // never receipt answers the session omitted or changed.
-                if proposal.manifest.ops != ops {
+                if proposal.manifest.ops != plan.ops {
                     return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                         "session applied ops differ from typed answers",
                     )));

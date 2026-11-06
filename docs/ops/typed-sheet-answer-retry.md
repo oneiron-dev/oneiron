@@ -32,7 +32,9 @@ request leaves the original row intact.
 The terminal sheet and folder paths move their owned complete bundle and receipt
 vectors into staging instead of cloning them. This does not consume or delete
 the stored answer-progress row. A staging error can still retry that canonical
-row under a new caller deadline.
+row under a new caller deadline. The native staging call also keeps one owned
+edit plan through application and the exact applied-operation comparison;
+it does not clone a second operation vector just to borrow that plan.
 
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.
