@@ -11,8 +11,10 @@
 //! evaluated binding therefore needs the run's checks and evaluation and a
 //! paired held-out trial against the question's current answerer: quality not
 //! worse within the question's measured noise, cost and latency both lower.
-//! The three numbers go in the binding. A trial not yet measured blocks it;
-//! only the owner's explicit choice with a reason binds the head then.
+//! The three numbers go in the binding (the trial itself is
+//! `question_trials`). A trial not yet measured, or one against another
+//! question, blocks it; only the owner's explicit choice with a reason binds
+//! the head then.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,58 +26,12 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::decision::ProviderPin;
 use crate::side_table::{self, Named, SideTable};
+
+use super::question_trials::{QUESTION_TRIALS, QuestionHeadTrial};
 
 const QUESTION_HEADS: SideTable<String, QuestionHeadBinding, Named> =
     SideTable::new(&side_table::TRAINING_PACK_QUESTION_HEAD);
-const QUESTION_TRIALS: SideTable<EntityId, QuestionHeadTrial, Named> =
-    SideTable::new(&side_table::TRAINING_PACK_QUESTION_TRIAL);
-
-/// A question run's paired held-out trial against the question's current
-/// answerer: both read the same held-out rows. Quality is the low end of the
-/// paired interval of the head's minus the incumbent's agreement with the
-/// labels, grouped by source family (NOT-WORSE = A); `noise` is the
-/// question's measured retest noise. Cost is per thousand units, latency the
-/// median per unit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionHeadTrial {
-    /// The answerer the head was paired with: the rung and model that answer
-    /// the question today.
-    pub incumbent: ProviderPin,
-    pub cases: u64,
-    pub quality_low: f64,
-    pub noise: f64,
-    pub head_cost_per_thousand: f64,
-    pub incumbent_cost_per_thousand: f64,
-    pub head_latency_ms: f64,
-    pub incumbent_latency_ms: f64,
-}
-
-impl QuestionHeadTrial {
-    /// Whether the head may replace the incumbent's rung (ARCH-0076 tier 3):
-    /// quality not worse within the noise, cost and latency both lower, on a
-    /// measured set of finite numbers.
-    #[must_use]
-    pub fn wins(&self) -> bool {
-        [
-            self.quality_low,
-            self.noise,
-            self.head_cost_per_thousand,
-            self.incumbent_cost_per_thousand,
-            self.head_latency_ms,
-            self.incumbent_latency_ms,
-        ]
-        .iter()
-        .all(|value| value.is_finite())
-            && self.cases > 0
-            && self.noise >= 0.0
-            && self.quality_low >= -self.noise
-            && self.head_cost_per_thousand < self.incumbent_cost_per_thousand
-            && self.head_latency_ms < self.incumbent_latency_ms
-    }
-}
 
 /// The owner's binding of a question run's head to one typed question
 /// version: what the host loads and answers that question with.
@@ -222,7 +178,12 @@ impl Vault {
                     "a question head binds once its held-out evaluation is recorded",
                 ));
             }
-            let trial = QUESTION_TRIALS.get(&self.store, txn, id)?;
+            // Only a trial against this question version counts for it.
+            let trial = QUESTION_TRIALS
+                .get(&self.store, txn, id)?
+                .filter(|trial| {
+                    trial.question == question && trial.question_version == question_version
+                });
             match &choice {
                 SwapChoice::Evaluated if !run.can_bind_question_head() => {
                     return Err(invalid(
@@ -348,14 +309,5 @@ impl Vault {
             .into_iter()
             .map(|(_, binding)| binding)
             .find(|binding| binding.run == *run))
-    }
-
-    /// Question run `run`'s paired held-out trial, once measured.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn training_question_trial(&self, run: &EntityId) -> Result<Option<QuestionHeadTrial>> {
-        QUESTION_TRIALS.get(&self.store, &self.store.env.read_txn()?, run)
     }
 }

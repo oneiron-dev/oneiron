@@ -82,11 +82,11 @@ pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::create_question_in_txn;
-pub(crate) use store::read_question_in_txn;
 pub use store::{
     create_question, create_question_with_lane, edit_question, edit_question_with_lane,
     pause_question, read_question, read_question_schedule,
 };
+pub(crate) use store::{read_question_in_txn, read_question_version};
 pub(crate) use task_ask::{TaskAnswerBinding, bind_task_answer_in_txn, validate_task_answer_unit};
 pub use windows::{
     SILENCE_OUTCOME, close_due_outcome_windows, closed_outcome_windows,

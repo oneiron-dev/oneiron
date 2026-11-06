@@ -192,7 +192,8 @@ pub use self::eval_set::{
     ScoreDirection, eval_seat_canary,
 };
 pub(crate) use self::eval_set::{
-    erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
+    PairedScores, erase_eval_source_in_txn, estimate_paired, forget_eval_case_source_rows,
+    forget_source_row,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,

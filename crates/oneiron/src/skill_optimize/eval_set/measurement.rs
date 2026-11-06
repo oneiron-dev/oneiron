@@ -29,6 +29,7 @@ pub(super) use self::doors::{
 };
 pub use self::finish::{JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS};
 pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin};
+pub(crate) use self::statistics::{PairedScores, estimate as estimate_paired};
 
 /// One arm: the exact model a seat would serve, at its serving revision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
