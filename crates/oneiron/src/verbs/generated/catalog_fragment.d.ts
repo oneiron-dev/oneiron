@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4638 declarations.
+// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4640 declarations.
 // Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -1816,12 +1816,13 @@ declare namespace Sdk {
   type OfferCost = { currency: string; monthly_before?: number | null; monthly_after?: number | null; one_off?: number | null; payback_months?: number | null };
   type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost; score?: number | null; evidence_refs: string[] };
   type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] };
-  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null };
+  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; paired_measurement?: number[] | null; losses: string[]; risk?: string | null };
   type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } };
   type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string };
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
+  type OfferAnswerAuthority = { kind: "owner"; owner: EntityId; authentication: string } | { kind: "stock_policy"; revision: EntityId };
   type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } };
-  type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number };
+  type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; authority: OfferAnswerAuthority; offer_digest: string; intent?: OfferIntent | null; at: number };
   type OfferCheckOutcome = "held" | "broken" | "currency_mismatch" | "promised_score_unknown" | "promised_cost_unknown" | "unverifiable_no_calls" | "unverifiable_no_meter" | "unverifiable_not_bound" | "unverifiable_no_model_role" | "unverifiable_mixed_model" | "unverifiable_no_usage" | "unverifiable_unpriced_model" | "unverifiable_unknown_currency" | "unverifiable_unpriced_cache" | "unverifiable_mixed_currency" | "unverifiable_sum_overflow" | "unverifiable_unclassified";
   type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; outcome: OfferCheckOutcome; note?: string | null; at: number; source_rows?: EntityId[] | null };
   type SwitchOwner = string;
@@ -3445,7 +3446,7 @@ declare namespace Sdk {
   type ModelBackendPin = { model: ModelId; backend: string; serving_revision: string; quantization?: string | null; context_window_tokens: number };
   type TrialSetPin = { id: string; version: number; rubric_version: string };
   type HeldOutSelection = { answer: EntityId; fact: EntityId; source_family: string };
-  type ModelTrialPolicy = { exploration_remaining: number; vault_cost_cap?: number | null; project_cost_cap?: number | null; auto_approve?: boolean; candidate_needs_download: boolean };
+  type ModelTrialPolicy = { exploration_remaining: number; vault_cost_cap?: number | null; project_cost_cap?: number | null; candidate_needs_download: boolean };
   type ModelTrialRequest = { principal: EntityId; question: EntityId; question_version: number; goal: EntityId; incumbent: ModelBackendPin; candidate: ModelBackendPin; source: string; benchmark: string; set: TrialSetPin; held_out: HeldOutSelection[]; incumbent_usage_bound: LlmUsage; candidate_usage_bound: LlmUsage; future_units: number; policy: ModelTrialPolicy };
   type ModelTrialNominate = { catalog_revision: string; request: ModelTrialRequest };
   type PricedModelBackend = { pin: ModelBackendPin; price: LlmCatalogCost };
@@ -3459,7 +3460,8 @@ declare namespace Sdk {
   type TrialAssessment = { set: TrialSetPin; measurements_hash: number[]; paired_gain?: PairedQualityInterval | null; retest_noise: number; stricter_margin?: number | null; required_families: number; rare_slices_sufficient: boolean; versions_match: boolean; canary_diverged: boolean };
   type TrialQuality = "better" | "not_worse" | "worse" | "unknown";
   type ModelTrialAction = "stay" | "offer" | "auto_approve" | "ask_tradeoff" | "unknown";
-  type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
+  type StockAutoapprovePolicy = { enabled: boolean; revision?: EntityId | null };
+  type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; stock_autoapprove_policy: StockAutoapprovePolicy; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
   type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; execution: ModelTrialExecutionState; arms_completed: number; arms_unknown: number; unknown_arms: TrialArmKey[]; arms_resent: number; arms_total: number; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
   type ModelTrialRef = { question: EntityId; trial: EntityId };
   type ModelTrialArmRef = { question: EntityId; trial: EntityId; answer: EntityId; arm: TrialArm };

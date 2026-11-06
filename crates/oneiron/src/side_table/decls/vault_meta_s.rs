@@ -301,6 +301,8 @@ side_tables! {
     /// The owner's switch over an Admin walking into a private room thread (FIX 6382): `false`
     /// turns it off. Absent is on. Key: ().
     ROOM_THREADS_ADMIN_WALK_IN: VaultMeta b"settings:rooms:v1:admin_walk_in" Named;
+    /// The owner's stock autoapproval permission and local change revision. Absent is off. Key: ().
+    STOCK_AUTOAPPROVE_POLICY: VaultMeta b"settings:stock_autoapprove:v1" Named;
     /// Owner-set posterior-lower-bound floor below which a skill's reliability triggers a quarantine
     /// proposal. Key: ().
     SKILL_RELIABILITY_FLOOR: VaultMeta b"settings:skill:v1:reliability_floor" Raw;

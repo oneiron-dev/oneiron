@@ -24,6 +24,10 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelId;
 
+mod notice;
+
+pub(crate) const STOCK_SWITCH_NOTIFICATION_PRODUCER: &str = "coach.training_offer.switch";
+
 /// The switch one offer's approval applied, keyed by offer id.
 const SWITCH: SideTable<EntityId, OfferSwitchReceipt, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_OFFER_SWITCH);
@@ -85,12 +89,14 @@ pub struct OfferSwitchUndo {
     pub at: u64,
 }
 
-/// The owner a switch or its undo names: an actor, or no one once that
-/// actor was erased (FIX 3520). It reads and writes as the actor's hex id,
-/// or as [`ERASED_CALL_IDENTITY`].
+/// The authority a switch or its undo names: a person's actor, the saved
+/// stock-policy revision, or no one after an actor erase (FIX 3520). A policy
+/// revision never impersonates an actor or a current owner proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwitchOwner {
     Actor(EntityId),
+    /// A stock switch under the owner's saved policy, not a person answering now.
+    StockPolicy(EntityId),
     Erased,
 }
 
@@ -118,6 +124,9 @@ impl Serialize for SwitchOwner {
     ) -> std::result::Result<S::Ok, S::Error> {
         match self {
             Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::StockPolicy(revision) => {
+                serializer.serialize_str(&format!("stock_policy:{}", revision.to_hex()))
+            }
             Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
         }
     }
@@ -131,13 +140,19 @@ impl<'de> Deserialize<'de> for SwitchOwner {
         if value == ERASED_CALL_IDENTITY {
             return Ok(Self::Erased);
         }
+        if let Some(revision) = value.strip_prefix("stock_policy:") {
+            return EntityId::from_hex(revision)
+                .map(Self::StockPolicy)
+                .map_err(serde::de::Error::custom);
+        }
         EntityId::from_hex(&value)
             .map(Self::Actor)
             .map_err(serde::de::Error::custom)
     }
 }
 
-/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+/// Its wire form is an actor's hex id, `stock_policy:<revision>`, or
+/// [`ERASED_CALL_IDENTITY`].
 impl schemars::JsonSchema for SwitchOwner {
     fn schema_name() -> String {
         "SwitchOwner".to_owned()
@@ -190,7 +205,7 @@ pub fn seat_model_role(seat: &EvalSeat) -> Option<ModelRole> {
 pub(super) fn apply_switch_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
+    owner: SwitchOwner,
     offer: &EntityId,
     seat: &EvalSeat,
     from: &OfferModelPin,
@@ -237,7 +252,7 @@ pub(super) fn apply_switch_in_txn(
     let application = if role == ModelRole::RetrievalEmbedder {
         let source = BindingSource::Offer {
             offer: *offer,
-            owner: SwitchOwner::Actor(owner),
+            owner,
         };
         let pending = crate::embed::stage_embedder_binding_in_txn(
             vault,
@@ -258,13 +273,40 @@ pub(super) fn apply_switch_in_txn(
         previous,
         binding,
         to: to.clone(),
-        owner: SwitchOwner::Actor(owner),
+        owner,
         at,
         application,
         undone: None,
     };
     SWITCH.put(&vault.store, txn, offer, &receipt)?;
+    notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     Ok(receipt)
+}
+
+/// Whether an applied switch still offers this owner's undo tap in `txn`.
+/// The undo door revalidates the owner and the complete move again when called.
+pub(crate) fn training_offer_switch_undo_available_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+    offer: &EntityId,
+) -> Result<bool> {
+    owner.revalidate_in_txn(vault, txn)?;
+    let Some(receipt) = SWITCH.get(&vault.store, txn, offer)? else {
+        return Ok(false);
+    };
+    if receipt.undone.is_some()
+        || !matches!(
+            &receipt.application,
+            SwitchApplication::Bound | SwitchApplication::Applied { .. }
+        )
+    {
+        return Ok(false);
+    }
+    let Some(manifest) = read_manifest(&vault.store, txn)? else {
+        return Ok(false);
+    };
+    Ok(manifest.roles.get(&receipt.role) == Some(&receipt.binding))
 }
 
 /// The vault owner's undo of an approved switch: the seat's role takes back
@@ -343,6 +385,7 @@ pub(crate) fn settle_staged_switch_in_txn(
     {
         receipt.application = application;
         SWITCH.put(&vault.store, txn, offer, &receipt)?;
+        notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     }
     Ok(())
 }

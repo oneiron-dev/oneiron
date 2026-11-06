@@ -17,6 +17,7 @@ mod device_only;
 pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
+pub(crate) mod stock_autoapprove;
 pub use oneiron_store::settings::web_connector;
 
 pub use destination::{
@@ -46,6 +47,7 @@ pub use model_versioning::{
     try_default_model_stack_registry,
 };
 pub use room_threads::RoomThreadAdminSettings;
+pub use stock_autoapprove::StockAutoapprovePolicy;
 
 /// Version of the persisted customization settings record.
 pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
