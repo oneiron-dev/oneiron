@@ -1,7 +1,9 @@
 //! Who a drafted reply goes to (fix list row 17645): the answered message's
 //! `Reply-To`, else its sender, in To; with reply-all, the message's own To
-//! and Cc lists in their roles; then the drafter's own Cc. The mailbox's own
-//! address never receives its reply. Every address is canonical and named
+//! and Cc lists in their roles; then the drafter's own Cc. None of the
+//! mailbox's own addresses receives its reply: `own` is the mailbox's whole
+//! own set, its address and every address its provider proves or its owner
+//! confirms it owns (fix list row 20400). Every address is canonical and named
 //! once, To before Cc, in the order the headers name them, the first To
 //! winning over a later Cc. A reply that names no To recipient, a malformed
 //! address, a named group's members or more than [`MAX_REPLY_RECIPIENTS`]
