@@ -7,6 +7,17 @@ impl SyncClient {
         &self,
         frame: DocumentFrame<'_>,
     ) -> Result<Vec<Vec<u8>>, TransportError> {
+        if frame.kind == document_sub_tags::PART {
+            let joined = self
+                .document_parts
+                .lock()
+                .map_err(|_| TransportError::Storage("document assembly poisoned".into()))?
+                .accept(frame)?;
+            return match joined {
+                Some(joined) => self.handle_document_frame(joined.frame()),
+                None => Ok(Vec::new()),
+            };
+        }
         match frame.kind {
             document_sub_tags::WAITED_OUT => {
                 transport::decode_document_waited_out(frame.payload)?;

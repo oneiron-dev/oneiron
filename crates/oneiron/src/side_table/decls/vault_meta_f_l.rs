@@ -260,6 +260,19 @@ side_tables! {
     HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
     /// A hook run's saved result and pinned input. Key: hash32 (run key).
     HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_memo_accepts_masked];
+    /// A verb call a count-bound budget window paced, held in its caller's fair line until its
+    /// turn (FIX 8753, ARCH-0044 C5): the call, its args with its ids fixed, the credential
+    /// reference it resumes under, its arrival, its fixed deadline and when it may run, and what
+    /// it came to. Key: id16 (invocation).
+    HOOKS_PACED_VERB: VaultMeta b"hooks:paced_verb:v1:" Named;
+    /// The paced line's bookkeeping: the last arrival handed out and the principal whose turn ran
+    /// last. Key: ().
+    HOOKS_PACED_VERB_LINE: VaultMeta b"hooks:paced_verb_line:v1" Named;
+    /// The instrument a paced credential call's request was admitted on, pinned beside it for the
+    /// drain to verify again: a slip, its holder's challenge and signature, or a managed vault's
+    /// attested owner's person, never a secret. Dropped when the call ends. Key: id16
+    /// (invocation).
+    HOOKS_PACED_VERB_WITNESS: VaultMeta b"hooks:paced_verb_witness:v1:" Named;
     /// A hook run's Hook receipt. Key: hash32 (run key).
     HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_receipt_accepts_masked];
     /// A hook's regen record: the contract its last good body passed under, its intent, and a

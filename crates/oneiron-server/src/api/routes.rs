@@ -290,6 +290,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(crate::auth::left_notice_routes())
         // FIX 10624 step 2: a seat CLI's credential helper, on its seat slip.
         .merge(crate::auth::seat_credential_helper_routes())
+        // FIX 15702: a seat CLI's model calls, on its run's door reference.
+        .merge(crate::auth::seat_model_door_routes())
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
