@@ -13,7 +13,7 @@ mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
-    FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs,
+    FilesAttachArgs, FilesCommand, FilesConvertArgs, FilesListArgs, FilesPathArgs, FilesRescanArgs,
 };
 mod graph_fs_args;
 mod hook_args;
