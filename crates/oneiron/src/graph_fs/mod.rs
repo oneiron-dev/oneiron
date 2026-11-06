@@ -13,6 +13,7 @@ mod coreutils_text;
 mod device_scan;
 mod model;
 mod paging;
+mod paths;
 mod readdir;
 mod repo_projection;
 mod scoped_files;
