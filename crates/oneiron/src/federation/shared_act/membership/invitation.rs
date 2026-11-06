@@ -4,15 +4,18 @@
 //! the grant is written only when that person accepts it with their own
 //! person-tier proof, before it expires and while its issuer still holds the
 //! power. A declined, withdrawn or expired invitation grants nothing, and an
-//! accepted one is spent. Given the public key the invitee generated on their
-//! own device, the invitation's writer also mints their own human slip for
-//! it (FIX 1925, `authority::invitee_slip`): good only at this invitation's
-//! list, accept and decline doors, and only while it is pending.
+//! accepted one is spent. The `add_member` power names no key (FIX 8745):
+//! the invitee binds their invitation to the key of an independent live human
+//! slip of their own, or redeems an owner's invitation pairing code with a
+//! key of their own, and gets their own human slip for it (FIX 1925,
+//! `authority::invitee_slip`): good only at this invitation's list, accept
+//! and decline doors, only while it is pending and only while that key is
+//! the one it records.
 use super::super::{
     Effect, SharedActExecutionReceipt, SharedVaultChange, check_vault, decode, encode, invalid,
     key, non_root,
 };
-use crate::authority::{CapabilitySlip, HostSlipIssuer};
+use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvitationLink};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -22,6 +25,8 @@ use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
 const INVITATION_PREFIX: &[u8] = b"shared-vault:invitation:v1:";
+/// `side_table::SHARED_VAULT_INVITATION_KEY`: the key an invitation's slips bind.
+const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
 /// How long an invitation stays open on the store clock.
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
@@ -69,6 +74,45 @@ fn invitation_key(invitee: &EntityId, id: &str) -> Vec<u8> {
     key(INVITATION_PREFIX, &format!("{}:{id}", invitee.to_hex()))
 }
 
+/// The key an invitation's own slips bind (FIX 8745), as its invitee bound
+/// it, and what bound it. Binding again replaces it, which ends every slip
+/// minted to the earlier key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InvitationKeyBinding {
+    /// The invitee's public key.
+    pub(crate) holder_key: [u8; 32],
+    /// The invitee's own independent credential that proved the key (its
+    /// slip id), which must stay live for the invitation's slips to stand;
+    /// `None` when the invitee redeemed an owner's invitation pairing code
+    /// with it, a code spent as it bound.
+    pub(crate) source_slip: Option<[u8; 32]>,
+}
+
+impl InvitationKeyBinding {
+    /// The row: the key's 32 bytes, then the source slip id's when there is one.
+    fn encode(&self) -> Vec<u8> {
+        let mut row = self.holder_key.to_vec();
+        if let Some(source) = self.source_slip {
+            row.extend_from_slice(&source);
+        }
+        row
+    }
+    fn decode(row: &[u8]) -> Result<Self> {
+        let bytes = |part: &[u8]| <[u8; 32]>::try_from(part).map_err(|_| invalid());
+        match row.len() {
+            32 => Ok(Self {
+                holder_key: bytes(row)?,
+                source_slip: None,
+            }),
+            64 => Ok(Self {
+                holder_key: bytes(&row[..32])?,
+                source_slip: Some(bytes(&row[32..])?),
+            }),
+            _ => Err(invalid()),
+        }
+    }
+}
+
 impl Vault {
     fn invitation_in_txn(
         &self,
@@ -94,6 +138,39 @@ impl Vault {
             txn,
             &invitation_key(&invitee, &invitation.id),
             &encode(invitation)?,
+        )?;
+        Ok(())
+    }
+    fn invitation_key_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        invitee: EntityId,
+        id: &str,
+    ) -> Result<Option<InvitationKeyBinding>> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        self.store
+            .vault_meta
+            .get(
+                txn,
+                &key(INVITATION_KEY_PREFIX, &format!("{}:{id}", invitee.to_hex())),
+            )?
+            .map(|row| InvitationKeyBinding::decode(&row))
+            .transpose()
+    }
+    /// Records `binding` as the key `invitation`'s slips bind, replacing any
+    /// earlier one.
+    pub(crate) fn put_invitation_key_binding_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        invitation: &SharedInvitation,
+        binding: &InvitationKeyBinding,
+    ) -> Result<()> {
+        let id = EntityId::from_hex(&invitation.id)?.to_hex();
+        let invitee = EntityId::from_hex(&invitation.invitee)?;
+        self.store.vault_meta.put(
+            txn,
+            &key(INVITATION_KEY_PREFIX, &format!("{}:{id}", invitee.to_hex())),
+            &binding.encode(),
         )?;
         Ok(())
     }
@@ -142,26 +219,60 @@ impl Vault {
         Ok(pending)
     }
 
-    /// Whether `invitee`'s invitation `id` is pending and unexpired at `now`:
-    /// an invitation-bound slip (FIX 1925) stands only while it is.
-    pub(crate) fn shared_invitation_pending_in_txn(
+    /// Whether a slip of `invitee`'s invitation `id` bound to `holder_key`
+    /// stands at `now`: the invitation is pending and unexpired (FIX 1925),
+    /// `holder_key` is the key it records, and the independent credential
+    /// that bound it, if one did, is live (FIX 8745). A slip minted to a key
+    /// no binding records, or since replaced, does not.
+    pub(crate) fn invitation_slip_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         invitee: EntityId,
         id: &str,
+        holder_key: &[u8; 32],
         now: u64,
     ) -> bool {
-        self.invitation_in_txn(txn, invitee, id)
-            .is_ok_and(|open| open.state == SharedInvitationState::Pending && now < open.expires_at)
+        let pending = self.invitation_in_txn(txn, invitee, id).is_ok_and(|open| {
+            open.state == SharedInvitationState::Pending && now < open.expires_at
+        });
+        pending
+            && self
+                .invitation_key_binding_in_txn(txn, invitee, id)
+                .is_ok_and(|binding| {
+                    binding.is_some_and(|binding| {
+                        binding.holder_key == *holder_key
+                            && binding.source_slip.is_none_or(|source| {
+                                self.capability_slip_id_is_live_in_txn(txn, &source)
+                                    .unwrap_or(false)
+                            })
+                    })
+                })
+    }
+
+    /// `invitee`'s invitation `id`, open for a slip at `now`: into
+    /// `vault_id`, pending and unexpired.
+    pub(crate) fn pending_invitation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        invitee: EntityId,
+        id: &str,
+        now: u64,
+    ) -> Result<SharedInvitation> {
+        let invitation = self.invitation_in_txn(txn, invitee, id)?;
+        if invitation.vault_id != vault_id
+            || invitation.state != SharedInvitationState::Pending
+            || now >= invitation.expires_at
+        {
+            return Err(invalid());
+        }
+        Ok(invitation)
     }
 
     /// The `add_member` effect: one pending invitation of `member` at `role`,
     /// refused while another of theirs to this vault is still open. `founding`
-    /// marks the creation writer's own invitations. With `credential`, the
-    /// host's issuer and the public key `member` generated on their own
-    /// device, it also answers their own slip for this invitation, which ends
-    /// when the invitation does.
-    #[allow(clippy::too_many_arguments)]
+    /// marks the creation writer's own invitations. It names no key: the
+    /// invitee binds one ([`Vault::mint_invitation_slip`]).
     pub(super) fn issue_invitation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -170,9 +281,8 @@ impl Vault {
         member: EntityId,
         role: Role,
         founding: bool,
-        credential: Option<(&HostSlipIssuer, [u8; 32])>,
         now: u64,
-    ) -> Result<(Effect, Option<CapabilitySlip>)> {
+    ) -> Result<Effect> {
         if self
             .invitations_of_in_txn(txn, member, vault_id)?
             .iter()
@@ -194,19 +304,7 @@ impl Vault {
             founding,
         };
         self.put_invitation_in_txn(txn, &invitation)?;
-        let slip = credential
-            .map(|(issuer, holder_key)| {
-                self.mint_invitee_slip_in_txn(
-                    txn,
-                    issuer,
-                    member,
-                    &invitation.id,
-                    holder_key,
-                    invitation.expires_at,
-                )
-            })
-            .transpose()?;
-        let effect = Effect {
+        Ok(Effect {
             change: SharedVaultChange::MemberInvited {
                 invitation: invitation.id,
                 member: invitation.invitee,
@@ -216,64 +314,141 @@ impl Vault {
             grants: Vec::new(),
             revoked_slips: Vec::new(),
             notify: BTreeSet::from([member]),
-        };
-        Ok((effect, slip))
+        })
     }
 
-    /// The invitee's own slip for an invitation already pending (FIX 1925): a
-    /// founding invitation, whose creation input names no device key, or one
-    /// whose slip was lost. A live `add_member` holder mints it under the
-    /// host's `issuer` for `holder_key`, the public key the invitee generated
-    /// on their own device; it ends when the invitation does.
+    /// The invitee binds their pending invitation to a key of their own and
+    /// gets its slip (FIX 1925, FIX 8745): `invitee`'s request came on their
+    /// own independent live human slip, presented whole, whose key the
+    /// invitation records and the slip, minted under the host's `issuer`,
+    /// binds. It ends when the invitation does, when that credential does
+    /// (it is minted to end no later), or when the invitee binds another key. No one names this key for them: an `add_member` holder
+    /// only creates or withdraws the invitation. An invitee with no such
+    /// credential redeems an owner's invitation pairing code instead.
     pub fn mint_invitation_slip(
         &self,
-        admin: &AuthenticatedOwner,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+    ) -> Result<CapabilitySlip> {
+        let mut txn = self.store.env.write_txn()?;
+        let own = invitee.independent_credential_in_txn(self, &txn)?;
+        check_vault(self, &txn, vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+        let invitation =
+            self.pending_invitation_in_txn(&txn, vault_id, own.person, invitation_id, now)?;
+        self.put_invitation_key_binding_in_txn(
+            &mut txn,
+            &invitation,
+            &InvitationKeyBinding {
+                holder_key: own.holder_key,
+                source_slip: Some(own.slip_id),
+            },
+        )?;
+        let slip = self.mint_invitee_slip_in_txn(
+            &mut txn,
+            issuer,
+            own.person,
+            &invitation.id,
+            own.holder_key,
+            invitation.expires_at.min(own.expires_at),
+        )?;
+        txn.commit()?;
+        Ok(slip)
+    }
+
+    /// An owner's invitation pairing code (FIX 8745), for an invitee with no
+    /// independent credential of their own, a founding Owner included: the
+    /// owner's act mints a one-hour single-use code for `invitee`'s pending
+    /// invitation `invitation_id` and returns it to `owner`, who passes it on
+    /// by any channel, as an invite link; the engine chooses none. The
+    /// invitee redeems it at the pairing door with a key of their own, which
+    /// binds the invitation to that key and mints its slip
+    /// (`Vault::redeem_invitation_link_in_txn`). The code reaches nothing
+    /// else, and an `add_member` holder who is not an owner mints none.
+    pub fn issue_invitation_pairing_link(
+        &self,
+        owner: &AuthenticatedOwner,
         vault_id: u64,
         invitee: EntityId,
         invitation_id: &str,
         issuer: &HostSlipIssuer,
-        holder_key: [u8; 32],
-    ) -> Result<CapabilitySlip> {
+    ) -> Result<PairingLink> {
         let mut txn = self.store.env.write_txn()?;
-        let actor = admin.revalidate_person_in_txn(self, &txn)?;
+        let owner = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         check_vault(self, &txn, vault_id)?;
-        self.authorize_shared_vault_write_in_txn(
-            &txn,
-            vault_id,
-            &WriteActor::new(actor, EdgeActorClass::Human),
-            &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
-        )?;
-        let invitation = self.invitation_in_txn(&txn, invitee, invitation_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        if invitation.vault_id != vault_id
-            || invitation.state != SharedInvitationState::Pending
-            || now >= invitation.expires_at
-        {
-            return Err(invalid());
-        }
-        let slip = self.mint_invitee_slip_in_txn(
+        let invitation =
+            self.pending_invitation_in_txn(&txn, vault_id, invitee, invitation_id, now)?;
+        let link = self.issue_invitation_pairing_link_in_txn(
             &mut txn,
             issuer,
-            invitee,
-            &invitation.id,
-            holder_key,
+            owner,
+            PendingInvitationLink {
+                vault_id,
+                invitee,
+                invitation: invitation.id,
+            },
             invitation.expires_at,
         )?;
         txn.commit()?;
-        Ok(slip)
+        Ok(link)
+    }
+
+    /// The invitation side of redeeming an invitation pairing code, in the
+    /// redemption's writer (FIX 8745): while `link`'s invitation is still
+    /// pending, `holder_key`, the key the redeemer proved, becomes the key it
+    /// records, replacing any earlier one, and the invitee's slip for it is
+    /// minted to that key.
+    pub(crate) fn redeem_invitation_link_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        link: &PendingInvitationLink,
+        holder_key: [u8; 32],
+    ) -> Result<CapabilitySlip> {
+        check_vault(self, txn, link.vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let invitation = self.pending_invitation_in_txn(
+            txn,
+            link.vault_id,
+            link.invitee,
+            &link.invitation,
+            now,
+        )?;
+        self.put_invitation_key_binding_in_txn(
+            txn,
+            &invitation,
+            &InvitationKeyBinding {
+                holder_key,
+                source_slip: None,
+            },
+        )?;
+        self.mint_invitee_slip_in_txn(
+            txn,
+            issuer,
+            link.invitee,
+            &invitation.id,
+            holder_key,
+            invitation.expires_at,
+        )
     }
 
     /// The invitee accepts `invitation_id` with their own person-tier proof:
     /// while it is pending and unexpired, they hold no membership here, and
     /// its issuer still holds the `add_member` power, the grant at its role
     /// is written, the invitation is spent, and the receipt goes to the
-    /// Owners, the invitee and the issuer.
+    /// Owners, the invitee and the issuer. A request slip the proof carries
+    /// must be the invitation's own, on its bound key, or the invitee's own
+    /// independent credential (FIX 8745).
     pub fn accept_shared_invitation(
         &self,
         invitee: &AuthenticatedOwner,
         vault_id: u64,
         invitation_id: &str,
     ) -> Result<SharedActExecutionReceipt> {
+        invitee.require_invitation_acceptor(invitation_id)?;
         self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
             self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)
         })

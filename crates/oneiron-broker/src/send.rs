@@ -51,6 +51,11 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    /// The client a git exchange sends through: the same verified TLS and
+    /// the same no-redirect, no-retry, no-proxy, no-decoding rules, and no
+    /// timer of its own, so each exchange's idle bound times its connect
+    /// and its send (OSH-3), never a model send's timeout.
+    git: Client,
     ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
@@ -63,28 +68,16 @@ pub(crate) struct Sender {
 
 impl Sender {
     pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
-        let mut builder = Client::builder()
-            .use_rustls_tls()
-            .https_only(true)
-            .tls_built_in_root_certs(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy()
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .no_zstd()
+        let client = client_builder(policy)?
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
-            .timeout(policy.timeout);
-        for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
-                builder = builder.add_root_certificate(root);
-            }
-        }
-        let client = builder.build().map_err(io::Error::other)?;
+            .timeout(policy.timeout)
+            .build()
+            .map_err(io::Error::other)?;
+        let git = client_builder(policy)?.build().map_err(io::Error::other)?;
         let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
             client,
+            git,
             ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
@@ -96,10 +89,10 @@ impl Sender {
         CallDeadline::start(self.timeout)
     }
 
-    /// The verified client a git exchange sends through, and its idle
-    /// bound: [`SendPolicy::timeout`] without progress.
-    pub(crate) fn git_client(&self) -> (&Client, Duration) {
-        (&self.client, self.timeout)
+    /// The verified client a git exchange sends through, under its own
+    /// idle bound, never this policy's timeout.
+    pub(crate) fn git_client(&self) -> &Client {
+        &self.git
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
@@ -467,6 +460,29 @@ impl Sender {
         let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
+}
+
+/// The rules every client of the broker shares: rustls with the WebPKI, the
+/// platform and the policy's private-CA roots, `https` only, no redirect,
+/// no retry, no proxy and no automatic decoding.
+fn client_builder(policy: &SendPolicy) -> io::Result<reqwest::ClientBuilder> {
+    let mut builder = Client::builder()
+        .use_rustls_tls()
+        .https_only(true)
+        .tls_built_in_root_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd();
+    for pem in &policy.extra_roots {
+        for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
+            builder = builder.add_root_certificate(root);
+        }
+    }
+    Ok(builder)
 }
 
 /// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
