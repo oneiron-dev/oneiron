@@ -23,24 +23,27 @@ impl WakePump {
     /// each batch to its adapters, with the wakes an earlier batch left
     /// undelivered (FIX 6187). What no adapter took comes back from
     /// `Instance::deliver` and is kept here, one wake per existing
-    /// `event_ref`, for the next poll on the same cadence; a failed poll
-    /// offers the kept wakes alone. The kept batch lives in this process
-    /// only: the TASK in the vault stays the durable source, and a bridge
-    /// that exits drops it.
+    /// `event_ref`, for the next poll on the same cadence. Each retry goes
+    /// through the server's current reader before any adapter sees it. A
+    /// failed poll keeps the wakes for a later poll without offering them.
+    /// The kept wakes live in this process only: the TASK in the vault stays
+    /// the durable source, and a bridge that exits drops them.
     pub(super) fn start(bridge: Arc<Bridge>, path: &Path) -> anyhow::Result<Self> {
         let instance = crate::wake_adapters::Instance::load(path)?;
         let runtime = tokio::runtime::Handle::try_current()?;
         Ok(Self(runtime.spawn(async move {
             let mut failed = false;
-            let mut undelivered = BoardDelivery::default();
+            let mut undelivered = Vec::new();
             loop {
                 let polling = Arc::clone(&bridge);
                 let key = instance.key.clone();
-                let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
+                let retained = undelivered.clone();
+                let polled =
+                    tokio::task::spawn_blocking(move || polling.wakes(&key, &retained)).await;
                 let delivery = match polled {
                     Ok(Ok(delivery)) => {
                         failed = false;
-                        delivery
+                        Some(delivery)
                     }
                     Ok(Err(refusal)) => {
                         if !failed {
@@ -50,18 +53,19 @@ impl WakePump {
                             );
                         }
                         failed = true;
-                        BoardDelivery::default()
+                        None
                     }
                     Err(error) => {
                         if !failed {
                             eprintln!("oneiron wake poll did not finish: {error}");
                         }
                         failed = true;
-                        BoardDelivery::default()
+                        None
                     }
                 };
-                let offered = delivery.merge_undelivered(std::mem::take(&mut undelivered));
-                undelivered = instance.deliver(offered, &bridge.named_env).await;
+                if let Some(delivery) = delivery {
+                    undelivered = instance.deliver(delivery, &bridge.named_env).await.wakes;
+                }
                 tokio::time::sleep(WAKE_POLL_INTERVAL).await;
             }
         })))
@@ -79,13 +83,14 @@ impl Bridge {
     fn wakes(
         &self,
         instance_key: &str,
+        retained: &[oneiron::context_board::WakeEnvelope],
     ) -> Result<crate::wake_adapters::board_stream::BoardDelivery, Refusal> {
         let id = json!("oneiron-wake-adapter");
         let body = json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "oneiron/wakes",
-            "params": { "instance_key": instance_key },
+            "params": { "instance_key": instance_key, "retained": retained },
         });
         let until = Instant::now() + self.deadline.min(WAKE_POLL_TIMEOUT);
         // The wake poll's own cap is inside the global deadline; its error

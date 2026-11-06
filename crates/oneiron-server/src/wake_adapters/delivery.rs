@@ -1,6 +1,5 @@
 //! The preference/degrade ladder belongs to this host, never the engine.
 
-use std::collections::BTreeSet;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -54,42 +53,6 @@ impl Handoff {
             wakes,
             frames: self.frames.clone(),
             opener,
-        };
-        batch.retain_frames();
-        batch
-    }
-}
-
-impl BoardDelivery {
-    /// This poll's batch with `undelivered`, the wakes an earlier offer left
-    /// with no adapter, which the bridge's wake pump keeps (FIX 6187): one
-    /// wake per existing `event_ref`, the poll's own replacing a kept one,
-    /// since the poll read its TASK's current line. The kept frames ride
-    /// before the poll's. A batch that keeps any wake renders its opener now
-    /// for every wake it carries, and keeps only its own wakes' frames.
-    pub(crate) fn merge_undelivered(self, undelivered: Self) -> Self {
-        if undelivered.wakes.is_empty() {
-            return self;
-        }
-        let mut wakes: Vec<WakeEnvelope> = {
-            let polled: BTreeSet<&str> = self
-                .wakes
-                .iter()
-                .map(|wake| wake.event_ref.as_str())
-                .collect();
-            undelivered
-                .wakes
-                .into_iter()
-                .filter(|wake| !polled.contains(wake.event_ref.as_str()))
-                .collect()
-        };
-        wakes.extend(self.wakes);
-        let mut frames = undelivered.frames;
-        frames.extend(self.frames);
-        let mut batch = Self {
-            opener: wake_batch_opener(&wakes, wall_clock_ms()),
-            wakes,
-            frames,
         };
         batch.retain_frames();
         batch
