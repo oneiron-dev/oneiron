@@ -6,9 +6,10 @@ step request consumes that rung's `LlmBackend` stream instead of its buffered
 provider response. The request digest is admitted for the selected transport
 before it leaves. Only the terminal `Done` becomes the generated reply.
 
-A request with custom parameters or provider options retains buffered generation.
-In particular, `Done` has no token-score field, so customized requests keep their
-existing response shape. A rung without streaming, or whose stream preflight
+Native seat `reasoning_effort` and the host's cache descriptor namespace may
+accompany the stream. Other custom parameters or provider options retain buffered
+generation. In particular, `Done` has no token-score field, so requests for token
+scores keep their existing buffered response shape. A rung without streaming, or whose stream preflight
 cannot take the request, also keeps buffered generation. Neither case skips a
 working rung or introduces another refusal.
 
