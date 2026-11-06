@@ -7,7 +7,7 @@ use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::coreutils_text::{
-    LinePosition, copy_path_parts, join_graph_path_with_reader, page_grep_lines,
+    LinePosition, copy_text_parts, join_graph_path_with_reader, page_grep_lines,
 };
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
@@ -256,7 +256,7 @@ impl GraphFsResolver<'_, '_> {
                     reader,
                     self.options.page_byte_cap,
                 )?,
-                None => copy_path_parts(&[root], reader, self.options.page_byte_cap)?,
+                None => copy_text_parts(&[root], reader, self.options.page_byte_cap)?,
             };
             dirs.push(dir);
         }
@@ -289,7 +289,11 @@ impl GraphFsResolver<'_, '_> {
             let lines = at.lines.take();
             let Some(entry) = entry else {
                 // This page is walked: on to the listing's next page, or back up.
-                if let Some(next_page) = page.next_cursor().map(str::to_owned) {
+                if let Some(next_page) = page
+                    .next_cursor()
+                    .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                    .transpose()?
+                {
                     let frame = &mut at.frames[depth];
                     frame.page = Some(next_page);
                     frame.passed = 0;
@@ -318,7 +322,7 @@ impl GraphFsResolver<'_, '_> {
                 }
                 if is_dir {
                     let name =
-                        copy_path_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
+                        copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
                     at.frames[depth].passed += 1;
                     at.frames.push(WalkFrame {
                         name,
