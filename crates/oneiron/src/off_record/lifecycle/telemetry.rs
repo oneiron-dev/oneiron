@@ -135,14 +135,16 @@ impl SessionRetrievalTelemetry<'_> {
         F: FnOnce(&crate::store::SessionStoreView<'_>, &mut heed::RwTxn<'_>) -> Result<()>,
     {
         let overlay = self.landing.route.overlay();
-        let segment = self.vault.with_write_txn_grouped(|wtxn| {
-            let segment = overlay.install_txn_segment()?;
-            self.landing.in_overlay_txn(wtxn)?;
-            let view = self.vault.store.session_view(overlay.clone())?;
-            apply(&view, wtxn)?;
-            Ok(segment)
-        })?;
-        segment.commit()
+        self.vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                self.landing.in_overlay_txn(wtxn)?;
+                let view = self.vault.store.session_view(overlay.clone())?;
+                apply(&view, wtxn)?;
+                Ok(segment)
+            },
+            |segment| segment.commit(),
+        )
     }
 
     /// One BASE-ledger telemetry publication, under the captured route.

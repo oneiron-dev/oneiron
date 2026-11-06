@@ -418,6 +418,7 @@ impl Vault {
                             end: snapshot.delta.occurred_end,
                         },
                         learned_at: snapshot.delta.learned_at,
+                        row_version: None,
                         data,
                         allow_maintenance: false,
                         allow_reserved_predicate: false,

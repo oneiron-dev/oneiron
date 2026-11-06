@@ -15,6 +15,13 @@
 //! sent again over HTTP: a fault after `generate` left is a cut stream, for
 //! the caller's own retry authority, which never replays a tool's effects.
 //!
+//! [`NativeLocalTransport`] is the same native path with no HTTP sender at
+//! all (I2-LOCAL): the transport of the provider's on-device offer, over the
+//! routes captured when its runtime was built, on Linux and macOS, where each
+//! channel's peer is checked against the supervised child. A call it cannot
+//! send natively is not sent, so the offer it serves can say that nothing it
+//! takes leaves this machine.
+//!
 //! The worker's `final` carries the HTTP reply's fields, its usage with the
 //! same inference receipt R1 defined; it goes through the same reply
 //! evidence as an HTTP answer (`openai::carry_reply_evidence`). A receipt
@@ -24,13 +31,19 @@
 //! `final` feed the worker's activity (FIX 9190), as the supervisor's own
 //! poll ([`activity`]) does.
 mod buffer;
+mod evaluator_ops;
 mod session_ops;
 mod transport;
 mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+// FIX 14975: the drafter evaluator's op, and the chat body split it sends.
+pub(super) use evaluator_ops::{
+    advertised as evaluator_advertised, evaluate as evaluator_generate,
+};
 pub(super) use transport::next_request_id;
+pub(super) use wire::split_request;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
@@ -59,7 +72,9 @@ use oneiron_llm_openai::{
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::openai::{OpenAiHttp, carry_reply_evidence, send_format};
-use super::worker_host::{self, NativeRoute};
+use super::output_cap::OutputCap;
+use super::worker_host::{self, NativeLaunch, NativeRoute};
+use crate::config::models::ResponseFormatWire;
 use transport::{Call, Channel, Cut, Event, Start};
 
 /// What a worker's `resident_mib` must say it measures to be its resident
@@ -73,6 +88,7 @@ const POLL_DETAIL: &str = "cheap";
 /// A provider's chat transport when a managed EXL3 worker is bound to it.
 pub(super) struct NativeExl3Transport {
     provider: String,
+    shaping: NativeShaping,
     http: OpenAiHttp,
 }
 
@@ -90,6 +106,7 @@ impl NativeExl3Transport {
         }
         Ok(Self {
             provider: name.to_owned(),
+            shaping: NativeShaping::new(http.cap, http.response_format, http.engine_models.clone()),
             http,
         })
     }
@@ -108,13 +125,6 @@ impl NativeExl3Transport {
         let evidence = worker_host::managed_http_evidence(&self.provider, wire_model)?;
         Some(Tie::new(evidence.manifest_sha256, evidence.backend_epoch))
     }
-
-    /// The body as HTTP would send it: its output cap and response format.
-    fn shaped(&self, mut body: JsonValue) -> JsonValue {
-        self.http.cap.apply(&mut body);
-        send_format(self.http.response_format, &mut body);
-        body
-    }
 }
 
 /// One native `generate` per call, never resent; a call no native route
@@ -131,15 +141,7 @@ impl OpenAiCompatTransport for NativeExl3Transport {
             let tie = self.http_tie(&request.body);
             return self.http.execute_with_tie(request, lease, tie);
         };
-        let segments = request.host_segments;
-        let body = self.shaped(request.body);
-        let context = lease.work_context().unwrap_or_default();
-        let engine_model = body
-            .get("model")
-            .and_then(JsonValue::as_str)
-            .and_then(|wire| self.http.engine_models.get(wire))
-            .cloned();
-        Box::pin(execute(route, body, segments, context, lease, engine_model))
+        self.shaping.execute(route, request, lease)
     }
 
     fn stream<'a>(
@@ -151,15 +153,75 @@ impl OpenAiCompatTransport for NativeExl3Transport {
             let tie = self.http_tie(&request.body);
             return self.http.stream_with_tie(request, lease, tie);
         };
+        Ok(self.shaping.stream(route, request, lease))
+    }
+}
+
+/// What a native call takes from its provider's chat config, apart from any
+/// sender: the output cap and response format HTTP would send, and the
+/// engine model each configured wire id is sent for, which its receipt
+/// names.
+#[derive(Clone)]
+pub(super) struct NativeShaping {
+    cap: OutputCap,
+    response_format: ResponseFormatWire,
+    engine_models: BTreeMap<String, ModelId>,
+}
+
+impl NativeShaping {
+    pub(super) fn new(
+        cap: OutputCap,
+        response_format: ResponseFormatWire,
+        engine_models: BTreeMap<String, ModelId>,
+    ) -> Self {
+        Self {
+            cap,
+            response_format,
+            engine_models,
+        }
+    }
+
+    /// The body as HTTP would send it: its output cap and response format.
+    fn shaped(&self, mut body: JsonValue) -> JsonValue {
+        self.cap.apply(&mut body);
+        send_format(self.response_format, &mut body);
+        body
+    }
+
+    /// The engine model the body's wire model is sent for.
+    fn engine_model(&self, body: &JsonValue) -> Option<ModelId> {
+        body.get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.engine_models.get(wire))
+            .cloned()
+    }
+
+    /// A buffered call over `route`, shaped as HTTP would send it.
+    fn execute<'a>(
+        &self,
+        route: NativeRoute,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
-        let engine_model = body
-            .get("model")
-            .and_then(JsonValue::as_str)
-            .and_then(|wire| self.http.engine_models.get(wire))
-            .cloned();
-        Ok(Box::pin(futures_util::stream::unfold(
+        let engine_model = self.engine_model(&body);
+        Box::pin(execute(route, body, segments, context, lease, engine_model))
+    }
+
+    /// A streamed call over `route`, shaped as HTTP would send it.
+    fn stream<'a>(
+        &self,
+        route: NativeRoute,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatProviderStream<'a> {
+        let segments = request.host_segments;
+        let body = self.shaped(request.body);
+        let context = lease.work_context().unwrap_or_default();
+        let engine_model = self.engine_model(&body);
+        Box::pin(futures_util::stream::unfold(
             Streaming::Start {
                 route,
                 body,
@@ -169,7 +231,63 @@ impl OpenAiCompatTransport for NativeExl3Transport {
                 engine_model,
             },
             Streaming::step,
-        )))
+        ))
+    }
+}
+
+/// A managed EXL3 worker's native channel and nothing else (I2-LOCAL): the
+/// transport of a provider's on-device offer. It holds the routes captured
+/// when its runtime was built ([`worker_host::native_local_routes`]) and no
+/// HTTP sender, so every call it takes goes to the supervised child over a
+/// channel `Channel::connect_launch` authenticated, or is not sent. A call
+/// whose wire model no captured route serves fails unsent; a native fault is
+/// the native transport's own (`begin`, `execute`, `Live`), never an HTTP
+/// retry.
+pub(super) struct NativeLocalTransport {
+    routes: BTreeMap<String, NativeRoute>,
+    shaping: NativeShaping,
+}
+
+impl NativeLocalTransport {
+    pub(super) fn new(routes: BTreeMap<String, NativeRoute>, shaping: NativeShaping) -> Self {
+        Self { routes, shaping }
+    }
+
+    /// The captured route of the call's wire model.
+    fn route(&self, body: &JsonValue) -> Result<NativeRoute, OpenAiCompatTransportError> {
+        body.get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.routes.get(wire))
+            .cloned()
+            .ok_or_else(|| OpenAiCompatTransportError::NotSent {
+                stage: "native_route",
+                detail: "no supervised native worker serves this wire model".to_owned(),
+            })
+    }
+}
+
+/// One native `generate` per call, never resent, and never an HTTP send.
+impl oneiron::llm::SingleSend for NativeLocalTransport {}
+
+impl OpenAiCompatTransport for NativeLocalTransport {
+    fn execute<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
+        match self.route(&request.body) {
+            Ok(route) => self.shaping.execute(route, request, lease),
+            Err(error) => Box::pin(async move { Err::<OpenAiCompatHttpResponse, _>(error) }),
+        }
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        let route = self.route(&request.body)?;
+        Ok(self.shaping.stream(route, request, lease))
     }
 }
 
@@ -244,9 +362,10 @@ async fn begin(
         .and_then(|observed| observed.identity.backend_epoch.as_ref())
         .map(|epoch| epoch.as_str().to_owned())
         .ok_or(OpenAiCompatTransportError::Connection)?;
-    let (socket, manifest_sha256) = route
-        .launch()
+    let launch = route
+        .native_launch()
         .ok_or(OpenAiCompatTransportError::Connection)?;
+    let manifest_sha256 = launch.manifest_sha256().to_owned();
     if lease.revoked() {
         return Err(OpenAiCompatTransportError::Connection);
     }
@@ -266,7 +385,7 @@ async fn begin(
         Some(manifest) => {
             worker_host::open_turn(
                 route,
-                &socket,
+                &launch,
                 &epoch,
                 lease.observed(),
                 manifest,
@@ -281,7 +400,7 @@ async fn begin(
     // A plain retry after a refused session is the same call: it reuses the
     // ticket, grant, class, priority and deadline.
     let mut started = Call::start(
-        &socket,
+        &launch,
         &epoch,
         &conversation,
         params,
@@ -303,7 +422,7 @@ async fn begin(
             .await
             .map_err(|_| OpenAiCompatTransportError::Connection)?;
         started = Call::start(
-            &socket,
+            &launch,
             &epoch,
             &conversation,
             params,
@@ -674,14 +793,10 @@ pub(super) async fn drain_and_shutdown(socket: &Path) {
 /// sent once, buffered, with the epoch the hello named. Returns the hello
 /// and the reply in the HTTP reply's shape.
 pub(super) async fn qualify(
-    socket: &Path,
+    launch: &NativeLaunch,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let mut channel = Channel::connect(socket)
-        .await
-        .map_err(|_| WorkerFailure::Unreachable)?;
-    let hello = channel
-        .ask("hello", json!({}))
+    let (channel, hello) = Channel::connect_launch(launch, None)
         .await
         .map_err(|_| WorkerFailure::Unreachable)?;
     drop(channel);
@@ -692,7 +807,7 @@ pub(super) async fn qualify(
         .to_owned();
     let (conversation, params) = wire::split_request(request);
     let mut call = Call::start(
-        socket,
+        launch,
         &epoch,
         &conversation,
         params,

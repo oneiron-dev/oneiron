@@ -179,4 +179,10 @@ edge_kinds! {
     /// reply names the reply it answers again. It never suppresses the old
     /// reply and is never traversed.
     Regenerates = 31 => "regenerates",
+    /// A code symbol directly calls a lexically resolved code binding.
+    Calls = 32 => "calls",
+    /// A code source imports another captured source module.
+    Imports = 33 => "imports",
+    /// A code symbol reads another lexically resolved code binding.
+    Refs = 34 => "refs",
 }

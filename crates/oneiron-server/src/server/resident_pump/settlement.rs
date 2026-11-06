@@ -8,12 +8,11 @@ use super::{
     AgentDispatchStatus, AgentDispatcher, AttemptConfession, AttemptId, AttemptQueue,
     AttemptResultRef, BoundRun, Claimed, CompleteDreamerAttempt, DecisionHost, DetectorTier,
     DreamerParkCause, DreamerRunnerStore, DurableStepContext, EngineExecutorOutcome,
-    EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureEscalationMode,
-    FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot,
-    LEASE_OWNER, LlmError, OutputContextEntry, ParkDreamerAttempt, PayerFault,
-    RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
-    TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON,
-    agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
+    EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureLadderOutcome,
+    FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot, LEASE_OWNER, LlmError,
+    OutputContextEntry, ParkDreamerAttempt, PayerFault, RUN_RETRY_BACKOFF_SECS, RetryableLlmError,
+    SetAttemptResult, SpentKind, TypeRef, TypedFailureEvidence, TypedFailureVerdict, Vault,
+    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
     park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
     restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_now,
 };
@@ -26,6 +25,7 @@ pub(super) fn settle(
     decisions: &DecisionHost,
     claimed: &Claimed,
     ran: Result<BoundRun, EngineRunError>,
+    healer_slot: HealerSlot,
 ) -> oneiron::Result<()> {
     let status = &claimed.status;
     let attempt = &status.attempt;
@@ -45,6 +45,8 @@ pub(super) fn settle(
     };
     let mut retry_at = now;
     let reason = match ran {
+        // The media step already committed its trap and signal park together.
+        Ok(BoundRun::Trapped) => return Ok(()),
         // CUA E4: a bound try whose program met its TASK's goal settles on
         // its receipt, with no model call.
         Ok(BoundRun::Library(receipt)) => {
@@ -127,7 +129,8 @@ pub(super) fn settle(
         }
     };
     // Any other failure has no detector verdict, and the ladder never infers
-    // one from prose: the run ends for a person to look at. Its checkpoint is
+    // one from prose. The configured healer routes only eligible cases; absent
+    // configuration preserves human-only escalation. The checkpoint is
     // the start of the step that failed (FIX 3694), a ref of its own, never
     // the run's or the attempt's id; its Q&A thread is the claim's: a
     // resident's home, its TASK, or its tree's root.
@@ -148,15 +151,14 @@ pub(super) fn settle(
             retry_at,
             now,
         },
-        FailureScopePolicy {
-            scope: FailureScope {
+        FailureScopePolicy::for_healer(
+            FailureScope {
                 agent_ref: claimed.agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: max_tries,
-            escalation_mode: FailureEscalationMode::Human,
-            healer_slot: HealerSlot::Reserved,
-        },
+            max_tries,
+            healer_slot,
+        ),
     )?;
     // A retry shares the run's spend scope; only an end closes it.
     if !matches!(ended, FailureLadderOutcome::Retried { .. }) {
@@ -244,7 +246,13 @@ fn complete(
     if settled_itself {
         let body =
             serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
-        let entry = OutputContextEntry::capture(vault, body.as_bytes(), now, String::new())?;
+        let entry = OutputContextEntry::capture_for_run(
+            vault,
+            outcome.replay_record.run_id,
+            body.as_bytes(),
+            now,
+            String::new(),
+        )?;
         AttemptQueue::new(vault).set_result(SetAttemptResult {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
