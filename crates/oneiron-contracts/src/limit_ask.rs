@@ -57,9 +57,10 @@ pub enum EngineLimit {
     /// vault's core batch door). Past it every entity is written in the same
     /// one atomic batch.
     CoreBatchEntities,
-    /// Entities one legacy N-API `batch_put_entities` call carries, counted
-    /// from the JS array before any element is read. Past it every entity is
-    /// written in the same one atomic transaction.
+    /// Entities one legacy `batch_put_entities` call carries (N-API, or the
+    /// C FFI's `oneiron_vault_batch_put_entities`), counted before any
+    /// element is read. Past it every entity is written in the same one
+    /// atomic transaction.
     LegacyBatchEntities,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
