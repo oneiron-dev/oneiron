@@ -4362,7 +4362,7 @@ class Oneiron:
             """Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_observe(json.dumps(spec))))
         def requeue_survivors(self, spec):
-            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
+            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_requeue_survivors(json.dumps(spec))))
         def land_reviewed(self, spec):
             """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""

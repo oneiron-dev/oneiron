@@ -5788,7 +5788,7 @@ declare const vault: Sdk.VaultHost & {
       observe(input: Sdk.MergeQueueObserveRequest): Promise<Sdk.MergeQueueObservation | StoredResult>;
       /** Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased. */
       recover(input: Sdk.MergeQueueRepoRequest): Promise<Sdk.MergeQueuePointersView | StoredResult>;
-      /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
+      /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch. */
       requeue_survivors(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueRequeueView | StoredResult>;
       review_policy: {
         /** Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant. */
