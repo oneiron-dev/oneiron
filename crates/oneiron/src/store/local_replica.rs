@@ -127,6 +127,10 @@ pub(crate) struct KeepControls {
     /// member, and every other keep rule holds. Each member it removes takes
     /// its document payload with it (call 4 = A).
     pub(crate) release_local_members: bool,
+    /// Keep each removed member's own `FacetOf` edge, the birth facet its
+    /// retained scope stamp names, so the row is admitted again against that
+    /// stamp when its world comes back (FIX 14534).
+    pub(crate) keep_birth_facets: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
 }
@@ -140,6 +144,7 @@ impl Default for KeepControls {
             defer_on_queued_writes: true,
             defer_on_local_members: false,
             release_local_members: false,
+            keep_birth_facets: false,
             max_removals: 1024,
         }
     }
@@ -330,7 +335,15 @@ fn tear_members(
     }
     for id in &removal.order {
         let released = members.released.contains(id);
-        remove_member(store, txn, &edges, id, released, report)?;
+        remove_member(
+            store,
+            txn,
+            &edges,
+            id,
+            released,
+            keep.keep_birth_facets,
+            report,
+        )?;
         if released {
             release_local_work(store, txn, window, id)?;
         }
