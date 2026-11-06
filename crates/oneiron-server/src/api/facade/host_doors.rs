@@ -130,6 +130,10 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's retained document-copy edit doors (FIX 13274).
+pub(crate) use super::repo_copy_edit_doors::{
+    vault_sync_documents_copy_edit_review, vault_sync_documents_copy_edit_settle,
+};
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;

@@ -59,6 +59,9 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+#[cfg(feature = "sync")]
+mod repo_copy_edit;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -481,6 +484,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_copy_edit::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
