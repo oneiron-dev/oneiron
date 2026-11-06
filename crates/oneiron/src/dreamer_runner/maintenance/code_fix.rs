@@ -42,7 +42,6 @@ use serde_json::json;
 use self::admission::{read_granted_in_txn, settle_in_txn};
 use self::candidate_run::ReplayCandidate;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
-use self::publisher_refs::publisher_candidates_with_refs;
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
     snapshot_job, untried,
@@ -52,7 +51,7 @@ use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
-    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay, ExactReplayRequest,
+    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplayRequest,
     FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage,
     ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
@@ -80,7 +79,9 @@ pub use self::publisher::{
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
     artifact_digest_text, parse_artifact_digest_text,
 };
-pub use self::publisher_refs::{PublisherCandidateInput, PublisherCandidateRef};
+pub use self::publisher_refs::{
+    PublisherCandidateInput, PublisherCandidateRef, publisher_candidates_with_refs,
+};
 pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 
 /// Key: `work::work_key`.
@@ -232,6 +233,12 @@ pub trait CodeFixHost {
 /// answers are for, the dial and bands they run under, and each question's
 /// own budget.
 pub struct CodeFixDecisions<'a> {
+    /// The question asking whether a replay reproduced the failure.
+    pub reproduced_wording: String,
+    /// The question comparing the replies before and after a fix.
+    pub fixed_wording: String,
+    /// The question checking the invented example before export.
+    pub export_safe_wording: String,
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
@@ -525,9 +532,9 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        // An erased capsule's call is never replayed, rebuilt or not (FIX
-        // 6251): nothing is classed or drafted for it.
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        // An erased capsule's call, or one whose route prompt is unavailable,
+        // is never replayed (FIX 6251, 6255): nothing is classed or drafted.
+        if snapshot.replay.exact.runs_none() {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::ReplayUnavailable,
@@ -651,7 +658,7 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        if snapshot.replay.exact.runs_none() {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
         let candidates = missing.to_vec();

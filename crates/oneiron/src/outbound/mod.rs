@@ -57,6 +57,7 @@ pub(crate) use self::dispatch_attempt_id::{
     connector_logical_send_ref, outbound_dispatch_attempt_id,
 };
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
+pub(crate) use self::dispatch_pipeline::connector_slate_effect_from_frozen_payload;
 pub(crate) use self::dispatch_pipeline::outbound_gate_effect;
 pub(crate) use self::dispatch_pipeline::provider_retry_after_secs;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
@@ -87,8 +88,9 @@ pub use self::reply_job::{
     ConnectorReplyJobResult, ConnectorReplyStage,
 };
 pub use self::served_sink::{
-    LINE_API_BASE, OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints,
-    ServedTransports, TELEGRAM_API_BASE,
+    APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment, LINE_API_BASE,
+    OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints, ServedTransports,
+    TELEGRAM_API_BASE,
 };
 
 pub(crate) use self::connector_task::{

@@ -177,9 +177,10 @@ impl FacadeRowDoor {
         } else {
             serde_json::from_slice(&bytes).map_err(|_| refused())?
         };
-        // Only the native pending-ask envelope makes a successful status a
-        // hook stop (FIX 1450); an accepted asynchronous job is a row answer.
-        if status.is_success() && !FacadeApiError::is_pending_ask(status.as_u16(), &body) {
+        // Only the native pending-ask or paced-hold envelope makes a
+        // successful status a held call (FIX 1450, FIX 8753); an accepted
+        // asynchronous job is a row answer.
+        if status.is_success() && !FacadeApiError::is_held_call(status.as_u16(), &body) {
             return Ok(body);
         }
         let text = |pointer: &str| {
@@ -417,15 +418,16 @@ impl AgentVerbDoor for FacadeRowDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::MemorySearch
-                    | SelfEffect::MemoryPutEdge
-                    | SelfEffect::ConsultResult
-                    | SelfEffect::WorkflowDispatch
-            )
-        )
+        Ok((matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+            || matches!(
+                call,
+                RunCall::Bridge(
+                    SelfEffect::MemorySearch
+                        | SelfEffect::MemoryPutEdge
+                        | SelfEffect::ConsultResult
+                        | SelfEffect::WorkflowDispatch
+                )
+            ))
         .then(|| self.read_key.clone()))
     }
 

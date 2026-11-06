@@ -52,6 +52,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 10466: every inference snapshot whose dependency set reaches it.
     |write, txn, id| crate::store::snapshot_catalog::erase_in_txn(write.store, txn, id),
+    // FIX 15128: every drafter training example whose dependency set names it.
+    |write, txn, id| crate::drafter::erase_drafter_examples_for_source_in_txn(write, txn, id),
+    // FIX 12569: every drafter version whose training ancestry reaches it.
+    |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.
     |write, txn, id| erase_reply_assertions_in_txn(write.store, txn, id),
     // FIX 9970: a TURN's unpersisted-wake label.

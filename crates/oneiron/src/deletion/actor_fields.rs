@@ -134,7 +134,7 @@ pub(super) fn erase_actor_fields_in_txn(
             &BTreeSet::from([*actor]),
         )?;
     }
-    scrub_actor_fields_in_txn(&mut erase)?;
+    scrub_actor_fields_in_txn(&mut erase, act)?;
     if hard || accepted_hard_purge {
         return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
             &mut erase, act,
@@ -144,9 +144,24 @@ pub(super) fn erase_actor_fields_in_txn(
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
-/// clears for all its ids in one pass.
-fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<()> {
+/// clears for all its ids in one pass. Pair-copy identities are verified
+/// before the actor and pair scrubs remove their provenance; their bodies
+/// leave afterwards, MESSAGEs before the TURNs that contain only them.
+fn scrub_actor_fields_in_txn(
+    erase: &mut ActorErasureWriter<'_, '_>,
+    act: Option<&EraseOwnerAct<'_>>,
+) -> Result<()> {
     let (vault, wtxn, actor) = erase.parts();
+    let mut copied_messages = BTreeSet::new();
+    let mut copied_turns = BTreeSet::new();
+    for pair in crate::code_run::contribution_pair_erase_candidates_in_txn(vault, wtxn, &actor)? {
+        for (message, turn) in
+            crate::task_verb::contribution_pair_erase_targets_in_txn(vault, wtxn, &pair)?
+        {
+            copied_messages.insert(message);
+            copied_turns.extend(turn);
+        }
+    }
     let actor = &actor;
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
@@ -162,9 +177,13 @@ fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<(
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
     crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
+    crate::inbox::scrub_finding_notification_subjects_in_txn(erase)?;
     let (vault, wtxn, actor) = erase.parts();
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, &actor)?;
+    }
+    for id in copied_messages.into_iter().chain(copied_turns) {
+        vault.soft_erase_active_store_in_txn(wtxn, &id, true, act)?;
     }
     Ok(())
 }
@@ -231,7 +250,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
             erase.erase_planned_pack_revision()?;
-            scrub_actor_fields_in_txn(&mut erase)?;
+            scrub_actor_fields_in_txn(&mut erase, None)?;
         }
         // The image's cleanup rows name it again; they go once more (FIX 7517).
         crate::vault_cleanup::erase_in_txn(&vault.store, wtxn, actor)?;

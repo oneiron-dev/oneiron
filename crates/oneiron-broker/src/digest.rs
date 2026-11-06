@@ -9,12 +9,13 @@ const CONTEXT: &str = "oneiron-broker 2026-10-11 request digest v1";
 
 /// Request headers that carry a credential. The digest leaves them out, and a
 /// call frame may not carry them: the broker adds the shape's own.
-const AUTH_HEADERS: [&str; 5] = [
+const AUTH_HEADERS: [&str; 6] = [
     "authorization",
     "proxy-authorization",
     "x-api-key",
     "api-key",
     "x-goog-api-key",
+    "xi-api-key",
 ];
 
 /// Whether `name` is an auth header, in any letter case.
@@ -35,12 +36,7 @@ pub fn request_digest(
     headers: &[(String, String)],
     body: &[u8],
 ) -> String {
-    let mut sorted: Vec<(String, &str)> = headers
-        .iter()
-        .filter(|(name, _)| !is_auth_header(name))
-        .map(|(name, value)| (name.to_ascii_lowercase(), value.as_str()))
-        .collect();
-    sorted.sort_unstable();
+    let sorted = sorted_headers(headers);
     let mut hasher = blake3::Hasher::new_derive_key(CONTEXT);
     field(&mut hasher, method.as_bytes());
     field(&mut hasher, path.as_bytes());
@@ -53,7 +49,20 @@ pub fn request_digest(
     hasher.finalize().to_hex().to_string()
 }
 
-fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+/// `headers` as a digest takes them: auth headers left out, names
+/// lowercase, sorted.
+pub(crate) fn sorted_headers(headers: &[(String, String)]) -> Vec<(String, &str)> {
+    let mut sorted: Vec<(String, &str)> = headers
+        .iter()
+        .filter(|(name, _)| !is_auth_header(name))
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.as_str()))
+        .collect();
+    sorted.sort_unstable();
+    sorted
+}
+
+/// One length-prefixed field of a digest.
+pub(crate) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(&(bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
 }
