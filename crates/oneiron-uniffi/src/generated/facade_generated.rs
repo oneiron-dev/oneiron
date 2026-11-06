@@ -4424,7 +4424,7 @@ export_facade! {
 "vault.models.roles.invoke" => fn vault_models_roles_invoke(&self, input: ModelRoleInvoke) -> ModelRoleInvocation = |client| {
     let input: oneiron::llm::manifest::doors::ModelRoleInvoke = crate::codec::lower_record("vault.models.roles.invoke", input)?;
     let output = client.vault_models_roles_invoke(&input)?;
-    crate::codec::lift_record("vault.models.roles.invoke", &output)
+    crate::codec::lift_model_role_invocation("vault.models.roles.invoke", output)
 };
 "vault.skills.attribution.settle" => fn vault_skills_attribution_settle(&self, input: ProposalDeltaSettleRequest) -> ProposalDeltaSettlement = |client| {
     let input: oneiron::task_verb::sdk::ProposalDeltaSettleRequest = crate::codec::lower_record("vault.skills.attribution.settle", input)?;
@@ -4464,12 +4464,12 @@ export_facade! {
 "ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
     let output = client.ai_steps_submit(&input)?;
-    crate::codec::lift_record("ai.steps.submit", &output)
+    crate::codec::lift_model_step_receipt("ai.steps.submit", output)
 };
 "ai.steps.receipt" => fn ai_steps_receipt(&self, input: ModelStepReceiptRequest) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepReceiptRequest = crate::codec::lower_record("ai.steps.receipt", input)?;
     let output = client.ai_steps_receipt(&input)?;
-    crate::codec::lift_record("ai.steps.receipt", &output)
+    crate::codec::lift_model_step_receipt("ai.steps.receipt", output)
 };
 "ai.streams.open" => fn ai_streams_open(&self, input: ModelStreamOpen) -> ModelStreamOpened = |client| {
     let input: oneiron::llm::model_stream::ModelStreamOpen = crate::codec::lower_record("ai.streams.open", input)?;
@@ -4484,7 +4484,7 @@ export_facade! {
 "ai.streams.events" => fn ai_streams_events(&self, input: ModelStreamEventsRequest) -> ModelStreamEvents = |client| {
     let input: oneiron::llm::model_stream::ModelStreamEventsRequest = crate::codec::lower_record("ai.streams.events", input)?;
     let output = client.ai_streams_events(&input)?;
-    crate::codec::lift_record("ai.streams.events", &output)
+    crate::codec::lift_model_stream_events("ai.streams.events", output)
 };
 "ai.streams.detach" => fn ai_streams_detach(&self, input: ModelStreamDetach) -> ModelStreamDetached = |client| {
     let input: oneiron::llm::model_stream::ModelStreamDetach = crate::codec::lower_record("ai.streams.detach", input)?;

@@ -330,3 +330,23 @@ base64 bodies, recorded run identity, clocks and all other finite fields keep
 the original whole-record codec. This changes no native reads, admission,
 public records, inputs, typed clients or hooks and makes no depth, heap or
 runtime claim.
+
+
+`vault.models.roles.invoke` uses the same owned response conversion for its
+generated result. Embedded and tagged results retain the original finite
+codec, including numeric widths and optional execution metadata.
+`ai.steps.submit` and `ai.steps.receipt` also consume a finished step's
+optional parsed JSON or a failed step's required provider JSON inside its
+optional spent usage. Response leaves and parsed JSON are both consumed
+before either error can return. Missing or null parsed JSON remains absent;
+required provider null remains present. Retry, progression, failure and
+validation fields, memoization, fallback and claim refs stay on the original
+whole-receipt codec.
+
+`ai.streams.events` consumes every tool-call-end input, tool-result-end output
+and done-event message and usage leaf across the whole event list before
+returning a conversion error. Delta fragments stay strings, event order and
+all finite variants stay on the original whole-event-record codec, and done
+events gain no token-score field. These conversions do not change native
+execution, public records, inputs, typed clients, hooks or authority and are
+not end-to-end depth, heap or runtime proof.

@@ -2352,6 +2352,12 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_ai_video_job({name}, output)'
             elif row['output'] == 'crate::task_verb::sdk::AskImageAnswer':
                 result = f'crate::codec::lift_ask_image({name}, output)'
+            elif row['output'] == 'crate::llm::manifest::doors::ModelRoleInvocation':
+                result = f'crate::codec::lift_model_role_invocation({name}, output)'
+            elif row['output'] == 'crate::llm::model_step::ModelStepReceipt':
+                result = f'crate::codec::lift_model_step_receipt({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamEvents':
+                result = f'crate::codec::lift_model_stream_events({name}, output)'
             elif row['output'] == 'crate::llm::model_stream::ModelStreamTerminal':
                 result = f'crate::codec::lift_model_stream_terminal({name}, output)'
             elif row['output'] == 'Option<crate::llm::model_step::SettledStepView>':
