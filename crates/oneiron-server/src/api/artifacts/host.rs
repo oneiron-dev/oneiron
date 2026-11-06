@@ -34,7 +34,8 @@ use tower::ServiceExt;
 use crate::error::{ApiError, EnvelopedApiError};
 
 /// Marks a request this router rewrote from `/<artifact>/…` (or an app
-/// host's `/…`) to `/a/<artifact>/…`, so its redirects keep the host's form.
+/// host's `/…`) to an internal artifact route, so its redirects keep the
+/// host's form.
 /// Set by this router alone, never read from a request.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VaultHostRoute {
@@ -161,7 +162,8 @@ impl ArtifactHosts {
             HostRoute::Vault(app, artifact) => (app, artifact),
         };
         // `<vault>.<domain>/<artifact>/…` is that vault's `/a/<artifact>/…`,
-        // and `<app>--<vault>.<domain>/…` is its `/a/<app>/…`; so are
+        // and `<app>--<vault>.<domain>/…` selects its backend-or-static
+        // `/_apps/<app>/…` dispatcher; so do
         // `<vault_id>.artifact.invalid/<artifact>/…` and
         // `<app>.<vault_id>.artifact.invalid/…`.
         let Some(uri) = vault_route_uri(request.uri(), artifact.as_deref()) else {
@@ -213,7 +215,7 @@ fn vault_route_uri(uri: &Uri, artifact: Option<&str>) -> Option<Uri> {
         return None;
     }
     match artifact {
-        Some(artifact) => format!("/a/{artifact}{path_and_query}").parse().ok(),
+        Some(artifact) => format!("/_apps/{artifact}{path_and_query}").parse().ok(),
         None if uri.path() == "/" => None,
         None => format!("/a{path_and_query}").parse().ok(),
     }

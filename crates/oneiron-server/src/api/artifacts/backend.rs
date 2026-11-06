@@ -5,18 +5,20 @@ use std::fs;
 use std::io::Write;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{OriginalUri, Path, Query, Request, State};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_SECURITY_POLICY, HOST, LOCATION, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
 };
-use axum::http::{HeaderMap, HeaderValue, Uri};
+use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 use axum::response::Response;
 use axum::routing::any;
+use axum::{Extension, Router};
 use serde::Deserialize;
 
 use super::route::ArtifactRoute;
-use super::{ArtifactServeQuery, CoreAuth, CoreScope, SyncServer};
+use super::{
+    ArtifactOnlyListener, ArtifactServeQuery, CoreAuth, CoreScope, SyncServer, VaultHostRoute,
+};
 use crate::error::{ApiError, EnvelopedApiError};
 
 #[path = "backend_cookies.rs"]
@@ -55,10 +57,15 @@ async fn serve(
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<ArtifactServeQuery>,
     OriginalUri(uri): OriginalUri,
+    vault_host: Option<Extension<VaultHostRoute>>,
+    listener: Option<Extension<ArtifactOnlyListener>>,
     request: Request,
 ) -> Result<Response, EnvelopedApiError> {
-    let host = server.artifact_backend.clone().ok_or_else(missing)?;
-    let profile = host.profile.clone();
+    let app_host = vault_host.is_some_and(|Extension(host)| host.app);
+    let host = server.artifact_backend.clone();
+    if !app_host && host.is_none() {
+        return Err(missing());
+    }
     let artifact = params.get("artifact").ok_or_else(missing)?;
     let internal: Uri = format!(
         "/a/{}",
@@ -70,8 +77,19 @@ async fn serve(
     )
     .parse()
     .map_err(|_| missing())?;
-    let route = ArtifactRoute::parse(&internal, artifact, &query)?;
+    let mut route = ArtifactRoute::parse(&internal, artifact, &query)?;
     let (mut parts, body) = request.into_parts();
+    if app_host {
+        route.on_vault_host(true);
+        // Keep the original static host's caller path, headers and context
+        // until this request has an admitted backend, before any guest use.
+        parts.uri = internal.clone();
+        parts.extensions.insert(OriginalUri(internal));
+    }
+    let Some(host) = host else {
+        return static_app(server, &route, &parts, listener);
+    };
+    let profile = host.profile.clone();
     let caller = CoreAuth::for_managed_request(
         &parts.headers,
         &parts.extensions,
@@ -112,11 +130,21 @@ async fn serve(
     })
     .await
     .map_err(|_| ApiError::internal_server_error("artifact backend staging failed"))?
-    .map_err(|error| super::core_engine_error("artifact backend staging failed", error))?
-    .ok_or_else(missing)?;
+    .map_err(|error| super::core_engine_error("artifact backend staging failed", error))?;
+    let Some(staged) = staged else {
+        return if app_host {
+            static_app(server, &route, &parts, listener)
+        } else {
+            Err(missing())
+        };
+    };
     let app_query = application_query(uri.query());
     if let Some(target) = route.redirect() {
-        let target = target.replacen("/a/", BACKEND_ROUTE_PREFIX, 1);
+        let target = if app_host {
+            target
+        } else {
+            target.replacen("/a/", BACKEND_ROUTE_PREFIX, 1)
+        };
         let target = if app_query.is_empty() {
             target
         } else {
@@ -125,7 +153,19 @@ async fn serve(
         return super::artifact_redirect_response(&target);
     }
     let encoded_path = route.encoded_path();
-    let prefix = uri.path().strip_suffix(encoded_path).ok_or_else(missing)?;
+    let browser_path = if app_host {
+        let (_, tail) = uri
+            .path()
+            .strip_prefix(BACKEND_ROUTE_PREFIX)
+            .and_then(|path| path.split_once('/'))
+            .ok_or_else(missing)?;
+        format!("/{tail}")
+    } else {
+        uri.path().to_owned()
+    };
+    let prefix = browser_path
+        .strip_suffix(encoded_path)
+        .ok_or_else(missing)?;
     let (policy, authority) = backend_policy(&uri, &parts.headers, prefix)?;
     let target = if app_query.is_empty() {
         format!("/{encoded_path}")
@@ -182,6 +222,36 @@ async fn serve(
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    Ok(response)
+}
+
+fn static_app(
+    server: Arc<SyncServer>,
+    route: &ArtifactRoute,
+    parts: &axum::http::request::Parts,
+    listener: Option<Extension<ArtifactOnlyListener>>,
+) -> Result<Response, EnvelopedApiError> {
+    if !matches!(parts.method, Method::GET | Method::HEAD) {
+        return Err(missing());
+    }
+    let policy = super::code_artifact_policy(&server, listener);
+    let mut response = super::serve_artifact_file(server, route, parts, policy)?;
+    if let Some(target) = route.redirect() {
+        return super::artifact_redirect_response(&target);
+    }
+    if parts.method == Method::HEAD {
+        use axum::body::HttpBody;
+        use axum::http::header::CONTENT_LENGTH;
+
+        if response.status() != axum::http::StatusCode::NOT_MODIFIED {
+            if let Some(length) = response.body().size_hint().exact() {
+                response
+                    .headers_mut()
+                    .insert(CONTENT_LENGTH, HeaderValue::from(length));
+            }
+        }
+        *response.body_mut() = axum::body::Body::empty();
+    }
     Ok(response)
 }
 
