@@ -26,17 +26,14 @@ pub(super) struct BaseProjections {
 }
 
 /// Projects each BASE window whose projection is owed, for every row the
-/// owner's discard marked.
+/// owner's discard marks once that window is closed.
 ///
 /// # Errors
 /// Store errors; a stored document that does not open.
 pub(super) fn project_owed_windows(vault: &Vault) -> Result<BaseProjections> {
-    let (windows, discarded) = {
+    let windows = {
         let txn = vault.store.env.read_txn()?;
-        (
-            owed_projections_in(&vault.store, &txn)?,
-            super::world_base_rows::discarded_rows_in(&vault.store, &txn)?,
-        )
+        owed_projections_in(&vault.store, &txn)?
     };
     let mut pass = BaseProjections::default();
     for window in windows {
@@ -44,9 +41,7 @@ pub(super) fn project_owed_windows(vault: &Vault) -> Result<BaseProjections> {
             continue;
         };
         vault.unload_idle_window(&key)?;
-        let step = vault.while_window_closed(&key, || {
-            install_discard_projection(vault, &key, &discarded)
-        });
+        let step = vault.while_window_closed(&key, || install_discard_projection(vault, &key));
         match step.transpose()? {
             Some(DiscardInstall::Installed { erased, rewritten }) => {
                 tracing::info!(

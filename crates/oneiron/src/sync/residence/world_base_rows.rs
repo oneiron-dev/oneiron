@@ -249,7 +249,7 @@ pub(crate) fn discarded_world_in(
 }
 
 /// Every BASE row the owner's discard took and still marks.
-pub(super) fn discarded_rows_in(store: &Store, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
+pub(crate) fn discarded_rows_in(store: &Store, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
     Ok(DISCARDED_WORLD_ROW
         .scan(store, txn)?
         .into_iter()

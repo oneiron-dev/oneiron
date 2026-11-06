@@ -108,8 +108,7 @@ impl<'a> DiscardClassifier<'a> {
     }
 
     fn names_discarded(&self, key: &str) -> bool {
-        EntityId::from_hex(key)
-            .is_ok_and(|id| id.to_hex() == key && self.discarded.contains(&id))
+        EntityId::from_hex(key).is_ok_and(|id| id.to_hex() == key && self.discarded.contains(&id))
     }
 
     /// Whether no holder of a value keeps it: each is a discarded row, or
@@ -118,7 +117,10 @@ impl<'a> DiscardClassifier<'a> {
         !holders.is_empty()
             && holders.iter().all(|holder| {
                 self.owners.contains(&holder.owner)
-                    || holder.dependencies.iter().any(|on| self.owners.contains(on))
+                    || holder
+                        .dependencies
+                        .iter()
+                        .any(|on| self.owners.contains(on))
             })
     }
 
@@ -174,7 +176,8 @@ impl<'a> DiscardClassifier<'a> {
                     Some(place) => *place,
                     None => {
                         self.parts.push(key.to_owned());
-                        self.part_places.insert(key.to_owned(), self.parts.len() - 1);
+                        self.part_places
+                            .insert(key.to_owned(), self.parts.len() - 1);
                         self.parts.len() - 1
                     }
                 };
@@ -396,25 +399,24 @@ pub(crate) enum DiscardInstall {
 }
 
 /// Projects the persisted state of BASE window `key`, which the caller
-/// holds closed, for the rows in `discarded`, and installs it: the
+/// holds closed, for every row the owner's discard marks (read once the
+/// window is closed, and read again in the write), and installs it: the
 /// snapshot replaced by the projected one, its update rows folded in, its
 /// version vector unchanged, and the floor filed. Nothing is written unless
 /// the home, as this device last exchanged with it, holds every operation
-/// the window does, no send of the window is queued, and the rows read
-/// first are still the window's.
+/// the window does, no send of the window is queued, the rows read first
+/// are still the window's, and no row the projection took has come back
+/// since (a NOTE accepted again as shared clears its mark).
 ///
 /// # Errors
 ///
 /// Store errors, and a stored document or update that does not open.
-pub(crate) fn install_discard_projection(
-    vault: &Vault,
-    key: &WindowKey,
-    discarded: &BTreeSet<EntityId>,
-) -> Result<DiscardInstall> {
+pub(crate) fn install_discard_projection(vault: &Vault, key: &WindowKey) -> Result<DiscardInstall> {
     let window = key.to_string();
     let address = WindowAddress::new(&window);
-    let (snapshot, updates) = {
+    let (discarded, snapshot, updates) = {
         let txn = vault.store.env.read_txn()?;
+        let discarded = crate::sync::residence::discarded_rows_in(&vault.store, &txn)?;
         let snapshot = vault
             .store
             .port_window_doc_with_raw(&txn, address, |raw| Ok(raw.to_vec()))?;
@@ -422,7 +424,7 @@ pub(crate) fn install_discard_projection(
             .store
             .port_window_updates(&txn, address, |row, bytes| (row, bytes.to_vec()))?
             .collect::<Result<Vec<_>>>()?;
-        (snapshot, updates)
+        (discarded, snapshot, updates)
     };
     if snapshot.is_none() && updates.is_empty() {
         return Ok(DiscardInstall::Unchanged);
@@ -434,7 +436,7 @@ pub(crate) fn install_discard_projection(
     for (_, bytes) in &updates {
         import_doc(&doc, bytes)?;
     }
-    let (bytes, erased, rewritten) = match project_window_doc(&doc, discarded)? {
+    let (bytes, erased, rewritten) = match project_window_doc(&doc, &discarded)? {
         Projected::Unchanged => return Ok(DiscardInstall::Unchanged),
         Projected::Deferred(why) => return Ok(DiscardInstall::Deferred(why)),
         Projected::Joined {
@@ -445,7 +447,9 @@ pub(crate) fn install_discard_projection(
     };
     let held = doc.oplog_vv();
     if doc_from_snapshot(&bytes)?.oplog_vv() != held {
-        return Ok(DiscardInstall::Deferred("a projection that moved the window's version"));
+        return Ok(DiscardInstall::Deferred(
+            "a projection that moved the window's version",
+        ));
     }
     let floor = held.encode();
     let read_keys: BTreeSet<Vec<u8>> = updates
@@ -468,6 +472,13 @@ pub(crate) fn install_discard_projection(
             .collect();
         if current != snapshot || current_keys != read_keys {
             deferred = Some("a window written since its projection was read");
+            return Ok(());
+        }
+        if !discarded.is_subset(&crate::sync::residence::discarded_rows_in(
+            &vault.store,
+            txn,
+        )?) {
+            deferred = Some("a discarded row accepted back since its projection was read");
             return Ok(());
         }
         if !home_holds_in_txn(&vault.store, txn, &window, &held)? {
@@ -503,8 +514,10 @@ fn home_holds_in_txn(
     window: &str,
     held: &VersionVector,
 ) -> Result<bool> {
-    Ok(crate::sync::residence::home_window_vv_in_txn(store, txn, window)?
-        .is_some_and(|home| home.includes_vv(held)))
+    Ok(
+        crate::sync::residence::home_window_vv_in_txn(store, txn, window)?
+            .is_some_and(|home| home.includes_vv(held)),
+    )
 }
 
 /// Marks BASE window `window` as waiting for its projection, in the write

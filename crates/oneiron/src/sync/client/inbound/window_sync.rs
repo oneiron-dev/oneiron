@@ -803,7 +803,12 @@ impl SyncClient {
     /// Whether an owner's discard took rows from BASE window `window_key`.
     fn discard_touched(&self, window_key: &str) -> std::result::Result<bool, TransportError> {
         let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
-        let txn = self.vault.store.env.read_txn().map_err(|error| storage(error.into()))?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
         crate::sync::window::discard_touched_in(&self.vault.store, &txn, window_key)
             .map_err(storage)
     }
@@ -815,7 +820,12 @@ impl SyncClient {
         window_key: &str,
     ) -> std::result::Result<Option<VersionVector>, TransportError> {
         let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
-        let txn = self.vault.store.env.read_txn().map_err(|error| storage(error.into()))?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
         crate::sync::window::projection_floor_in(&self.vault.store, &txn, window_key)
             .map_err(storage)
     }

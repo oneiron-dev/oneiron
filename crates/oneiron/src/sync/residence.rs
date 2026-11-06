@@ -136,7 +136,7 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
-pub(crate) use world_base_rows::{discarded_world_in, forget_discarded_in_txn};
+pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
     home_window_vv_in_txn, put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
