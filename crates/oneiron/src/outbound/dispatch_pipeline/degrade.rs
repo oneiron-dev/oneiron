@@ -34,6 +34,13 @@ const ALTERNATIVE_DISPATCH_ERROR: &str = "dispatch_error";
 /// same on every retry of that interrupt.
 const AMBIENT_ALTERNATIVE_REF_SEGMENT: &str = "ambient";
 
+/// The identity an alternative bound for `surface` derives from its
+/// interrupt's identity `parent_ref`: its receipt id, its intent ref, and
+/// its ledger identity, under which its ledger rows are keyed.
+pub(in crate::outbound) fn ambient_alternative_ref(parent_ref: &str, surface: &str) -> String {
+    format!("{parent_ref}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{surface}")
+}
+
 /// The alternative's own request: its intent and counterparty, the
 /// interrupt's actor, gate facts, clock and session, and identities derived
 /// from the interrupt's and the surface. It binds no alternative of its own.
@@ -41,12 +48,7 @@ fn ambient_alternative_request(
     parent: &OutboundDispatchRequest,
     alternative: &OutboundAmbientAlternative,
 ) -> OutboundDispatchRequest {
-    let derive = |id: &str| {
-        format!(
-            "{id}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{}",
-            alternative.surface
-        )
-    };
+    let derive = |id: &str| ambient_alternative_ref(id, &alternative.surface);
     let mut request = OutboundDispatchRequest::new(
         derive(&parent.receipt_id),
         derive(&parent.intent_ref),
