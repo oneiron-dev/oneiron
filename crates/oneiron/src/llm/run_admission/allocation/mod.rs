@@ -15,6 +15,7 @@ use crate::{EntityId, Vault};
 
 mod runtime;
 mod store;
+mod terminal;
 
 pub use runtime::{AllocationProducer, PersistentAllocation};
 

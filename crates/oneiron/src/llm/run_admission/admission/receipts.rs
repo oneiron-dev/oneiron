@@ -92,17 +92,25 @@ impl RunInner {
     }
 
     pub(in crate::llm::run_admission) fn publish_receipt(&self, receipt: RunReceipt) {
-        if !std::thread::panicking() {
-            self.receipts.record(receipt);
-            return;
-        }
-        // A permit's or a dispatch's drop during an unwind: a sink that
-        // panics again must not abort the host. The meters are settled by now.
-        let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.receipts.record(receipt);
-        }));
-        if recorded.is_err() {
-            tracing::error!(run = %self.run, "run receipt sink panicked during an unwind");
-        }
+        publish_receipt_to(&self.receipts, receipt);
+    }
+}
+
+pub(in crate::llm::run_admission) fn publish_receipt_to(
+    sink: &std::sync::Arc<dyn super::RunReceiptSink>,
+    receipt: RunReceipt,
+) {
+    if !std::thread::panicking() {
+        sink.record(receipt);
+        return;
+    }
+    // A permit's or a dispatch's drop during an unwind: a sink that
+    // panics again must not abort the host. The meters are settled by now.
+    let run = receipt.run.clone();
+    let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sink.record(receipt);
+    }));
+    if recorded.is_err() {
+        tracing::error!(%run, "run receipt sink panicked during an unwind");
     }
 }

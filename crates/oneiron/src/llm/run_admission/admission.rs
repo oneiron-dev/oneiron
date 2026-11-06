@@ -26,6 +26,7 @@ mod receipts;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub(super) use receipts::publish_receipt_to;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
@@ -79,7 +80,7 @@ pub(super) struct RunInner {
     pub(super) guard: BudgetGuard,
     pub(super) host: Option<Arc<HostAccount>>,
     pub(super) persistent_allocation: Option<Arc<super::allocation::PersistentAllocation>>,
-    pub(super) persistent_calls: Mutex<BTreeSet<String>>,
+    pub(super) persistent_calls: Arc<Mutex<BTreeSet<String>>>,
     /// Who funds the run's calls when a room's root spend scope pays for
     /// them (OF-531), fixed when the run starts.
     pub(super) payer: Option<PayerPerson>,
@@ -87,7 +88,7 @@ pub(super) struct RunInner {
     pub(super) attribution: Option<RunAttribution>,
     /// The host marked the run as memory work (FIX 11003).
     memory_work: AtomicBool,
-    receipts: Arc<dyn RunReceiptSink>,
+    pub(super) receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
     /// `calls`. A meter other runs share issues their leases too, so the
@@ -245,7 +246,7 @@ impl RunAdmission {
                 guard: meter,
                 host,
                 persistent_allocation,
-                persistent_calls: Mutex::new(BTreeSet::new()),
+                persistent_calls: Arc::new(Mutex::new(BTreeSet::new())),
                 payer,
                 attribution,
                 memory_work: AtomicBool::new(false),

@@ -1,6 +1,7 @@
 //! Explicit run binding for the native allocation ledger. The producer uses
 //! the ledger's caller-owned writer, never the non-authoritative receipt sink.
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use super::{
     AllocationCallKey, AllocationCommit, AllocationStoreError, AllocationTerminal,
@@ -35,6 +36,8 @@ pub trait AllocationProducer: Send + Sync {
 pub struct PersistentAllocation {
     pub(super) ledger: Arc<VaultAllocationLedger>,
     producer: Arc<dyn AllocationProducer>,
+    pub(super) pending_terminals:
+        Mutex<BTreeMap<(crate::EntityId, String), super::terminal::PendingTerminal>>,
 }
 
 impl PersistentAllocation {
@@ -43,7 +46,22 @@ impl PersistentAllocation {
         ledger: Arc<VaultAllocationLedger>,
         producer: Arc<dyn AllocationProducer>,
     ) -> Arc<Self> {
-        Arc::new(Self { ledger, producer })
+        Arc::new(Self {
+            ledger,
+            producer,
+            pending_terminals: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    pub(super) fn commit_terminal(
+        &self,
+        key: &AllocationCallKey,
+        terminal: &AllocationTerminal,
+        receipt: &RunReceipt,
+    ) -> Result<AllocationCommit<()>, AllocationStoreError> {
+        self.ledger.settle(key, terminal.clone(), |txn, _, _| {
+            self.producer.settle_in_write_txn(txn, receipt)
+        })
     }
 }
 
@@ -147,12 +165,25 @@ impl RunInner {
             dispatched,
             units,
         };
-        let commit = account
-            .ledger
-            .settle(&hold.key, terminal, |txn, _, _| {
-                account.producer.settle_in_write_txn(txn, receipt)
-            })
-            .map_err(|error| allocation_denied("settle", error))?;
+        let commit = match account.commit_terminal(&hold.key, &terminal, receipt) {
+            Ok(commit) => commit,
+            Err(error) => {
+                let pending = super::terminal::PendingTerminal {
+                    key: hold.key.clone(),
+                    terminal,
+                    receipt: receipt.clone(),
+                    calls: Arc::clone(&self.persistent_calls),
+                    observer: Arc::clone(&self.receipts),
+                };
+                account
+                    .pending_terminals
+                    .lock()
+                    .expect("pending native terminal mutex poisoned")
+                    .entry((hold.key.instance, hold.key.lease.clone()))
+                    .or_insert(pending);
+                return Err(allocation_denied("settle", error));
+            }
+        };
         committed("settle", commit);
         self.persistent_calls
             .lock()
