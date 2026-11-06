@@ -690,10 +690,10 @@ impl Bridge {
                 None,
             )?
             .answer_to(&id)?;
-        let Some(delivery) = answer.get("result").cloned() else {
+        let Some(delivery) = answer.get("result") else {
             return Err(Refusal::Refused(answer));
         };
-        serde_json::from_value(delivery)
+        serde::Deserialize::deserialize(delivery)
             .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
     }
 
@@ -885,8 +885,12 @@ impl Refusal {
                 auth.refused_advice(),
                 Some(body),
             ),
-            Self::Refused(answer) => match answer.get("error") {
-                Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
+            Self::Refused(mut answer) => match answer.get_mut("error").map(Value::take) {
+                Some(error) => {
+                    let mut response = json!({ "jsonrpc": "2.0", "id": id, "error": null });
+                    response["error"] = error;
+                    response.to_string()
+                }
                 None => rpc_error(
                     id,
                     -32000,
@@ -939,14 +943,19 @@ fn rpc_error(
     message: &str,
     server_error: Option<Value>,
 ) -> String {
-    let mut data = json!({ "kind": kind, "error_code": kind, "human_message": message });
-    if let (Some(server_error), Some(data)) = (server_error, data.as_object_mut()) {
-        data.insert("server_error".to_owned(), server_error);
-    }
-    json!({
+    let mut response = json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": code, "message": message, "data": data },
-    })
-    .to_string()
+        "error": {
+            "code": code,
+            "message": message,
+            "data": { "kind": kind, "error_code": kind, "human_message": message },
+        },
+    });
+    if let (Some(server_error), Some(data)) =
+        (server_error, response["error"]["data"].as_object_mut())
+    {
+        data.insert("server_error".to_owned(), server_error);
+    }
+    response.to_string()
 }
