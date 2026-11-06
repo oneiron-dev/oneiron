@@ -1,6 +1,7 @@
 //! Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error mapping.
 
 use futures_core::Stream;
+use oneiron::llm::DispatchRelease;
 use oneiron::{BudgetLease, LlmError, LlmUsage, RetryableLlmError};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -64,10 +65,39 @@ pub trait OpenAiCompatTransport: Send + Sync {
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError>;
+
+    /// Checks release at entry. A transport with later waits or retries
+    /// overrides this and rechecks before each physical request.
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> OpenAiCompatFuture<'a> {
+        Box::pin(async move {
+            release().map_err(OpenAiCompatTransportError::Release)?;
+            self.execute(request, lease).await
+        })
+    }
+
+    /// Streaming counterpart of `execute_released`, with the same
+    /// entry-only default and physical-send override responsibility.
+    fn stream_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        release().map_err(OpenAiCompatTransportError::Release)?;
+        self.stream(request, lease)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum OpenAiCompatTransportError {
+    /// The call-owned release refused; this is not a provider or I/O fault.
+    #[error("dispatch release refused: {0}")]
+    Release(LlmError),
     #[error("OpenAI-compatible transport timed out")]
     Timeout,
     #[error("OpenAI-compatible transport stream was cut")]
@@ -100,6 +130,7 @@ impl From<OpenAiCompatTransportError> for LlmError {
     /// carrying their cause (FIX 10403), so a result row or receipt names it.
     fn from(error: OpenAiCompatTransportError) -> Self {
         match error {
+            OpenAiCompatTransportError::Release(error) => error,
             OpenAiCompatTransportError::Timeout => RetryableLlmError::Timeout.into(),
             OpenAiCompatTransportError::StreamCut | OpenAiCompatTransportError::Connection => {
                 RetryableLlmError::StreamCut.into()

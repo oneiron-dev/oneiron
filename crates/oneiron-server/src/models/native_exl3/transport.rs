@@ -32,9 +32,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use oneiron::llm::{
-    CallSchedule, INFERENCE_CALLS_KEY, InferenceCallReceipt, ScheduleAck, ScheduleUpdate,
-    SchedulingReceipt, SessionOp,
+    CallSchedule, DispatchRelease, INFERENCE_CALLS_KEY, InferenceCallReceipt, ScheduleAck,
+    ScheduleUpdate, SchedulingReceipt, SessionOp,
 };
+use oneiron::{BudgetLease, LlmError};
 use oneiron_driver::{DeviceGrant, InferenceWorker, WorkerLease};
 use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{
@@ -189,6 +190,19 @@ impl Channel {
         body: JsonValue,
         fd: BorrowedFd<'_>,
     ) -> io::Result<()> {
+        self.send_with_fd_release(op, request_id, epoch, body, fd, None)
+            .await
+    }
+
+    async fn send_with_fd_release(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: BorrowedFd<'_>,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> io::Result<()> {
         let bytes = Self::frame(op, request_id, epoch, body)?;
         let fds = [fd];
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
@@ -200,8 +214,16 @@ impl Channel {
         }
         let mut writer = self.writer.lock().await;
         let stream: &UnixStream = (*writer).as_ref();
+        let mut attempted = false;
         let sent = stream
             .async_io(Interest::WRITABLE, || {
+                if let Some((release, lease)) = release {
+                    release().map_err(io::Error::other)?;
+                    if !attempted {
+                        lease.begin_physical_attempt();
+                        attempted = true;
+                    }
+                }
                 sendmsg(stream, &[IoSlice::new(&bytes)], &mut control, SEND_FLAGS)
                     .map_err(io::Error::from)
             })
@@ -611,8 +633,8 @@ impl CallUpdates {
 
 /// How a call's start went wrong.
 pub(super) enum Start {
-    /// Nothing left this side: the worker never saw the call. Carries
-    /// `OpenAiCompatTransportError::NotSent`.
+    /// This generate request never left this side: a pre-send failure or
+    /// the call-owned release's original model error.
     NotSent(OpenAiCompatTransportError),
     /// The worker refused it before anything ran, with this body.
     Refused(JsonValue),
@@ -757,6 +779,39 @@ impl Call {
         schedule: Option<&CallSchedule>,
         worker: Option<&InferenceWorker>,
     ) -> Result<Self, Start> {
+        Self::start_with_release(
+            launch,
+            epoch,
+            conversation,
+            params,
+            stream,
+            lease,
+            session,
+            schedule,
+            worker,
+            None,
+        )
+        .await
+    }
+
+    /// The same call, with release checked after connection and readiness,
+    /// immediately before its first descriptor-bearing send.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact of the call being started"
+    )]
+    pub(super) async fn start_with_release(
+        launch: &NativeLaunch,
+        epoch: &str,
+        conversation: &JsonValue,
+        params: JsonValue,
+        stream: bool,
+        lease: Option<WorkerLease>,
+        session: Option<JsonValue>,
+        schedule: Option<&CallSchedule>,
+        worker: Option<&InferenceWorker>,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
         let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
@@ -773,9 +828,25 @@ impl Call {
             }
             None => "generate",
         };
-        let sent = channel
-            .send_with_fd(op, request_id, Some(epoch), body, input.fd())
-            .await;
+        let sent = match release {
+            Some(release) => {
+                channel
+                    .send_with_fd_release(
+                        op,
+                        request_id,
+                        Some(epoch),
+                        body,
+                        input.fd(),
+                        Some(release),
+                    )
+                    .await
+            }
+            None => {
+                channel
+                    .send_with_fd(op, request_id, Some(epoch), body, input.fd())
+                    .await
+            }
+        };
         let mut call = Self {
             channel: Some(channel),
             request_id,
@@ -787,6 +858,14 @@ impl Call {
         };
         if let Err(error) = sent {
             call.ended = true;
+            if let Some(released) = error
+                .get_ref()
+                .and_then(|cause| cause.downcast_ref::<LlmError>())
+            {
+                return Err(Start::NotSent(OpenAiCompatTransportError::Release(
+                    released.clone(),
+                )));
+            }
             return Err(Start::Cut(io_fault("send generate", Some(error))));
         }
         loop {
