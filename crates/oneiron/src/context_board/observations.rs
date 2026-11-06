@@ -23,7 +23,19 @@ impl SessionReadSet {
         body: &[u8],
         loaded: bool,
     ) -> Result<Option<ScopedReadReceipt>> {
-        let (state, receipt) = lifecycle(read, id, kind, body)?;
+        self.observe_snapshot_with_read_capacity(read, id, kind, body, loaded, &mut |_| {})
+    }
+
+    fn observe_snapshot_with_read_capacity<G>(
+        &mut self,
+        read: &ScopedRead<'_>,
+        id: EntityId,
+        kind: u8,
+        body: &[u8],
+        loaded: bool,
+        observe: &mut impl FnMut(u64) -> G,
+    ) -> Result<Option<ScopedReadReceipt>> {
+        let (state, receipt) = lifecycle(read, id, kind, body, observe)?;
         let Some(state) = state else {
             return Ok(receipt);
         };
@@ -60,22 +72,25 @@ impl SessionReadSet {
         self.observe_rows_with_read_capacity(read, ids, |_| {})
     }
 
-    /// Observe temporary point-read and returned-row storage before it is consumed.
-    pub fn observe_rows_with_read_capacity(
+    /// Retain a holder for each temporary read buffer, including successor lookups.
+    /// The observer returns a holder that drops after that buffer is consumed.
+    pub fn observe_rows_with_read_capacity<G>(
         &mut self,
         read: &ScopedRead<'_>,
         ids: &[EntityId],
-        mut observe: impl FnMut(u64),
+        mut observe: impl FnMut(u64) -> G,
     ) -> Result<ScopedReadReceipt> {
+        let _reads_storage;
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
-        observe(
+        _reads_storage = observe(
             (reads.capacity() as u64).saturating_mul(std::mem::size_of::<PointRead<'_>>() as u64),
         );
+        let _rows_storage;
         let ScopedReadResult {
             value: rows,
             mut receipt,
         } = read.read(&reads, None)?;
-        observe(observed_row_storage_bytes(&rows));
+        _rows_storage = observe(observed_row_storage_bytes(&rows));
         for row in rows.into_iter().flatten() {
             if let ReadRow {
                 id,
@@ -83,8 +98,14 @@ impl SessionReadSet {
                 body: Some(body),
                 ..
             } = row
-                && let Some(successor) =
-                    self.observe_snapshot(read, id, entity_type, &body, false)?
+                && let Some(successor) = self.observe_snapshot_with_read_capacity(
+                    read,
+                    id,
+                    entity_type,
+                    &body,
+                    false,
+                    &mut observe,
+                )?
             {
                 receipt.restrict_with(&successor);
             }
@@ -138,11 +159,12 @@ fn observed_row_storage_bytes(rows: &Vec<Option<ReadRow>>) -> u64 {
 }
 
 /// The served lifecycle, plus the successor read's receipt when one was made.
-fn lifecycle(
+fn lifecycle<G>(
     read: &ScopedRead<'_>,
     id: EntityId,
     kind: u8,
     body: &[u8],
+    observe: &mut impl FnMut(u64) -> G,
 ) -> Result<(Option<ServedLifecycle>, Option<ScopedReadReceipt>)> {
     let state = match kind {
         ENTITY_TYPE_CLAIM => decode_claim_body(body, true)?.lifecycle,
@@ -155,7 +177,7 @@ fn lifecycle(
                     Ok((Some(ServedLifecycle::Active), None))
                 }
                 crate::write_envelope::skill_record::SkillLifecycle::Superseded => {
-                    successor(read, id, kind)
+                    successor(read, id, kind, observe)
                 }
                 _ => Ok((None, None)),
             };
@@ -166,7 +188,7 @@ fn lifecycle(
                 Some(match agent.lifecycle_status {
                     ClaimLifecycleStatus::Active => ServedLifecycle::Active,
                     ClaimLifecycleStatus::Retracted => ServedLifecycle::Retracted,
-                    ClaimLifecycleStatus::Superseded => return successor(read, id, kind),
+                    ClaimLifecycleStatus::Superseded => return successor(read, id, kind, observe),
                 }),
                 None,
             ));
@@ -176,17 +198,19 @@ fn lifecycle(
     match state {
         ClaimLifecycleStatus::Active => Ok((Some(ServedLifecycle::Active), None)),
         ClaimLifecycleStatus::Retracted => Ok((Some(ServedLifecycle::Retracted), None)),
-        ClaimLifecycleStatus::Superseded => successor(read, id, kind),
+        ClaimLifecycleStatus::Superseded => successor(read, id, kind, observe),
     }
 }
 
-fn successor(
+fn successor<G>(
     read: &ScopedRead<'_>,
     id: EntityId,
     kind: u8,
+    observe: &mut impl FnMut(u64) -> G,
 ) -> Result<(Option<ServedLifecycle>, Option<ScopedReadReceipt>)> {
     // Supersedes is directed new -> old. Do not follow to an unobserved chain head.
     // Only an unambiguous, currently readable successor can enter the response.
+    let _targets_storage;
     let targets: Vec<_> = read
         .vault()
         .edges_in(&id)?
@@ -194,10 +218,15 @@ fn successor(
         .filter(|edge| edge.kind == crate::EdgeKind::Supersedes)
         .map(|edge| PointRead::id(edge.target))
         .collect();
+    _targets_storage = observe(
+        (targets.capacity() as u64).saturating_mul(std::mem::size_of::<PointRead<'_>>() as u64),
+    );
+    let _rows_storage;
     let ScopedReadResult {
         value: rows,
         receipt,
     } = read.read(&targets, None)?;
+    _rows_storage = observe(observed_row_storage_bytes(&rows));
     let mut next = None;
     for row in rows.into_iter().flatten() {
         if row.entity_type != kind {
