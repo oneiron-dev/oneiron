@@ -81,7 +81,10 @@ pub(crate) use self::holders::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
-pub(crate) use self::lifecycle::{hold_asset_reference_in_txn, release_asset_reference_in_txn};
+pub(crate) use self::lifecycle::{
+    discard_asset_reference_in_txn, discard_local_copy_in_txn, hold_asset_reference_in_txn,
+    release_asset_reference_in_txn,
+};
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
 pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_version_in_txn};
