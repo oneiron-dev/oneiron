@@ -128,6 +128,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let attribute_value_budget = budget.clone();
         let comment_budget = budget.clone();
         let doctype_budget = budget.clone();
+        let pending_table_budget = budget.clone();
         parser
             .with_open_elements_reservation(move |elements, additional| {
                 open_elements
@@ -181,6 +182,16 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                 text.try_reserve_with_reservation(
                     additional,
                     |bytes| reserve(&doctype_budget, bytes),
+                    Backing::resize,
+                )
+                .map_err(tendril_error)
+            })
+            .with_pending_table_text_reservation(move |text, additional| {
+                let additional =
+                    u32::try_from(additional).map_err(|_| ContentTemplateError::Overflow)?;
+                text.try_reserve_with_reservation(
+                    additional,
+                    |bytes| reserve(&pending_table_budget, bytes),
                     Backing::resize,
                 )
                 .map_err(tendril_error)

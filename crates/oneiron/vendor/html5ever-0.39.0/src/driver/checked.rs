@@ -301,6 +301,42 @@ where
         self
     }
 
+    /// Reserve actual pending table-text payload before storing or coalescing
+    /// UTF-8. The first payload is built in a fresh native destination; existing
+    /// input storage is not retrospectively admitted. The native header keeps
+    /// its reservation through flush and drop. Pending vector storage is separate.
+    /// A refusal uses this parser's existing first-error channel.
+    pub fn with_pending_table_text_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut StrTendril, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .sink
+            .sink
+            .set_pending_table_text_reservation(Box::new(move |text, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(text, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Parse borrowed UTF-8 without copying the whole input into a heap tendril.
     /// Each input tendril contains one Unicode scalar and fits in tendril's
     /// inline storage. Tokenizer and sink allocations remain separate.
