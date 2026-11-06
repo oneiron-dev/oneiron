@@ -7,7 +7,9 @@ use crate::recovery::canonical::{
 };
 
 use super::metadata::MetadataComparison;
-use super::{compare_bytes, compare_optional_text, compare_rows, compare_value};
+use super::{
+    compare_bytes, compare_optional_bytes, compare_optional_text, compare_rows, compare_value,
+};
 
 #[derive(Default)]
 pub(super) struct HistoryComparison {
@@ -39,6 +41,7 @@ enum Part {
     Third,
     Fourth,
     Fifth,
+    Sixth,
 }
 
 impl HistoryComparison {
@@ -46,6 +49,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut Option<CanonicalEntityDocumentHistory>,
         wanted: &Option<CanonicalEntityDocumentHistory>,
+        remaining: &mut usize,
     ) -> Result<bool> {
         let (Some(actual), Some(wanted)) = (actual.as_mut(), wanted.as_ref()) else {
             compare_value(&actual.is_some(), &wanted.is_some())?;
@@ -60,14 +64,17 @@ impl HistoryComparison {
             purges,
         } = actual;
         let (done, next_group) = match self.group {
-            Group::Versions => (self.versions(versions, &wanted.versions)?, Group::Shallow),
+            Group::Versions => (
+                self.versions(versions, &wanted.versions, remaining)?,
+                Group::Shallow,
+            ),
             Group::Shallow => {
                 compare_value(shallow, &wanted.shallow)?;
                 (true, Group::Pins)
             }
             Group::Pins => (self.pins(pins, &wanted.pins)?, Group::Receipts),
             Group::Receipts => (self.receipts(receipts, &wanted.receipts)?, Group::Forks),
-            Group::Forks => (self.forks(forks, &wanted.forks)?, Group::Purges),
+            Group::Forks => (self.forks(forks, &wanted.forks, remaining)?, Group::Purges),
             Group::Purges => (
                 compare_rows(purges, &wanted.purges, &mut self.next)?,
                 Group::Complete,
@@ -95,6 +102,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut [CanonicalDocumentVersion],
         wanted: &[CanonicalDocumentVersion],
+        remaining: &mut usize,
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
         let Some(CanonicalDocumentVersion {
@@ -102,6 +110,7 @@ impl HistoryComparison {
             prefix,
             suffix,
             middle,
+            native_skill_state,
             metadata,
             summary_meta,
         }) = actual.get_mut(self.next)
@@ -130,14 +139,28 @@ impl HistoryComparison {
             return Ok(false);
         }
         if self.part == Part::Third {
-            if self.metadata.advance(metadata, &expected.metadata)? {
+            if compare_optional_bytes(
+                native_skill_state,
+                &expected.native_skill_state,
+                &mut self.byte,
+            )? {
                 self.part = Part::Fourth;
+                self.byte = 0;
+            }
+            return Ok(false);
+        }
+        if self.part == Part::Fourth {
+            if self
+                .metadata
+                .advance(metadata, &expected.metadata, remaining)?
+            {
+                self.part = Part::Fifth;
             }
             return Ok(false);
         }
         if self
             .metadata
-            .advance(summary_meta, &expected.summary_meta)?
+            .advance(summary_meta, &expected.summary_meta, remaining)?
         {
             self.finish_row();
         }
@@ -220,6 +243,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut [CanonicalDocumentFork],
         wanted: &[CanonicalDocumentFork],
+        remaining: &mut usize,
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
         let Some(CanonicalDocumentFork {
@@ -233,6 +257,7 @@ impl HistoryComparison {
             base,
             output,
             output_metadata,
+            output_native_skill_state,
             proposal_index,
             proposal_len,
             proposal_settled,
@@ -262,14 +287,25 @@ impl HistoryComparison {
                 }
             }
             Part::Second => {
-                if self
-                    .metadata
-                    .advance_optional(output_metadata, &expected.output_metadata)?
-                {
+                if self.metadata.advance_optional(
+                    output_metadata,
+                    &expected.output_metadata,
+                    remaining,
+                )? {
                     self.part = Part::Third;
                 }
             }
             Part::Third => {
+                if compare_optional_bytes(
+                    output_native_skill_state,
+                    &expected.output_native_skill_state,
+                    &mut self.byte,
+                )? {
+                    self.part = Part::Fourth;
+                    self.byte = 0;
+                }
+            }
+            Part::Fourth => {
                 if self.member == 0 {
                     compare_value(proposal_index, &expected.proposal_index)?;
                     compare_value(proposal_len, &expected.proposal_len)?;
@@ -280,17 +316,17 @@ impl HistoryComparison {
                     &expected.proposal_opener_lineage,
                     &mut self.member,
                 )? {
-                    self.part = Part::Fourth;
-                    self.member = 0;
-                }
-            }
-            Part::Fourth => {
-                if compare_rows(read_refs, &expected.read_refs, &mut self.member)? {
                     self.part = Part::Fifth;
                     self.member = 0;
                 }
             }
             Part::Fifth => {
+                if compare_rows(read_refs, &expected.read_refs, &mut self.member)? {
+                    self.part = Part::Sixth;
+                    self.member = 0;
+                }
+            }
+            Part::Sixth => {
                 if compare_optional_text(keep, &expected.keep, &mut self.byte)? {
                     self.finish_row();
                 }

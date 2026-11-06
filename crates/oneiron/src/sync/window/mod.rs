@@ -106,6 +106,14 @@ pub use self::tombstones::{
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
+/// Reads the input snapshot's original root section through the native
+/// canonical-table decoder, independently of its latest state and replay.
+pub(in crate::sync) fn original_snapshot_root(snapshot: &[u8]) -> Result<Option<LoroDoc>> {
+    admission::encoded_root_state(snapshot).ok_or_else(|| {
+        Error::InvalidConfig("shared replica snapshot state is not canonical".into())
+    })
+}
+
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
 ///
