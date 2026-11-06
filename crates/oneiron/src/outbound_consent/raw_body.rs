@@ -9,6 +9,8 @@ use zeroize::Zeroizing;
 
 use crate::{Result, Vault};
 
+mod cleared;
+
 /// The raw body of one send, not authority to read any other result. A clone
 /// shares its owner; each reader has its own position and range. Diagnostics
 /// reveal the byte count only.
@@ -79,7 +81,8 @@ impl RawOutboundBody {
     /// Clears an already validated JSON reply with the send's own door
     /// value. Unchanged JSON retains its original bytes; changed JSON uses
     /// the same parsed-value comparison and compact encoding as clear_bytes.
-    /// This adapter still holds parsed Values; it is not a streamed JSON wall.
+    /// File-backed JSON batches are cleared one message at a time. Individual
+    /// messages, non-array JSON and byte-backed bodies still hold parsed Values.
     pub fn cleared_json(
         self,
         vault: &Vault,
@@ -90,26 +93,7 @@ impl RawOutboundBody {
             value.clear_bytes(&mut bytes);
             return Ok(Self::from_bytes(bytes));
         }
-        let mut parsed: serde_json::Value =
-            serde_json::from_reader(super::ZeroizingBufReader::new(self.reader()))
-                .map_err(io::Error::other)?;
-        let changed = value.clear_json_changed(&mut parsed);
-        if !changed {
-            super::zeroize_json(parsed);
-            return Ok(self);
-        }
-        let cleared = (|| -> Result<Self> {
-            let mut file = vault.archive_spool_file()?;
-            serde_json::to_writer(&mut file, &parsed).map_err(io::Error::other)?;
-            let len = file.stream_position()?;
-            Ok(Self {
-                storage: Arc::new(Storage::File(Mutex::new(file))),
-                start: 0,
-                len,
-            })
-        })();
-        super::zeroize_json(parsed);
-        cleared
+        cleared::clear(self, vault, value)
     }
 
     #[must_use]
