@@ -37,6 +37,18 @@ pub enum EngineLimit {
     /// UTF-8 bytes of one keyed-memory key. Past it the key is kept and
     /// served whole.
     KeyedKeyBytes,
+    /// UTF-8 bytes of the booker email one authenticated booking confirm
+    /// carries. Past it the address is kept and served whole.
+    BookingEmailBytes,
+    /// Intake answers one authenticated booking confirm carries. Past it
+    /// every answer is kept.
+    BookingIntakeAnswers,
+    /// UTF-8 bytes of the largest intake answer value one authenticated
+    /// booking confirm carries. Past it the answer is kept whole.
+    BookingIntakeValueBytes,
+    /// Distinct local time windows one booking constraint carries once
+    /// canonical (sorted, duplicates gone). Past it every window is solved.
+    BookingLocalTimeWindows,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.

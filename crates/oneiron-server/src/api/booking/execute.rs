@@ -97,9 +97,12 @@ async fn execute(
     if let Some(authority) = &public_authority {
         public_availability::validate_public_request(&authority.publication, &request)?;
     }
-    validate_operation_shape(&request)?;
-    if transport.credential.is_none() {
+    let anonymous = transport.credential.is_none();
+    validate_operation_shape(&request, anonymous)?;
+    if anonymous {
         validate::validate_anonymous_intake_count(&request)?;
+    } else {
+        validate::measure_authenticated(&server.vault, &request);
     }
     check_action_token_page(&server.vault, page_ref, &request)?;
 
@@ -204,6 +207,7 @@ async fn execute(
                     input.visitor_tz = visitor_tz;
                 }
             }
+            validate::measure_local_time_windows(&server.vault, input.constraint.as_ref());
             let (response, sources) = public_availability::solve(
                 server,
                 page_ref,
