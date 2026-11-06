@@ -1,6 +1,8 @@
 //! Three-tier repair driver: whole validation and publication, the work
 //! between them paged on the vault's fair task-work line (FIX 8821).
 
+#[cfg(feature = "sync")]
+use super::canonical::CanonicalCapture;
 use super::canonical::{CanonicalSnapshot, invalid, pack, rebuild_vault_window_from_canonical};
 use super::{decode_recovery_artifact, encode_recovery_artifact};
 use crate::error::{ArtifactError, Result};
@@ -286,6 +288,7 @@ pub(super) fn verify_page(
     snapshot: &CanonicalSnapshot,
     at: &mut usize,
     page: usize,
+    capture: &mut Option<CanonicalCapture>,
 ) -> Result<bool> {
     let entities = snapshot.entity_blobs.len();
     let landed_edges = 2 * entities + 1;
@@ -294,8 +297,23 @@ pub(super) fn verify_page(
     while *at < end {
         let check = *at;
         if check == entities {
-            let actual =
-                super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;
+            // FIX 10316 partial: one structural recapture stage per turn.
+            // Pending yields without moving `at`; the next turn resumes the
+            // same state, window and read view. The finished capture drops
+            // its view before the equivalence below reads the store.
+            let slot =
+                capture.get_or_insert_with(|| CanonicalCapture::new(&snapshot.window, usize::MAX));
+            let done = match slot.advance(vault, &prepared.window) {
+                Ok(done) => done,
+                Err(error) => {
+                    *capture = None;
+                    return Err(error);
+                }
+            };
+            let Some((actual, _)) = done else {
+                return Ok(false);
+            };
+            *capture = None;
             if &pad_equivalent(vault, actual, snapshot) != snapshot {
                 return Err(invalid("recovery materialization is not equivalent"));
             }

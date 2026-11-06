@@ -211,14 +211,18 @@ pub(super) fn capture(
             }
             let head = *head.as_bytes();
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
-            let row = from_doc(
-                entity.id,
+            // This row comes from the host's own admitted proposal store.
+            // Canonical recovery carries its value, never its operation authority.
+            let (text, title) = crate::note::documents::stored_proposal_values(note, &doc)?;
+            let row = CanonicalDocument {
+                entity_id: entity.id,
                 head,
-                &doc,
-                false,
-                core.author_ref.id().map(|author| *author.as_bytes()),
-                header.learned_at,
-            )?;
+                text,
+                title,
+                birth_actor: core.author_ref.id().map(|author| *author.as_bytes()),
+                birth_at: header.learned_at,
+                authorship: Vec::new(),
+            };
             take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
