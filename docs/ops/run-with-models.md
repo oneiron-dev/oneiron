@@ -224,8 +224,23 @@ role or model `on_device`); every other call keeps the provider's offer,
 native when the worker's socket is up and HTTP otherwise, as before, and stays
 `own_server`. An on-device call never falls back to HTTP, to another rung, or
 to an owner's fallback off the device, and an on-device extraction needs no
-`extraction_egress`. Only free work gets the on-device offer: a provider with
-a key or a payer other than `local` keeps its calls `own_server` and paid. The
+`extraction_egress`.
+
+The on-device offer changes where a call runs, never who pays for it. It
+keeps the provider offer's payer, key custody and rates. A free provider
+(payer `local`, no key) stays free work on device. A paid provider (a
+`key_env` key, or a payer other than `local`) gets the on-device offer too,
+so a vault routed `on_device` can use it: each call is charged to that payer,
+reserves on its run's budget line (and on the vault's allocation for payer
+`host`), and is refused when they refuse it, exactly as its own-server call
+is. A declared run still refuses a `key_env` (T1) offer unless the owner
+allowed that offer. The native channel sends no key; a key the provider holds
+still makes its calls paid. The receipt names the place `on_device`
+(`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
+provider gets no on-device offer: payer `local`, no key, and locality
+`third_party` (the `openai-compat` default). Its calls are paid only because
+of that locality, and on device they would turn free. Set `locality = "own_server"`
+on it to make its calls free work and give it the on-device offer. The
 reranker and a raw `/v1/llm` call keep the provider's own offer.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in
