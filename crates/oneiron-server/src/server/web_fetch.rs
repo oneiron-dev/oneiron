@@ -59,14 +59,13 @@ impl SyncServer {
     }
 
     /// The guard for a fetch of a URL an outside, unauthenticated party
-    /// names (an OAuth client's metadata document, FIX 4902): the hosted
-    /// guard on a managed node, and on every other node one that refuses
-    /// this node's own addresses and every private network with no origin
-    /// excepted, so no caller can make a self-hosted vault fetch inside the
-    /// network it runs in.
+    /// names (an OAuth client's metadata document, FIX 4902), on every node:
+    /// it refuses this node's own addresses and every private network, with
+    /// no origin excepted. The managed node's `hosted_private_origins` are the
+    /// owner's own web fetcher's exceptions, never an outside caller's
+    /// (review #6478).
     pub(crate) fn untrusted_url_egress_guard(&self) -> Arc<HostedEgressGuard> {
-        self.hosted_egress_guard()
-            .unwrap_or_else(|| Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new())))
+        Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new()))
     }
 
     /// Called off the async runtime. The default rung is a credential-free
