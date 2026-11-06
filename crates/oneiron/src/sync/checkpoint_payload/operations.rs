@@ -25,13 +25,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::checkpoint::{Atom, AtomId, Capture, Parts, Payload, SlotKind, Unsupported};
+use loro::checkpoint::{Atom, AtomId, Parts, Payload, SlotKind, Unsupported};
 use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, LoroValue};
 
-use super::classify::{Classifier, Home, Plan, Refusal};
+use super::classify::{Plan, Refusal};
 use super::joined_turns::{Transport, TurnSource, derived_atom};
 use super::owners::{WINDOW_ROOTS, key_fill, root_fill};
-use super::parts::PartHolders;
 use super::{
     AtomHome, AtomRef, CapturedSyncRow, DerivedRole, JoinedTurn, LoroCarrier, LoroRow, LoroSlice,
     LoroSlot, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncUnclassified,
@@ -152,43 +151,79 @@ pub(super) fn project(
     }
     for (window, rows) in windows {
         let base = rows.snapshot.as_ref().map(|row| row.blob);
+        let mut groups = Vec::new();
         if let Some(snapshot) = rows.snapshot {
-            group(&window, None, vec![snapshot], owners, emit, &mut projection)?;
+            groups.push((None, vec![snapshot]));
         }
         if !rows.updates.is_empty() {
-            let updates = rows.updates.into_values().collect();
-            group(&window, base, updates, owners, emit, &mut projection)?;
+            groups.push((base, rows.updates.into_values().collect()));
         }
+        project_window(&window, groups, owners, emit, &mut projection)?;
     }
     Ok(projection)
 }
 
-/// Splits one group of `window`'s rows and emits its copies, or names each
-/// of its rows whole with why.
-fn group(
+/// Prepares BOTH original groups before any native source is emitted.
+/// A source-free window keeps the original independent group proofs.
+fn project_window(
     window: &str,
-    base: Option<&[u8]>,
-    rows: Vec<LoroIn<'_>>,
+    groups: Vec<(Option<&[u8]>, Vec<LoroIn<'_>>)>,
     owners: &dyn SyncPayloadOwners,
     emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
     projection: &mut WindowProjection,
 ) -> Result<()> {
-    match prepare(base, &rows, owners) {
-        Ok(prepared) => projection.carriers.push(prepared.emit(window, rows, emit)?),
-        Err((owner, reason)) => {
-            let whole = rows.into_iter().map(|row| SkeletonRow::Unclassified {
-                at: row.at,
-                owner,
-                reason,
-            });
-            projection.unclassified.extend(whole);
+    let mut prepared: Vec<_> = groups
+        .into_iter()
+        .map(|(base, rows)| (prepare(base, &rows, owners), rows))
+        .collect();
+    let native = prepared.iter().any(|(group, _)| {
+        group
+            .as_ref()
+            .is_ok_and(|group| group.classified.has_sources())
+    });
+    if native {
+        let refusal = prepared
+            .iter()
+            .find_map(|(group, _)| group.as_ref().err().cloned());
+        let refusal = refusal.or_else(|| {
+            let views: Vec<_> = prepared
+                .iter()
+                .filter_map(|(group, _)| {
+                    group
+                        .as_ref()
+                        .ok()
+                        .map(|group| (&group.classified, group.slices.as_slice()))
+                })
+                .collect();
+            super::record_documents::ClassifiedRecordDocuments::reconstruct_window_all_open(&views)
+                .err()
+                .map(|_| not_proved())
+        });
+        if let Some(reason) = refusal {
+            for (group, _) in &mut prepared {
+                *group = Err(reason.clone());
+            }
+        }
+    }
+    for (group, rows) in prepared {
+        match group {
+            Ok(prepared) => projection.carriers.push(prepared.emit(window, rows, emit)?),
+            Err((owner, reason)) => {
+                projection.unclassified.extend(rows.into_iter().map(|row| {
+                    SkeletonRow::Unclassified {
+                        at: row.at,
+                        owner,
+                        reason,
+                    }
+                }));
+            }
         }
     }
     Ok(())
 }
 
 /// Why the vendored capture left a window whole, when no family said.
-fn unsupported(why: Unsupported) -> SyncUnclassified {
+pub(super) fn unsupported(why: Unsupported) -> SyncUnclassified {
     match why {
         Unsupported::NonQuiescent => SyncUnclassified::ActorSplit(PENDING),
         Unsupported::Root => SyncUnclassified::UnknownRoot,
@@ -197,79 +232,50 @@ fn unsupported(why: Unsupported) -> SyncUnclassified {
     }
 }
 
-/// A group proved split, not yet emitted.
+/// A classified group with ordinary values proved, not yet emitted.
+/// Native reconstruction is proved with every group of the same window.
 struct Prepared {
-    parts: Parts,
-    plans: Vec<Plan>,
-    homes: Vec<Home>,
+    classified: super::record_documents::ClassifiedRecordDocuments,
     slices: Vec<LoroSlice>,
-    turn: Option<TurnSource>,
 }
 
-/// Captures and proves one group; nothing is emitted.
 fn prepare(
     base: Option<&[u8]>,
     rows: &[LoroIn<'_>],
     owners: &dyn SyncPayloadOwners,
 ) -> std::result::Result<Prepared, Refusal> {
     let (doc, slices) = open(base, rows)?;
-    let mut classifier = Classifier::new(owners, None, None);
-    let mut captured = doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut classifier);
-    if classifier.needs_parts {
-        // A part's holders are every manifest's in the capture's history:
-        // note them all first, then place. A parted turn row the notes
-        // prove is carried joined (FIX 12153).
-        let mut noting = Classifier::new(owners, None, None);
-        noting.noting = Some(PartHolders::default());
-        doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut noting);
-        let turn = TurnSource::of(&noting.turns);
-        classifier = Classifier::new(owners, noting.noting, turn);
-        captured = doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut classifier);
-    }
-    let parts = match captured {
-        Capture::Classified(parts) => parts,
-        Capture::Unclassified(why) => {
-            return Err(classifier.refusal.unwrap_or((None, unsupported(why))));
-        }
-    };
-    let Classifier {
-        plans, homes, turn, ..
-    } = classifier;
-    if plans.len() != parts.atoms.len() {
-        return Err(not_proved());
-    }
-    // A joined turn is carried only with its manifest derived from it.
-    let turn = turn.filter(|_| {
-        plans.iter().any(|plan| {
-            plan.derived
-                .is_some_and(|slot| slot.role == DerivedRole::Manifest)
-        })
-    });
+    let sources = super::record_documents::prepare(&doc, &WINDOW_ROOTS, owners)
+        .map_err(|_| (None, SyncUnclassified::Undecodable))?;
+    let classified = sources.classify(&doc, &WINDOW_ROOTS, owners)?;
+    let parts = &classified.parts;
+    let plans = &classified.plans;
     // Current-map values alone miss historical heads and removed parts.
-    // Judge manifest bindings against every value this group captured.
+    let entries: Vec<(&str, &[u8])> = plans
+        .iter()
+        .filter(|plan| {
+            plan.kind == SlotKind::Value
+                && plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP
+        })
+        .map(|plan| (plan.key.as_str(), plan.value.as_slice()))
+        .collect();
+    if let Some((owner, reason)) =
+        crate::sync::repo_manifests::checkpoint::binding_refusal(&entries)
     {
-        let entries: Vec<(&str, &[u8])> = plans
-            .iter()
-            .filter(|plan| {
-                plan.kind == SlotKind::Value
-                    && plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP
-            })
-            .map(|plan| (plan.key.as_str(), plan.value.as_slice()))
-            .collect();
-        if let Some((owner, reason)) =
-            crate::sync::repo_manifests::checkpoint::binding_refusal(&entries)
-        {
-            return Err((Some(owner), reason));
-        }
+        return Err((Some(owner), reason));
     }
-    prove(&doc, rows, &slices, &parts, &plans, turn.as_ref())?;
-    Ok(Prepared {
+    prove_values(
         parts,
         plans,
-        homes,
-        slices,
-        turn,
-    })
+        classified.turn.as_ref(),
+        &classified.native_slots,
+    )?;
+    if classified.has_sources() {
+        prove_turns(parts, plans, classified.turn.as_ref())?;
+    } else {
+        prove(&doc, rows, &slices, parts, plans, classified.turn.as_ref())?;
+    }
+    Ok(Prepared { classified, slices })
 }
 
 fn not_proved() -> Refusal {
@@ -336,7 +342,59 @@ fn prove(
     turn: Option<&TurnSource>,
 ) -> std::result::Result<(), Refusal> {
     let open = turn.map(|turn| &turn.open);
+    let (atoms, erased) = expand(parts, plans, open);
+    if !erased.is_empty() {
+        return Err(not_proved());
+    }
+    let joined = LoroDoc::join_root_map_checkpoint(&parts.skeleton, &atoms, &[])
+        .map_err(|_| not_proved())?;
+    let rejoined = LoroDoc::from_snapshot(&joined.bytes).map_err(|_| not_proved())?;
+    if !same_doc(doc, &rejoined) {
+        return Err(not_proved());
+    }
+    for (row, slice) in rows.iter().zip(slices) {
+        let rebuilt = export_slice(&rejoined, slice).map_err(|_| not_proved())?;
+        let proved = admit_round_trip(WINDOW_ROUND_TRIP, row.blob, &rebuilt, |stored, rebuilt| {
+            if joined.report.equivalent && same_slice(stored, rebuilt, slice) {
+                Ok(())
+            } else {
+                Err(bad_part())
+            }
+        });
+        proved.map_err(|_| not_proved())?;
+    }
+    prove_turns(parts, plans, turn)
+}
+
+fn prove_turns(
+    parts: &Parts,
+    plans: &[Plan],
+    turn: Option<&TurnSource>,
+) -> std::result::Result<(), Refusal> {
+    if let Some(turn) = turn {
+        if !turn.split.actors.is_empty() {
+            let parts_held = usize::try_from(turn.parts).map_err(|_| not_proved())?;
+            let erased_actor =
+                Transport::of(&turn.split.no_one, parts_held).map_err(|_| not_proved())?;
+            joins(parts, plans, Some(&erased_actor))?;
+        }
+        joins(parts, plans, None)?;
+    }
+    Ok(())
+}
+
+/// Every ordinary atom still round-trips through its original family codec.
+fn prove_values(
+    parts: &Parts,
+    plans: &[Plan],
+    turn: Option<&TurnSource>,
+    native: &BTreeSet<AtomId>,
+) -> std::result::Result<(), Refusal> {
+    let open = turn.map(|turn| &turn.open);
     for (atom, plan) in parts.atoms.iter().zip(plans) {
+        if native.contains(&atom.id) {
+            continue;
+        }
         if let Some(derived) = plan.derived {
             if derived_atom(atom.id, &atom.holders, derived.role, open).as_ref() != Some(atom) {
                 return Err(not_proved());
@@ -374,36 +432,6 @@ fn prove(
         if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored) {
             return Err(not_proved());
         }
-    }
-    let (atoms, erased) = expand(parts, plans, open);
-    if !erased.is_empty() {
-        return Err(not_proved());
-    }
-    let joined = LoroDoc::join_root_map_checkpoint(&parts.skeleton, &atoms, &[])
-        .map_err(|_| not_proved())?;
-    let rejoined = LoroDoc::from_snapshot(&joined.bytes).map_err(|_| not_proved())?;
-    if !same_doc(doc, &rejoined) {
-        return Err(not_proved());
-    }
-    for (row, slice) in rows.iter().zip(slices) {
-        let rebuilt = export_slice(&rejoined, slice).map_err(|_| not_proved())?;
-        let proved = admit_round_trip(WINDOW_ROUND_TRIP, row.blob, &rebuilt, |stored, rebuilt| {
-            if joined.report.equivalent && same_slice(stored, rebuilt, slice) {
-                Ok(())
-            } else {
-                Err(bad_part())
-            }
-        });
-        proved.map_err(|_| not_proved())?;
-    }
-    if let Some(turn) = turn {
-        if !turn.split.actors.is_empty() {
-            let parts_held = usize::try_from(turn.parts).map_err(|_| not_proved())?;
-            let erased_actor =
-                Transport::of(&turn.split.no_one, parts_held).map_err(|_| not_proved())?;
-            joins(parts, plans, Some(&erased_actor))?;
-        }
-        joins(parts, plans, None)?;
     }
     Ok(())
 }
@@ -456,19 +484,30 @@ impl Prepared {
         rows: Vec<LoroIn<'_>>,
         emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
     ) -> Result<LoroCarrier> {
-        let Self {
+        let Self { classified, slices } = self;
+        let super::record_documents::ClassifiedRecordDocuments {
             parts,
             plans,
             homes,
-            slices,
             turn,
-        } = self;
+            native_slots,
+            sources,
+        } = classified;
         let first = rows
             .first()
             .map(|row| row.at.clone())
             .ok_or_else(bad_part)?;
         let mut slots = Vec::with_capacity(plans.len());
         for (atom, plan) in parts.atoms.iter().zip(plans) {
+            // Native values and withheld keys belong ONLY to their source bank.
+            if native_slots.contains(&atom.id) {
+                slots.push(LoroSlot {
+                    copies: Vec::new(),
+                    holes: Vec::new(),
+                    derived: None,
+                });
+                continue;
+            }
             // A derived slot holds no copy: the join makes it (FIX 12153).
             if plan.derived.is_some() {
                 slots.push(LoroSlot {
@@ -527,6 +566,7 @@ impl Prepared {
             Some(turn) => vec![emit_turn(turn, &first, emit)?],
             None => Vec::new(),
         };
+        let record_documents = sources.emit(&first, emit)?;
         let rows = rows
             .into_iter()
             .zip(slices)
@@ -542,6 +582,7 @@ impl Prepared {
             rows,
             slots,
             joined,
+            record_documents,
         })
     }
 }

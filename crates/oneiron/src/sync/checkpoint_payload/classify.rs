@@ -380,11 +380,11 @@ pub(super) fn capture_record_documents<'o>(
     }
     let parts = match captured {
         Capture::Classified(parts) => parts,
-        Capture::Unclassified(_) => {
+        Capture::Unclassified(why) => {
             return Err(classifier
                 .ordinary
                 .refusal
-                .unwrap_or((None, SyncUnclassified::Undecodable)));
+                .unwrap_or((None, super::operations::unsupported(why))));
         }
     };
     if classifier.ordinary.plans.len() != parts.atoms.len() {

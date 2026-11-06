@@ -216,3 +216,21 @@ fn check(
         _ => Err(bad_part()),
     }
 }
+
+/// All native value/key uses, including shared descriptor positions.
+/// Call only after validating the bank against the same final skeleton.
+pub(crate) fn slots(sources: &[JoinedRecordDocument]) -> BTreeSet<AtomId> {
+    let mut slots = BTreeSet::new();
+    for source in sources {
+        let native = &source.slots;
+        for slot in std::iter::once(&native.head)
+            .chain(&native.rows)
+            .chain(native.snapshot.iter().flatten())
+            .chain(native.refinement.iter().flatten().flatten())
+        {
+            slots.insert(slot.value);
+            slots.extend(slot.key);
+        }
+    }
+    slots
+}
