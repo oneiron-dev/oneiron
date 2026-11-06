@@ -30,6 +30,10 @@ side_tables! {
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// The "Forget too" provider deletes a mail source still owes (fix list row 18084): the
+    /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
+    /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
+    MAIL_PACK_FORGET_OWED: VaultMeta b"mail_pack:forget_owed:v1:" Named;
     /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
     /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
     /// of the path.
