@@ -8,11 +8,14 @@
 //! with its delivery uncertain (the provider has not shown it never took
 //! effect), its reserved budget kept; a running one is polled again after
 //! the provider's hint, never sooner than the host's pass, backing off while
-//! it runs. A task waiting on input (`input_required`) is polled as running:
-//! this host answers no task input, so such a task ends when its provider
-//! drops it. A session the connector ended (HTTP 404) is renewed: the host
-//! opens a new one under the row's own endpoint and credential, and the
-//! handle keeps its id for the polls that follow (FIX 16028). A session
+//! it runs. A task waiting on input (`input_required`) is polled as running,
+//! its requests read through `tasks/result`: a form question, in a session
+//! that declared form elicitation, is parked for the owner, and a task whose
+//! parked question the owner answered is due on the host's next pass, which
+//! sends the answer (FIX 16029). A session the connector ended (HTTP 404) is
+//! renewed: the host opens a new one under the row's own endpoint and
+//! credential, declaring what the send's session declared, and the handle
+//! keeps its id for the polls that follow (FIX 16028). A session
 //! whose handle goes before it ended (an erase takes the request, or the
 //! row settles another way) is owed its end: the host ends it on its next
 //! pass. The poll table keeps only
@@ -59,6 +62,12 @@ pub struct RemoteTaskPoll {
     pub protocol: String,
     /// The credential the send presented, presented again for each poll.
     pub credential: RemoteTaskCredential,
+    /// Whether the send's `initialize` declared form elicitation (FIX
+    /// 16029): a renewed session declares the same, and only then is a form
+    /// question the task asks parked for the owner. A handle kept without
+    /// it reads as none declared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub form_elicitation: bool,
 }
 
 impl fmt::Debug for RemoteTaskPoll {
@@ -67,6 +76,7 @@ impl fmt::Debug for RemoteTaskPoll {
             .field("session", &self.session.as_ref().map(|_| "[redacted]"))
             .field("protocol", &self.protocol)
             .field("credential", &self.credential)
+            .field("form_elicitation", &self.form_elicitation)
             .finish()
     }
 }
@@ -370,6 +380,37 @@ impl Vault {
             state.next_poll_ms = now_ms.saturating_add(after);
             state.last_status = Some(status);
             POLLS.put(&self.store, txn, intent, &state)
+        })?;
+        Ok(())
+    }
+
+    /// Makes the polls of `intents` due at `now_ms` (FIX 16029): each is a
+    /// task whose parked question the owner answered, which the host's next
+    /// pass drives to `tasks/result` however recently it last read the task.
+    /// The backoff of every other poll stays as it is; an intent with no
+    /// poll row, or one already due, changes nothing.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn remote_task_polls_due_at(
+        &self,
+        intents: &[[u8; 32]],
+        now_ms: u64,
+    ) -> IntentLedgerResult<()> {
+        if intents.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            for intent in intents {
+                let Some(mut state) = POLLS.get(&self.store, txn, intent)? else {
+                    continue;
+                };
+                if state.next_poll_ms > now_ms {
+                    state.next_poll_ms = now_ms;
+                    POLLS.put(&self.store, txn, intent, &state)?;
+                }
+            }
+            Ok(())
         })?;
         Ok(())
     }
