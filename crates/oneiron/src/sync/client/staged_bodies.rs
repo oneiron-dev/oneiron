@@ -19,8 +19,9 @@ use super::federated::map_federated_admission_err;
 use crate::EntityId;
 use crate::batch::export::{
     OwedBody, StagedImportBodyProgress, VaultImportStageReceipt, VaultImportStageStatus,
-    cancel_staged_import_body_work, decode_staged_import_parts, settle_staged_import_body_work,
-    staged_import_body_work, vault_import_stage_receipt, vault_import_staged_content,
+    attach_staged_import_body_source, cancel_staged_import_body_work, decode_staged_import_parts,
+    settle_staged_import_body_work, staged_import_body_work, vault_import_stage_receipt,
+    vault_import_staged_content,
 };
 use crate::sync::asset_body::references::bound_refs;
 use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
@@ -75,6 +76,53 @@ impl SyncClient {
             .map(|work| work.owed)
             .unwrap_or_default();
         Ok(StagedImportBodyProgress::of(&owed, Vec::new()))
+    }
+
+    /// Attaches the producer the host registered as `source`
+    /// ([`super::SyncClientConfig::staged_import_body_sources`]) to the bodies
+    /// the confirmed staged import `receipt_id` still owes: this client then
+    /// fetches them from it on a socket of its own, and each lands as a
+    /// supplied body does, at the receipt's federated tier and under today's
+    /// policy for its part. A producer serves only the import source it is
+    /// registered for, so a receipt from any other source refuses it.
+    /// Attaching another producer stops a fetch begun under the earlier one.
+    /// Returns whether any body was owed.
+    ///
+    /// # Errors
+    ///
+    /// A receipt that is missing or not confirmed, a producer not registered
+    /// or registered for another source, and storage errors.
+    pub fn attach_staged_vault_import_body_source(
+        &mut self,
+        receipt_id: [u8; 32],
+        source: [u8; 32],
+    ) -> std::result::Result<bool, TransportError> {
+        let vault = std::sync::Arc::clone(&self.vault);
+        let _guard = vault
+            .store
+            .staged_import_confirm_lock
+            .lock()
+            .map_err(|_| TransportError::Storage("staged import lock poisoned".into()))?;
+        let receipt = confirmed_receipt(&self.vault, &receipt_id)?;
+        let registered = self
+            .config
+            .staged_import_body_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .ok_or(TransportError::InvalidPayload(
+                "staged import body source not registered",
+            ))?;
+        if registered.serves != receipt.source {
+            return Err(TransportError::InvalidPayload(
+                "staged import body source serves another source",
+            ));
+        }
+        let attached = attach_staged_import_body_source(&self.vault, &receipt_id, source)
+            .map_err(map_federated_admission_err)?;
+        if attached.is_some() {
+            self.staged_body_pulls.wake();
+        }
+        Ok(attached.is_some())
     }
 
     /// Stops delivering the bodies the confirmed staged import `receipt_id`
@@ -257,7 +305,7 @@ impl SyncClient {
 }
 
 /// The confirmed receipt `receipt_id`, or why it is none.
-fn confirmed_receipt(
+pub(super) fn confirmed_receipt(
     vault: &crate::Vault,
     receipt_id: &[u8; 32],
 ) -> std::result::Result<VaultImportStageReceipt, TransportError> {

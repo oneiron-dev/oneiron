@@ -57,6 +57,7 @@ mod repo_projection;
 mod residence;
 mod sealed_updates;
 mod staged_bodies;
+mod staged_body_pull;
 mod sync_frames;
 mod types;
 mod window_pads;
@@ -85,10 +86,11 @@ pub(crate) use self::residence::{
     request_media_vectors, retry_refused_retains, search_resident,
 };
 pub(crate) use self::sealed_updates::{send_sealed_updates, world_relays_sealed};
+pub(crate) use self::staged_body_pull::StagedBodyPump;
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
-    EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
-    SyncResidenceMode, SyncStatus, SyncTransportCredential,
+    EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, StagedImportBodySource,
+    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
 
 #[cfg(test)]
