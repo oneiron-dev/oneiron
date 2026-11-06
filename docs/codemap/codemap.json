@@ -8248,7 +8248,7 @@
      "path": "src/batch/secret_scan/provider_tokens.rs",
      "purpose": "Core half of `batch::secret_scan::provider_tokens`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -18141,13 +18141,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 3
      }
     },
@@ -18349,7 +18349,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 42
      }
     },
     {
@@ -18359,7 +18359,7 @@
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -62991,12 +62991,14 @@
       "PackInstanceEnvelope",
       "PackInstanceOrigin",
       "PackKindIdentity",
-      "PackKindRegistration"
+      "PackKindRegistration",
+      "StructuralKindAllocation"
      ],
      "path": "src/registry/pack_byte_map/types.rs",
      "purpose": "Name-bearing portable kinds, local registrations, and instance envelopes",
      "surface": {
       "crate-vis": 3,
+      "enum": 1,
       "fn": 4,
       "struct": 5
      }
@@ -68019,7 +68021,7 @@
      "path": "src/side_table/erased.rs",
      "purpose": "The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -93224,7 +93226,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 175,
+   "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6575,
    "test_files": 895

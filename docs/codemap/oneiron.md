@@ -721,7 +721,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask/text_spans.rs` | src | s | 3 crate-vis | — | Core half of `batch::secret_scan::mask::text_spans`: its store-layer items live in… |
 | `src/batch/secret_scan/mask/wipe.rs` | src | s | 4 crate-vis | — | Core half of `batch::secret_scan::mask::wipe`: its store-layer items live in… |
 | `src/batch/secret_scan/message_parts.rs` | src | s | 1 crate-vis | — | Whole immutable MESSAGE parts, sealed without changing their signed bytes |
-| `src/batch/secret_scan/provider_tokens.rs` | src | s | 7 crate-vis | — | Core half of `batch::secret_scan::provider_tokens`: its store-layer items live in… |
+| `src/batch/secret_scan/provider_tokens.rs` | src | s | 8 crate-vis | — | Core half of `batch::secret_scan::provider_tokens`: its store-layer items live in… |
 | `src/batch/secret_scan/release_read.rs` | src | s | 3 crate-vis | — | Core half of `batch::secret_scan::release_read`: its store-layer items live in… |
 | `src/batch/secret_scan/release_read/assignment.rs` | src | m | 3 crate-vis | — | The release assignment rule as a body's text streams (FIX 7200, FIX 5392 Rule 5) |
 | `src/batch/secret_scan/release_read/tokens.rs` | src | s | 4 crate-vis | — | The release provider-key rule as a body's text streams (FIX 7200, FIX 5392 Rule 5) |
@@ -1516,7 +1516,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/reader_jobs/scoped.rs` | src | s | 2 fn · 3 crate-vis | — | A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows as every child of the parent is… |
 | `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 27 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/records/admitted.rs` | src | s | 10 crate-vis | — | A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4) |
-| `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 32 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
+| `src/code_run/storage/records/bodies.rs` | src | L | 3 fn · 33 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
 | `src/code_run/storage/records/bodies/context.rs` | src | s | 1 crate-vis | — | One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output… |
 | `src/code_run/storage/records/bodies/context_output.rs` | src | s | 1 crate-vis | — | Context outputs published with the replay record that holds them |
 | `src/code_run/storage/records/bodies/host_occurrence.rs` | src | s | 2 crate-vis | — | A host parent run's record and whose it is (FIX 9019) |
@@ -1536,8 +1536,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/replay_capsule/start_parts.rs` | src | m | 12 crate-vis | — | The step starts a checkpoint carries as parts (FIX 9180, coord-b slice d): each read by its capsule's typed… |
 | `src/code_run/storage/response_erase.rs` | src | m | 7 crate-vis | — | An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay… |
 | `src/code_run/storage/response_owners.rs` | src | s | 11 crate-vis | — | Whose reply content a code run's replay row holds (FIX 5718, KEY STORE = A): one row per replay record, a… |
-| `src/code_run/storage/routing.rs` | src | L | 41 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
-| `src/code_run/storage/routing/bodies.rs` | src | m | 12 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
+| `src/code_run/storage/routing.rs` | src | L | 42 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
+| `src/code_run/storage/routing/bodies.rs` | src | m | 13 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
 | `src/code_run/storage/routing/bodies/admitted_reply.rs` | src | s | 2 crate-vis | — | A session-bound run's reply bodies, admitted as the vault's are (FIX 6647, FIX 5718 part 3) |
 | `src/code_run/storage/routing/replay.rs` | src | s | 1 crate-vis | — | A bound session's replay append, on the run's one route, in one routed transaction: the record compared… |
 | `src/code_run/storage/routing/type_feedback.rs` | src | s | 14 crate-vis | — | A run's type feedback rows on its own route (FIX 10389, CALLS "session feedback lives on the session route… |
@@ -5135,7 +5135,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/pack_byte_map/revisions.rs` | src | s | 5 crate-vis | — | Admitted same-pack revisions (FIX 10062) |
 | `src/registry/pack_byte_map/state.rs` | src | s | 1 fn · 7 crate-vis | — | Pure interning state machine |
 | `src/registry/pack_byte_map/tests.rs` | test | m | — | — | PackByteMap contract tests: public results, persisted rows, and typed refusals |
-| `src/registry/pack_byte_map/types.rs` | src | s | 5 struct · 4 fn · 3 crate-vis | PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity, PackKindRegistration | Name-bearing portable kinds, local registrations, and instance envelopes |
+| `src/registry/pack_byte_map/types.rs` | src | s | 5 struct · 1 enum · 4 fn · 3 crate-vis | PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity, PackKindRegistration, StructuralKindAllocation | Name-bearing portable kinds, local registrations, and instance envelopes |
 | `src/repo_mutation/bundle.rs` | src | m | 13 crate-vis | — | A reviewed file bundle (FIX 7608 slice 5): many files, each with its exact state change, as ONE proposal… |
 | `src/repo_mutation/bundle/tree.rs` | src | s | 6 crate-vis | — | A file bundle's exact tree change (G4 PR2; moved here from `received_file/tree.rs` under bundle names, FIX… |
 | `src/repo_mutation/conflict.rs` | src | m | 2 fn · 8 crate-vis | — | Repository conflict claims and checked resolution writes |
@@ -5549,7 +5549,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/decls/vault_meta_n_r.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_s.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_t_z.rs` | src | m | — | — | — |
-| `src/side_table/erased.rs` | src | s | 5 crate-vis | — | The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form |
+| `src/side_table/erased.rs` | src | s | 7 crate-vis | — | The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form |
 | `src/side_table/mod.rs` | src | L | 49 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/raw_reverse.rs` | src | s | 1 crate-vis | — | Descending raw side rows for readers that retain malformed values as facts |
 | `src/side_table/tests.rs` | test | L | — | — | — |
