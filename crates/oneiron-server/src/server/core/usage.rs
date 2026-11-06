@@ -3,7 +3,84 @@ use std::sync::Arc;
 
 use super::SyncServer;
 
+mod native;
+pub(super) use native::NativeUsage;
+
 impl SyncServer {
+    /// Selects native custody before work starts, using this vault's actual
+    /// writer lease and the original usage owner. This neither creates nor
+    /// replenishes a grant. The trusted host delivers original allocations
+    /// through `persistent_allocation_ledger`, never a reflected live balance.
+    pub fn with_native_usage_metering(
+        self,
+        owner: impl Into<String>,
+    ) -> Result<Self, oneiron::llm::run_admission::AllocationStoreError> {
+        let mut server = self.with_usage_metering(owner).map_err(|error| {
+            oneiron::llm::run_admission::AllocationStoreError::Producer(Box::new(error))
+        })?;
+        let usage = server
+            .vault_usage()
+            .expect("the original usage meter was bound");
+        server.native_usage = Some(NativeUsage::new(
+            Arc::clone(&server.vault),
+            usage,
+            Arc::clone(&server.run_receipts),
+        )?);
+        Ok(server)
+    }
+
+    /// The selected authoritative ledger, for original trusted-host grants,
+    /// status and retirement. Construction does not replay an old full grant.
+    #[must_use]
+    pub fn persistent_allocation_ledger(
+        &self,
+    ) -> Option<Arc<oneiron::llm::run_admission::VaultAllocationLedger>> {
+        self.native_usage
+            .as_ref()
+            .map(|native| Arc::clone(&native.ledger))
+    }
+
+    /// An undeclared run using the explicitly selected native backend, or
+    /// the unchanged ordinary runtime when no native backend was selected.
+    #[must_use]
+    pub fn undeclared_run(
+        &self,
+        run: impl Into<String>,
+        meter: oneiron::BudgetGuard,
+    ) -> oneiron::llm::run_admission::RunAdmission {
+        let run = run.into();
+        match &self.native_usage {
+            Some(native) => native.undeclared_run(run, meter),
+            None => self.ai.model_runtime().undeclared_run(run, meter),
+        }
+    }
+
+    pub(crate) fn record_service_cost(
+        &self,
+        permit: &oneiron::llm::run_admission::RunPermit,
+        cost: crate::usage::UsageServiceCost,
+    ) -> Result<(), crate::usage::UsageError> {
+        if let Some(backend) = permit.persistent_allocation() {
+            let native = self
+                .native_usage
+                .as_ref()
+                .filter(|native| Arc::ptr_eq(&native.backend, &backend))
+                .ok_or(crate::usage::UsageError::InvalidField {
+                    field: "nativeUsageAdmission",
+                    message: "the call belongs to another native backend",
+                })?;
+            return native.producer.record_service_cost(
+                permit.instance(),
+                permit.lease().id(),
+                cost,
+            );
+        }
+        if let Some(usage) = self.vault_usage() {
+            usage.record_service_cost(permit.instance(), permit.lease().id(), cost);
+        }
+        Ok(())
+    }
+
     /// Enables durable usage facts for the owner the trusted host resolved.
     /// The vault id comes from the authority log, never an HTTP payload.
     /// Bind before starting work so every admission has attribution. Each
@@ -68,6 +145,11 @@ impl SyncServer {
 
     fn flush_usage_meters(&self, stopping: bool) {
         self.retrieval_buffer.flush();
+        if let Some(native) = &self.native_usage
+            && let Err(error) = native.backend.retry_settlements()
+        {
+            tracing::warn!(%error, stopping, "original native terminals remain in memory for retry");
+        }
         if let Some(usage) = self.vault_usage() {
             usage.flush_settlements(stopping);
         }

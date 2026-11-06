@@ -29,6 +29,10 @@ pub trait AllocationProducer: Send + Sync {
         txn: &mut heed::RwTxn<'_>,
         terminal: &RunReceipt,
     ) -> Result<(), AllocationStoreError>;
+
+    /// Releases memory-only producer facts only after the original hold and
+    /// usage transaction committed. No vault writer is held here.
+    fn terminal_committed(&self, _terminal: &RunReceipt) {}
 }
 
 /// An explicit backend selection, not a grant or a reflected balance. Grant,
@@ -59,9 +63,11 @@ impl PersistentAllocation {
         terminal: &AllocationTerminal,
         receipt: &RunReceipt,
     ) -> Result<AllocationCommit<()>, AllocationStoreError> {
-        self.ledger.settle(key, terminal.clone(), |txn, _, _| {
+        let commit = self.ledger.settle(key, terminal.clone(), |txn, _, _| {
             self.producer.settle_in_write_txn(txn, receipt)
-        })
+        })?;
+        self.producer.terminal_committed(receipt);
+        Ok(commit)
     }
 }
 

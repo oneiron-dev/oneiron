@@ -268,6 +268,7 @@ pub struct SyncServer {
     pub(super) organ_dir: Option<std::path::PathBuf>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
+    native_usage: Option<Arc<usage::NativeUsage>>,
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,

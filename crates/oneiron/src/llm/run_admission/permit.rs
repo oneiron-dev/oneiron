@@ -87,6 +87,14 @@ impl RunPermit {
         &self.facts
     }
 
+    /// The original native backend, only when this call owns a durable hold.
+    /// A selected run's free or memory-work call has no such backend.
+    #[must_use]
+    pub fn persistent_allocation(&self) -> Option<Arc<super::allocation::PersistentAllocation>> {
+        self.persistent_allocation.as_ref()?;
+        self.run.persistent_allocation.clone()
+    }
+
     /// The declaration revision the call was admitted under.
     #[must_use]
     pub fn revision(&self) -> u32 {
