@@ -72,13 +72,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // An owner's confirm stands only where he gave it: an image's
                 // receipt is never an election (FIX-LIST 10671).
                 b"secret_custody:restore_election:v1:",
-                // A source audience's pending window wakes and the windows its
-                // live mirror last found are this vault's own working state,
-                // and a source landing's birth mark never outlives its write
-                // (fix list row 17455): no image takes them.
-                b"source_audience:policy_wake:v1:",
-                b"source_audience:policy_window:v1:",
-                b"source_audience:birth:v1:",
             ]
             .iter()
             .any(|p| key.starts_with(p))
