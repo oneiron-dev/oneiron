@@ -52211,13 +52211,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -52645,7 +52645,7 @@
      "path": "src/note/pin_index.rs",
      "purpose": "Exact citation dependency indexes shared by sync and featureless erasure",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -73019,7 +73019,7 @@
      "path": "src/store/key_custody/erasable.rs",
      "purpose": "Erasable keys (FIX 8875): one independent custody key per parent and incarnation, for a client whose content…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -73428,7 +73428,7 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -76781,7 +76781,17 @@
      "path": "src/sync/client/window_pads.rs",
      "purpose": "The device's side of the window pad envelope (KS-5, FIX 7107)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/window_pads/deferred.rs",
+     "purpose": "A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -79215,7 +79225,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -79510,7 +79520,7 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -79632,7 +79642,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 24,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
@@ -79709,7 +79719,7 @@
      "path": "src/sync/window/replacement.rs",
      "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -92175,7 +92185,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 359,
+     "files": 360,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92387,7 +92397,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6502,
+   "source_files": 6503,
    "test_files": 895
   },
   "oneiron-android": {
