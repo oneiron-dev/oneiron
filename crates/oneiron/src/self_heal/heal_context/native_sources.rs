@@ -18,6 +18,40 @@ pub(super) fn unavailable_in_txn(
     source: &NativeReadSource,
 ) -> Result<Option<&'static str>> {
     match source {
+        NativeReadSource::OutcomeRow { row: source } => {
+            let Some(row) = crate::skill_reliability::canonical_outcome_dependency_in_txn(
+                lane.vault(),
+                txn,
+                source,
+            )?
+            else {
+                return Ok(Some("source_missing"));
+            };
+            if row.source() != *source {
+                return Ok(Some("source_changed"));
+            }
+            Ok((!lane.native_outcome_dependency_admitted_in_txn(txn, &row)?).then_some("withheld"))
+        }
+        NativeReadSource::AttributedOutcomeScan {
+            skill,
+            prefixes,
+            rows,
+        } => {
+            let (_, current) = crate::skill_reliability::canonical_attributed_outcomes_in_txn(
+                lane.vault(),
+                txn,
+                skill,
+            )?;
+            if current.prefixes() != prefixes.as_slice() || current.sources() != *rows {
+                return Ok(Some("source_changed"));
+            }
+            for row in current.rows() {
+                if !lane.native_outcome_dependency_admitted_in_txn(txn, row)? {
+                    return Ok(Some("withheld"));
+                }
+            }
+            Ok(None)
+        }
         NativeReadSource::RuleOutcome {
             skill,
             receipt,

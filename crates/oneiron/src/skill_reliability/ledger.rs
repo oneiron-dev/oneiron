@@ -18,6 +18,10 @@ use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosteri
 use super::read::read_skill;
 
 mod sources;
+pub(super) use sources::weighted_read;
+
+use super::outcome_position::OutcomePlacement;
+use super::outcome_row::LedgerOutcomeRow;
 
 pub(crate) use sources::{
     attributed_outcome_results_sourced, attributed_outcomes_weighted_sourced,
@@ -28,7 +32,7 @@ pub(crate) use sources::{
 /// The receipt id in the KEY is what makes the projector idempotent: an outcome
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
-const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
+pub(super) const OUTCOME: SideTable<(EntityId, String), LedgerOutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
 
 /// [`OUTCOME`]'s row: the byte layout [`record_outcome_in_txn`] has always spelled. `at` is
@@ -68,7 +72,7 @@ impl RawValue for OutcomeRow {
 
 /// The same outcome row for a named executor's arm: [`OUTCOME`]'s value, keyed by the arm and
 /// the receipt id, so one model's evidence never folds into another's or the legacy arm.
-const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, OutcomeRow, Raw> =
+pub(super) const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, LedgerOutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_OUTCOME);
 
 /// A named executor's arm of one skill: the skill id, then the model id framed by its big-endian
@@ -180,7 +184,11 @@ impl OutcomeRef {
         }
     }
 
-    fn get(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<OutcomeRow>> {
+    pub(super) fn get(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<LedgerOutcomeRow>> {
         match self {
             Self::Unknown(key) => OUTCOME.get(&vault.store, txn, key),
             Self::Paired(key) => PAIRED_OUTCOME.get(&vault.store, txn, key),
@@ -194,7 +202,12 @@ impl OutcomeRef {
         }
     }
 
-    fn put(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &OutcomeRow) -> Result<()> {
+    pub(super) fn put(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        row: &LedgerOutcomeRow,
+    ) -> Result<()> {
         match self {
             Self::Unknown(key) => OUTCOME.put(&vault.store, txn, key, row),
             Self::Paired(key) => PAIRED_OUTCOME.put(&vault.store, txn, key, row),
@@ -251,19 +264,20 @@ pub(super) fn outcome_skill_prefixes(skill: &EntityId) -> [Vec<u8>; 2] {
 }
 
 /// Outcome rows whose judge was displaced: the row stays, its weight leaves every fold.
-const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
+pub(super) const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_DISPLACED_JUDGE);
 
 /// [`DISPLACED`]'s row: the displaced and replacement judge revisions, as a MessagePack map.
 /// Only its presence is read today.
-struct DisplacedMark {
-    displaced: String,
-    replacement: String,
+pub(super) struct DisplacedMark {
+    pub(super) displaced: String,
+    pub(super) replacement: String,
+    pub(super) placement: OutcomePlacement,
 }
 
 impl RawValue for DisplacedMark {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        let mark = Value::Map(vec![
+        let mut mark = vec![
             (
                 Value::from("displaced"),
                 Value::from(self.displaced.as_str()),
@@ -272,8 +286,9 @@ impl RawValue for DisplacedMark {
                 Value::from("replacement"),
                 Value::from(self.replacement.as_str()),
             ),
-        ]);
-        Ok(encode_value(&mark)?)
+        ];
+        self.placement.append(&mut mark)?;
+        Ok(encode_value(&Value::Map(mark))?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
@@ -287,6 +302,7 @@ impl RawValue for DisplacedMark {
         Ok(Self {
             displaced: field("displaced")?,
             replacement: field("replacement")?,
+            placement: OutcomePlacement::decode(&value)?,
         })
     }
 }
@@ -300,14 +316,16 @@ pub(crate) fn mark_displaced_outcome_in_txn(
     old: &str,
     replacement: &str,
 ) -> Result<bool> {
-    let outcome = OutcomeRef::new(skill, executor, receipt);
-    let mark = DisplacedMark {
-        displaced: old.to_owned(),
-        replacement: replacement.to_owned(),
-    };
-    let existed = outcome.contains(vault, txn)?;
-    DISPLACED.put(&vault.store, txn, &outcome, &mark)?;
-    Ok(existed)
+    super::outcome_write::mark_displaced_outcome_positioned_in_txn(
+        vault,
+        txn,
+        skill,
+        executor,
+        receipt,
+        old,
+        replacement,
+        None,
+    )
 }
 
 fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &OutcomeRef) -> Result<bool> {
@@ -495,22 +513,16 @@ pub(super) fn record_outcome_in_txn(
     win: bool,
     at: u64,
 ) -> Result<()> {
-    if receipt_ref.is_empty() {
-        return Err(invalid("a reliability outcome must cite a receipt"));
-    }
-    let model = executor.ok_or(invalid("a skill outcome requires its executor revision"))?;
-    super::read::validate_executor(model)?;
-    let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, wtxn, receipt_ref)?
-        .ok_or(invalid("a skill outcome requires a terminal pack receipt"))?;
-    super::projector::receipt_query(&receipt)?;
-    let key = OutcomeRef::new(skill, executor, receipt_ref);
-    if win
-        && let Some(existing) = key.get(vault, wtxn)?
-        && !existing.win
-    {
-        return Ok(());
-    }
-    key.put(vault, wtxn, &OutcomeRow { win, at })
+    super::outcome_write::record_outcome_positioned_in_txn(
+        vault,
+        wtxn,
+        skill,
+        executor,
+        receipt_ref,
+        win,
+        at,
+        None,
+    )
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
@@ -648,7 +660,7 @@ pub(super) fn tally_outcomes(
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<OutcomeTally> {
-    let rows: Vec<(OutcomeRef, OutcomeRow)> = match executor {
+    let rows: Vec<(OutcomeRef, LedgerOutcomeRow)> = match executor {
         None => OUTCOME
             .scan_from(&vault.store, rtxn, skill.as_bytes())?
             .into_iter()

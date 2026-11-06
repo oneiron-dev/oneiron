@@ -34,6 +34,58 @@ impl CoachReadRequest {
         }
     }
 
+    /// The original DEV basis, with every amendment, primary and conditional
+    /// displacement dependency captured before its same-skill split filter.
+    pub(super) fn dev_receipts(
+        &self,
+        vault: &Vault,
+        skill: &crate::EntityId,
+    ) -> Result<(Vec<String>, Option<NativeFamilySources>)> {
+        use crate::skill_reliability::canonical_attributed_outcomes_in_txn;
+        let unknown = || super::gate::dev_receipts(vault, skill).map(|rows| (rows, None));
+        let Some(key) = &self.key else {
+            return unknown();
+        };
+        let lane = vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        if lane.persist_grant_clock().is_err() {
+            return unknown();
+        }
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+        let Ok(_custody) = vault.store.gate_custody_read_guard() else {
+            return unknown();
+        };
+        let txn = vault.store.env.read_txn()?;
+        let (outcomes, reads) = canonical_attributed_outcomes_in_txn(vault, &txn, skill)?;
+        let captured = reads.rows().iter().all(|row| {
+            matches!(
+                lane.native_outcome_dependency_admitted_in_txn(&txn, row),
+                Ok(true)
+            )
+        });
+        let receipt = captured
+            .then(|| lane.read_projected_in_txn(&txn, &[], None, |_, _| Ok(())))
+            .and_then(std::result::Result::ok)
+            .map(|read| read.receipt);
+        let sources = receipt.map(|receipt| NativeFamilySources {
+            source: crate::store::attempt_sources::NativeReadSource::AttributedOutcomeScan {
+                skill: *skill,
+                prefixes: reads.prefixes().to_vec(),
+                rows: reads.sources(),
+            },
+            receipt,
+        });
+        Ok((
+            outcomes
+                .into_iter()
+                .map(|(receipt, _)| receipt)
+                .filter(|receipt| !super::gate::receipt_is_held_out(skill, receipt))
+                .collect(),
+            sources,
+        ))
+    }
+
     /// The rule scanner reads all raw rows before membership and brief filters.
     pub(super) fn rule_outcome_receipts(
         &self,

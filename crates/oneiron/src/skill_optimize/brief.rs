@@ -112,6 +112,8 @@ pub struct SkillOptimizeBrief {
     pub(crate) native_rule_outcome_sources: Option<super::coach_read::NativeFamilySources>,
     /// Partial original judgment scan; includes rows the later filters discard.
     pub(crate) native_judgment_sources: Option<super::coach_read::NativeFamilySources>,
+    /// Partial original DEV basis, before the split and amended exclusions.
+    pub(crate) native_outcome_sources: Option<super::coach_read::NativeFamilySources>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -259,7 +261,11 @@ pub(super) fn optimize_brief_with_read_at(
     // with it, so no held-out outcome can reach the author through any of the
     // three ledgers this brief draws on. One membership set rather than three
     // filters — a second spelling of the rule is a second thing to get wrong.
-    let dev: HashSet<String> = dev_receipts(vault, &candidate.skill)?.into_iter().collect();
+    let (dev_basis, native_outcome_sources) = match source_read {
+        Some(read) => read.dev_receipts(vault, &candidate.skill)?,
+        None => (dev_receipts(vault, &candidate.skill)?, None),
+    };
+    let dev: HashSet<String> = dev_basis.into_iter().collect();
     let mut defect_receipts = Vec::new();
     let mut defect_judgments = Vec::new();
     let (judgment_rows, native_judgment_sources) = match source_read {
@@ -465,6 +471,7 @@ pub(super) fn optimize_brief_with_read_at(
         native_discovery_sources,
         native_judgment_sources,
         native_rule_outcome_sources,
+        native_outcome_sources,
     })
 }
 
@@ -622,7 +629,6 @@ fn rule_outcome_citations(
         }
     }
 }
-
 #[cfg(test)]
 impl Vault {
     pub(crate) fn skill_optimize_reliability_citations_for_test(
