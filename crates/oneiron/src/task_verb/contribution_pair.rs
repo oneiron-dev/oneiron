@@ -258,6 +258,94 @@ fn issue(
     Ok(())
 }
 
+/// Exact native pair copies in this snapshot, not authority to erase them.
+/// The private pair permit owns this immutable MESSAGE type. Erase checks
+/// its full envelope and reserved identities, not the now-settled ask's
+/// admission state. A TURN with another child stays; its verified MESSAGE
+/// can still leave.
+pub(crate) fn contribution_pair_erase_targets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pair: &OwnerPair,
+) -> Result<Vec<(EntityId, Option<EntityId>)>> {
+    use crate::EdgeKind;
+    use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+
+    let coach = crate::store::base_agent::coach_actor_id()?;
+    let conversation = pair.presentation.conversation;
+    let sole_peer = |source: &EntityId,
+                     direction: EdgeDirection,
+                     kind: EdgeKind,
+                     expected: EntityId|
+     -> Result<bool> {
+        let mut peers = vault.store.port_edge_peers(txn, source, direction, kind)?;
+        if peers.next().transpose()? != Some(expected) {
+            return Ok(false);
+        }
+        Ok(peers.next().transpose()?.is_none())
+    };
+    let mut targets = Vec::new();
+    for part in Part::ALL {
+        let (turn, message, digest) = part.ids(pair);
+        let Some(record) = vault.store.port_entity_record(txn, &message)? else {
+            continue;
+        };
+        if record.entity_type != ENTITY_TYPE_MESSAGE
+            || crate::gate::validate_canonical_witness_message_body(&record.body).is_err()
+        {
+            continue;
+        }
+        let mut input = record.body.as_slice();
+        let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut input) else {
+            continue;
+        };
+        let field = |key: &str| {
+            entries
+                .iter()
+                .find(|(name, _)| name.as_str() == Some(key))
+                .map(|(_, value)| value)
+        };
+        let Some(content) = single_str(&entries, "content") else {
+            continue;
+        };
+        if single_str(&entries, "author") != Some("companion")
+            || single_str(&entries, "type") != Some(CONTRIBUTION_PAIR_QUESTION_TYPE)
+            || field("is_visible").and_then(rmpv::Value::as_bool) != Some(true)
+            || field("order").and_then(rmpv::Value::as_u64) != Some(0)
+            || field("parts").is_some()
+            || field("metadata").and_then(part_key) != Some((pair.handle, part))
+            || *blake3::hash(content.as_bytes()).as_bytes() != digest
+            || !sole_peer(&message, EdgeDirection::Out, EdgeKind::PartOf, turn)?
+            || !sole_peer(
+                &message,
+                EdgeDirection::Out,
+                EdgeKind::BelongsTo,
+                conversation,
+            )?
+            || !sole_peer(&message, EdgeDirection::Out, EdgeKind::AuthoredBy, coach)?
+        {
+            continue;
+        }
+        let mut erase_turn = None;
+        if let Some(record) = vault.store.port_entity_record(txn, &turn)? {
+            let mut input = record.body.as_slice();
+            if record.entity_type == ENTITY_TYPE_TURN
+                && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut input)
+                && input.is_empty()
+                && entries.len() == 1
+                && single_str(&entries, "speaker") == Some("assistant")
+                && sole_peer(&turn, EdgeDirection::Out, EdgeKind::ChildOf, conversation)?
+                && sole_peer(&turn, EdgeDirection::In, EdgeKind::PartOf, message)?
+            {
+                erase_turn = Some(turn);
+            }
+        }
+        targets.push((message, erase_turn));
+    }
+    Ok(targets)
+}
+
 /// Whether the message at `ids` (its conversation, TURN and MESSAGE), with
 /// `metadata` and `content`, is one reserved part of a pending pair no ask
 /// carries yet, asked of a live owner: the reservation holds exactly these

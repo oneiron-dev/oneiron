@@ -47,7 +47,9 @@ pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(crate) use self::fork_erase::ForkProvenance;
-pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
+pub(crate) use self::fork_erase::{
+    contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
+};
 pub(crate) use self::owner_pair::{
     bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
     owner_pair_in_txn, put_owner_pair,

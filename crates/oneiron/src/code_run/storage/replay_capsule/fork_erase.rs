@@ -10,9 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::super::contribution::{FORK_RECEIPT_PREFIX, OwnerPairRoute};
+use super::super::super::contribution::{FORK_RECEIPT_PREFIX, OwnerPair, OwnerPairRoute};
 use super::super::super::replay_capsule::StepReplayCapsule;
-use super::{FORKS, ForkValue, actor_gone_in_txn};
+use super::{FORKS, ForkRow, ForkValue, actor_gone_in_txn};
 use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
 use crate::{EntityId, Result, Vault};
@@ -97,6 +97,46 @@ fn receipt_entities(receipt: &str) -> impl Iterator<Item = EntityId> + '_ {
         .filter_map(|hex| EntityId::from_hex(hex).ok())
 }
 
+fn affected_pairs(rows: &[(([u8; 32], String), ForkRow)], entity: &EntityId) -> BTreeSet<[u8; 32]> {
+    rows.iter()
+        .filter(|(_, row)| {
+            row.provenance.subjects.contains(entity)
+                || matches!(&row.value, ForkValue::Fork(fork)
+                    if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity))
+                || matches!(&row.value, ForkValue::OwnerPair(pair)
+                    if receipt_entities(&pair.scoring.outcome_receipt).any(|id| id == *entity))
+        })
+        .map(|((pair, _), _)| *pair)
+        .collect()
+}
+
+/// The erase's pending copied-question records, read before actor fields or
+/// the pair rows are scrubbed. These records name candidates, not erase authority.
+pub(crate) fn contribution_pair_erase_candidates_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Vec<OwnerPair>> {
+    let mut rows = Vec::new();
+    for key in FORKS.scan_keys(&vault.store, txn, &[])? {
+        let Some(bytes) = FORKS.get_bytes(&vault.store, txn, &key)? else {
+            continue;
+        };
+        if let Ok(row) = FORKS.decode_value(&bytes) {
+            rows.push((key, row));
+        }
+    }
+    let affected = affected_pairs(&rows, entity);
+    Ok(rows
+        .into_iter()
+        .filter(|(key, _)| affected.contains(&key.0))
+        .filter_map(|(_, row)| match row.value {
+            ForkValue::OwnerPair(pair) => Some(*pair),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Re-keys every pair naming `entity` and rebinds CHECK's exact fork
 /// references without changing a measurement. New fork paths are opaque
 /// from birth, so keeping their bodies keeps no target-derived path. A row
@@ -123,17 +163,7 @@ pub(crate) fn erase_contribution_forks_in_txn(
     for key in &undecodable {
         FORKS.delete(&vault.store, wtxn, key)?;
     }
-    let affected: BTreeSet<_> = rows
-        .iter()
-        .filter(|(_, row)| {
-            row.provenance.subjects.contains(entity)
-                || matches!(&row.value, ForkValue::Fork(fork)
-                    if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity))
-                || matches!(&row.value, ForkValue::OwnerPair(pair)
-                    if receipt_entities(&pair.scoring.outcome_receipt).any(|id| id == *entity))
-        })
-        .map(|((pair, _), _)| *pair)
-        .collect();
+    let affected = affected_pairs(&rows, entity);
     if affected.is_empty() {
         return Ok(());
     }

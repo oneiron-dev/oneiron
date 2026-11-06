@@ -62,7 +62,8 @@ pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
     ForkProvenance, ForkRows, actor_gone_in_txn, bind_capsule_answer, capsule_context_body,
-    capsule_request, capsule_route_prompt, capsule_start_body, erase_capsule_actor_in_txn,
+    capsule_request, capsule_route_prompt, capsule_start_body,
+    contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
     refresh_staged_request, route_prompt_at, step_replay_capsules_in_txn, store_fork_execution,

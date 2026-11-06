@@ -193,9 +193,10 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_request,
     capsule_route_prompt, capsule_start_body, continuation_seed_body_in_txn,
-    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn,
-    publish_continuation_output_in_txn, put_run_continuation_row_in_txn, route_prompt_at,
-    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
+    contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
+    erase_contribution_forks_in_txn, publish_continuation_output_in_txn,
+    put_run_continuation_row_in_txn, route_prompt_at, run_continuation_in_txn,
+    seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
