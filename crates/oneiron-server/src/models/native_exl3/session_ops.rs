@@ -21,8 +21,8 @@ use serde_json::Value as JsonValue;
 
 use super::buffer::{InputRegion, SnapshotRegion};
 use super::transport::Channel;
-use super::worker_host::NativeLaunch;
 use super::wire::{self, Incoming};
+use super::worker_host::NativeLaunch;
 
 /// How a session op went wrong.
 pub(in crate::models) enum OpFault {
