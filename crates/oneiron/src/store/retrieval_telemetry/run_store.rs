@@ -1,7 +1,5 @@
 //! Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies, key formats, and codecs.
 
-use std::collections::HashSet;
-
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
@@ -930,22 +928,38 @@ fn stage_context_pack_retrieval_run_finalize(
         memory.materialized(0, bytes);
         bytes
     });
-    if let Some(trace) = record.trace.as_mut() {
+    let allowed_bytes = if let Some(trace) = record.trace.as_mut() {
         // Finalization publishes only the caller's post-filter result set.
         // Earlier stages also reach the durable row and its fork index, so
         // retain their scoring detail only for ids that actually surfaced.
-        let allowed: HashSet<[u8; 16]> = surfaced_result_ids.iter().copied().collect();
+        let mut allowed = surfaced_result_ids.to_vec();
+        let allowed_bytes = memory.as_deref_mut().map_or(0, |memory| {
+            let bytes = (allowed.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64);
+            memory.materialized(0, bytes);
+            bytes
+        });
+        allowed.sort_unstable();
+        allowed.dedup();
         for channel in &mut trace.per_channel {
             channel
                 .candidates
-                .retain(|entry| allowed.contains(&entry.result_id));
+                .retain(|entry| allowed.binary_search(&entry.result_id).is_ok());
         }
         for stage in [&mut trace.fused, &mut trace.blended, &mut trace.reranked] {
             stage
                 .candidates
-                .retain(|entry| allowed.contains(&entry.result_id));
+                .retain(|entry| allowed.binary_search(&entry.result_id).is_ok());
         }
         trace.final_stage.candidates = record.score_breakdown.clone();
+        allowed_bytes
+    } else {
+        0
+    };
+    if allowed_bytes != 0
+        && let Some(memory) = memory.as_deref_mut()
+    {
+        memory.shrink(allowed_bytes);
     }
     if let Some(memory) = memory.as_deref_mut() {
         let bytes = score_breakdown_bytes(&record.score_breakdown)
