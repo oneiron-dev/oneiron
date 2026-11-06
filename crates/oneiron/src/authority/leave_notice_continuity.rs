@@ -179,17 +179,44 @@ pub(super) fn store_delegation_in_txn(
     DELEGATION_BY_HANDOFF.put(store, txn, &delegation.handoff_entry, &digest)
 }
 
-/// The canonical bytes of the delegation stored for the handoff `entry`, if
-/// any.
-pub(super) fn delegation_of_handoff_in_txn(
+/// The stored delegations that hand the root on to `signer`, as (handoff
+/// entry, canonical bytes), in chain order (FIX 7932): walked back from
+/// `signer` through each certificate's own predecessor, so a home that
+/// adopted a checkpoint image and holds no raw ReRoot row still finds the
+/// certificates a home move carried in. The walk ends at a key no stored
+/// delegation hands the root to, at a key more than one does (a fork this
+/// selection does not choose between), or at a repeated handoff. It only
+/// selects what rides: the member's env verifies every link.
+pub(super) fn delegation_chain_to_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entry: &AuthorityEntryHash,
-) -> Result<Option<Vec<u8>>> {
-    let Some(digest) = DELEGATION_BY_HANDOFF.get(store, txn, entry)? else {
-        return Ok(None);
-    };
-    DELEGATIONS.get(store, txn, &digest)
+    signer: &AuthorityKey,
+) -> Result<Vec<(AuthorityEntryHash, Vec<u8>)>> {
+    let mut stored = Vec::new();
+    for (_, bytes) in DELEGATIONS.scan(store, txn)? {
+        let delegation = LeaveNoticeDelegation::decode(&bytes)?;
+        stored.push((delegation, bytes));
+    }
+    let mut chain: Vec<(AuthorityEntryHash, Vec<u8>)> = Vec::new();
+    let mut key = signer.clone();
+    loop {
+        let mut to = stored
+            .iter()
+            .filter(|(delegation, _)| delegation.successor == key);
+        let (Some((delegation, bytes)), None) = (to.next(), to.next()) else {
+            break;
+        };
+        if chain
+            .iter()
+            .any(|(handoff, _)| *handoff == delegation.handoff_entry)
+        {
+            break;
+        }
+        chain.push((delegation.handoff_entry, bytes.clone()));
+        key = delegation.predecessor.clone();
+    }
+    chain.reverse();
+    Ok(chain)
 }
 
 impl Vault {

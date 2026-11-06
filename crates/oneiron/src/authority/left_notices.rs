@@ -170,9 +170,10 @@ impl Vault {
     }
 
     /// The continuity a removed person's notices ride with (FIX 7932): the
-    /// canonical bytes of the leave-notice delegation saved for each root
-    /// edge to `signer` ([`root_chain`]) the person's env did not fold, in
-    /// chain order. An edge with no saved delegation (a RotateKey, a ReRoot
+    /// canonical bytes of the stored leave-notice delegations on the chain
+    /// to `signer`, walked through the certificates themselves
+    /// (`delegation_chain_to_in_txn`), less the handoffs the person's env
+    /// folded, in chain order. An edge with no saved delegation (a RotateKey, a ReRoot
     /// settled with none or before delegations were signed) sends nothing,
     /// and the env cannot bridge it. Unknown heads never widen what is read:
     /// only the delegations on this chain ever ride.
@@ -186,17 +187,19 @@ impl Vault {
         let history = super::history_transfer::history_in_txn(self, txn)?;
         let folded = member_folded(&history, member_heads);
         let mut delegations = Vec::new();
-        for edge in root_chain(&history, fold, signer)? {
-            if folded.contains(&edge) {
+        // The chain is read from the stored certificates, not the resident
+        // rows: a home that adopted a checkpoint image holds no raw ReRoot
+        // row for a handoff the image covers (FIX 7932, review round 2). A
+        // handoff held here as a row this fold does not count rides nothing.
+        for (edge, bytes) in
+            super::leave_notice_continuity::delegation_chain_to_in_txn(&self.store, txn, signer)?
+        {
+            if folded.contains(&edge)
+                || (history.contains_key(&edge) && !fold.valid_entries.contains(&edge))
+            {
                 continue;
             }
-            if let Some(bytes) = super::leave_notice_continuity::delegation_of_handoff_in_txn(
-                &self.store,
-                txn,
-                &edge,
-            )? {
-                delegations.push(bytes);
-            }
+            delegations.push(bytes);
         }
         Ok(delegations)
     }
