@@ -743,9 +743,10 @@ pub(super) fn committed_text(
     let Some(value) = committed_body(vault, txn, &seed.message_id)? else {
         return Ok(None);
     };
-    if seed.author == crate::memory::WitnessAuthor::System {
-        // System rows intentionally have no AuthoredBy edge. Only a stream's
-        // durable actor-bound receipt proves which system writer may continue.
+    if !seed.author.names_writer() {
+        // System and counterparty rows intentionally have no AuthoredBy edge.
+        // Only a stream's durable actor-bound receipt proves which writer may
+        // continue.
         if storage::receipt(vault, txn, seed.message_id)?.is_none_or(|r| r.actor != seed.actor) {
             return Err(MessageStreamError::WrongActor);
         }
@@ -778,7 +779,7 @@ pub(super) fn committed_text(
         (EdgeKind::BelongsTo, Some(seed.conversation)),
         (
             EdgeKind::AuthoredBy,
-            (seed.author != crate::memory::WitnessAuthor::System).then_some(seed.actor),
+            seed.author.names_writer().then_some(seed.actor),
         ),
     ] {
         if crate::memory::sole_edge_target(&vault.store, txn, &seed.message_id, kind, "message")?

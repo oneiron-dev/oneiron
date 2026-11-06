@@ -2700,7 +2700,7 @@ class TaskAccept(TypedDict):
 class TaskRedo(TypedDict):
     task_ref: EntityId
     intent_key: str
-WitnessAuthor = Literal["user", "companion", "system"]
+WitnessAuthor = Literal["user", "companion", "system", "counterparty"]
 class WitnessAssertions(TypedDict):
     cited: list[RecordRef]
     created: list[RecordRef]

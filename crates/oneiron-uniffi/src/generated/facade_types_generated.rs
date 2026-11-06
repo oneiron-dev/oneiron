@@ -8537,6 +8537,8 @@ pub enum WireWitnessAuthor {
     Companion,
     #[serde(rename = "system")]
     System,
+    #[serde(rename = "counterparty")]
+    Counterparty,
 }
 
 /// `oneiron::memory::witness::types::WitnessAssertions`.

@@ -1005,7 +1005,7 @@ export type TaskAccept = { task_ref: EntityId; intent_key: string }
 /** `oneiron::task_verb::highway_types::TaskRedo` */
 export type TaskRedo = { task_ref: EntityId; intent_key: string }
 /** `oneiron::memory::witness::types::WitnessAuthor` */
-export type WitnessAuthor = "user" | "companion" | "system"
+export type WitnessAuthor = "user" | "companion" | "system" | "counterparty"
 /** `oneiron::memory::witness::types::WitnessAssertions` */
 export type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] }
 /** `oneiron_store::conversation_record::QuoteSpan` */

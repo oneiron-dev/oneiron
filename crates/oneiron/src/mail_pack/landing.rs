@@ -293,7 +293,11 @@ impl<'v> Landing<'v> {
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
-                author: WitnessAuthor::User,
+                author: if headers.sent_by_mailbox {
+                    WitnessAuthor::User
+                } else {
+                    WitnessAuthor::Counterparty
+                },
                 message_type: format!("import.{stamp_source}"),
                 content: text,
                 parts: None,

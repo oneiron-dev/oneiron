@@ -16,7 +16,7 @@ from . import facade_types as Facade
 
 __all__ = ["Oneiron", "OneironError"]
 
-WitnessAuthor = Literal["user", "companion", "system"]
+WitnessAuthor = Literal["user", "companion", "system", "counterparty"]
 Effort = Literal["light", "medium", "high", "xhigh", "max", "call"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 

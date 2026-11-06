@@ -98,7 +98,7 @@ pub struct TurnActionAttempt {
 /// One earlier line of the conversation, as a chat request carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnActionLine {
-    /// `User` or `Companion`.
+    /// `User`, `Companion` or `Counterparty`.
     pub author: WitnessAuthor,
     pub text: String,
     /// The selected TURN and MESSAGE behind this line; unknown if either

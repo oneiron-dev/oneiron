@@ -383,13 +383,14 @@ fn clip(text: &str, bytes: usize) -> &str {
 /// text. Its bytes must be the canonical transcript envelope.
 fn thread_entry(admitted: &Admitted) -> Result<Option<ThreadLensEntry>> {
     use crate::gate::{
-        WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
-        WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
+        WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+        WITNESS_AUTHOR_USER, WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
     };
     let author = match validate_canonical_witness_message_body(&admitted.body)? {
         WitnessMessageBodyAuthor::User => WITNESS_AUTHOR_USER,
         WitnessMessageBodyAuthor::Companion => WITNESS_AUTHOR_COMPANION,
         WitnessMessageBodyAuthor::System => WITNESS_AUTHOR_SYSTEM,
+        WitnessMessageBodyAuthor::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
     };
     let value = rmpv::decode::read_value(&mut admitted.body.as_slice())
         .map_err(|_| Error::InvalidConfig("thread source is not a MESSAGE envelope".into()))?;

@@ -16,7 +16,7 @@ use super::super::{AddressMode, AppendRecord, AppendedRecord};
 use super::value;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::gate::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use crate::gate::{WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -163,7 +163,11 @@ pub(super) fn append_message_in_txn(
         .made_by(&id, birth)
         .edge(&id, EdgeKind::PartOf, &turn, 1.0)
         .edge(&id, EdgeKind::BelongsTo, &input.conversation, 1.0);
-    if envelope.author != WITNESS_AUTHOR_SYSTEM {
+    // A `counterparty` row is somebody else's speech, never its writer's.
+    if !matches!(
+        envelope.author,
+        WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
+    ) {
         batch = batch.edge(&id, EdgeKind::AuthoredBy, &writer, 1.0);
     }
     if let Some(parent) = input.parent {

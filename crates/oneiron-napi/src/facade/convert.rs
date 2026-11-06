@@ -81,7 +81,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
     for message in &turn.messages {
         let author = WitnessAuthor::parse(&message.author).ok_or_else(|| {
             format!(
-                "author must be one of user, companion, system; got {:?}",
+                "author must be one of user, companion, system, counterparty; got {:?}",
                 message.author
             )
         })?;

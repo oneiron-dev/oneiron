@@ -523,7 +523,7 @@ declare namespace Sdk {
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
   type TaskAccept = { task_ref: EntityId; intent_key: string };
   type TaskRedo = { task_ref: EntityId; intent_key: string };
-  type WitnessAuthor = "user" | "companion" | "system";
+  type WitnessAuthor = "user" | "companion" | "system" | "counterparty";
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
   type QuoteSpan = { message: EntityId; start: number; end: number };
   type MessageBirth = { conversation_ref: string; turn_ref?: string | null; author: WitnessAuthor; message_type: string; metadata?: unknown | null; is_visible: boolean; order: number; occurred_at: number; assertions?: WitnessAssertions; quote?: QuoteSpan | null };

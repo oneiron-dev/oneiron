@@ -29,7 +29,10 @@ use super::watermark::decode_turn_body;
 use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -370,6 +373,7 @@ fn collect_with(
     ) {
         DreamerTurnRole::User => WITNESS_AUTHOR_USER,
         DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+        DreamerTurnRole::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         // Branch admission refuses every other role; no child is its text.
         _ => {
             return Ok(TurnText {

@@ -564,7 +564,7 @@ impl Memory<'_> {
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
             // An imported row's author is the source's speaker, named in its
             // metadata; the importer did not write it.
-            if planned.message.author != WitnessAuthor::System && plan.imported.is_none() {
+            if planned.message.author.names_writer() && plan.imported.is_none() {
                 batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, &self.actor, 1.0);
             }
         }
