@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4595 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1265 facade rows, 4601 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -59685,6 +59685,131 @@ pub struct ScopedReadResultTemporalSearchResult {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::memory::edge_provenance::EdgeProvenanceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeProvenanceRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "edge_kind")]
+    pub edge_kind: String,
+    #[serde(rename = "target_ref")]
+    pub target_ref: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
+}
+
+/// `oneiron::memory::edge_provenance::EdgeProvenanceActorClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EdgeProvenanceActorClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::memory::edge_provenance::EdgeProvenanceSupersession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EdgeProvenanceSupersession {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "confirmed")]
+    Confirmed,
+    #[serde(rename = "disputed")]
+    Disputed,
+    #[serde(rename = "retracted")]
+    Retracted,
+}
+
+/// `oneiron::memory::edge_provenance::EdgeProvenanceLifecycle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EdgeProvenanceLifecycle {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "superseded")]
+    Superseded,
+    #[serde(rename = "retracted")]
+    Retracted,
+}
+
+/// `oneiron::memory::edge_provenance::EdgeProvenanceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EdgeProvenanceView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "short_ref", default, skip_serializing_if = "Option::is_none")]
+    pub short_ref: Option<String>,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "edge_kind")]
+    pub edge_kind: String,
+    #[serde(rename = "target_ref")]
+    pub target_ref: String,
+    #[serde(rename = "actor_entity_ref")]
+    pub actor_entity_ref: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: EdgeProvenanceActorClass,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(
+        rename = "body_snapshot_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub body_snapshot_ref: Option<String>,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "supersession_status")]
+    pub supersession_status: EdgeProvenanceSupersession,
+    #[serde(
+        rename = "valid_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub valid_from: Option<u64>,
+    #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<u64>,
+    #[serde(
+        rename = "substrate_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub substrate_ref: Option<String>,
+    #[serde(
+        rename = "reasoning_effort",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reasoning_effort: Option<String>,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: EdgeProvenanceLifecycle,
+    #[serde(rename = "stale")]
+    pub stale: bool,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+    #[serde(rename = "occurred_start")]
+    pub occurred_start: u64,
+    #[serde(rename = "occurred_end")]
+    pub occurred_end: u64,
+    #[serde(rename = "winner")]
+    pub winner: bool,
+}
+
+/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `EdgeProvenanceViewList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultEdgeProvenanceViewList {
+    #[serde(rename = "value")]
+    pub value: Vec<EdgeProvenanceView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
 /// `oneiron::memory::structural::productivity::ProductivityCreateRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ProductivityCreateRole {
@@ -68843,6 +68968,12 @@ pub struct AuthorTakeRequest {
     pub target: AuthorTakeTarget,
     #[serde(rename = "markdown")]
     pub markdown: String,
+    #[serde(
+        rename = "source_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_ref: Option<String>,
 }
 
 /// `oneiron::verbs::memory_requests::CreateNoteFromEntityRequest`.

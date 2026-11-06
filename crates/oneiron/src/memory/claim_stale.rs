@@ -51,7 +51,7 @@ pub struct ReadFilterInput {
 }
 
 impl ReadFilterInput {
-    fn to_filter(&self) -> crate::gate::RetrievalFilter {
+    pub(super) fn to_filter(&self) -> crate::gate::RetrievalFilter {
         crate::gate::RetrievalFilter {
             entity_types: self.entity_types.clone(),
             max_sensitivity_band: self.max_sensitivity_band,

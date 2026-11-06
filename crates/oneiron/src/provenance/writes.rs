@@ -633,6 +633,22 @@ impl Vault {
         self.write_edge_provenance_inner(wtxn, write, allow_structural, true)
     }
 
+    /// The `edge.provenance` Claim of one link a NOTE birth's content writer
+    /// staged in `wtxn` (FIX 3959), written in that same transaction, never a
+    /// nested one: a structural link takes the authored-structural path of
+    /// [`Vault::put_structural_edge_provenance`] and keeps its 12-byte value;
+    /// a semantic link takes [`Vault::put_edge_provenance`]'s path and is
+    /// stamped from its cohort winner.
+    pub(crate) fn put_authored_link_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+    ) -> Result<()> {
+        let structural =
+            edge_value_layout_for_kind(write.subject.kind, false) == EdgeValueLayout::Structural;
+        self.write_edge_provenance_inner(wtxn, write, structural, false)
+    }
+
     /// FIX 7755: [`Self::write_edge_provenance_in_txn`] with an explicit
     /// authored-structural inlet. `allow_structural` is true only on the new
     /// structural doors above; every existing caller keeps the static-kind

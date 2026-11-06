@@ -1143,6 +1143,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.search.temporal", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))
         .route("/vault.neighbors", post(facade_route))
+        .route("/vault.edges.provenance", post(facade_route))
         .route("/vault.structural.put", post(facade_route))
         .route("/vault.habits.checkin", post(facade_route))
         .route("/vault.productivity.create", post(facade_route))
