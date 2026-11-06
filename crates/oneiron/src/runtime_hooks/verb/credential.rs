@@ -129,11 +129,33 @@ impl VerbAskCredentialWitness {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerbAskMcpCeiling {
     pub actor_ref: EntityId,
+    #[serde(with = "mcp_actor_class")]
     pub actor_class: EdgeActorClass,
     pub world: Option<EntityId>,
     pub facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
     pub write_facet: Option<EntityId>,
     pub bound_verbs: Option<std::collections::BTreeSet<String>>,
+}
+
+mod mcp_actor_class {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::EdgeActorClass;
+
+    pub(super) fn serialize<S: Serializer>(
+        class: &EdgeActorClass,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*class as u8)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<EdgeActorClass, D::Error> {
+        let byte = u8::deserialize(deserializer)?;
+        EdgeActorClass::try_from_u8(byte)
+            .ok_or_else(|| serde::de::Error::custom("invalid MCP actor class"))
+    }
 }
 
 /// The door a credential call came in by, and what it carried beside the
