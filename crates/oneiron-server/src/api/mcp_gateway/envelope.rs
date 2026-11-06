@@ -39,7 +39,29 @@ mod request;
 
 pub(crate) use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
-pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+/// The newest MCP protocol version this server speaks: what `initialize`
+/// answers a client that asks for none of [`MCP_PROTOCOL_VERSIONS`].
+pub(crate) const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// The MCP protocol versions this server speaks, newest first. An engine
+/// call (CALLS, FIX 4902): the current Streamable HTTP revisions, and
+/// `2024-11-05` kept for a client that asks for it. Each is served alike:
+/// one JSON-RPC request per POST, answered `application/json`; no batch; no
+/// server-initiated stream. The endpoint holds no session: it mints no
+/// `Mcp-Session-Id` and reads none, so each POST stands alone.
+pub(crate) const MCP_PROTOCOL_VERSIONS: &[&str] =
+    &[MCP_PROTOCOL_VERSION, "2025-06-18", "2024-11-05"];
+
+/// The version `initialize` answers (MCP lifecycle): the one the client
+/// asks for when this server speaks it, else the newest. An engine call
+/// (CALLS, FIX 4902).
+fn mcp_negotiated_version(requested: Option<&str>) -> &'static str {
+    MCP_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|version| Some(*version) == requested)
+        .unwrap_or(MCP_PROTOCOL_VERSION)
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct McpJsonRpcRequest {
