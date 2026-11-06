@@ -23,7 +23,7 @@ impl Vault {
             if remaining == 0 {
                 break;
             }
-            match self.collect_one_session(&session_ref, &overlay, remaining, &mut report) {
+            match self.collect_one_session(&session_ref, &overlay, remaining, &mut report, None) {
                 Ok(seen) => remaining = remaining.saturating_sub(seen),
                 Err(error) => tracing::warn!(
                     kind = ?error.kind(),
@@ -34,12 +34,26 @@ impl Vault {
         report
     }
 
+    /// Retries this room's queued digest once its body operation gave back
+    /// its pins. It never considers the canonical release queue.
+    pub(crate) fn collect_released_session_body(
+        &self,
+        session_ref: &str,
+        overlay: &Arc<SessionOverlay>,
+        digest: &[u8; 32],
+    ) -> Result<()> {
+        let mut report = ResultBodyCollectReport::default();
+        self.collect_one_session(session_ref, overlay, usize::MAX, &mut report, Some(digest))
+            .map(|_| ())
+    }
+
     fn collect_one_session(
         &self,
         session_ref: &str,
         overlay: &Arc<SessionOverlay>,
         limit: usize,
         report: &mut ResultBodyCollectReport,
+        only_digest: Option<&[u8; 32]>,
     ) -> Result<usize> {
         let (segment, taken, seen) = self.with_write_txn_grouped(|txn| {
             let segment = overlay.install_txn_segment()?;
@@ -60,6 +74,7 @@ impl Vault {
                         .and_then(<[u8; 32] as SideKey>::decode_key),
                     _ => None,
                 })
+                .filter(|digest| only_digest.is_none_or(|only| digest == only))
                 .take(limit)
                 .collect();
             let mut taken = Vec::new();
