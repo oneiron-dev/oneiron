@@ -74,6 +74,10 @@ struct Frozen {
     cold: Option<(ModelId, ModelLocality)>,
     home: CompactionHome,
     live: Option<Arc<LiveCompactionFork>>,
+    /// Whether the row the flight froze under is on `auto`: its live fork's
+    /// first call goes out only while the prefix is still warm, a cheap
+    /// writer standing by or not (FIX 9462).
+    auto: bool,
     /// The source the flight's first call ran on, for every later call.
     executed: Arc<OnceLock<SelfCompactionSource>>,
 }
@@ -224,13 +228,13 @@ impl SelfCompactionBackend {
                 return Err(SelfCompactionUnavailable::RouteWiderThanPolicy);
             }
             let home = load_compaction_home(&self.route.vault, &self.host)?;
+            let auto = row.source == SelfCompactionSource::Auto;
             return Ok(Frozen {
                 // Only `auto` keeps the cheap writer standing by.
-                cold: cold
-                    .ok()
-                    .filter(|_| row.source == SelfCompactionSource::Auto),
+                cold: cold.ok().filter(|_| auto),
                 home,
                 live: Some(Arc::new(fork)),
+                auto,
                 executed,
             });
         }
@@ -240,6 +244,7 @@ impl SelfCompactionBackend {
             cold: Some(cold),
             home,
             live: None,
+            auto: row.source == SelfCompactionSource::Auto,
             executed,
         })
     }
@@ -328,11 +333,19 @@ impl SelfCompactionBackend {
             (Some(fork), None | Some(SelfCompactionSource::LiveFork)) => fork,
             _ => return retained(self.serve_retained(frozen, request, retry)),
         };
-        let while_warm = frozen.cold.is_some() && executed.is_none();
+        // Under `auto` the first call goes out only while the prefix is still
+        // warm, whether or not a cheap writer stands by (FIX 9462).
+        let while_warm = frozen.auto && executed.is_none();
         match self
             .route
             .serve_live_fork(fork, &frozen.home, request, retry, while_warm)
         {
+            // Cold before anything was sent, with no cheap writer to write
+            // the flight instead: the window stays raw, and says why.
+            Ok(None) if frozen.cold.is_none() => Err((
+                SelfCompactionUnavailable::LivePrefixCold.refusal().into(),
+                SelfCompactionSource::RetainedTurns,
+            )),
             Ok(None) => {
                 let _ = frozen.executed.set(SelfCompactionSource::RetainedTurns);
                 retained(self.serve_retained(frozen, request, retry))
