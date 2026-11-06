@@ -36,6 +36,8 @@
 mod left_env;
 mod member_removal;
 
+pub(crate) use member_removal::discard_bundle_payload_in_txn;
+
 #[allow(unused_imports, reason = "L03's OF-158 leave calls these")]
 pub(crate) use left_env::{LEFT_ENV_KEPT_SAMPLE, LeftEnvPurge, purge_left_shared_env_in_txn};
 use member_removal::{discard_owned_payload, remove_member};

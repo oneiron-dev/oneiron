@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use heed::RwTxn;
 
 use super::documents::NOTE_PROPOSAL_DOC;
-use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE};
+use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NoteReviewBundle};
 use crate::store::Store;
 use crate::{EntityId, Result};
 
@@ -52,23 +52,52 @@ pub(crate) fn discard_workflow_in_txn(
         if !named {
             continue;
         }
-        let shared = bundle
-            .waiting
-            .iter()
-            .any(|fork| !notes.contains(&fork.note))
-            || bundle
-                .landed
-                .iter()
-                .any(|receipt| !notes.contains(&receipt.note));
+        let alone = names_only(&bundle, notes);
         bundle.waiting.retain(|fork| !notes.contains(&fork.note));
         if bundle.waiting.is_empty() && bundle.landed.is_empty() {
             NOTE_PROPOSAL_BUNDLE.delete(store, txn, &key)?;
         } else {
-            if !shared {
-                bundle.explainer = "redacted".to_owned();
+            if alone {
+                bundle.explainer = REDACTED_EXPLAINER.to_owned();
             }
             NOTE_PROPOSAL_BUNDLE.put(store, txn, &key, &bundle)?;
         }
     }
     Ok(())
+}
+
+/// The explainer of each review bundle whose every named note is among
+/// `discarded`, the notes all of one owner's discard's writes took: it reads
+/// "redacted" once the last of them went in a write of its own, which saw
+/// only its own notes (FIX 14534).
+pub(crate) fn discard_bundle_explainers_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    discarded: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if discarded.is_empty() {
+        return Ok(());
+    }
+    for (key, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(store, txn)? {
+        if bundle.explainer != REDACTED_EXPLAINER && names_only(&bundle, discarded) {
+            bundle.explainer = REDACTED_EXPLAINER.to_owned();
+            NOTE_PROPOSAL_BUNDLE.put(store, txn, &key, &bundle)?;
+        }
+    }
+    Ok(())
+}
+
+/// What a bundle's explainer reads once no note it quotes stays.
+const REDACTED_EXPLAINER: &str = "redacted";
+
+/// Whether `bundle` names a note, waiting or landed, and every one it names
+/// is among `notes`: its explainer then quotes none that stays.
+fn names_only(bundle: &NoteReviewBundle, notes: &BTreeSet<EntityId>) -> bool {
+    let mut named = bundle
+        .waiting
+        .iter()
+        .map(|fork| &fork.note)
+        .chain(bundle.landed.iter().map(|receipt| &receipt.note))
+        .peekable();
+    named.peek().is_some() && named.all(|note| notes.contains(note))
 }

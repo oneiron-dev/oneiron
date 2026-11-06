@@ -178,10 +178,10 @@ impl Store {
     /// call 4 = A): each decision bound to one of `claims`, and each bundle
     /// whose every constituent is one, becomes its retention skeleton in
     /// place at `at`, as an erase leaves it: identifier-only immutable
-    /// history. Local only: nothing is owed, and no tray, obligation or key
-    /// is touched. A decision a hold keeps, a bundle that names a claim that
-    /// stays, and a batch preflight's future receipt keep their bytes. The
-    /// number made skeletons.
+    /// history. Local only: nothing is owed, and no tray, obligation, key or
+    /// other reader's saved weave digest is touched. A decision a hold keeps,
+    /// a bundle that names a claim that stays, and a batch preflight's future
+    /// receipt keep their bytes. The number made skeletons.
     pub(crate) fn discard_claim_gate_payload_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -210,7 +210,7 @@ impl Store {
         }
         let count = redact.len();
         for record in redact.into_values() {
-            self.redact_gate_decision_in_txn(wtxn, record, at)?;
+            self.skeleton_gate_decision_in_txn(wtxn, record, at)?;
         }
         Ok(count)
     }
@@ -250,10 +250,27 @@ impl Store {
         Ok(found)
     }
 
+    /// `record`, live, as its retention skeleton in place, and the saved
+    /// weave digests that quote its reasons scrubbed: an erase's redaction.
+    fn redact_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: GateDecisionRecord,
+        redacted_at: u64,
+    ) -> Result<()> {
+        let decision = record.decision_id;
+        let bound = record.claim_id.is_some();
+        self.skeleton_gate_decision_in_txn(wtxn, record, redacted_at)?;
+        if bound {
+            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, decision)?;
+        }
+        Ok(())
+    }
+
     /// `record`, live, as its retention skeleton in place: its grant-ref index
     /// row and its claim references go with its content, and so does every
     /// scrub it was owed. The claim index stays for discovery.
-    fn redact_gate_decision_in_txn(
+    fn skeleton_gate_decision_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         mut record: GateDecisionRecord,
@@ -283,9 +300,6 @@ impl Store {
             &record.decision_id,
             &encode_gate_decision(&record)?,
         )?;
-        if record.claim_id.is_some() {
-            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, record.decision_id)?;
-        }
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)
     }
 
