@@ -1,6 +1,7 @@
 //! Opt-in AG-UI event-dump normalization, without capture or outcome inference.
 
 mod file;
+pub(crate) use file::project_ag_ui_file;
 mod observations;
 pub use file::{
     AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt,

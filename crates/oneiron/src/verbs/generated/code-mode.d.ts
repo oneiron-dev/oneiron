@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1307 code-mode rows (1267 host rows, 40 run rows), 4604 declarations.
+// Census: 1307 code-mode rows (1267 host rows, 40 run rows), 4606 declarations.
 // Replies: 1120 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
@@ -1787,7 +1787,9 @@ declare namespace Sdk {
   type EvalFamilyAssignRequest = { seat: EvalSeat; roots: string[]; purpose: FamilyPurpose };
   type EvalCasesRequest = { seat: EvalSeat; purpose: FamilyPurpose };
   type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number; source_rows?: EntityId[] | null };
-  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[]; source_rows?: EntityId[] | null };
+  type EvalRepairTaskSource = { claim_ref: string; source_hash: string; outcome_ordinal: number; task_pointer: string; seat: EvalSeat };
+  type EvalRepairCaseRecipe = { source: EvalRepairTaskSource; task_hash: number[] };
+  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[]; repair_task?: EvalRepairCaseRecipe | null; source_rows?: EntityId[] | null };
   type EvalCaseDraft = { seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number };
   type CohortRetirement = { reason: string; skill: EntityId; revision: string; attempt: EntityId; exposure: EvalExposureCounts };
   type EvalCohort = { id: EntityId; seat: EvalSeat; from: number; until: number; families: EntityId[]; cases: EntityId[]; membership_digest: string; rubric_revision: string; reference: boolean; cut_at: number; retired_at?: number | null; retirement?: CohortRetirement | null };

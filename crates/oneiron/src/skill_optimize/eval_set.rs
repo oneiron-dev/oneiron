@@ -50,6 +50,7 @@ pub mod doors;
 mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+mod repair_case;
 mod repair_task;
 mod replay_input;
 mod sufficiency;
@@ -85,6 +86,7 @@ pub use measurement::{
     MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
     eval_seat_canary,
 };
+pub use repair_case::{EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseRequest};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
@@ -261,6 +263,9 @@ pub struct EvalCase {
     pub source_at: u64,
     pub recorded_at: u64,
     pub labels: Vec<EvalLabel>,
+    /// Reconstruction pins only. Expected responses remain in the scoped source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_task: Option<EvalRepairCaseRecipe>,
     /// The rows the case's content was read from, frozen when it was
     /// recorded (FIX 5761): its receipts' and its parents' content and
     /// labels. `None`, unknown, when any of them is: a receipt names no
@@ -726,6 +731,7 @@ fn record_case_in_txn(
         source_at: draft.source_at,
         recorded_at: at,
         labels: Vec::new(),
+        repair_task: None,
         source_rows: super::union_source_rows(sources),
     };
     put_case_in_txn(vault, txn, &mut case)?;
