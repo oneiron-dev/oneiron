@@ -53,3 +53,25 @@ Combined guardian loss and server death during rearm are not claimed to have
 Linux's direct parent-death guarantee. This mechanism does not add adoption of a
 worker after its parent has died, and it does not prove a bound on every
 externally stopped or kernel-failed process.
+
+## Native EXL3 channel identity
+
+On Linux and macOS, a managed EXL3 channel checks the kernel peer UID and PID
+against the actual direct child held by that launch's supervisor. Reaping and
+terminal publication share the short custody lock used by this check. A copied
+PID, socket path, worker name or launch manifest alone is not the proof. The
+check holds no lock across a connection or reply wait.
+
+Before a generation or session operation sends any input body or descriptor,
+the same connected channel reads a `hello` and checks its launch-manifest digest,
+wire model and expected backend epoch. Qualification also checks its channel
+before sending its fixed input. Session create, fork, import, export, commit and
+drop use the captured launch context. A retiring session keeps its original
+context; it does not look up a replacement worker by name. Content-free activity
+and drain controls retain their existing UID check.
+
+This native transport check does not change provider locality, model offers,
+admission, charging or the device-only reranking guard. In particular, the
+existing HTTP fallback remains an OwnServer route. Other Unix targets retain
+their existing transport semantics; the child-PID check described here is for
+Linux and macOS.

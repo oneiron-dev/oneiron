@@ -979,12 +979,18 @@ off.
 
 ## 6. Code mode (MCP `execute_code`)
 
-`execute_code` runs a task as generated JavaScript: each step's program comes
-from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through each verb at its SDK path
-(`vault.recall(...)`, `self.focus.refresh(...)`) under the
-connector's own grants. It is listed on `tools/list` only when the seat has a
-rung and a prompt package for the executor is named:
+`execute_code` runs a task as generated TypeScript or JavaScript: each step's
+program comes from the `generative_reasoner` seat and runs in the checked-in
+QuickJS component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the connector's own grants.
+JavaScript that parses in the guest's async body runs byte for byte. TypeScript
+is lowered by Oxc; declarations that need script-level grammar can be prepared
+before the guest envelope, with their original source positions retained.
+This adds no module loader. An unsuccessful preparation still leaves the
+original program for QuickJS to report, with its preparation note.
+
+It is listed on `tools/list` only when the seat has a rung and a prompt package
+for the executor is named:
 
 ```toml
 [models.code_mode]
