@@ -22802,6 +22802,7 @@ class MailReplyDraftRequest(TypedDict):
     thread_ref: str
     parent_turn_ref: NotRequired[str | None]
     body: str
+    body_html: NotRequired[str | None]
     request_key: str
 MailReplyDraftState = Literal["proposed", "approved", "sent", "unsettled", "discarded"]
 class MailReplyDraftView(TypedDict):
@@ -22813,6 +22814,7 @@ class MailReplyDraftView(TypedDict):
     to: str
     subject: str
     body: str
+    body_html: NotRequired[str | None]
     plan_ref: str
     state: MailReplyDraftState
     outcome: NotRequired[str | None]
