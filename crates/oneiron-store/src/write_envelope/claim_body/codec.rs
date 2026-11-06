@@ -171,6 +171,7 @@ fn decode_claim(
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
     let value_memory: Option<oneiron_contracts::host_memory::MemoryLease>;
+    let predicate_memory: Option<oneiron_contracts::host_memory::MemoryLease>;
     let mut dom_memory = memory.map(ClaimScopeReadMemory::value_lease);
     let mut cursor = Cursor::new(data);
     let value = match (memory, dom_memory.as_mut()) {
@@ -371,6 +372,9 @@ fn decode_claim(
     value_memory = dom_memory.as_mut().map(|dom_memory| {
         dom_memory.split_allocated(read_memory::value_storage_bytes(&claim_value))
     });
+    predicate_memory = dom_memory
+        .as_mut()
+        .map(|dom_memory| dom_memory.split_allocated(predicate.capacity() as u64));
     if let DecodeTarget::Value(history) = target {
         if let Some(projected) = history(&predicate, evidence.as_ref())? {
             return Ok(DecodedClaim::Value(
@@ -383,11 +387,13 @@ fn decode_claim(
             stale.unwrap_or(false),
             claim_value,
             value_memory,
+            predicate_memory,
         )));
     }
     let retained_input_bytes = value_memory
         .as_ref()
         .map_or(0, |lease| lease.bytes())
+        .saturating_add(predicate_memory.as_ref().map_or(0, |lease| lease.bytes()))
         .saturating_add(dom_memory.as_ref().map_or(0, |lease| lease.bytes()));
     let rel = rel.expect("required relationship scope was validated");
     let mut memory = match (memory, rel.len()) {
@@ -432,5 +438,6 @@ fn decode_claim(
         },
         memory,
         value_memory,
+        predicate_memory,
     )))
 }

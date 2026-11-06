@@ -76,6 +76,7 @@ pub struct ClaimBodyRead {
     body: ClaimBody,
     _memory: Option<MemoryLease>,
     value_memory: Option<MemoryLease>,
+    predicate_memory: Option<MemoryLease>,
 }
 
 impl ClaimBodyRead {
@@ -83,11 +84,13 @@ impl ClaimBodyRead {
         body: ClaimBody,
         memory: Option<MemoryLease>,
         value_memory: Option<MemoryLease>,
+        predicate_memory: Option<MemoryLease>,
     ) -> Self {
         Self {
             body,
             _memory: memory,
             value_memory,
+            predicate_memory,
         }
     }
 
@@ -99,6 +102,11 @@ impl ClaimBodyRead {
             lease.materialized(0, value_storage_bytes(&body.value));
             lease
         });
+        let predicate_memory = memory.map(|memory| {
+            let mut lease = memory.value_lease();
+            lease.materialized(0, body.predicate.capacity() as u64);
+            lease
+        });
         let memory = memory.map(|memory| {
             let mut lease = memory.memory.empty_lease();
             let bytes = body
@@ -108,12 +116,13 @@ impl ClaimBodyRead {
             lease.materialized(0, bytes);
             lease
         });
-        Self::new(body, memory, value_memory)
+        Self::new(body, memory, value_memory, predicate_memory)
     }
 
-    /// Extracts a body only when neither relationship nor value backing is leased.
+    /// Extracts a body only when its relationship, value and predicate guards are absent.
     pub fn try_into_unbound_body(self) -> Result<ClaimBody, Self> {
-        if self._memory.is_some() || self.value_memory.is_some() {
+        if self._memory.is_some() || self.value_memory.is_some() || self.predicate_memory.is_some()
+        {
             return Err(self);
         }
         Ok(self.body)
@@ -127,6 +136,7 @@ impl ClaimBodyRead {
             self.body.stale,
             self.body.value,
             self.value_memory,
+            self.predicate_memory,
         )
     }
 }
@@ -146,6 +156,7 @@ pub struct ClaimValueHead {
     lifecycle: ClaimLifecycleStatus,
     stale: bool,
     value: ClaimValueRead,
+    _predicate_memory: Option<MemoryLease>,
 }
 
 impl ClaimValueHead {
@@ -155,6 +166,7 @@ impl ClaimValueHead {
         stale: bool,
         value: Value,
         memory: Option<MemoryLease>,
+        predicate_memory: Option<MemoryLease>,
     ) -> Self {
         Self {
             predicate,
@@ -164,6 +176,7 @@ impl ClaimValueHead {
                 value,
                 _memory: memory,
             },
+            _predicate_memory: predicate_memory,
         }
     }
 
