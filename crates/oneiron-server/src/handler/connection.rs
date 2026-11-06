@@ -44,9 +44,11 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// (fail-closed) — without this gate any network peer could pull the full
 /// root snapshot and window exports. When no secret is configured, upgrades
 /// are rejected unless the explicit insecure dev escape hatch is enabled,
-/// matching `auth::require_owner_auth` on the HTTP side. An upgrade naming
-/// the MCP subprotocol is the one exception: it opens the MCP carrier
-/// ([`super::mcp_socket`]), which serves none of that state.
+/// matching `auth::require_owner_auth` on the HTTP side. Two upgrades are
+/// the exceptions, and neither serves any of that state: one naming the MCP
+/// subprotocol opens the MCP carrier ([`super::mcp_socket`]), and a managed
+/// vault's stale owner sign-in opens an app-tier socket that books and
+/// nothing more (FIX 11712, `run::booking`).
 ///
 /// The credential's revocable identity is carried into the connection rather
 /// than discarded with the rest of the `CoreAuth`: the handshake proves the
@@ -88,30 +90,18 @@ async fn ws_upgrade_handler(
         }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
-    let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
-        Some(Ok(auth)) if auth.is_owner_grade() => auth,
-        Some(Ok(_)) => {
-            return Err(crate::auth::caller_slip_too_narrow("full replication").into_response());
+    // A stale owner sign-in, whose per-request booking doors serve him,
+    // holds an app-tier socket that books and nothing more (FIX 11712),
+    // recognized as the MCP carrier recognizes him, before the owner-grade
+    // credential full replication asks for. Its mode is fixed for the
+    // socket's life. A slip or a bearer beside him is never him, so a slip
+    // that fails below never falls back to him.
+    let mode = match super::mcp_socket::stale_booking_holder(&headers, &extensions, &server) {
+        Some(holder) => {
+            run::SocketMode::Booking(run::BookingCaller::upgraded(holder, &extensions)?)
         }
-        Some(Err(refused)) => return Err(refused.into_response()),
-        None => require_owner_auth(&headers, &server.config, server.vault().as_ref())
-            .map_err(|_| sync_upgrade_refused(&headers, &server))?,
+        None => replication_mode(&headers, &extensions, &server)?,
     };
-    // Full replication reads the whole vault, an owner act: a hosted
-    // operator's root is refused before the upgrade (FIX 2222), with its
-    // typed body (FIX 6032). Every refusal stays this door's 403.
-    crate::api::host_action::require_host_owner_act(&server, &auth).map_err(|refused| {
-        if refused.status() == StatusCode::FORBIDDEN {
-            refused.into_response()
-        } else {
-            StatusCode::FORBIDDEN.into_response()
-        }
-    })?;
-    let session_jti = auth.jti().map(str::to_owned);
-    let owner = auth.managed_owner().is_some().then(|| auth.clone());
-    // The socket's sync frames count under the actor its upgrade admitted,
-    // as an HTTP request counts under its own (OF-520, FIX 1086).
-    let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
     // The binding door proved the machine with the upgrade's own slip proof.
     let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
     // The home answers with its own machine over that same proof, so the
@@ -159,8 +149,7 @@ async fn ws_upgrade_handler(
                         (socket, stop),
                         server,
                         conn_id,
-                        (session_jti, owner),
-                        telemetry_actor,
+                        mode,
                         locality,
                         machine,
                         signing_request_transport,
@@ -175,6 +164,44 @@ async fn ws_upgrade_handler(
             .insert(oneiron::sync::home_proof::HOME_PROOF_HEADER, value);
     }
     Ok(response)
+}
+
+/// The full-replication socket an upgrade opens: its owner-grade
+/// credential, or the refusal it is answered with before the upgrade.
+fn replication_mode(
+    headers: &HeaderMap,
+    extensions: &axum::http::Extensions,
+    server: &SyncServer,
+) -> Result<run::SocketMode, Response> {
+    let auth = match CoreAuth::for_attested_request(headers, extensions, "/ws", server) {
+        Some(Ok(auth)) if auth.is_owner_grade() => auth,
+        Some(Ok(_)) => {
+            return Err(crate::auth::caller_slip_too_narrow("full replication").into_response());
+        }
+        Some(Err(refused)) => return Err(refused.into_response()),
+        None => require_owner_auth(headers, &server.config, server.vault().as_ref())
+            .map_err(|_| sync_upgrade_refused(headers, server))?,
+    };
+    // Full replication reads the whole vault, an owner act: a hosted
+    // operator's root is refused before the upgrade (FIX 2222), with its
+    // typed body (FIX 6032). Every refusal stays this door's 403.
+    crate::api::host_action::require_host_owner_act(server, &auth).map_err(|refused| {
+        if refused.status() == StatusCode::FORBIDDEN {
+            refused.into_response()
+        } else {
+            StatusCode::FORBIDDEN.into_response()
+        }
+    })?;
+    let session_jti = auth.jti().map(str::to_owned);
+    let owner = auth.managed_owner().is_some().then(|| auth.clone());
+    // The socket's sync frames count under the actor its upgrade admitted,
+    // as an HTTP request counts under its own (OF-520, FIX 1086).
+    let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
+    Ok(run::SocketMode::Replication {
+        session_jti,
+        owner,
+        telemetry_actor,
+    })
 }
 
 /// The refusal of a sync upgrade whose credential is not owner-grade. On a
