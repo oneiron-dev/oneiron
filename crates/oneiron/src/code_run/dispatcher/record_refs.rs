@@ -7,7 +7,7 @@
 //! ([`crate::gate::record_references`]). A missing record and one the
 //! writer may not read give the same refusal.
 
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::entity_id::EntityId;
@@ -53,12 +53,19 @@ impl HostSelfDispatcher<'_> {
             Some(proof) => Some(vault.credential_target_key(proof)?),
             None => None,
         };
+        // A record resolves on the recorded lane, as a facade row's ref does
+        // (`Memory::get_entity`): a superseded claim the writer may read is
+        // history it may name (REVIEW-6389).
+        let reads = |key: &ScopedReadActorKey, id: EntityId| {
+            vault
+                .scoped_read(key.clone())
+                .with_claim_status(ClaimReadStatus::Recorded)
+                .all_refs_readable(&[id])
+        };
         for (pointer, id) in refs {
-            let resolves = vault.scoped_read(key.clone()).all_refs_readable(&[*id])?
+            let resolves = reads(&key, *id)?
                 && match &slip_key {
-                    Some(Some(slip_key)) => vault
-                        .scoped_read(slip_key.clone())
-                        .all_refs_readable(&[*id])?,
+                    Some(Some(slip_key)) => reads(slip_key, *id)?,
                     Some(None) => false,
                     None => true,
                 };
