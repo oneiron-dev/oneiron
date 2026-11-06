@@ -62,8 +62,10 @@ pub use contribution::{
     contributed, contribution_check_candidates_after, record_contribution_pair,
 };
 mod contribution_admission;
-pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
 pub use contribution_admission::{ContributionRecord, UnmatchedReason};
+pub(crate) use contribution_admission::{
+    erase_contribution_checks_in_txn, rebind_contribution_fork_receipts_in_txn,
+};
 mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
@@ -156,9 +158,11 @@ pub(crate) use host::{
 mod judge_binding;
 pub(crate) use judge_binding::finalize_run_judge_in_txn;
 mod derivation_witness;
+mod queue_revision;
 pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
+pub(crate) use queue_revision::note_queue_revision_derivations_in_txn;
 mod site_exposure;
 pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;

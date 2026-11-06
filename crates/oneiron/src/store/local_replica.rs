@@ -72,11 +72,13 @@ const PENDING_DOCUMENT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> =
 const PENDING_NOTE_REQUESTS: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
-/// Authority, grant, policy, key, consent, receipt and identity-ledger kinds,
-/// plus the machine, world and agent-definition rows they govern.
+/// Authority, grant, policy, claim-class vocabulary, key, consent, receipt and
+/// identity-ledger kinds, plus the machine, world and agent-definition rows
+/// they govern.
 const KEPT_KINDS: &[u8] = &[
     registry::ENTITY_TYPE_AUTHORITY_LOG,
     registry::ENTITY_TYPE_POLICY_MANIFEST,
+    registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
     registry::ENTITY_TYPE_FEDERATION_GRANT,
     registry::ENTITY_TYPE_ACCESS_GRANT,
     registry::ENTITY_TYPE_SECRET_CUSTODY,
@@ -111,6 +113,11 @@ pub(crate) struct KeepControls {
     pub(crate) guarded_rows: bool,
     /// Remove nothing while the outbox queues a write for this window.
     pub(crate) defer_on_queued_writes: bool,
+    /// Remove nothing while a member the window document does not carry, or
+    /// one with local work pending, stays: the window is left whole, so a
+    /// caller that may not drop what only this install holds can find it
+    /// again (FIX 14534).
+    pub(crate) defer_on_local_members: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
 }
@@ -122,6 +129,7 @@ impl Default for KeepControls {
             bound_actors: true,
             guarded_rows: true,
             defer_on_queued_writes: true,
+            defer_on_local_members: false,
             max_removals: 1024,
         }
     }
@@ -216,12 +224,20 @@ pub(crate) fn remove_local_replica_window_in_txn(
     if keep.defer_on_queued_writes && queued_writes > 0 {
         return Ok(report);
     }
-    // The next take of a sealed window's mirror lands its rows again, from
-    // the first call that may remove one (FIX 5506).
-    crate::world_keys::unland_window_in_txn(store, txn, window)?;
     let doc = persisted_window_doc(store, txn, window)?;
     let census = Census::new(store, txn, window, &keep, &doc)?;
     let removable = census.sort(txn, &mut report)?;
+    if keep.defer_on_local_members
+        && report
+            .kept
+            .iter()
+            .any(|(_, reason)| matches!(reason, KeepReason::NotCarried | KeepReason::Pending))
+    {
+        return Ok(report);
+    }
+    // The next take of a sealed window's mirror lands its rows again, from
+    // the first call that may remove one (FIX 5506).
+    crate::world_keys::unland_window_in_txn(store, txn, window)?;
     report.remaining = removable.len().saturating_sub(keep.max_removals);
     let batch = &removable[..removable.len().min(keep.max_removals)];
     let removal = Removal::plan(store, txn, batch, &mut report)?;
