@@ -44,3 +44,29 @@ Busy-session waiting keeps its existing 24-hour absolute window and 60-second
 cadence. No operating timeout, cap, default, dependency or compatibility reader
 is introduced. Deploy the engine and existing transcript drain together through
 the normal deployment owner.
+
+## Retained caller and retries
+
+Retained imports keep the original reader's verified proof and host-action
+guard in engine-owned work. A drain rebuilds those same native guards; it
+does not replace a credential-bound caller with the actor's wider native
+read. Revocation and holder binding are still checked by each ordinary
+read. The retained destination includes all proved peers, even if the
+original locality was on-device.
+
+A room or thread keeps its held world, facet, clearance and P7 terms, not
+just its id. A drain rebuilds current membership and meets those current
+terms with the saved narrowing. Narrowing learned during an import is
+saved again before retry. The personal/held choice and effective author
+run-attempt stamp are retained; request-only observers are not replayed.
+An explicit, newly admitted caller retry that reclaims the upload lease
+records that actual caller before continuing. A background retry does not
+renew or widen its authority.
+
+Both session pre-hooks and a retained retry's wait-status probe reuse a
+calling operation's held task-work turn. Only the turn is shared with the
+ask's saved author; the caller's authority is not. An ask never needs a
+second permit while that operation holds the only one. The existing
+busy-session deadline remains saved during an ask: it is bypassed only
+while the native ask is waiting, and applies again if
+the sitting is busy after the ask proceeds. No new timeout is introduced.
