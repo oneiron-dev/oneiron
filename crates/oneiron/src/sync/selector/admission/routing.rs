@@ -240,12 +240,12 @@ impl<'a> Routes<'a> {
         routes.rename_worlds(
             vault,
             guest,
-            carried_worlds,
+            &carried_worlds,
             typed_world_targets,
             named,
             entity_candidates,
         )?;
-        routes.placements = routes.guest_placements(guest, placements)?;
+        routes.placements = routes.guest_placements(vault, guest, &carried_worlds, placements)?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
@@ -307,12 +307,12 @@ impl<'a> Routes<'a> {
         &mut self,
         vault: &Vault,
         guest: &[u8; 32],
-        carried: Vec<EntityId>,
+        carried: &[EntityId],
         typed_world_targets: BTreeSet<EntityId>,
         named: BTreeSet<EntityId>,
         entity_candidates: BTreeSet<EntityId>,
     ) -> Result<()> {
-        for id in carried {
+        for &id in carried {
             let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
             self.worlds.insert(id, here);
             if entity_candidates.contains(&id) {
@@ -421,21 +421,31 @@ impl<'a> Routes<'a> {
     /// Each birth placement the guest `guest` carried, `carried`, at the
     /// world it lands in here (FIX 3656): the sender's base reality at the
     /// guest's base copy, as a guest CLAIM's is, and any other world at the
-    /// foreign copy [`Self::worlds`] holds for it. A world the map does not
-    /// hold stays the sender's id, as an unproven WORLD does (#5009), and a
-    /// guest's row is never placed at a sender's id: that placement is
-    /// refused, and so is its row (`BirthPlacement::for_guest`).
+    /// foreign copy whose WORLD row is carried or stored here. Edge-kind
+    /// routing alone is not birth-placement evidence. An unproven world
+    /// refuses the placement and its row (`BirthPlacement::for_guest`).
     fn guest_placements(
         &self,
+        vault: &Vault,
         guest: &[u8; 32],
+        carried_worlds: &[EntityId],
         carried: BTreeMap<EntityId, crate::federation::record_scope::BirthPlacement>,
     ) -> Result<BTreeMap<EntityId, crate::federation::record_scope::GuestPlacement>> {
         let mut placed = BTreeMap::new();
         for (id, placement) in carried {
             let copy = if placement.world == crate::claim::base_world_id() {
                 Some(crate::federation::guest_claim_world(guest, None)?.entity_id())
+            } else if let Some(copy) = self.worlds.get(&placement.world).copied()
+                && (carried_worlds.contains(&placement.world)
+                    || vault
+                        .get_raw_unsealed(&copy)?
+                        .as_deref()
+                        .and_then(EntityMetadataHeader::parse)
+                        .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
+            {
+                Some(copy)
             } else {
-                self.worlds.get(&placement.world).copied()
+                None
             };
             placed.insert(id, placement.for_guest(copy)?);
         }
