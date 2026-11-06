@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
-| `src/native/verify/verify_revocation.rs` | src | m | 7 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
+| `src/native/verify/verify_revocation.rs` | src | m | 8 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
 | `src/native/verify/verify_sig_pipeline.rs` | src | m | 16 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
 | `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 23 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
