@@ -394,7 +394,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_identity/request_code_text.rs` | src | s | 2 fn | — | A machine's request code as the owner reads and types it (FIX 4956): 26 Crockford base32 symbols, the… |
 | `src/authority/machine_profile/apply.rs` | src | s | 9 crate-vis | — | The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every… |
 | `src/authority/machine_profile/merge.rs` | src | s | 4 crate-vis | — | How a machine's chains merge across branches: a higher revision supersedes, divergent profiles at one… |
-| `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 12 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
+| `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 13 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
 | `src/authority/machine_profile/owner_answers.rs` | src | m | 2 fn · 11 crate-vis | — | The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by… |
 | `src/authority/machine_standing.rs` | src | m | 23 crate-vis | — | A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its… |
 | `src/authority/machine_write.rs` | src | m | 4 fn · 12 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
@@ -4760,7 +4760,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/mod.rs` | src | s | 1 mod · 16 re-export · 4 crate-vis | — | Policy classification over two planes |
 | `src/policy_model/notes.rs` | src | s | 1 crate-vis | — | The audit notes a `rationale_json` pass carries beside its decided verdict |
 | `src/policy_model/notice.rs` | src | m | 23 crate-vis | — | The one notice a policy verdict emits — and the one audit row it files |
-| `src/policy_model/owner_rows/authority.rs` | src | m | 4 fn · 8 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
+| `src/policy_model/owner_rows/authority.rs` | src | m | 4 fn · 9 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
 | `src/policy_model/owner_rows/ledger.rs` | src | m | 3 struct · 1 enum · 3 fn · 6 crate-vis | PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt | Append-only row change history and proposal inbox |
 | `src/policy_model/owner_rows/mod.rs` | src | s | 1 enum · 5 fn · 6 re-export · 3 crate-vis | PolicyRowSubmission | Holder-governed owner-policy row edits, proposals, events and change log |
 | `src/policy_model/owner_rows/notification_receipt.rs` | src | s | 2 crate-vis | — | A queued policy-change notice, delivered as the change it records (FIX 10031) |
