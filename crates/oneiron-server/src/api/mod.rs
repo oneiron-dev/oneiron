@@ -107,6 +107,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 12477: the redeem door's per-address failure backoff, held by the server.
+pub(crate) use self::pairing::PairingRedeemBackoff;
 // FIX 922: the kit door to the sealed cloud bundle.
 mod recovery_bundle;
 mod sessions;
@@ -181,6 +183,7 @@ pub(crate) use self::facade::{
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
+mod phone_line;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the

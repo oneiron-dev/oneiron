@@ -165,7 +165,25 @@ impl AttemptQueue<'_> {
         validate_optional_resume_point(input.resume_point.as_ref())?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let outcome = self.accept_landing_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, LandingOutcome::Landing(_)) {
+            wtxn.commit()?;
+            self.store.notify_attempt_observers();
+        }
+        Ok(outcome)
+    }
+
+    /// Transaction-composable [`Self::accept_landing`].
+    pub(crate) fn accept_landing_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: AcceptAttemptLanding,
+    ) -> Result<LandingOutcome> {
+        validate_lease_owner(&input.lease_owner)?;
+        validate_optional_cancel_status(input.status.as_deref())?;
+        validate_optional_resume_point(input.resume_point.as_ref())?;
+
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("accept_landing", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
@@ -236,12 +254,10 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
         Ok(LandingOutcome::Landing(record))
     }
 
@@ -322,7 +338,22 @@ impl AttemptQueue<'_> {
         validate_resume_point(&input.resume_point)?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let record = self.record_resume_point_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(record)
+    }
+
+    /// Transaction-composable [`Self::record_resume_point`].
+    pub(crate) fn record_resume_point_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RecordAttemptResumePoint,
+    ) -> Result<AttemptRecord> {
+        validate_lease_owner(&input.lease_owner)?;
+        validate_resume_point(&input.resume_point)?;
+
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("record_resume_point", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
@@ -353,12 +384,10 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
         Ok(record)
     }
 
@@ -447,7 +476,28 @@ impl AttemptQueue<'_> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let outcome = self.spend_landing_reserve_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, LandingReserveSpendOutcome::Spent { .. }) {
+            wtxn.commit()?;
+            self.store.notify_attempt_observers();
+        }
+        Ok(outcome)
+    }
+
+    /// Transaction-composable [`Self::spend_landing_reserve`].
+    pub(crate) fn spend_landing_reserve_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: SpendAttemptLandingReserve,
+    ) -> Result<LandingReserveSpendOutcome> {
+        validate_lease_owner(&input.lease_owner)?;
+        if input.units == 0 {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_RESERVE_SPEND_ZERO,
+            )));
+        }
+
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("spend_landing_reserve", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
@@ -491,12 +541,10 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
 
         let remaining_units = record.cancel_state.reserve.remaining_units();
         Ok(LandingReserveSpendOutcome::Spent {

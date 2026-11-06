@@ -6,7 +6,8 @@ use lopdf::{Object, Stream};
 
 /// A stream's bytes as preparation reads them: an unfiltered stream whole,
 /// a filtered one exactly decoded, every buffer admitted first by `limits`.
-/// Growth is admitted, never refused past a per-stream codec bound.
+/// Inspection retains its caller's per-stream codec bound; preparation
+/// admits growth without that bound.
 pub(super) fn decoded(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, WorkError> {
     decoded_admitted(stream, limits)
 }
@@ -35,7 +36,11 @@ pub(crate) fn decode_stream(stream: &Stream, limits: &WorkLimits) -> Result<Vec<
 /// [`decode_stream`], its output admitted by `limits` before each growth:
 /// the whole new allocation, doubling unclamped, while the old one lives.
 fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, WorkError> {
+    let limit = limits.stream_decode_bytes.unwrap_or(usize::MAX);
     if !stream.dict.has(b"Filter") {
+        if stream.content.len() > limit {
+            return Err(WorkError::Invalid(InputInvalidCode::TooLarge));
+        }
         // organ: admitted, not refused (FIX 7980)
         limits
             .ledger
@@ -81,11 +86,13 @@ fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, Work
             )
             .map_err(|_| WorkError::Invalid(InputInvalidCode::MalformedPdf))?;
         let count = (decoder.total_out() - before_out) as usize;
-        // organ: admitted, not refused (FIX 7980)
+        if count > limit.saturating_sub(output.len()) {
+            return Err(WorkError::Invalid(InputInvalidCode::TooLarge));
+        }
         let needed = output.len() + count;
         if needed > output.capacity() {
             // organ: admitted, not refused (FIX 7980)
-            let grown = output.capacity().saturating_mul(2).max(needed);
+            let grown = output.capacity().saturating_mul(2).max(needed).min(limit);
             limits
                 .ledger
                 .admit_len::<u8>(grown)
@@ -145,6 +152,11 @@ fn predictor(stream: &Stream, data: Vec<u8>, limits: &WorkLimits) -> Result<Vec<
     // organ: admitted, not refused (FIX 7980)
     let width = columns
         .checked_mul(colors)
+        .filter(|width| {
+            limits
+                .stream_decode_bytes
+                .is_none_or(|bound| *width <= bound)
+        })
         .ok_or(WorkError::Invalid(InputInvalidCode::TooLarge))?;
     if !data.len().is_multiple_of(width + 1) {
         return Err(WorkError::Invalid(InputInvalidCode::MalformedPdf));

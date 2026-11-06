@@ -39,6 +39,7 @@ A server door refuses with these too; they pass through verbatim.
 
 | Code | Response |
 |---|---|
+| `DEADLINE_EXCEEDED` | The caller's signals_deadline_ms expired. HTTP answers 408 and publishes no partial signal page or advanced cursor. Retry from the previous successful cursor with a larger budget, or omit the explicit deadline. |
 | `AGENT_THREAD_WALK_IN_FORBIDDEN` | An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020). |
 | `writes_frozen` | This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020). |
 | `render_deadline` | The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020). |

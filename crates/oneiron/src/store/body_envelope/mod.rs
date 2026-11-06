@@ -76,8 +76,8 @@ pub(crate) use self::retention::{
 };
 pub(crate) use self::rows::{
     BODY_INSTANCES, BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
-    remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
-    remembered_body_instances_in_txn, retire_body_key_in_txn,
+    journal_restored_body_key_in_txn, remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,
