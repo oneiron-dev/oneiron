@@ -128,6 +128,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let attribute_storage_budget = budget.clone();
         let attribute_value_budget = budget.clone();
         let attribute_atomic_budget = budget.clone();
+        let attribute_merge_budget = budget.clone();
         let comment_budget = budget.clone();
         let doctype_budget = budget.clone();
         let pending_table_budget = budget.clone();
@@ -172,7 +173,16 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                         )
                         .map_err(arena_error)
                 },
-                Document::add_tag_attributes_if_missing,
+                move |document, target, attrs| {
+                    document
+                        .add_tag_attributes_if_missing(
+                            target,
+                            attrs,
+                            |bytes| reserve(&attribute_merge_budget, bytes),
+                            Backing::resize,
+                        )
+                        .map_err(arena_error)
+                },
             )
             .with_attribute_value_reservation(move |value, additional| {
                 let additional =
