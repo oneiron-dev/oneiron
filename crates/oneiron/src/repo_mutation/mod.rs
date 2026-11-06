@@ -58,7 +58,7 @@ pub use self::types::{
 pub(crate) use self::bundle::bundle_merge_proposal;
 pub(crate) use self::bundle::tree::{BundleTreeEdit, stage_bundle_tree_edits};
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
-pub(crate) use self::git::canonical_mutation_scope;
+pub(crate) use self::git::canonical_mutation_repo_ref;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
 pub(crate) use self::proposal::actor_erase::erase_proposal_actor_in_txn;
 pub(crate) use self::proposal::persist::PreparedRepoProposal;
