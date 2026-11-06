@@ -64,7 +64,7 @@ impl AskOptionLinkCall {
         })
         .await
         .map_err(|_| ProtocolError::InvalidPayload("option link worker ended"))??;
-        for frame in reply.queued_for_machine(conn, false) {
+        for frame in reply.queued_for_machine(conn, true) {
             direct
                 .send(frame)
                 .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
