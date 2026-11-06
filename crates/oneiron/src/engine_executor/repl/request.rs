@@ -183,10 +183,18 @@ impl EngineNativeExecutor<'_> {
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
-                Some(Some(frame)) => {
+                Some(Some(mut frame)) => {
                     // FIX 18924: a fold's stub copies its accepted summary.
                     if let Some(word) = shown_fold_words(&epochs, record.run_id, seq) {
                         crate::code_run::push_fold_word(&mut self.request_fold_words, word);
+                    }
+                    // An epoch frame or a whole-step fold stub keeps a
+                    // summary, ids and a note: each is masked at every
+                    // render, so a value custody learns later is masked too.
+                    for part in &mut frame.content {
+                        if let ContentPart::Text { text } = part {
+                            *text = mask_known_text(&self.storage, text)?;
+                        }
                     }
                     messages.push(frame);
                     swapped = true;
