@@ -43,6 +43,13 @@ struct StoredTeamRunBinding {
     source_rows: Option<Vec<EntityId>>,
 }
 
+/// A team start and the entity rows its writer named, from the same stored row.
+/// Sources are data, not a read grant; `None` remains unknown.
+pub(crate) struct SourcedTeamRunBinding {
+    pub(crate) run: TeamRunBinding,
+    pub(crate) source_rows: Option<Vec<EntityId>>,
+}
+
 /// One team start, as the host observed it. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -186,6 +193,21 @@ pub fn team_run_binding_in_txn(
     Ok(TEAM_RUN
         .get(&vault.store, txn, &run_key(leader, team_ref))?
         .map(|row| row.run))
+}
+
+/// Reads the start and its stored source inventory once in the caller's snapshot.
+pub(crate) fn team_run_binding_with_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    leader: AttemptId,
+    team_ref: &str,
+) -> Result<Option<SourcedTeamRunBinding>> {
+    Ok(TEAM_RUN
+        .get(&vault.store, txn, &run_key(leader, team_ref))?
+        .map(|row| SourcedTeamRunBinding {
+            run: row.run,
+            source_rows: row.source_rows,
+        }))
 }
 
 /// The team a spawn or TASK made by `attempt` works in: the one team the

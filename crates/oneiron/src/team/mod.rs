@@ -65,6 +65,7 @@ pub use run::{
     SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
     TeamRecordInput, TeamRunAnswer, TeamStartInput,
 };
+pub(crate) use run_binding::{SourcedTeamRunBinding, team_run_binding_with_sources_in_txn};
 pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
