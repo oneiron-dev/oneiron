@@ -6,10 +6,11 @@
 //! reservation. Nothing a request carries picks the model, its endpoint or
 //! the lease: the door holds them. The words a call sends are known before
 //! it leaves, so it is priced on them first ([`payload_units`]), and a line
-//! that cannot cover them refuses the call unsent. A `[models]` rung is
-//! reached over HTTP, never in this process, so this host does not run on
-//! the device (`RecallRerankHost::runs_on_device`): a row a device-only world
-//! keeps is sent to it empty. Each rung a call reaches reserves that price,
+//! that cannot cover them refuses the call unsent. A `[models]` reranker rung
+//! is reached over HTTP (`/v1/rerank`), never in this process nor over a
+//! supervised worker's native channel (I2-LOCAL names no native rerank), so
+//! this host does not run on the device (`RecallRerankHost::runs_on_device`):
+//! a row a device-only world keeps is sent to it empty. Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
@@ -365,7 +366,7 @@ fn sent_rows(documents: &[RerankDocument<'_>]) -> Option<Vec<EntityId>> {
 pub(crate) struct CallRuntime(Mutex<Option<tokio::runtime::Runtime>>);
 
 impl CallRuntime {
-    pub(super) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
+    pub(crate) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
         let not_started =
             || unavailable("the server could not start a runtime to call the reranker on");
         let mut slot = self.0.lock().map_err(|_| not_started())?;
@@ -406,4 +407,23 @@ fn spent(denied: BudgetDenied) -> MemoryError {
         format!("the recall's budget line refused its rerank call: {denied}"),
         &["Recall at medium, or raise [models.recall] rerank_budget_units."],
     )
+}
+
+impl SyncServer {
+    /// A new rerank caller's batches use the same native payload price and line.
+    pub(crate) fn rerank_line_for_payload(
+        meter: &BudgetGuard,
+        query: &str,
+        documents: &[&str],
+    ) -> Result<Arc<dyn RerankLine>, BudgetDenied> {
+        let price = payload_units(query, documents);
+        let line = meter.read();
+        if price > line.remaining_units {
+            return Err(BudgetDenied::Exhausted);
+        }
+        meter.revise_line(line.limit_units, price.max(meter.reserve_units()));
+        Ok(Arc::new(BatchLine {
+            meter: meter.clone(),
+        }))
+    }
 }

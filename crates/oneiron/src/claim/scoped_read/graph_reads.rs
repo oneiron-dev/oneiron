@@ -214,7 +214,17 @@ impl ScopedRead<'_> {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record)
                     .map(|visible| visible.then_some(()))
             })?;
-            suppressed += admitted.suppression();
+            if admitted.suppression() > 0
+                && requested.is_some()
+                && self
+                    .actor_retrieval_floor(&policy)
+                    .and_then(|floor| {
+                        self.timeline_record_allowed_in(&txn, &policy, &floor, record)
+                    })
+                    .unwrap_or(false)
+            {
+                suppressed += 1;
+            }
             if !admitted.visible() {
                 value.push(None);
                 continue;
