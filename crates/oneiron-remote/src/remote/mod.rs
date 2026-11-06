@@ -47,6 +47,7 @@ mod response;
 mod wire;
 
 use self::origin::{bearer_header, normalize_origin};
+pub use self::pairing::PreparedPairing;
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
     ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
