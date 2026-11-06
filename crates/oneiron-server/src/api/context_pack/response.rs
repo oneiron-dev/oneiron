@@ -273,6 +273,10 @@ pub(crate) struct CoreContextPackResponse {
     /// Whether this door lowered the requested result count; always false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) limit_clamped: bool,
+    /// Custody of the materialized stamp and disclosure buffers, not admission.
+    #[serde(skip)]
+    #[schema(ignore)]
+    disclosure_memory: Option<super::output_memory::RetainedDisclosureOutput>,
 }
 
 pub(crate) async fn run_context_pack_builder(
@@ -458,6 +462,7 @@ pub(crate) async fn run_context_pack_builder(
     };
     let mut response = core_context_pack_response(pack, evidence, assembly, narrowing);
     response.pin_narrowing = pin_narrowing;
+    response.retain_disclosure_output(&server.memory);
     Ok((response, section, cursor))
 }
 
@@ -545,6 +550,7 @@ pub(crate) fn core_context_pack_response(
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
         limit_clamped: false,
+        disclosure_memory: None,
     }
 }
 
@@ -740,6 +746,12 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
+    pub(super) fn retain_disclosure_output(&mut self, memory: &crate::machine::MachineMemory) {
+        self.disclosure_memory
+            .get_or_insert_with(|| super::output_memory::RetainedDisclosureOutput::new(memory))
+            .retain(self.interlocutors.as_ref(), self.disclosure.as_ref());
+    }
+
     /// The rows this pack serves: its results, its neighbours and the
     /// evidence its L2 base names.
     pub(crate) fn served_rows(&self) -> oneiron::Result<Vec<oneiron::EntityId>> {

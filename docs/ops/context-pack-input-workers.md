@@ -96,6 +96,29 @@ receipts and response serialization still produce distinct output strings or
 bytes; the retained label's guard does not account for them. The borrowed
 contact terminal and label transfer add no allocation admission or memory wait.
 
+The server response keeps a separate post-allocation lease for its own
+interlocutor stamp vector, each speaker string, and the disclosure assembly's
+mode, notice, emit stamp and stamp vector. It counts actual vector slots and
+string capacities, including the non-serialized emit stamp. The response owns
+these fields before its guard drops. Its Board embedding moves that same
+response; it does not copy a charge onto independently cloned assemblies.
+
+HTTP context-pack and context-board encode through an owned JSON byte writer.
+Each append records the encoded vector's actual capacity after allocation.
+The transport's shared byte owner keeps that same vector and its lease through
+the last body-byte clone. A serialization failure keeps axum's existing 500,
+plain-text content type and error text, with a separate charge for that error
+buffer. Internal typed Board callers still receive the same `Json` response.
+The standing-budget check uses the same byte owner while counting its JSON,
+inside the original recording transaction and with the same error mapping.
+
+This is output custody, not pre-allocation admission. Serialization may still
+allocate before its capacity is recorded, and reallocation may temporarily
+hold old and new backing. Independent MEMORIES disclosure clones, reply JSON
+values, prompt strings, other response fields and byte-owner bookkeeping are
+not covered by these selected disclosure and wire-buffer leases. No memory
+wait, deadline, cap or refusal is added by this output path.
+
 The fold still sees the first duplicate only after every claim has been read,
 so a later native read error retains its original precedence. Ignored heads
 release their own guards too. Where the full-body terminal admits relationship
@@ -116,7 +139,7 @@ the existing core error envelope and keep the original refusal distinct.
 This change does not complete contact-read or pinned-reference memory admission.
 MessagePack DOM decoding (including allocation before a value is charged),
 history/projection scratch, other retained collections, other request storage,
-auth clones and response-byte custody still need their own physical-memory
+auth clones and the remaining response-byte copies still need their own physical-memory
 accounting and admission. Retained-input FIFO progress remains open. Future untimed memory waits must use this caller's
 stop condition; the full-body relationship-set wait does so. There is no full-Q,
 runtime or throughput claim here.
