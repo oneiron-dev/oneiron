@@ -645,34 +645,71 @@ fn validate_mirror_url(url: &str) -> Result<()> {
 /// code.
 pub const MIRROR_URL_MALFORMED: &str = "mirror_url_malformed";
 
-/// Refuses a mirror URL whose path is not plain segments: `/` alone, or one
-/// holding an empty, `.` or `..` segment. The credential broker's repository
-/// rule takes no other, and a served host's mirror git goes only through the
-/// broker, so one URL rule holds on every host: such a mirror is refused at
-/// setup, and one already set up reports misconfigured under
+/// Refuses a mirror URL the credential broker sends to no repository at: one
+/// [`broker_repository`] does not read as plain, such as a path that is `/`
+/// alone or that holds an empty, `.` or `..` segment once the URL parser has
+/// normalized it (`/%2e` included). A served host's mirror git goes only
+/// through the broker, so one URL rule holds on every host: such a mirror is
+/// refused at setup, and one already set up reports misconfigured under
 /// [`MIRROR_URL_MALFORMED`] on each run and publish, served or embedded,
 /// before any request goes out (FIX 20091).
 ///
 /// # Errors
 /// [`Error::Refused`] naming [`MIRROR_URL_MALFORMED`].
 pub(crate) fn require_plain_mirror_url(url: &str) -> Result<()> {
-    let rest = url.strip_prefix("https://").unwrap_or(url);
-    let path = rest.find('/').map_or("", |at| &rest[at..]);
-    let plain = path
-        .trim_end_matches('/')
-        .strip_prefix('/')
-        .is_some_and(|segments| {
+    if broker_repository(url) {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "{MIRROR_URL_MALFORMED}: a mirror URL must be a plain https repository: a host with no \
+         credential, no query or fragment, and a path of segments that are neither empty, '.' \
+         nor '..' once normalized, and not '/' alone"
+    )))
+}
+
+/// Whether the credential broker reads `url` as a repository, by its own
+/// rule (oneiron-broker `GitRepository::parse` and `check`), read the same
+/// way here: an `https` origin with a host and no credential that serializes
+/// back to itself, no query or fragment, and a path, as the URL parser
+/// normalizes it and with its trailing slashes trimmed, of non-empty
+/// segments, none `.` or `..`, that joins back onto the origin unchanged.
+fn broker_repository(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.host().is_none()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    let origin = parsed.origin().ascii_serialization();
+    let Ok(base) = reqwest::Url::parse(&origin) else {
+        return false;
+    };
+    if base.scheme() != "https"
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || base.host().is_none()
+        || base.origin().ascii_serialization() != origin
+    {
+        return false;
+    }
+    let path = parsed.path().trim_end_matches('/');
+    let plain = !path.contains(['?', '#'])
+        && path.strip_prefix('/').is_some_and(|segments| {
             segments
                 .split('/')
                 .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
         });
-    if plain {
-        return Ok(());
-    }
-    Err(Error::Refused(format!(
-        "{MIRROR_URL_MALFORMED}: a mirror URL's path must be plain segments, with no empty, \
-         '.' or '..' segment, and not '/' alone"
-    )))
+    // The broker joins the path back onto its origin and takes it only when
+    // both come back unchanged.
+    plain
+        && reqwest::Url::parse(&format!("{origin}{path}"))
+            .is_ok_and(|joined| joined.origin() == base.origin() && joined.path() == path)
 }
 
 fn invalid(reason: &str) -> Error {
