@@ -53,6 +53,15 @@ pub(super) fn normalize(
     fork: &NoteFork,
     retained: &BTreeSet<super::retained::Place>,
 ) -> Result<NoteFork> {
+    let fork = if !fork.decided && !fork.rewrite && fork.recovery_merge.is_none() {
+        let raw = super::NOTE_PROPOSAL_DOC
+            .get(&vault.store, txn, &super::DocKey(fork.note, fork.fork))?
+            .ok_or(invalid("missing proposal document"))?;
+        let doc = loro::LoroDoc::from_snapshot(&raw).map_err(|_| invalid("proposal document"))?;
+        crate::note::recovery_fork_value(fork, &doc)?
+    } else {
+        fork.clone()
+    };
     // A pending fork's basis is the live head, or a head a later switch
     // replaced that the artifact retains for it (FIX 8829); a decided one's
     // may be any head a later switch replaced.
@@ -61,7 +70,7 @@ pub(super) fn normalize(
         && !fork.decided
         && fork.parent != head
         && !retained.contains(&(fork.note, fork.parent)))
-        || !frontier_decodes(fork)
+        || !frontier_decodes(&fork)
         || ((!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some())
     {
         return Err(invalid("proposal requires canonical value basis"));
@@ -88,10 +97,9 @@ pub(super) fn capture(
             return Err(invalid("stored fork key"));
         }
         // The captured fork and the original kept to check bundles against.
-        budget.take(2 * fork_bytes(&fork))?;
-        snapshot
-            .note_forks
-            .push(normalize(vault, txn, &fork, retained)?);
+        let normalized = normalize(vault, txn, &fork, retained)?;
+        budget.take(fork_bytes(&fork) + fork_bytes(&normalized))?;
+        snapshot.note_forks.push(normalized);
         originals.insert(fork.fork, fork);
     }
     for row in super::NOTE_PROPOSAL_BUNDLE.iter_from(&vault.store, txn, &[])? {
