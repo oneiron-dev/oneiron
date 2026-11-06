@@ -30,8 +30,10 @@
 
 mod attempt_capture;
 mod input_capture;
+mod type_source;
 
 pub(crate) use attempt_capture::{TeamAttemptCapture, TeamAttemptSource};
+pub(crate) use type_source::{SelectedTeamType, SelectedTeamTypeFile};
 
 pub(super) use input_capture::INPUT_PREDICATE;
 pub(crate) use input_capture::record_led_team_captured;

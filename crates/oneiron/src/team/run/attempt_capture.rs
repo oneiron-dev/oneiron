@@ -3,11 +3,12 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::{CapturePosition, capture_claim_in_txn};
+use super::type_source::CapturedTeamType;
+use super::{CapturePosition, SelectedTeamType, capture_claim_in_txn};
 use crate::agent_dispatch::{AgentDispatchStatus, decode_agent_dispatch_input};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::VadPostcommitScope;
-use crate::claim::{ClaimLifecycleStatus, PointRead, ReadRow, ScopedReadActorKey};
+use crate::claim::{ClaimLifecycleStatus, PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::store::dreamer_attempt_payload::{
     KEY_PRODUCER_SOURCE, decode_dreamer_attempt_payload, decode_value,
     encode_dreamer_attempt_payload, encode_value,
@@ -45,6 +46,7 @@ pub(crate) struct TeamAttemptSource {
     claim_hash: [u8; 32],
     native_attempt: AttemptId,
     birth_hash: [u8; 32],
+    type_source: Option<CapturedTeamType>,
 }
 
 impl TeamAttemptSource {
@@ -103,6 +105,19 @@ impl TeamAttemptSource {
         }
         Some(self.claim)
     }
+
+    pub(crate) fn admitted_sources_in_txn(
+        &self,
+        reader: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        row: Option<ReadRow>,
+    ) -> Option<Vec<EntityId>> {
+        let mut sources = vec![self.admitted_in_txn(reader.vault(), txn, row)?];
+        if let Some(type_source) = &self.type_source {
+            sources.extend(type_source.admitted_in_txn(reader, txn)?);
+        }
+        Some(sources)
+    }
 }
 
 /// The actual live caller, borrowed for this one enqueue. Nothing is serialized
@@ -112,6 +127,7 @@ pub(crate) struct TeamAttemptCapture {
     position: CapturePosition,
     envelope: WriteEnvelope,
     team: crate::agent_dispatch::TeamRunStamp,
+    _body_pins: Option<crate::store::result_body_pins::ResultBodyPin>,
 }
 
 impl TeamAttemptCapture {
@@ -129,6 +145,7 @@ impl TeamAttemptCapture {
             position,
             envelope,
             team: team.clone(),
+            _body_pins: crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies()),
         })
     }
 
@@ -139,9 +156,11 @@ impl TeamAttemptCapture {
         vault: &Vault,
         parent: &mut heed::RwTxn<'_>,
         status: &AgentDispatchStatus,
+        type_selection: Option<&SelectedTeamType>,
         now: u64,
     ) -> Option<AttemptRecord> {
-        self.capture(vault, parent, &status.attempt, now).ok()
+        self.capture(vault, parent, &status.attempt, type_selection, now)
+            .ok()
     }
 
     fn capture(
@@ -149,6 +168,7 @@ impl TeamAttemptCapture {
         vault: &Vault,
         parent: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
+        type_selection: Option<&SelectedTeamType>,
         now: u64,
     ) -> Result<AttemptRecord> {
         let projection = DispatchProjection {
@@ -170,13 +190,22 @@ impl TeamAttemptCapture {
             &self.envelope,
             now,
         )?;
+        let reader = vault.scoped_read(self.key.clone());
+        let input =
+            decode_agent_dispatch_input(&decode_dreamer_attempt_payload(&record.payload)?.input)?;
+        let type_source = type_selection
+            .filter(|selected| {
+                input.project_ref == Some(selected.project)
+                    && input.type_ref == selected.placed_type
+            })
+            .and_then(|selected| CapturedTeamType::capture(&reader, &child, selected));
         let source = TeamAttemptSource {
             claim,
             claim_hash: *blake3::hash(&encode_claim_body(&body)?).as_bytes(),
             native_attempt: record.id,
             birth_hash: birth_hash(record)?,
+            type_source,
         };
-        let reader = vault.scoped_read(self.key.clone());
         let admitted =
             reader.read_projected_in_txn(&child, &[PointRead::id(claim)], None, |_, rows| {
                 Ok::<_, Error>(rows)
