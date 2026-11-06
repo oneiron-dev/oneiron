@@ -2,19 +2,18 @@
 
 use std::sync::Arc;
 
-use oneiron::llm::decision::{HumanDecisionQueue, ProviderPin};
+use oneiron::llm::decision::ProviderPin;
 use oneiron::policy_model::PolicyModelConfig;
 
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// Called after the anonymous door's Read check. `human` owns this request's
-/// authorized role-holder delivery, including its policy-state projection.
+/// Called after the anonymous door's Read check. Its queue uses this same
+/// server's live recipient hub, including the recipient's state projection.
 /// No responder or Checker meter is borrowed, and no shared ladder is changed.
 pub(super) fn owner_policy_config(
-    server: &SyncServer,
+    server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    human: Arc<dyn HumanDecisionQueue>,
     human_pin: ProviderPin,
 ) -> PolicyModelConfig {
     let mut config = server
@@ -23,6 +22,10 @@ pub(super) fn owner_policy_config(
     let Some(decisions) = config.owner_decisions.as_deref() else {
         return config;
     };
+    let recipients = crate::livequery::connection::Hub::for_server(server).private_human();
+    let human = Arc::new(crate::api::private_human::RequestHumanQueue::new(
+        server, auth, recipients,
+    ));
     let vault = Arc::clone(server.vault());
     let auth = auth.clone();
     let run = crate::models::unrecorded_run(

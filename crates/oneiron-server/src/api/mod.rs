@@ -60,6 +60,7 @@ use axum::http::HeaderMap;
 
 pub(crate) mod ai;
 mod anonymous_chat;
+pub(crate) mod private_human;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
 mod artifacts;

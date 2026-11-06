@@ -49,10 +49,15 @@ pub mod frame_kind_ids {
     /// Sealed world-update frames ([`super::super::TAG_SEALED_UPDATE`],
     /// DEC-0005 fix 8).
     pub const SEALED_WORLD_UPDATES: u8 = 0x80;
+    /// Request-owned private Human asks ([`super::super::TAG_PRIVATE_HUMAN`]).
+    pub const PRIVATE_HUMAN: u8 = 0x81;
 }
 
 /// The optional frame kinds this build decodes, as its hellos list them.
-pub const DECODED_FRAME_KIND_IDS: &[u8] = &[frame_kind_ids::SEALED_WORLD_UPDATES];
+pub const DECODED_FRAME_KIND_IDS: &[u8] = &[
+    frame_kind_ids::SEALED_WORLD_UPDATES,
+    frame_kind_ids::PRIVATE_HUMAN,
+];
 
 /// The codecs one peer decodes, from its hello. Unknown ids are ignored.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,6 +65,7 @@ pub struct WireCodecs {
     zstd: bool,
     /// The peer's hello also listed [`frame_kind_ids::SEALED_WORLD_UPDATES`].
     sealed_world_updates: bool,
+    private_human: bool,
 }
 
 impl WireCodecs {
@@ -67,11 +73,13 @@ impl WireCodecs {
     pub const NONE: Self = Self {
         zstd: false,
         sealed_world_updates: false,
+        private_human: false,
     };
     /// Our own server and clients: every build decodes zstd.
     pub const OURS: Self = Self {
         zstd: true,
         sealed_world_updates: true,
+        private_human: true,
     };
 
     /// The codecs named by a hello's id list.
@@ -79,12 +87,18 @@ impl WireCodecs {
         Self {
             zstd: ids.contains(&codec_ids::ZSTD),
             sealed_world_updates: ids.contains(&frame_kind_ids::SEALED_WORLD_UPDATES),
+            private_human: ids.contains(&frame_kind_ids::PRIVATE_HUMAN),
         }
     }
 
     /// Whether the peer decodes sealed world-update frames (DEC-0005 fix 8).
     pub const fn decodes_sealed_world_updates(self) -> bool {
         self.sealed_world_updates
+    }
+
+    /// Whether this peer explicitly decodes request-owned private Human asks.
+    pub const fn decodes_private_human(self) -> bool {
+        self.private_human
     }
 
     /// Whether the peer decodes zstd codec frames.
