@@ -254,6 +254,7 @@ vaultWeaveSettingChangesUndo(input: unknown): unknown
 vaultWeaveDigestFeedbackPut(input: unknown): unknown
 vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
+vaultProactivityDigest(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
 vaultInboxGroupsResolve(input: unknown): unknown
