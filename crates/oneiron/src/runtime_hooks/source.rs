@@ -259,6 +259,17 @@ pub(crate) fn record_settlement_in_txn(
     txn: &mut heed::RwTxn<'_>,
     fact: SettledFact,
 ) -> Result<SettlementPosition> {
+    let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
+    SETTLED.put(&vault.store, txn, &position.0, &row)?;
+    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)?;
+    Ok(position)
+}
+
+pub(super) fn prepare_settlement_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fact: SettledFact,
+) -> Result<(SettlementPosition, SettledRow)> {
     let last = SETTLED_NEXT.get(&vault.store, txn, &())?.unwrap_or(0);
     let sequence = last
         .checked_add(1)
@@ -275,9 +286,7 @@ pub(crate) fn record_settlement_in_txn(
         body_hash,
         recorded_at: vault.store.clock.now_recorded_at(),
     };
-    SETTLED.put(&vault.store, txn, &sequence, &row)?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &sequence)?;
-    Ok(SettlementPosition(sequence))
+    Ok((SettlementPosition(sequence), row))
 }
 
 /// The actor a critical-confirm timeout demotion settles as (FIX 1093): no
