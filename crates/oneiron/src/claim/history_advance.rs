@@ -19,7 +19,6 @@
 //!
 //! CALLS (L02, open): "FIX 4296 carry bounds".
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -28,6 +27,7 @@ use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::ClaimTransitionProjection;
 use crate::error::Result;
+use crate::overlay_db::EntityRowSource;
 use crate::store::Store;
 
 use super::ClaimHistoryHandoff;
@@ -106,11 +106,11 @@ impl ControlRows for CarriedHistory {
         store: &Store,
         txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> Result<Option<Cow<'a, [u8]>>> {
+    ) -> Result<Option<EntityRowSource<'a>>> {
         match self.rows.get(id) {
-            Some(row) => Ok(row.as_deref().map(Cow::Borrowed)),
+            Some(row) => Ok(row.as_deref().map(EntityRowSource::borrowed)),
             // A row the index does not name is read from the store, as ever.
-            None => store.entities.get(txn, id.as_bytes()),
+            None => store.entities.get_entity_source(txn, id),
         }
     }
 

@@ -564,16 +564,23 @@ The contact collector's retained counterparty and notes remain separate work.
 
 ## Machine-history raw control reads
 
-History control rows now lend the bytes from the same `Store.entities.get`
-when base supplies them. The `ControlRows::row` result borrows both its row
-provider and the existing read transaction. A carried row still borrows its
-original provider; only a carried miss reads the same store row as before.
-Staged overlay rows keep the accessor's existing owned result. These paths no
-longer make the raw port's extra `to_vec()` copy before canonical decoding.
+History control rows use `EntityRowSource` from the same accessor read position.
+Base rows borrow the original read transaction. Staged rows retain the same
+immutable overlay snapshot instead of cloning the raw `Vec`. The
+`ControlRows::row` result still ties its lifetime to both the row provider and
+the existing read transaction. A carried hit borrows its original bytes; only a
+carried miss reads the same store row as before. No extra raw `to_vec()` copy is
+made before canonical decoding.
 
 The index, trusted pin, header, canonical decoder, shape, hash, signature,
-handoff chain, and fold still run in their original order. Each raw result is
-local to that read; it is not a replacement for a selected birth or a grant.
-The owned advance cache and all decoded and projected claim backing remain
-unchanged. This removes a forced source copy, not those allocations or the
-contact collector's retained-input/FIFO and typed-output work.
+handoff chain, and fold still run in their original order. Each source carrier
+stays local to the original read scope. The owned advance cache and all decoded
+and projected claim backing remain unchanged. In particular, a stored target
+row is not a replacement for the history-selected owned birth or a grant.
+
+A staged carrier holds its whole snapshot and native lease until it drops.
+Changed writer previews can still allocate a snapshot `Arc` and grow the native
+held-state list. Removing the raw row copy does not admit the decoded history
+allocations or establish the contact collector's retained-input/FIFO progress
+and typed-output custody.
+

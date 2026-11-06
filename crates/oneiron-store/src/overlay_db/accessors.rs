@@ -62,6 +62,15 @@ enum EntityRowValue<'txn> {
     },
 }
 
+impl<'txn> EntityRowSource<'txn> {
+    /// Borrows a row already retained by the caller at this read position.
+    pub fn borrowed(value: &'txn [u8]) -> Self {
+        Self {
+            value: EntityRowValue::Direct(Cow::Borrowed(value)),
+        }
+    }
+}
+
 impl EntityRowSource<'_> {
     pub fn as_bytes(&self) -> &[u8] {
         match &self.value {
