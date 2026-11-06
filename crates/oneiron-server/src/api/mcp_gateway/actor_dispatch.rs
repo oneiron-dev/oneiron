@@ -78,6 +78,103 @@ impl McpCallEffect {
             Self::Commits
         }
     }
+
+    /// What one call a code run serves itself does, named for every effect
+    /// and read by default for none. A run row's effect is judged by its
+    /// generated rows (`RunVerb::effect`, `RunVerb::writes`). A verb-table
+    /// call is judged by its own row at the door's call (`mcp_verb_gate`).
+    /// The run's recorded output, its descriptor round trip and its speech
+    /// are the run's own record: the native host keeps each run on canonical
+    /// storage, where its speech lands in the run's own derived conversation
+    /// (ONE-1686), never a room. Every other effect writes at once. No call
+    /// here waits for review, so none proposes.
+    fn of_run_call(call: oneiron::code_run::RunCall) -> Self {
+        use oneiron::code_run::{RunCall, SelfEffect as Effect};
+        let effect = match call {
+            RunCall::RecordedOutput => return Self::Reads,
+            RunCall::Bridge(effect) => effect,
+        };
+        match effect {
+            Effect::ConnectorAnswer
+            | Effect::WorldPrivacySet
+            | Effect::MemorySearch
+            | Effect::MemoryPutClaim
+            | Effect::MemorySupersedeClaim
+            | Effect::MemoryPutEdge
+            | Effect::Fold
+            | Effect::ConsultResult
+            | Effect::TasksRefuse
+            | Effect::ReportBlocked
+            | Effect::AgentsSpawn
+            | Effect::WorkflowDispatch
+            | Effect::RepoSnapshotsGet
+            | Effect::RepoSnapshotsRead
+            | Effect::RepoSymbolsDefinitions
+            | Effect::RepoViewsGet
+            | Effect::RepoViewsRead
+            | Effect::RepoMergeQueueObserve
+            | Effect::RepoSnapshotsIngest
+            | Effect::RepoWorkOpen
+            | Effect::RepoSymbolsDeclare
+            | Effect::RepoSymbolsRenew
+            | Effect::RepoSymbolsRelease
+            | Effect::RepoProposalSubmit
+            | Effect::RepoMergeQueueEnqueue
+            | Effect::RepoCheckoutBind
+            | Effect::RepoExport
+            | Effect::Leader
+            | Effect::LeaderSplit
+            | Effect::SkillsCall
+            | Effect::Team
+            | Effect::ReaderSpawn
+            | Effect::TasksWaitSet
+            | Effect::Summarize => Self::of_run_rows(effect),
+            Effect::AgentVerb
+            | Effect::Context
+            | Effect::InferenceDefaultsRead
+            | Effect::Speak
+            | Effect::Think
+            | Effect::Express => Self::Reads,
+            Effect::TasksAsk
+            | Effect::TasksWait
+            | Effect::MemoryWriteFixture
+            | Effect::Ask
+            | Effect::DestructiveFixture
+            | Effect::OutboundFixture
+            | Effect::TaskDelegate
+            | Effect::AgentsPut
+            | Effect::InferenceDefaultsReplace
+            | Effect::WakePolicyWrite
+            | Effect::ReaderReport => Self::Commits,
+        }
+    }
+
+    /// A run row effect's: it reads only while every generated row with it
+    /// reads, so `self.folds` commits as `self.fold` does. An effect no row
+    /// names commits.
+    fn of_run_rows(effect: oneiron::code_run::SelfEffect) -> Self {
+        let mut rows = oneiron::task_verb::sdk::RunVerb::ALL
+            .iter()
+            .filter(|verb| verb.effect() == effect)
+            .peekable();
+        if rows.peek().is_some() && rows.all(|verb| !verb.writes()) {
+            Self::Reads
+        } else {
+            Self::Commits
+        }
+    }
+
+    /// A row a run's door serves itself, not through a tool: its generated
+    /// scope. A guest's act, an admission job's filing and an off-record
+    /// room write take effect at once, and a room write has no Proposed
+    /// lifecycle, so a writing row commits.
+    fn of_host_verb(verb: oneiron::task_verb::sdk::AgentVerb) -> Self {
+        if verb.writes() {
+            Self::Commits
+        } else {
+            Self::Reads
+        }
+    }
 }
 
 /// How much of the credential's record bounds one call can carry.

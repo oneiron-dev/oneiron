@@ -23,8 +23,8 @@ impl McpCodeModeVerbs {
         }
     }
 
-    /// A browser row: this connector's binding and live credential at each
-    /// call, then the run's guest.
+    /// A browser row: this connector's binding, live session and the row's
+    /// own grant at each call, then the run's guest.
     pub(super) fn call_browser(
         &self,
         call: &SelfAgentVerbCall,
@@ -32,7 +32,7 @@ impl McpCodeModeVerbs {
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, call.verb))
         {
             return refused(error);
         }
@@ -249,7 +249,8 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
-    /// credential `execute_code` was admitted on, still live. A search reads
+    /// session `execute_code` was admitted on, still live, and the grant its
+    /// own effect needs (`mcp_run_call_gate`). A search reads
     /// under that credential's grants, as `vault.recall` does, from where its
     /// caller sits (DEC-0005).
     fn admit_run_call(
@@ -264,7 +265,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
-        mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
+        mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
         // A search reads on the credential's lane, a facet stamp places only
         // a row that lane reads, a consult lands only refs it reads, and a
         // TASK binding reads its TASK and workflow there (FIX 5316).
@@ -292,11 +293,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A read a session-bound run serves through the room (WILL L11-01)
     /// meets this connector's door as its run calls do: the verb's own
-    /// binding, the credential `execute_code` was admitted on, still live,
-    /// and that credential's lane, from where its caller sits.
+    /// binding, the session `execute_code` was admitted on, still live, the
+    /// verb's own grant, and that credential's lane, from where its caller
+    /// sits.
     fn admit_session_read(&self, verb: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
         mcp_admit_host_verb(&self.actor, verb)
-            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
             .map_err(|error| AgentVerbRefusal {
                 code: error.kind.to_owned(),
             })?;

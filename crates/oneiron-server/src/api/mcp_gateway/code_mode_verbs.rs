@@ -76,7 +76,9 @@ use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
 use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
-use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
+use super::actor_dispatch::{
+    mcp_host_verb_gate, mcp_run_call_gate, mcp_tool_validation_error, mcp_verb_gate,
+};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
 };
