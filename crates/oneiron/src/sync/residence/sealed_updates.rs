@@ -394,6 +394,37 @@ pub fn sealed_update_outbox(vault: &Vault, limit: usize) -> Result<Vec<OutboxSea
     Ok(out)
 }
 
+/// Drops every outbox row of `world` in the caller's write transaction:
+/// the owner's discard of this install's copy of the world takes the sealed
+/// updates it made of it that the home has not stored (FIX 14534, Engine
+/// 11-06 08:34 call 3 = A: content sends go). Returns how many went.
+///
+/// # Errors
+/// Store errors; a malformed outbox key.
+pub(crate) fn discard_world_outbox_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    world: EntityId,
+) -> Result<usize> {
+    let world_at = SEALED_UPDATE_FRAME_ID_LEN..SEALED_UPDATE_FRAME_ID_LEN + 16;
+    let mut rows = Vec::new();
+    for row in OUTBOX.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, raw) = row?;
+        if raw.len() > OUTBOX_HEADER_LEN && &raw[world_at.clone()] == world.as_bytes() {
+            let key =
+                String::from_utf8(key).map_err(|_| corrupt("a sealed outbox key is not text"))?;
+            let mut id = [0u8; SEALED_UPDATE_FRAME_ID_LEN];
+            id.copy_from_slice(&raw[..SEALED_UPDATE_FRAME_ID_LEN]);
+            rows.push((key, id));
+        }
+    }
+    for (key, id) in &rows {
+        OUTBOX.delete(&vault.store, wtxn, key)?;
+        OUTBOX_IDS.delete(&vault.store, wtxn, &id_key(id))?;
+    }
+    Ok(rows.len())
+}
+
 /// Drops the outbox row `id`: its home stored it, or its world no longer
 /// syncs sealed.
 ///

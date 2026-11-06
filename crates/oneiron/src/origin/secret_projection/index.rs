@@ -430,7 +430,7 @@ impl RepoIndexMarks {
             return Ok(RepoIndexInput::stored(bytes));
         }
         let mark_ids = marks.ids()?;
-        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes)? {
+        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes, None)? {
             RepoBodyProjection::Exact(bytes) => return Ok(RepoIndexInput::stored(bytes)),
             RepoBodyProjection::Masked { bytes, .. } => (RepoIndexCopyKind::Masked, bytes),
             RepoBodyProjection::Opaque(_) => {

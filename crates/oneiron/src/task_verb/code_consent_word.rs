@@ -59,7 +59,7 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
         return match choice {
             CodeConsentChoice::ApproveOnce => "Approve once: this call only",
             CodeConsentChoice::ApproveAndStopAsking => {
-                "Approve and stop asking: this call, and this tool no longer asks"
+                "Approve and stop asking: this connection, class and project"
             }
             CodeConsentChoice::Deny => "Deny: nothing is sent",
         }
