@@ -396,7 +396,7 @@ impl VoiceHost {
                             }
                             MediaEvent::Live(Ok(updates)) => {
                                 // A live hypothesis replaces partial work in flight, never a final's.
-                                if let Some(heard) = self.live_heard(bridge, updates, pending_final, outputs) {
+                                if let Some(heard) = self.live_heard(bridge, updates, pending_final, outputs).work {
                                     pending_final = heard.final_text;
                                     pending = Some(heard_pending(heard));
                                 }
@@ -571,7 +571,7 @@ impl VoiceHost {
                         // The final consumed its handle: what was heard live after it goes next.
                         if was_final
                             && let Some(bridge) = bridge.as_deref_mut()
-                            && let Some(heard) = self.live_resume(bridge, outputs)
+                            && let Some(heard) = self.live_resume(bridge, outputs).work
                         {
                             pending_final = heard.final_text;
                             pending = Some(heard_pending(heard));

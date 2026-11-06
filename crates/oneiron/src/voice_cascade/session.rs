@@ -635,10 +635,15 @@ impl VoiceCascadeSession {
     /// ARCH-0061 #backchannel), before the host prepares them. Words that
     /// are not a backchannel, heard while a speech run's interruption is
     /// pending, take the floor: the output stops, and the words go on to be
-    /// prepared. A backchannel final while the agent holds the floor starts
-    /// no reply: its utterance closes, and nothing waits for it. Words with
-    /// no interruption pending, words of an utterance not open, and every
-    /// word once the agent's playout drained, are prepared as usual.
+    /// prepared. A partial that can still complete a backchannel ("I" of "I
+    /// see") is undecided and stops nothing; the run's later words, its
+    /// final or the sustained hold settle it. A backchannel final while the
+    /// agent holds the floor starts no reply: its utterance closes, and
+    /// nothing waits for it. Words with no interruption pending, words of an
+    /// utterance not open, and every word once the agent's playout drained,
+    /// are prepared as usual. A host validates the words first
+    /// ([`Self::validate_asr`]): a stale or mismatched event must not reach
+    /// the floor.
     pub fn observe_words(
         &mut self,
         handle: &UtteranceHandle,
@@ -653,6 +658,10 @@ impl VoiceCascadeSession {
         {
             return FloorWords::Prepare;
         }
+        // Undecided: the person may be saying "I see" or "なるほど" yet.
+        if kind == AsrEventKind::Partial && backchannel::may_become_backchannel(text) {
+            return FloorWords::Prepare;
+        }
         if !backchannel::is_backchannel(text) {
             return if self.interruption_pending {
                 FloorWords::Interrupt(self.interrupt())
@@ -660,10 +669,7 @@ impl VoiceCascadeSession {
                 FloorWords::Prepare
             };
         }
-        if kind != AsrEventKind::Final {
-            return FloorWords::Prepare;
-        }
-        // The run's words were a backchannel: they settle its interruption.
+        // A backchannel final: the run's words settle its interruption.
         self.interruption_pending = false;
         self.close_utterance(handle);
         FloorWords::Backchannel

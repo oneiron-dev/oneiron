@@ -4,7 +4,7 @@
 //! a reply. Only the listening side is here: the agent's own aizuchi is not
 //! ruled.
 //!
-//! Entry: [`is_backchannel`].
+//! Entry: [`is_backchannel`]; [`may_become_backchannel`] for a partial.
 
 /// The words a person says to keep the agent talking, not to take the floor
 /// (CALLS, FIX 4899): an engine call. Matched whole, after the text is
@@ -67,6 +67,22 @@ pub const BACKCHANNEL_LEXICON: &[&str] = &[
 /// no letters or digits is no backchannel.
 #[must_use]
 pub fn is_backchannel(text: &str) -> bool {
+    entries_in_row(text, false)
+}
+
+/// Whether `text` can still become a backchannel as the person goes on
+/// (FIX 4899): normalised as [`is_backchannel`] says, it is entries in a
+/// row, then nothing or the start of one more entry. The start is matched
+/// by character, so an entry's first words ("i" of "i see") and an entry
+/// not yet finished ("yea" of "yeah", "なる" of "なるほど") both count. A
+/// partial like this is undecided: it does not take the floor.
+pub(crate) fn may_become_backchannel(text: &str) -> bool {
+    entries_in_row(text, true)
+}
+
+/// Whether `text`, normalised, is [`BACKCHANNEL_LEXICON`] entries in a
+/// row, and, when `open_end`, then the start of one more entry.
+fn entries_in_row(text: &str, open_end: bool) -> bool {
     let words = normalised(text);
     if words.is_empty() {
         return false;
@@ -81,12 +97,13 @@ pub fn is_backchannel(text: &str) -> bool {
     let mut reached = vec![false; words.len() + 1];
     let mut places = vec![0];
     while let Some(at) = places.pop() {
-        if at == words.len() {
+        let rest = &words[at..];
+        if rest.is_empty() || (open_end && entries.iter().any(|entry| entry.starts_with(rest))) {
             return true;
         }
         for entry in &entries {
             let next = at + entry.len();
-            if words[at..].starts_with(entry) && !reached[next] {
+            if rest.starts_with(entry) && !reached[next] {
                 reached[next] = true;
                 places.push(next);
             }

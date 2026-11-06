@@ -407,6 +407,16 @@ pub(super) struct HeardWork<'a> {
     pub(super) final_text: bool,
 }
 
+/// What live words did (FIX 4899): how many of the owner's cuts they
+/// finalized, in order, and the words to enrich, if any. A cut is consumed
+/// whether its final goes on to `work`, was a backchannel the agent's floor
+/// kept, heard nothing or was refused; a final in `work` is the last one.
+#[derive(Default)]
+pub(super) struct LiveHeard<'a> {
+    pub(super) consumed_finals: usize,
+    pub(super) work: Option<HeardWork<'a>>,
+}
+
 /// One thing the bridge has for the served connection.
 pub(super) enum MediaEvent {
     In(VoiceMediaIn),
@@ -709,18 +719,19 @@ impl VoiceHost {
     /// is the one final; Soniox's own endpoint changes nothing. While an
     /// earlier final is still being enriched (`final_pending`), what
     /// follows waits for it ([`Self::live_resume`]). Words that took the
-    /// agent's floor stop its output (FIX 4899).
+    /// agent's floor stop its output (FIX 4899), and every cut finalized
+    /// counts as consumed, work or none.
     pub(super) fn live_heard<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         updates: Vec<SonioxUpdate>,
         final_pending: bool,
         outputs: &mut VoiceOutputs<B, T, C>,
-    ) -> Option<HeardWork<'_>> {
+    ) -> LiveHeard<'_> {
         let mut stops = Vec::new();
-        let work = self.live_words(bridge, updates, final_pending, &mut stops);
+        let heard = self.live_words(bridge, updates, final_pending, &mut stops);
         speech::interrupted(stops, Some(bridge), outputs);
-        work
+        heard
     }
 
     fn live_words(
@@ -729,16 +740,16 @@ impl VoiceHost {
         updates: Vec<SonioxUpdate>,
         mut final_pending: bool,
         stops: &mut Vec<OutputStop>,
-    ) -> Option<HeardWork<'_>> {
+    ) -> LiveHeard<'_> {
+        let mut heard = LiveHeard::default();
         let MediaBridge {
             hearing: Hearing::Live(live),
             next_utterance,
             ..
         } = bridge
         else {
-            return None;
+            return heard;
         };
-        let mut work = None;
         let mut words = None;
         let mut finalized = String::new();
         for update in updates {
@@ -757,12 +768,14 @@ impl VoiceHost {
                     let text = std::mem::take(&mut finalized);
                     if final_pending {
                         live.waiting_partial = None;
-                        if !text.trim().is_empty() {
-                            live.waiting_finals.push_back(text);
+                        // An empty one waits too, so its cut is consumed in turn.
+                        live.waiting_finals.push_back(text);
+                    } else {
+                        heard.consumed_finals += 1;
+                        if let Some(work) = self.live_final(live, next_utterance, text, stops) {
+                            heard.work = Some(work);
+                            final_pending = true;
                         }
-                    } else if let Some(heard) = self.live_final(live, next_utterance, text, stops) {
-                        work = Some(heard);
-                        final_pending = true;
                     }
                 }
             }
@@ -773,52 +786,58 @@ impl VoiceHost {
             if let Some((handle, _)) = live.heard.take() {
                 self.close(&handle).ok();
             }
-            return work;
+            return heard;
         }
         if let Some(text) = words.filter(|text| !text.trim().is_empty()) {
             if final_pending {
                 live.waiting_partial = Some(text);
-            } else if let Some(heard) = self.live_partial(live, next_utterance, text, stops) {
-                work = Some(heard);
+            } else if let Some(work) = self.live_partial(live, next_utterance, text, stops) {
+                heard.work = Some(work);
             }
         }
-        work
+        heard
     }
 
     /// What waited for a final that is now enriched: the next final, else
     /// the words heard since. Words that took the agent's floor stop its
-    /// output (FIX 4899).
+    /// output (FIX 4899), and every waiting final taken counts as consumed,
+    /// work or none.
     pub(super) fn live_resume<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
-    ) -> Option<HeardWork<'_>> {
+    ) -> LiveHeard<'_> {
         let mut stops = Vec::new();
-        let work = self.resumed_words(bridge, &mut stops);
+        let heard = self.resumed_words(bridge, &mut stops);
         speech::interrupted(stops, Some(bridge), outputs);
-        work
+        heard
     }
 
     fn resumed_words(
         &self,
         bridge: &mut MediaBridge,
         stops: &mut Vec<OutputStop>,
-    ) -> Option<HeardWork<'_>> {
+    ) -> LiveHeard<'_> {
+        let mut heard = LiveHeard::default();
         let MediaBridge {
             hearing: Hearing::Live(live),
             next_utterance,
             ..
         } = bridge
         else {
-            return None;
+            return heard;
         };
         while let Some(text) = live.waiting_finals.pop_front() {
-            if let Some(heard) = self.live_final(live, next_utterance, text, stops) {
-                return Some(heard);
+            heard.consumed_finals += 1;
+            if let Some(work) = self.live_final(live, next_utterance, text, stops) {
+                heard.work = Some(work);
+                return heard;
             }
         }
-        let text = live.waiting_partial.take()?;
-        self.live_partial(live, next_utterance, text, stops)
+        if let Some(text) = live.waiting_partial.take() {
+            heard.work = self.live_partial(live, next_utterance, text, stops);
+        }
+        heard
     }
 
     /// A live hearing that failed: the utterance it was building closes,

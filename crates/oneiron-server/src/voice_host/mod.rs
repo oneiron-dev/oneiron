@@ -354,18 +354,7 @@ impl VoiceHost {
         }
         let mut state = self.lock()?;
         let handle = state.handle(token)?;
-        let event = AsrEvent {
-            kind: if final_text {
-                AsrEventKind::Final
-            } else {
-                AsrEventKind::Partial
-            },
-            text,
-            tokens: Vec::new(),
-            provider_latency_ms: None,
-            endpoint_delay_ms: None,
-            error: None,
-        };
+        let event = asr_observation(text, final_text);
         // The admitted owner supplies speech, not a context-taint assertion.
         // The brain marks retrieved/external context at its own boundary.
         let prepared = state
@@ -379,10 +368,13 @@ impl VoiceHost {
     }
 
     /// Heard words, through the agent's floor before they are prepared (FIX
-    /// 4899). Words that took the floor leave the stop in `stops`, for the
-    /// caller to dispatch before another playback dequeue, and go on to be
-    /// prepared. A backchannel final while the agent holds the floor closes
-    /// the utterance and prepares nothing: `Ok(None)`.
+    /// 4899). Their revision and input are validated first, as
+    /// [`Self::prepare`] validates them: a stale or mismatched event is
+    /// refused the same way and changes nothing. Words that took the floor
+    /// leave the stop in `stops`, for the caller to dispatch before another
+    /// playback dequeue, and go on to be prepared. A backchannel final while
+    /// the agent holds the floor closes the utterance and prepares nothing:
+    /// `Ok(None)`.
     pub(super) fn prepare_words(
         &self,
         token: &str,
@@ -392,19 +384,19 @@ impl VoiceHost {
         stops: &mut Vec<OutputStop>,
     ) -> Result<Option<EnrichmentWork<'_>>, HostError> {
         self.require_running()?;
-        let words = {
+        if text.trim().is_empty() {
+            return Err(HostError::InvalidRequest);
+        }
+        let (words, text) = {
             let mut state = self.lock()?;
             let handle = state.handle(token)?;
-            let kind = if final_text {
-                AsrEventKind::Final
-            } else {
-                AsrEventKind::Partial
-            };
-            let words = state.core.observe_words(&handle, kind, &text);
+            let event = asr_observation(text, final_text);
+            state.core.validate_asr(&handle, revision, &event, false)?;
+            let words = state.core.observe_words(&handle, event.kind, &event.text);
             if matches!(words, FloorWords::Backchannel) {
                 state.open = None;
             }
-            words
+            (words, event.text)
         };
         match words {
             FloorWords::Backchannel => return Ok(None),
@@ -423,6 +415,23 @@ impl VoiceHost {
     /// Whether no speculative pass of the call still runs past its deadline.
     fn speculative_at_rest(&self) -> bool {
         self.speculative.at_rest()
+    }
+}
+
+/// The owner's words as an ASR observation: a final or a partial,
+/// with no tokens, timing or error.
+fn asr_observation(text: String, final_text: bool) -> AsrEvent {
+    AsrEvent {
+        kind: if final_text {
+            AsrEventKind::Final
+        } else {
+            AsrEventKind::Partial
+        },
+        text,
+        tokens: Vec::new(),
+        provider_latency_ms: None,
+        endpoint_delay_ms: None,
+        error: None,
     }
 }
 
