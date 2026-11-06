@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::claim::ScopedRead;
 use crate::skill_attribution::{
+    canonical_attribution_judgment_in_txn, canonical_attribution_judgments_in_txn,
     canonical_skill_edit_proposal_in_txn, canonical_skill_edit_proposals_in_txn,
 };
 use crate::skill_optimize::{
@@ -17,6 +18,39 @@ pub(super) fn unavailable_in_txn(
     source: &NativeReadSource,
 ) -> Result<Option<&'static str>> {
     match source {
+        NativeReadSource::AttributionJudgment { row: source } => {
+            let Some(row) =
+                canonical_attribution_judgment_in_txn(lane.vault(), txn, source.sequence)?
+            else {
+                return Ok(Some("source_missing"));
+            };
+            if row.source() != *source {
+                return Ok(Some("source_changed"));
+            }
+            Ok(
+                (!lane.native_attribution_judgment_admitted_in_txn(txn, &row)?)
+                    .then_some("withheld"),
+            )
+        }
+        NativeReadSource::AttributionJudgmentScan { prefix, rows } => {
+            let (current, current_prefix) =
+                canonical_attribution_judgments_in_txn(lane.vault(), txn)?;
+            if current_prefix != prefix.as_slice()
+                || current.len() != rows.len()
+                || current
+                    .iter()
+                    .zip(rows)
+                    .any(|(row, source)| row.source() != *source)
+            {
+                return Ok(Some("source_changed"));
+            }
+            for row in &current {
+                if !lane.native_attribution_judgment_admitted_in_txn(txn, row)? {
+                    return Ok(Some("withheld"));
+                }
+            }
+            Ok(None)
+        }
         NativeReadSource::SkillEditProposal { row: source } => {
             let Some(row) =
                 canonical_skill_edit_proposal_in_txn(lane.vault(), txn, source.sequence)?

@@ -93,6 +93,11 @@ pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
 };
+mod judgment_read;
+pub(crate) use judgment_read::{
+    CanonicalAttributionJudgment, canonical_attribution_judgment_in_txn,
+    canonical_attribution_judgments_in_txn,
+};
 mod proposal_read;
 pub(crate) use proposal_read::{
     CanonicalSkillEditProposal, canonical_skill_edit_proposal_in_txn,
@@ -131,10 +136,12 @@ pub use self::projector::{
     attribution_judgments, pending_edit_proposals, read_attribution_cursor,
     record_attribution_evidence, run_attribution_projector,
     run_attribution_projector_with_decisions, run_attribution_projector_with_position,
+    run_attribution_projector_with_positions,
 };
 pub use self::types::{
-    AttemptOutcome, AttributionJudgment, AttributionLane, AttributionShare, AttributionSplit,
-    AttributionVerdict, DeviationCause, EditHunk, FollowedState, HunkVerdict, JudgeRequest,
+    AttemptOutcome, AttributionJudgment, AttributionJudgmentReadPosition, AttributionLane,
+    AttributionShare, AttributionSplit, AttributionVerdict, DeviationCause, EditHunk, FollowedState,
+    HunkVerdict, JudgeRequest,
     OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
     SkillEditProposalReadPosition, UnclearNote, UnclearReason,
 };

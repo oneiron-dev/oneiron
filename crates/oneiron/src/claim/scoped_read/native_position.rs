@@ -5,7 +5,7 @@ use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::error::{Error, Result};
-use crate::skill_attribution::SkillEditProposalReadPosition;
+use crate::skill_attribution::{AttributionJudgmentReadPosition, SkillEditProposalReadPosition};
 use crate::skill_optimize::{JudgeLabelReadPosition, SkillVerdictReadPosition};
 use crate::store::GateReadAnchors;
 use crate::write_envelope::claim_body::RelationshipScope;
@@ -48,6 +48,20 @@ impl<'a> From<&'a JudgeLabelReadPosition> for NativeReadPosition<'a> {
 
 impl<'a> From<&'a SkillVerdictReadPosition> for NativeReadPosition<'a> {
     fn from(position: &'a SkillVerdictReadPosition) -> Self {
+        Self {
+            scope: &position.scope,
+            kind_band: position.kind_band,
+            relationship: &position.relationship,
+            private: position.private,
+            body_worlds: &position.body_worlds,
+            body_facets: &position.body_facets,
+            anchors: &position.anchors,
+        }
+    }
+}
+
+impl<'a> From<&'a AttributionJudgmentReadPosition> for NativeReadPosition<'a> {
+    fn from(position: &'a AttributionJudgmentReadPosition) -> Self {
         Self {
             scope: &position.scope,
             kind_band: position.kind_band,

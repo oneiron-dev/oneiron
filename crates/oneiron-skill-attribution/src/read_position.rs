@@ -22,6 +22,21 @@ pub struct SkillEditProposalReadPosition {
     pub anchors: GateReadAnchors,
 }
 
+/// Placement data for a newly minted judgment, never a reader grant. Every
+/// axis comes from that judgment's original producer request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttributionJudgmentReadPosition {
+    pub scope: Scope,
+    pub kind_band: u8,
+    #[serde(deserialize_with = "deserialize_relationship")]
+    pub relationship: Option<BTreeSet<EntityId>>,
+    pub private: bool,
+    pub body_worlds: Vec<EntityId>,
+    pub body_facets: Vec<EntityId>,
+    pub anchors: GateReadAnchors,
+}
+
 fn deserialize_relationship<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<BTreeSet<EntityId>>, D::Error> {
