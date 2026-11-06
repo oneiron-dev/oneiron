@@ -354,6 +354,7 @@ struct FileServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
     device_sync: Option<super::DeviceSyncConfig>,
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
@@ -426,6 +427,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             gpu: value.gpu,
             native_mail: value.native_mail,
             device_sync: value.device_sync,
+            shared_env: value.shared_env,
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
@@ -511,6 +513,9 @@ struct PartialServeConfig {
     native_mail: Option<super::NativeMailConfig>,
     /// `[device_sync]` is file-only, as `[native_mail]` is.
     device_sync: Option<super::DeviceSyncConfig>,
+    /// `[[shared_env]]` is file-only: explicit dedicated-env paths and
+    /// credentials, never discovered through the process environment.
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     /// `[embedding]` is file-only, as `[models]` is.
@@ -614,6 +619,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
+            .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
@@ -715,6 +721,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: None,
             connectors: None,
             embedding: None,
             line: None,

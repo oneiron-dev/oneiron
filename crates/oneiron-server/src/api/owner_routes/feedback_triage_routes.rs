@@ -164,8 +164,8 @@ async fn status(
     Ok(Json(status))
 }
 
-/// `GET /v1/owner/feedback/triage/binding`: the skill the triage runs, with
-/// the revision a change names as `seen`.
+/// `GET /v1/owner/feedback/triage/binding`: the skill and intake scheduling
+/// policy, with the revision a change names as `seen`.
 async fn binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -178,9 +178,10 @@ async fn binding(
     Ok(Json(binding))
 }
 
-/// `PUT /v1/owner/feedback/triage/binding` with `{skill, seen}`: binds the
-/// skill (null unbinds) at the revision the owner read; a binding that
-/// moved since is refused and nothing changes.
+/// `PUT /v1/owner/feedback/triage/binding` with
+/// `{skill, enqueue_on_intake, seen}`: sets the skill (null unbinds) and
+/// intake policy at the revision the owner read; a moved binding is refused
+/// and nothing changes.
 async fn set_binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

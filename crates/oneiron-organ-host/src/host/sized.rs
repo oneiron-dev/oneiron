@@ -3,10 +3,12 @@
 //! must fit, and what the call measured, however it ended.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use oneiron::Vault;
+use oneiron_organ_protocol::{Hash32, SharedRegion};
 
-use super::{OrganHost, unvouched};
+use super::{Held, Lent, OrganHost, Resolved, unvouched};
 use crate::error::HostError;
 use crate::handlers::AskHandlers;
 use crate::outcome::OrganOutcome;
@@ -47,9 +49,17 @@ pub(super) enum Run<'m> {
     Warm,
     Fresh,
     Sized(CallSize, &'m mut CallMeasure),
+    SizedUntil(CallSize, &'m mut CallMeasure, Instant),
 }
 
 impl Run<'_> {
+    pub(super) fn until(&self) -> Option<Instant> {
+        match self {
+            Self::SizedUntil(_, _, until) => Some(*until),
+            _ => None,
+        }
+    }
+
     pub(super) fn fresh(&self) -> bool {
         !matches!(self, Self::Warm)
     }
@@ -57,7 +67,7 @@ impl Run<'_> {
     /// What the call books, noted in its measure.
     pub(super) fn booking(&mut self, spec: &OrganSpec) -> u64 {
         match self {
-            Self::Sized(size, measure) => {
+            Self::Sized(size, measure) | Self::SizedUntil(size, measure, _) => {
                 measure.tier = Some(spec.tier);
                 measure.booked = size.booking.max(spec.call_memory_bytes);
                 measure.booked
@@ -69,7 +79,9 @@ impl Run<'_> {
     /// The process grant of a sized call's own process.
     pub(super) fn process_memory(&self, spec: &OrganSpec) -> Option<u64> {
         match self {
-            Self::Sized(size, _) => Some(size.process.max(spec.memory_bytes)),
+            Self::Sized(size, _) | Self::SizedUntil(size, _, _) => {
+                Some(size.process.max(spec.memory_bytes))
+            }
             Self::Warm | Self::Fresh => None,
         }
     }
@@ -77,13 +89,86 @@ impl Run<'_> {
     /// Notes the frames the call's process carried. A sized call runs in a
     /// process of its own, so they are this call's alone.
     pub(super) fn measured(&mut self, process: &OrganProcess) {
-        if let Self::Sized(_, measure) = self {
+        if let Self::Sized(_, measure) | Self::SizedUntil(_, measure, _) = self {
             (measure.largest_sent_frame, measure.largest_received_frame) = process.largest_frames();
         }
     }
 }
 
+/// One call-owned immutable input. Its hash is computed from the same bytes
+/// copied into its region; callers cannot supply a different receipt hash.
+/// Unlike cached inputs, this region leaves memory when the call ends.
+#[derive(Debug)]
+pub struct LentRegion {
+    media_type: String,
+    hash: Hash32,
+    region: SharedRegion,
+}
+
+impl LentRegion {
+    /// Copies `bytes` once into an immutable region. The caller must admit
+    /// its length before this call and hold that reservation through the
+    /// organ call. No intermediate owned byte buffer is constructed.
+    pub fn copy_from(bytes: &[u8], media_type: impl Into<String>) -> std::io::Result<Self> {
+        Ok(Self {
+            media_type: media_type.into(),
+            hash: Hash32::of(bytes),
+            region: SharedRegion::from_bytes(bytes)?,
+        })
+    }
+
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        self.region.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.region.is_empty()
+    }
+
+    pub(super) fn resolve(self, spec: &OrganSpec) -> Result<Resolved, HostError> {
+        if !spec
+            .media_types
+            .iter()
+            .any(|media| media == &self.media_type)
+        {
+            return Err(HostError::MediaTypeNotGranted(self.media_type));
+        }
+        Ok(Resolved {
+            input: None,
+            media_type: self.media_type,
+            hash: self.hash,
+            len: self.region.len(),
+            held: Held::Region(Arc::new(self.region)),
+        })
+    }
+}
+
 impl OrganHost {
+    /// A sized call over one already admitted, call-owned region, bounded
+    /// by the caller's original absolute deadline. Budget waits do not move
+    /// this deadline; existing duration-based calls keep their own clocks.
+    /// The input is not copied again or retained in the region cache.
+    pub fn call_sized_region_until_with(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        input: LentRegion,
+        asks: &AskHandlers<'_>,
+        size: CallSize,
+        measure: &mut CallMeasure,
+        deadline: Instant,
+    ) -> Result<OrganOutcome, HostError> {
+        self.run(
+            vault,
+            call,
+            vec![Lent::Region(input)],
+            asks,
+            Run::SizedUntil(size, measure, deadline),
+        )
+    }
+
     /// [`Self::call_fresh_with`], at `size` rather than the install grant's
     /// booking and process grant: the caller sizes the call from what it
     /// lends, so no input is refused for outgrowing a fixed grant. The

@@ -26,6 +26,7 @@ mod participants;
 mod participation;
 mod private_threads;
 mod replica;
+mod speaking;
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -127,6 +128,7 @@ pub(crate) use replica::{
     replicated_turn_in,
 };
 use serde::{Deserialize, Serialize};
+pub use speaking::{ROOM_SPEAKING_TURNS, RoomSpeakingClaim};
 use std::collections::BTreeSet;
 pub(crate) use thread_delete::private_root_of_room_in;
 pub use thread_delete::{PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest};
