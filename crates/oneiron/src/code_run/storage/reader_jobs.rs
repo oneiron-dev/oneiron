@@ -10,6 +10,7 @@ mod read;
 mod scoped;
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
@@ -21,8 +22,9 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
-    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
+    ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderRoute,
+    ReaderRunEnd, SpawnHostSeat, SpawnParentBinding, TaskWaitSet, TaskWaitSetResult,
+    reader_job_cutoff, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -931,18 +933,47 @@ impl ExecutorStorage<'_> {
 
     /// Up to `limit` queued children, oldest first.
     pub(crate) fn queued_reader_jobs(&self, limit: usize) -> Result<Vec<ReaderJob>> {
+        Ok(self.queued_reader_jobs_after(None, limit)?.jobs)
+    }
+
+    /// Up to `limit` queue rows' children, oldest first, from just after
+    /// `after` (the queue's front for none), and where the next page starts
+    /// while rows follow (FIX 9708). A walk that pages on reaches every child
+    /// queued behind ones it cannot run yet.
+    pub(crate) fn queued_reader_jobs_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
         self.reader_read(|txn, dbs| {
-            let mut jobs = Vec::new();
-            for row in INDEX.iter_from(&dbs, txn, b"q")? {
-                if jobs.len() >= limit {
+            let front = vec![b'q'];
+            let end = vec![b'q' + 1];
+            let start = after.map(|at| queued_key(at.enqueued_at_ms, at.task));
+            let lower = start
+                .as_ref()
+                .map_or(Bound::Included(&front), Bound::Excluded);
+            let mut page = ReaderQueuePage {
+                jobs: Vec::new(),
+                next: None,
+            };
+            let (mut read, mut last) = (0, None);
+            for row in INDEX.iter_range(&dbs, txn, lower, Bound::Excluded(&end))? {
+                if read >= limit {
+                    page.next = last;
                     break;
                 }
                 let (key, _) = row?;
-                if let Some(job) = JOBS.get(&dbs, txn, &id_at(&key, 9)?)? {
-                    jobs.push(job);
+                let task = id_at(&key, 9)?;
+                last = Some(ReaderQueueCursor {
+                    enqueued_at_ms: time_at(&key, 1)?,
+                    task,
+                });
+                read += 1;
+                if let Some(job) = JOBS.get(&dbs, txn, &task)? {
+                    page.jobs.push(job);
                 }
             }
-            Ok(jobs)
+            Ok(page)
         })
     }
 
@@ -1174,6 +1205,17 @@ impl<'a> ReaderJobs<'a> {
     /// Up to `limit` queued children, oldest first.
     pub fn queued(&self, limit: usize) -> Result<Vec<ReaderJob>> {
         self.storage.queued_reader_jobs(limit)
+    }
+
+    /// Up to `limit` queued children, oldest first, from just after `after`
+    /// (the queue's front for none), and where the next page starts while
+    /// more follow (FIX 9708).
+    pub fn queued_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
+        self.storage.queued_reader_jobs_after(after, limit)
     }
 
     pub fn job(&self, task: EntityId) -> Result<Option<ReaderJob>> {
