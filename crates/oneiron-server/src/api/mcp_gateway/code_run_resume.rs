@@ -468,6 +468,12 @@ async fn caller_stands(server: &Arc<SyncServer>, continuation: &McpCodeRunContin
     let Some(auth) = caller.auth.as_ref() else {
         return not_entered(continuation, &VerbAskRefusal::CredentialMissing);
     };
+    // A caller with neither a kept instrument nor a connector registration
+    // has nothing to verify again here, so its run waits for its own next
+    // call, as a hook's ask on such a call does (FIX 11063).
+    if continuation.instrument.is_none() && continuation.registration.is_none() {
+        return not_entered(continuation, &VerbAskRefusal::CredentialUnavailable);
+    }
     if let Some(instrument) = &continuation.instrument
         && let Err(refusal) = crate::code_consent_host::kept_instrument_auth(
             server,
