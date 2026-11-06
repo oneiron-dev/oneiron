@@ -24,6 +24,10 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelId;
 
+mod notice;
+
+pub(crate) const STOCK_SWITCH_NOTIFICATION_PRODUCER: &str = "coach.training_offer.switch";
+
 /// The switch one offer's approval applied, keyed by offer id.
 const SWITCH: SideTable<EntityId, OfferSwitchReceipt, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_OFFER_SWITCH);
@@ -264,7 +268,34 @@ pub(super) fn apply_switch_in_txn(
         undone: None,
     };
     SWITCH.put(&vault.store, txn, offer, &receipt)?;
+    notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     Ok(receipt)
+}
+
+/// Whether an applied switch still offers this owner's undo tap in `txn`.
+/// The undo door revalidates the owner and the complete move again when called.
+pub(crate) fn training_offer_switch_undo_available_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+    offer: &EntityId,
+) -> Result<bool> {
+    owner.revalidate_in_txn(vault, txn)?;
+    let Some(receipt) = SWITCH.get(&vault.store, txn, offer)? else {
+        return Ok(false);
+    };
+    if receipt.undone.is_some()
+        || !matches!(
+            &receipt.application,
+            SwitchApplication::Bound | SwitchApplication::Applied { .. }
+        )
+    {
+        return Ok(false);
+    }
+    let Some(manifest) = read_manifest(&vault.store, txn)? else {
+        return Ok(false);
+    };
+    Ok(manifest.roles.get(&receipt.role) == Some(&receipt.binding))
 }
 
 /// The vault owner's undo of an approved switch: the seat's role takes back
@@ -343,6 +374,7 @@ pub(crate) fn settle_staged_switch_in_txn(
     {
         receipt.application = application;
         SWITCH.put(&vault.store, txn, offer, &receipt)?;
+        notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     }
     Ok(())
 }
