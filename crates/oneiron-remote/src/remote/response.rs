@@ -73,13 +73,18 @@ pub(super) fn serialize_whole<Q: Serialize>(request: &Q) -> Result<Vec<u8>, Memo
 
 /// `body`, when it is within the 64 MiB request ceiling.
 pub(super) fn within_ceiling(body: Vec<u8>) -> Result<Vec<u8>, MemoryError> {
-    if body.len() > MAX_REMOTE_REQUEST_BYTES {
+    check_request_length(body.len() as u64)?;
+    Ok(body)
+}
+
+pub(super) fn check_request_length(length: u64) -> Result<(), MemoryError> {
+    if length > MAX_REMOTE_REQUEST_BYTES as u64 {
         return Err(bad_request(
             format!("the request body exceeds the {MAX_REMOTE_REQUEST_BYTES}-byte ceiling"),
             &["Send less in one call; blob versions cap at 32 MiB of raw content."],
         ));
     }
-    Ok(body)
+    Ok(())
 }
 
 /// The bytes a serialized request crosses as (ARCH-0081 §8): zstd at 16 KiB or
