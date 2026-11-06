@@ -100,7 +100,7 @@ pub use self::verbs::{
     ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits,
     ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
     DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, FolderItemInput, KeptProposal,
-    NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
+    NativeOutputRequest, ProposalSettleRequest, ReleasedAnswers, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
 pub(crate) use self::versions::archive_version_tables;
@@ -116,7 +116,6 @@ pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_che
 
 /// The closed deck transaction grammar a deck proposal carries.
 pub use oneiron_docedit::edit::transaction::DeckTransaction;
-
 #[cfg(test)]
 mod tests;
 

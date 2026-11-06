@@ -2511,6 +2511,9 @@ impl OneironClient {
                 "vault.artifacts.release_wait" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ReleasedWait,
                 >(client, verb, &input),
+                "vault.artifacts.release_answers" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::ReleasedAnswers,
+                >(client, verb, &input),
                 "vault.artifacts.review_slides" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
                 >(client, verb, &input),
@@ -13851,6 +13854,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.release_wait", value)
+    }
+    /// Releases completed sheet answers by run ref under Discard consent.
+    pub fn vault_artifacts_release_answers(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::ReleasedAnswers, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.release_answers", value)
     }
     /// Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep.
     pub fn vault_artifacts_review_slides(

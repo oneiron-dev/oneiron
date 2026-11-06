@@ -32,8 +32,10 @@ write batch does not repeat any of its decisions.
 ## Remaining work
 
 This is a source implementation, not a production compile or runtime proof.
-The full FIX 9815 retention contract is still partial: a resource or deadline
-error during preparation can return before a proposal exists. Durable storage
-and retry of decided-but-unstaged answers must preserve the same decisions and
-run reference rather than replay the decider. Complete heap accounting,
-count-domain admission behavior and hard-time bounds are not established here.
+The full FIX 9815 retention contract is still partial. Completed sheet-row and
+folder-item decisions now survive a staging or retention error and can be
+restaged under the same run reference without replaying the decider; see
+[completed typed-sheet answer retry](typed-sheet-answer-retry.md). An error
+before the decision loop completes, or failure to commit the completed-answer
+row itself, is not covered. Complete heap accounting, count-domain admission
+behavior and hard-time bounds are not established here.

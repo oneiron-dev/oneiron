@@ -814,6 +814,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.proposals`
 - `vault.artifacts.waits`
 - `vault.artifacts.release_wait`
+- `vault.artifacts.release_answers`
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.artifacts.admit`

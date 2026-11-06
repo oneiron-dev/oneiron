@@ -14,6 +14,7 @@ use super::{
     OfficeDoc, OfficeFormat, RangeRef,
 };
 use crate::Vault;
+use crate::edit_settle::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
@@ -266,6 +267,20 @@ impl Vault {
         {
             return Err(invalid("invalid sheet ask selection"));
         }
+        let identity = DecidedSheetRequest::new(
+            ask,
+            DecidedSheetShape::SheetRows {
+                sheet: request.sheet.to_owned(),
+                rows,
+                answer_col,
+                header_row: request.header_row,
+                max_count_override: request.max_count_override,
+                only_rows: request.only_rows.map(|rows| rows.iter().copied().collect()),
+            },
+        );
+        if let Some(row) = self.decided_sheet_answers(artifact, &identity, false)? {
+            return self.stage_decided_sheet_answers(artifact, &row, ask.deadline);
+        }
         // A workbook with a live body is read there at its head, pinned with
         // it; the answer cell is read on the version the answer lands on
         // (FIX 11981).
@@ -391,19 +406,20 @@ impl Vault {
             }),
             base_live,
         };
-        Ok(ArtifactAskRun {
-            proposal: self.stage_sheet_answers(
-                artifact,
+        let row = self.retain_decided_sheet_answers(
+            artifact,
+            DecidedSheetAnswers {
+                request: identity,
                 bundle,
-                ask.run_ref,
                 version,
                 frontier,
-                Some(ask.deadline),
-            )?,
-            abstained,
-            refused,
-            read_rows,
-        })
+                read_rows,
+                abstained,
+                refused,
+                unmasked: false,
+            },
+        )?;
+        self.stage_decided_sheet_answers(artifact, &row, ask.deadline)
     }
 
     /// Stage decided answers through the in-process cell writer on the exact
