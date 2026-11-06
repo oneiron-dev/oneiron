@@ -44,6 +44,26 @@ fn generated_only(decisions: &ConsolidationDecisions) -> bool {
     .all(|(rung, provider)| rung <= first || rung > ceiling || provider.is_none())
 }
 
+/// The Arc's existing start counter, with its narrative slot left untouched.
+struct OpeningGenerations<'a> {
+    calls: std::sync::Mutex<&'a mut u32>,
+    limit: u32,
+}
+
+impl crate::llm::decision::DecisionGenerationAdmission for OpeningGenerations<'_> {
+    fn admit(&self) -> bool {
+        let mut calls = self
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if **calls >= self.limit.saturating_sub(1) {
+            return false;
+        }
+        **calls = (**calls).saturating_add(1);
+        true
+    }
+}
+
 impl<E> ScopeSummaryExecutor<'_, E> {
     #[expect(
         clippy::too_many_arguments,
@@ -84,11 +104,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         }
         let correlation = EntityId::from_bytes(*step.attempt_id.as_bytes())?;
         let to = AskTo::owner();
+        let generation = OpeningGenerations {
+            calls: std::sync::Mutex::new(calls),
+            limit,
+        };
         for turn in candidates {
-            // Keep one call for the original narrative reader. Memos spend no pace.
-            if *calls >= limit.saturating_sub(1) {
-                break;
-            }
             if ctx.deadline.expired() {
                 return Ok(ControlFlow::Break(charges.checkpoint()));
             }
@@ -209,13 +229,21 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 }
                 Ok(request)
             };
+            let purpose = shell.envelope.purpose.clone();
+            let context = crate::llm::decision::DecisionCallContext {
+                purpose: &purpose,
+                extraction_egress: call.inference.extraction_egress,
+                generation: Some(&generation),
+            };
             let mut spent = Vec::new();
+            let mut cut_usage = Vec::new();
+            let mut receipts = Vec::new();
             let decided = Decider {
                 decisions,
                 actor: self.actor,
                 guard: self.guard,
             }
-            .decide_scoped_on_run(
+            .decide_scoped_captured_on_run(
                 ScopedRead {
                     step,
                     pass: ctx.deadline,
@@ -233,12 +261,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 std::slice::from_ref(&pack.question),
                 &labels,
                 &mut spent,
+                &mut cut_usage,
                 run,
+                &context,
+                &mut receipts,
             )
             .await;
             let fresh = backend.fresh.load(Ordering::Relaxed);
-            if fresh {
-                *calls = calls.saturating_add(1);
+            for usage in &cut_usage {
+                charges.record_usage(usage);
             }
             for (hash, usage, ..) in &spent {
                 if let Err(error) =
