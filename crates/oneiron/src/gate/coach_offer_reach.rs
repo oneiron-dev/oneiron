@@ -23,8 +23,10 @@
 //! (FIX 857): the one reserved question about a Scored run's result, while
 //! the run still waits at the expectation it froze, and the ask on its TURN.
 //! It also reaches an owner-judged contribution pair (FIX 3609): the pair's
-//! reserved question and answer parts, while no ask carries the pair, and
-//! the ask on them. Revoking the row closes every one of these questions.
+//! reserved question and answer parts, which the Coach speaks as the
+//! companion and the witness door lands only on this reach, while no ask
+//! carries the pair, and the ask on them. Revoking the row closes every one
+//! of these questions.
 
 use rmpv::Value;
 
@@ -35,7 +37,9 @@ use super::constants::{
 };
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
-use super::witness_message::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use super::witness_message::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope,
+};
 use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -279,8 +283,9 @@ fn coach_swap_ask_ceiling_in(
 }
 
 /// The Coach's leave to write one `system` question row about a pending
-/// offer, bound to the writer and the row's exact canonical bytes. Only the
-/// witness door's System-author floor reads it.
+/// offer, or one companion part of a contribution pair (FIX 3609), bound to
+/// the writer and the row's exact canonical bytes. Only the witness door's
+/// floor reads it.
 pub(crate) struct OfferQuestionPermit {
     actor: WriteActor,
     body: Vec<u8>,
@@ -402,11 +407,12 @@ fn coach_swap_question_permit_in(
 
 /// The permit one reserved part of an owner-judged contribution pair's
 /// question carries to the witness door (FIX 3609): the writer is the Coach
-/// in its System class; the message is one visible row at order 0; its
-/// metadata names a pending pair's part whose reservation holds exactly
-/// these `(conversation, TURN, MESSAGE)` ids and this text's digest, while
-/// no ask carries the pair, for a live owner; and the live policy grants
-/// the reach.
+/// in its System class; the message is one visible companion row at order
+/// 0, the speaker its new TURN needs; its metadata names a pending pair's
+/// part whose reservation holds exactly these `(conversation, TURN,
+/// MESSAGE)` ids and this text's digest, while no ask carries the pair, for
+/// a live owner; and the live policy grants the reach. The witness door
+/// lands a part only on this permit.
 fn coach_pair_question_permit_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -415,7 +421,7 @@ fn coach_pair_question_permit_in(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
-    if envelope.author != WITNESS_AUTHOR_SYSTEM
+    if envelope.author != WITNESS_AUTHOR_COMPANION
         || !envelope.is_visible
         || envelope.order != 0
         || !is_coach(actor.entity_ref(), actor.actor_class())?
@@ -438,8 +444,8 @@ fn coach_pair_question_permit_in(
     }))
 }
 
-/// Whether `permit` lets `actor` write the `system` row `body` past the
-/// floor: it binds both, the reach still holds under `policy`, and neither an
+/// Whether `permit` lets `actor` write the row `body` past the floor: it
+/// binds both, the reach still holds under `policy`, and neither an
 /// AGENT_DEF self-limit nor a row bound to this writer clamps it to Proposed.
 pub(super) fn offer_question_authorized(
     permit: &OfferQuestionPermit,
