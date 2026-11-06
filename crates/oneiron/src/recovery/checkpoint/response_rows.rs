@@ -379,6 +379,10 @@ pub(super) fn retire_carried(
         })
         .collect();
     for (database, key, keep, instance, digest) in gone {
+        #[cfg(feature = "sync")]
+        if super::carried_bodies::home_claim::retire(image, &database, &key)? {
+            continue;
+        }
         let rows = image.databases.get_mut(&database).ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
         if value.len() < keep {

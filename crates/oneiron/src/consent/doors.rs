@@ -23,6 +23,7 @@ use crate::error::GateError;
 
 mod decision_slot;
 mod grants;
+mod invitee_credential;
 mod lineage;
 mod owner;
 mod person_credential;

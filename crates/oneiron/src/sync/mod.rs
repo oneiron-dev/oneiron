@@ -37,6 +37,7 @@ pub(crate) use crate::room_codec::carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;
+mod isolated_receiver;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
@@ -137,7 +138,7 @@ pub use selector::{
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    filtered_window_doc_for, filtered_window_doc_for_peer, filtered_window_doc_for_peer_in_scope,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

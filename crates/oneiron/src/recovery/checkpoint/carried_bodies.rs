@@ -25,6 +25,8 @@
 //! A replay row's or a step start's parts recompose their row once, after
 //! every part is read ([`replay`], FIX 9180).
 
+#[cfg(feature = "sync")]
+pub(super) mod home_claim;
 pub(super) mod replay;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,6 +190,13 @@ impl BodyCensus {
             && let Some(stripped) = replay::note_start(self, store, txn, key, value)?
         {
             return Ok(stripped);
+        }
+        #[cfg(feature = "sync")]
+        if database == "sync_queue"
+            && let Some((carried, body, skeleton)) = home_claim::note(store, txn, key, value)?
+        {
+            self.inline.push((carried, body));
+            return Ok(Some(skeleton));
         }
         match self.responses.note(store, txn, database, key, value)? {
             Noted::Not => {}
@@ -508,11 +517,13 @@ pub(super) fn require(
     plan: &mut CustodyPlan,
 ) -> Result<(BTreeSet<[u8; 16]>, BTreeSet<[u8; 32]>)> {
     replay::require(image)?;
-    let rows = image
-        .databases
-        .get_mut("vault_meta")
-        .ok_or_else(codec_error)?;
-    let named = body_instances_in_rows(rows)?;
+    let rows = image.databases.get("vault_meta").ok_or_else(codec_error)?;
+    let mut named = body_instances_in_rows(rows)?;
+    #[cfg(feature = "sync")]
+    named.extend(home_claim::required_instances(
+        &image.inline_bodies,
+        &image.databases,
+    )?);
     // A superseded response's binding is the live vault's now (KS-2B2).
     let carried = image
         .sealed_bodies
@@ -531,6 +542,10 @@ pub(super) fn require(
         }
     }
     let retired = require_body_instances(&named, plan)?;
+    let rows = image
+        .databases
+        .get_mut("vault_meta")
+        .ok_or_else(codec_error)?;
     let pruned = prune_retired_bodies_in_rows(rows, &retired)?;
     crate::code_run::retire_replay_bodies_in_rows(&mut image.databases, &pruned.digests)?;
     crate::memory::retire_message_results_in_rows(&mut image.databases, &pruned.digests)?;
@@ -683,6 +698,10 @@ pub(super) fn restore(
             .get_mut(&carried.database)
             .ok_or_else(codec_error)?;
         let value = response_rows::row_mut(rows, &carried.key)?;
+        #[cfg(feature = "sync")]
+        if home_claim::land(&vault.store, carried, value, &body)? {
+            continue;
+        }
         let keep = carried.keep as usize;
         // An inline body's row is its first bytes alone; a response's is its
         // stub, whose first bytes the exact body follows (KS-2B1).

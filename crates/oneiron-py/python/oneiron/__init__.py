@@ -2664,11 +2664,14 @@ class Oneiron:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
             return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def invitation_slip(self, spec):
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
             return json.loads(_translate(lambda: self._client.vault_members_invitation_slip(json.dumps(spec))))
+        def invitation_code(self, spec):
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitation_code(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -2684,6 +2687,9 @@ class Oneiron:
         def accept(self, spec):
             """The invitee accepts their own invitation and joins the shared vault at its role."""
             return json.loads(_translate(lambda: self._client.vault_members_accept(json.dumps(spec))))
+        def accept_with_credential(self, spec):
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_members_accept_with_credential(json.dumps(spec))))
         def decline(self, spec):
             """The invitee declines their own invitation; nothing is granted."""
             return json.loads(_translate(lambda: self._client.vault_members_decline(json.dumps(spec))))
