@@ -55,12 +55,12 @@ pub(super) fn envelope(body: &ClaimBody) -> Result<WriteEnvelope> {
         lineage,
     ))
 }
-/// The source claim's scope map for its companion (FIX 8663): every entry of
-/// `body.scope`, each facet or project selector set to the claim's stored
-/// stamp, so storing the companion cannot select another facet. A scope that
-/// is not a map holds no entry to copy.
+/// The source claim's scope map for its companion (FIX 8663), without the
+/// source's own birth weight. Each facet or project selector is set to the
+/// claim's stored stamp, so storing the companion cannot select another
+/// facet. A scope that is not a map holds no entry to copy.
 fn source_scope(body: &ClaimBody) -> Value {
-    let Some(Value::Map(mut entries)) = body.scope.clone() else {
+    let Some(Value::Map(mut entries)) = super::without_initial_weight(body.scope.clone()) else {
         return Value::Map(Vec::new());
     };
     for (key, value) in &mut entries {
