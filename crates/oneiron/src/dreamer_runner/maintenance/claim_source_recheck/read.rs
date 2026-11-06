@@ -237,10 +237,13 @@ pub(super) fn discover_pending(vault: &Vault) -> Result<()> {
     })
 }
 
-/// What every live claim cites, read in one scan of the claims (FIX
+/// What every stored claim cites, read in one scan of the claims (FIX
 /// 20502): the claims that cite each record, a support assertion by the
 /// head it supports, and what the live support assertions on each head
-/// cite. A head's own evidence is read with the head.
+/// cite. A head's own evidence is read with the head. A claim no longer
+/// active (superseded, weakened, retracted) still carries what its
+/// descendants were drawn from, so the walk reads it too; only the judge's
+/// read leaves it out (FIX 20387).
 struct Census {
     citing: BTreeMap<EntityId, BTreeSet<EntityId>>,
     supports: BTreeMap<EntityId, BTreeSet<EntityId>>,
@@ -261,20 +264,19 @@ impl Census {
                 continue;
             }
             let body = crate::claim::decode_claim_body(&bytes[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.lifecycle != ClaimLifecycleStatus::Active {
-                continue;
-            }
             let mut cited = BTreeSet::new();
             let head = if let Some((source, head)) = supported_head(&body) {
                 cited.insert(source);
                 if let Some(evidence) = scope_field(&body, DERIVED_EVIDENCE_KEY) {
                     cited_by_slot(evidence, &mut cited);
                 }
-                census
-                    .supports
-                    .entry(head)
-                    .or_default()
-                    .extend(cited.iter().copied());
+                if body.lifecycle == ClaimLifecycleStatus::Active {
+                    census
+                        .supports
+                        .entry(head)
+                        .or_default()
+                        .extend(cited.iter().copied());
+                }
                 head
             } else {
                 cited_by(&body, &mut cited);
@@ -287,10 +289,11 @@ impl Census {
         Ok(census)
     }
 
-    /// Every live claim that stands on one of `targets`, by its logical
-    /// head, with what the live support assertions on it cite: one whose
-    /// typed support cites a target, and one drawn from a claim so found,
-    /// to a fixed point (FIX 20387).
+    /// Every claim that stands on one of `targets`, by its logical head,
+    /// with what the live support assertions on it cite: one whose typed
+    /// support cites a target, and one drawn from a claim so found, to a
+    /// fixed point (FIX 20387). One no longer active is found as a link of
+    /// the walk; the judge's read passes it by.
     fn found(&self, targets: &BTreeSet<EntityId>) -> BTreeMap<EntityId, BTreeSet<EntityId>> {
         let mut found = BTreeMap::new();
         let mut reached: Vec<EntityId> = targets.iter().copied().collect();
