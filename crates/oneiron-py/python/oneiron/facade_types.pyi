@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1256 facade rows, 4547 declarations.
+Census: 1256 facade rows, 4549 declarations.
 Inputs: 1187 of 1256 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1090 of 1256 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
@@ -8956,6 +8956,15 @@ class EvalLabel(TypedDict):
     weight: float
     at: int
     source_rows: NotRequired[list[EntityId] | None]
+class EvalRepairTaskSource(TypedDict):
+    claim_ref: str
+    source_hash: str
+    outcome_ordinal: int
+    task_pointer: str
+    seat: EvalSeat
+class EvalRepairCaseRecipe(TypedDict):
+    source: EvalRepairTaskSource
+    task_hash: list[int]
 class EvalCase(TypedDict):
     id: EntityId
     family: EntityId
@@ -8968,6 +8977,7 @@ class EvalCase(TypedDict):
     source_at: int
     recorded_at: int
     labels: list[EvalLabel]
+    repair_task: NotRequired[EvalRepairCaseRecipe | None]
     source_rows: NotRequired[list[EntityId] | None]
 class EvalCaseDraft(TypedDict):
     seat: EvalSeat

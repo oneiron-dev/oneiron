@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1256 facade rows, 4546 generated types.
+// UniFFI census: 1256 facade rows, 4548 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1208.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -27764,6 +27764,32 @@ pub struct EvalLabel {
     pub source_rows: Option<Vec<String>>,
 }
 
+/// `oneiron::skill_optimize::eval_set::repair_task::EvalRepairTaskSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairTaskSource {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "source_hash")]
+    pub source_hash: String,
+    #[serde(rename = "outcome_ordinal")]
+    pub outcome_ordinal: u64,
+    #[serde(rename = "task_pointer")]
+    pub task_pointer: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCaseRecipe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCaseRecipe {
+    #[serde(rename = "source")]
+    pub source: EvalRepairTaskSource,
+    #[serde(rename = "task_hash")]
+    pub task_hash: Vec<u8>,
+}
+
 /// `oneiron::skill_optimize::eval_set::EvalCase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27794,6 +27820,12 @@ pub struct EvalCase {
     pub recorded_at: u64,
     #[serde(rename = "labels")]
     pub labels: Vec<EvalLabel>,
+    #[serde(
+        rename = "repair_task",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repair_task: Option<EvalRepairCaseRecipe>,
     #[serde(
         rename = "source_rows",
         default,

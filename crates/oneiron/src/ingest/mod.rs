@@ -6,6 +6,7 @@
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
 mod ag_ui;
+pub(crate) use ag_ui::project_ag_ui_file;
 pub use ag_ui::{
     AG_UI_FILE_PREDICATE, AG_UI_SOURCE_ID, AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent,
     AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,

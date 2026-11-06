@@ -145,90 +145,98 @@ impl Memory<'_> {
                 receipt: read.receipt,
             });
         };
-        source.seat.token()?;
-        let source = EvalRepairTaskSource {
-            claim_ref: view.claim_ref.clone(),
-            source_hash: view.source_hash.clone(),
-            outcome_ordinal: source.outcome_ordinal,
-            task_pointer: source.task_pointer.clone(),
-            seat: source.seat.clone(),
-        };
-        let link = view
-            .repair_links
-            .iter()
-            .find(|link| {
-                link.outcome_ordinal == source.outcome_ordinal
-                    && link.status == AgUiRepairLinkStatus::Linked
-            })
-            .ok_or(Error::InvalidClaimBody(
-                "Repair task requires a linked outcome",
-            ))?;
-        let failure_ordinal = link
-            .failure_ordinal
-            .ok_or(Error::InvalidClaimBody("Repair task has no linked failure"))?;
-        let repair_ordinal = link
-            .repair_ordinal
-            .ok_or(Error::InvalidClaimBody("Repair task has no linked repair"))?;
-        let events = AgUiSource::decode(&view.jsonl)
-            .map_err(|_| Error::InvalidClaimBody("invalid Repair task capture"))?;
-        let failure = events
-            .get(failure_ordinal)
-            .ok_or(Error::InvalidClaimBody("Repair task failure is missing"))?;
-        let spec: EvalRepairTaskSpec =
-            serde_json::from_value(at_pointer(failure.raw(), &source.task_pointer)?.clone())
-                .map_err(|_| Error::InvalidClaimBody("invalid Repair task contract"))?;
-        if spec.intent.trim().is_empty()
-            || !spec.tools.is_empty()
-            || spec.allowed_actions.as_slice() != [EvalRepairAction::Respond]
-        {
-            return Err(Error::InvalidClaimBody(
-                "a text-response Repair task needs an intent, no tools and only respond",
-            )
-            .into());
-        }
-        for check in &spec.preconditions {
-            if at_pointer(&spec.initial_state, &check.pointer)? != &check.equals {
-                return Err(Error::InvalidClaimBody("Repair initial precondition failed").into());
-            }
-        }
-        let observed = view
-            .observations
-            .iter()
-            .find(|row| row.ordinal == source.outcome_ordinal)
-            .and_then(|row| row.outcome.as_ref())
-            .ok_or(Error::InvalidClaimBody(
-                "Repair observed outcome is missing",
-            ))?;
-        let EvalRepairGrader::ObservedResponseEquals { pointer } = &spec.grader;
-        let expected_response = at_pointer(observed, pointer)?
-            .as_str()
-            .ok_or(Error::InvalidClaimBody(
-                "Repair response outcome must be text",
-            ))?
-            .to_owned();
-        // The grader is hashed with the task, but is never part of a leg's input.
-        let bytes = serde_json::to_vec(&(&source, &spec, &expected_response))
-            .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;
-        let input = serde_json::json!({
-            "world": spec.world,
-            "initial_state": spec.initial_state,
-            "preconditions": spec.preconditions,
-            "intent": spec.intent,
-            "input": spec.input,
-            "tools": spec.tools,
-            "allowed_actions": spec.allowed_actions,
-        });
         Ok(EvalRepairTaskRead {
-            task: Some(EvalRepairTask {
-                source,
-                failure_ordinal,
-                repair_ordinal,
-                source_rows: vec![EntityId::from_hex(&view.claim_ref)?],
-                task_hash: *blake3::hash(&bytes).as_bytes(),
-                input,
-                expected_response,
-            }),
+            task: Some(compile_repair_task(&view, source)?),
             receipt: read.receipt,
         })
     }
+}
+
+pub(super) fn compile_repair_task(
+    view: &crate::ingest::AgUiFileView,
+    source: &EvalRepairTaskSource,
+) -> Result<EvalRepairTask> {
+    source.seat.token()?;
+    let source = EvalRepairTaskSource {
+        claim_ref: view.claim_ref.clone(),
+        source_hash: view.source_hash.clone(),
+        outcome_ordinal: source.outcome_ordinal,
+        task_pointer: source.task_pointer.clone(),
+        seat: source.seat.clone(),
+    };
+    let link = view
+        .repair_links
+        .iter()
+        .find(|link| {
+            link.outcome_ordinal == source.outcome_ordinal
+                && link.status == AgUiRepairLinkStatus::Linked
+        })
+        .ok_or(Error::InvalidClaimBody(
+            "Repair task requires a linked outcome",
+        ))?;
+    let failure_ordinal = link
+        .failure_ordinal
+        .ok_or(Error::InvalidClaimBody("Repair task has no linked failure"))?;
+    let repair_ordinal = link
+        .repair_ordinal
+        .ok_or(Error::InvalidClaimBody("Repair task has no linked repair"))?;
+    let events = AgUiSource::decode(&view.jsonl)
+        .map_err(|_| Error::InvalidClaimBody("invalid Repair task capture"))?;
+    let failure = events
+        .get(failure_ordinal)
+        .ok_or(Error::InvalidClaimBody("Repair task failure is missing"))?;
+    let spec: EvalRepairTaskSpec =
+        serde_json::from_value(at_pointer(failure.raw(), &source.task_pointer)?.clone())
+            .map_err(|_| Error::InvalidClaimBody("invalid Repair task contract"))?;
+    if spec.intent.trim().is_empty()
+        || !spec.tools.is_empty()
+        || spec.allowed_actions.as_slice() != [EvalRepairAction::Respond]
+    {
+        return Err(Error::InvalidClaimBody(
+            "a text-response Repair task needs an intent, no tools and only respond",
+        ));
+    }
+    for check in &spec.preconditions {
+        if at_pointer(&spec.initial_state, &check.pointer)? != &check.equals {
+            return Err(Error::InvalidClaimBody(
+                "Repair initial precondition failed",
+            ));
+        }
+    }
+    let observed = view
+        .observations
+        .iter()
+        .find(|row| row.ordinal == source.outcome_ordinal)
+        .and_then(|row| row.outcome.as_ref())
+        .ok_or(Error::InvalidClaimBody(
+            "Repair observed outcome is missing",
+        ))?;
+    let EvalRepairGrader::ObservedResponseEquals { pointer } = &spec.grader;
+    let expected_response = at_pointer(observed, pointer)?
+        .as_str()
+        .ok_or(Error::InvalidClaimBody(
+            "Repair response outcome must be text",
+        ))?
+        .to_owned();
+    // The grader is hashed with the task, but is never part of a leg's input.
+    let bytes = serde_json::to_vec(&(&source, &spec, &expected_response))
+        .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;
+    let input = serde_json::json!({
+        "world": spec.world,
+        "initial_state": spec.initial_state,
+        "preconditions": spec.preconditions,
+        "intent": spec.intent,
+        "input": spec.input,
+        "tools": spec.tools,
+        "allowed_actions": spec.allowed_actions,
+    });
+    Ok(EvalRepairTask {
+        source,
+        failure_ordinal,
+        repair_ordinal,
+        source_rows: vec![EntityId::from_hex(&view.claim_ref)?],
+        task_hash: *blake3::hash(&bytes).as_bytes(),
+        input,
+        expected_response,
+    })
 }

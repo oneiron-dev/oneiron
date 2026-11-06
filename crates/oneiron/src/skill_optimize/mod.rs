@@ -192,7 +192,8 @@ pub use self::eval_set::{
     ScoreDirection, eval_seat_canary,
 };
 pub use self::eval_set::{
-    EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
+    EvalRepairAction, EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseRequest,
+    EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
 };
 pub(crate) use self::eval_set::{

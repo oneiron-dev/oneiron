@@ -126,11 +126,39 @@ hash binds the canonical source recipe, full task contract and expected
 response; it is a content digest, not authority. All variants from one capture
 share a family root for the explicitly named seat. No family is assigned here.
 
-This is task compilation only. It creates no eval case, outcome label, source
-family, cohort, exposure, training grant or automatic nomination, and runs no
-model or replay. The case ledger, released-task hydration, paired measurement,
-family assignment, reuse, inventory digest and cut-audit integrations remain
-separate work. Receipt and Synthetic case paths are unchanged.
+The reader is task compilation only. It creates no eval case, outcome label,
+source family, cohort, exposure, training grant or automatic nomination, and
+runs no model or replay. Receipt and Synthetic case paths are unchanged.
+
+## Explicit owner-requested Repair cases
+
+`Memory::record_eval_repair_case` accepts an explicit `AuthenticatedOwner`
+proof and `EvalRepairCaseRequest`. The request pins the canonical task source,
+its full compiled task-and-grader hash, and the family purpose. The owner proof
+permits the eval write; it does not widen this Memory handle's source rights.
+The handle prepares its normal scoped read lane, grant clock and body custody
+before opening the writer. In that same writer it revalidates the owner,
+reads the exact source through the scoped lane, checks the native capture
+projection, and recompiles the task. A missing or withheld source creates no
+family or case and returns the original scoped read receipt.
+
+Family assignment precedes case creation in the same transaction. All task
+variants from the capture share its canonical entity root for that seat. Reuse
+requires the same seat, family, source recipe, complete task hash, parentless
+Repair lineage and live source-row set. The cohort date is the admitted claim's
+capture time, not an inferred app-event timestamp or the case's recording time.
+
+The case stores only the typed reconstruction recipe and digest, through the
+existing case secret wall. It copies no raw task, world, repair or expected
+answer into the ledger, and creates no label. The source stays subject to its
+ordinary erasure rules; source admission and digest checks precede any case
+write, so an earlier erased read cannot resurrect a copied answer. A recipe
+changed by admission aborts the write rather than storing different pins.
+
+This is an explicit Rust case-recording door, not automatic authoring or a
+measurement result. Released Repair hydration, the dedicated response grader,
+scoped cut audit, inventory and nomination remain separate consumer work. No
+family-purpose default or Development-only restriction is introduced.
 
 ## Remaining feature work
 
@@ -139,7 +167,8 @@ compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
 Repair nomination, executable worlds beyond the explicit response-only task,
-family split, reuse, digest, released-task hydration, measurement and cut-audit
-consumer are separate. Existing typed Repair case storage is unchanged. The
-file path adds no table, family ledger, migration, old-format reader, default
-cap or timer.
+released-task hydration, measurement and the scoped cut-audit consumer remain
+open. The explicit owner case door records source recipes, family assignment
+and exact-task reuse; it does not activate those remaining consumers. The file
+path adds no table, family ledger, migration, old-format reader, default cap
+or timer.
