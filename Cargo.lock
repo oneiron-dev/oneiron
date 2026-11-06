@@ -8857,7 +8857,9 @@ dependencies = [
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
+ "oneiron-authority",
  "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]

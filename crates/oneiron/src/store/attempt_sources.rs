@@ -43,10 +43,27 @@ pub struct SkillEditVerdictSource {
     pub displacement_hash: Option<[u8; 32]>,
 }
 
+/// A native discovery proposal at its actual u64 primary key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SkillEditProposalSource {
+    pub sequence: u64,
+    pub id: EntityId,
+    pub key: Vec<u8>,
+    pub body_hash: [u8; 32],
+}
+
 /// Family tags never grant ENTITY access, even for UUID-shaped native keys.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum NativeReadSource {
+    SkillEditProposal {
+        row: SkillEditProposalSource,
+    },
+    /// The exact original eager scan, including rows filtered out later.
+    SkillEditProposalScan {
+        prefix: Vec<u8>,
+        rows: Vec<SkillEditProposalSource>,
+    },
     JudgeLabel {
         ask_id: [u8; 32],
         key: Vec<u8>,

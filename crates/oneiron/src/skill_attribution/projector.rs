@@ -14,7 +14,7 @@ use super::judge::{AttributionDecisions, verdict_subject};
 use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
-    SkillEditProposal,
+    SkillEditProposal, SkillEditProposalReadPosition,
 };
 use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
 
@@ -93,6 +93,17 @@ pub fn run_attribution_projector_with_decisions(
     vault: &Vault,
     since_cursor: u64,
     decisions: Option<&AttributionDecisions<'_>>,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_with_position(vault, since_cursor, decisions, None)
+}
+
+/// Runs the original pass with the placement its caller requests for NEW
+/// discovery proposals. This data grants no read and never restamps a held row.
+pub fn run_attribution_projector_with_position(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    read_position: Option<&SkillEditProposalReadPosition>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let mut judgments = Vec::new();
@@ -231,7 +242,7 @@ pub fn run_attribution_projector_with_decisions(
                 AttributionLane::Attempt,
                 &judgment.sequence.to_string(),
             )?;
-            mint_edit_proposal_in_txn(vault, wtxn, judgment)?;
+            mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, read_position)?;
         }
         for sequence in &settled_environment {
             delete_unclear_in_txn(vault, wtxn, AttributionLane::Attempt, &sequence.to_string())?;
@@ -319,10 +330,26 @@ pub(crate) fn mint_edit_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     judgment: &AttributionJudgment,
 ) -> Result<()> {
+    mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, None)
+}
+
+fn mint_edit_proposal_with_position_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    judgment: &AttributionJudgment,
+    read_position: Option<&SkillEditProposalReadPosition>,
+) -> Result<()> {
     if let Some(mut proposal) = edit_proposal_for(judgment, vault.store.clock.entity_id()?) {
-        // A re-judged amendment re-mints under its held sequence: the row keeps its id.
         if let Some(held) = EDIT_PROPOSAL.get(&vault.store, wtxn, &proposal.judgment_sequence)? {
             proposal.row_id = held.row_id;
+            proposal.read_position = held.read_position.clone();
+            // The same row keeps its original placement. Changed contents
+            // cannot borrow the old position or a later caller's request.
+            if proposal != held {
+                proposal.read_position = None;
+            }
+        } else {
+            proposal.read_position = read_position.cloned();
         }
         EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
     }
@@ -369,6 +396,7 @@ fn edit_proposal_for(
             skill,
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
+            read_position: None,
         })
 }
 

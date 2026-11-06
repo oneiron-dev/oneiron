@@ -2,6 +2,8 @@
 
 use oneiron_contracts::entity_id::EntityId;
 
+pub use crate::read_position::SkillEditProposalReadPosition;
+
 /// Schema version for every row this module persists.
 pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
 
@@ -500,4 +502,6 @@ pub struct SkillEditProposal {
     pub evidence_receipts: Vec<String>,
     /// Unix seconds of the outcome that produced it.
     pub at: u64,
+    /// The original producer's position. Missing placement never grants a read.
+    pub read_position: Option<SkillEditProposalReadPosition>,
 }

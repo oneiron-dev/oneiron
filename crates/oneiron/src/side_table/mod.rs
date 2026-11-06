@@ -13,6 +13,7 @@ mod decls;
 mod erased;
 use oneiron_store::side_table::key;
 mod raw_reverse;
+mod source_rows;
 #[cfg(test)]
 mod tests;
 
