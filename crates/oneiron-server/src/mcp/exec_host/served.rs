@@ -245,8 +245,7 @@ impl McpEngineNativeCodeHost {
         // on its OWN thread with its OWN current-thread reactor; the
         // gateway task holds no lock and only awaits the answer, so a
         // durable wait never becomes a held connection.
-        let worker = std::thread::Builder::new()
-            .name("mcp-execute-code".to_owned())
+        let worker = crate::engine_thread("mcp-execute-code".to_owned())
             .spawn(move || {
                 let outcome = run_engine_native_code_mode(
                     &vault,

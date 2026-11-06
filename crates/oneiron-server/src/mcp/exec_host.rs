@@ -774,6 +774,7 @@ pub(crate) fn run_seat(
     seat_for(
         vault,
         provider,
+        None,
         run_id,
         SeatPin::Base(None),
         parent_at,
@@ -801,6 +802,7 @@ impl dyn McpCodeModeProvider + '_ {
         seat_for(
             vault,
             self,
+            None,
             run_id,
             SeatPin::Routed(bound),
             parent_at,
@@ -813,10 +815,14 @@ impl dyn McpCodeModeProvider + '_ {
 /// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
 /// stamped with `type_ref`, the stamp its dispatch carried, so the run's
 /// route reads with its own stamp. A manifest-free vault still bears none.
-/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is. The
+/// pick is the dispatched `agent`'s own: it is the pick's principal (FIX
+/// 4543).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn task_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
@@ -824,11 +830,20 @@ pub(crate) fn task_run_seat(
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
-        let mut task = task(facet);
-        task.learning = learning;
-        task
-    })
+    seat_for(
+        vault,
+        provider,
+        Some(agent),
+        run_id,
+        pin,
+        None,
+        worlds,
+        |facet| {
+            let mut task = task(facet);
+            task.learning = learning;
+            task
+        },
+    )
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -841,10 +856,14 @@ enum SeatPin<'p, 'd> {
 
 /// The one birth every seat shares, wherever `pin` puts it. The model
 /// catalog and manifest are the vault's own; the run's prior receipt is read
-/// where its pin lives.
+/// where its pin lives. A dispatched agent's wake names the agent as
+/// `principal` (FIX 4543), so its pick runs in the agent's voice on the
+/// host's ladder; every other birth keeps the host's own principal.
+#[allow(clippy::too_many_arguments)]
 fn seat_for(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    principal: Option<EntityId>,
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
     parent_at: Option<Instant>,
@@ -867,6 +886,14 @@ fn seat_for(
     let decisions = provider
         .seat_decisions()
         .ok_or("manifest-backed run requires seat decisions")?;
+    let voiced;
+    let decisions = match principal {
+        Some(agent) => {
+            voiced = decisions.for_principal(agent);
+            &voiced
+        }
+        None => decisions,
+    };
     let facet = provider
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
@@ -915,10 +942,12 @@ pub(crate) fn engine_run_seat(
 }
 
 /// An agent run's seat as `engine_run_seat` births one, stamped with its
-/// dispatch's `type_ref` (`task_run_seat`).
+/// dispatch's `type_ref` and picked in `agent`'s voice (`task_run_seat`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn task_engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     config: &EngineExecutorConfig,
     warm_scope: String,
     type_ref: &TaskTypeRef,
@@ -931,6 +960,7 @@ pub(crate) fn task_engine_run_seat(
     task_run_seat(
         vault,
         provider,
+        agent,
         config.run_id,
         type_ref,
         worlds,
