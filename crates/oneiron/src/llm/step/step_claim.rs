@@ -257,6 +257,20 @@ pub(super) fn log_terminal_step(
                     *step_hash,
                     claim_id,
                 );
+                if let Some(invoices) = &source.native_net_invoices {
+                    crate::dreamer_runner::record_native_net_response_in_txn(
+                        ctx.vault,
+                        wtxn,
+                        origin,
+                        crate::model_step_context::StepReceipt {
+                            attempt_id: binding.attempt_id,
+                            step_hash: *step_hash,
+                            claim_id,
+                        },
+                        invoices,
+                        claimed.used_units,
+                    );
+                }
             }
             Ok(Some(claim_id))
         })
