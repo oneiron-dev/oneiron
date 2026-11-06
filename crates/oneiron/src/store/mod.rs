@@ -216,6 +216,7 @@ pub use oneiron_store::outbound_trigger;
 pub(crate) mod output_decay;
 pub use oneiron_store::pack_hook_actor_class;
 pub mod pack_hook_proposal;
+pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
@@ -479,8 +480,9 @@ pub(crate) use key_custody::{
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
     CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
     Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
-    standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+    TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds, refuse_foreign_binding,
+    retirement_in_txn, route_custody, standing_retirements_in_txn,
+    unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_custody::{
     Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,

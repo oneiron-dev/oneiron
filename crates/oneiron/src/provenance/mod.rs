@@ -273,6 +273,10 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     #[cfg(unix)]
     crate::store::settle_inline_asset_in_txn(store, txn, row, erase)?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
+    #[cfg(unix)]
+    if erase {
+        crate::code_run::retire_sourced_code_outputs_in_txn(store, txn, row)?;
+    }
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {
         let bodies = body::owned_bodies_in_txn(store, txn, row)?;
