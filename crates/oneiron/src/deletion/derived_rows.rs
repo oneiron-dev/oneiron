@@ -99,6 +99,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| erase_inbox_cards_in_txn(write.store, txn, id),
     // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
     |write, txn, id| crate::mail_pack::erase_occurrence_rows_in_txn(write.store, txn, id),
+    // Fix list row 17645: a drafted reply with files, its retained message, plan and Ask,
+    // when a row it depends on is erased.
+    crate::mail_pack::erase_reply_attachment_dependents_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)

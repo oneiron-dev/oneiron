@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1269 facade rows, 4595 generated types.
+// UniFFI census: 1269 facade rows, 4597 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1221.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -70743,6 +70743,16 @@ pub struct MailThreadShareReceipt {
     pub shared_with: Vec<String>,
 }
 
+/// `oneiron::mail_pack::reply_attachments::MailReplyAttachment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyAttachment {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+}
+
 /// `oneiron::mail_pack::reply::MailReplyDraftRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -70763,8 +70773,36 @@ pub struct MailReplyDraftRequest {
     pub reply_all: Option<bool>,
     #[serde(rename = "cc", default, skip_serializing_if = "Option::is_none")]
     pub cc: Option<Vec<String>>,
+    #[serde(
+        rename = "attachments",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments: Option<Vec<MailReplyAttachment>>,
     #[serde(rename = "request_key")]
     pub request_key: String,
+}
+
+/// `oneiron::mail_pack::reply_attachments::MailReplyAttachmentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyAttachmentView {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "disposition")]
+    pub disposition: String,
+    #[serde(rename = "size")]
+    pub size: u64,
+    #[serde(rename = "content_blake3")]
+    pub content_blake3: String,
+    #[serde(rename = "stored_version_blake3")]
+    pub stored_version_blake3: String,
 }
 
 /// `oneiron::mail_pack::reply::MailReplyDraftState`.
@@ -70806,6 +70844,24 @@ pub struct MailReplyDraftView {
     pub body: String,
     #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
     pub body_html: Option<String>,
+    #[serde(
+        rename = "attachments",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments: Option<Vec<MailReplyAttachmentView>>,
+    #[serde(
+        rename = "message_octets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub message_octets: Option<u64>,
+    #[serde(
+        rename = "message_blake3",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub message_blake3: Option<String>,
     #[serde(rename = "plan_ref")]
     pub plan_ref: String,
     #[serde(rename = "state")]

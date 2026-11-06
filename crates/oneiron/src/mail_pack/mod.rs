@@ -61,6 +61,9 @@ mod pack;
 mod provider_delete;
 mod reply;
 mod reply_ask;
+mod reply_attachments;
+mod reply_custody;
+mod reply_erase;
 mod reply_mime;
 mod reply_recipients;
 mod reply_send;
@@ -113,6 +116,8 @@ pub use reply::{
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+pub use reply_attachments::{MailReplyAttachment, MailReplyAttachmentView};
+pub(crate) use reply_erase::erase_reply_attachment_dependents_in_txn;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{

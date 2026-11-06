@@ -39,8 +39,9 @@ pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
 pub(crate) use self::lifecycle::close_family_claims_for_delete_in_txn;
 pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
 pub(crate) use self::storage::{
-    counterparty_contacts_for_send_in_claims_in_txn, counterparty_contacts_in_claims_in_txn,
-    party_has_contact_on_class_in_claims_in_txn,
+    counterparty_contacts_for_send_in_claims_in_txn,
+    counterparty_contacts_for_send_with_ids_in_claims_in_txn,
+    counterparty_contacts_in_claims_in_txn, party_has_contact_on_class_in_claims_in_txn,
 };
 pub use self::trusted_contact::{
     TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,

@@ -11,6 +11,7 @@ mod inbound_types;
 mod line_adapter;
 mod line_chat_binding;
 mod line_chat_erase;
+pub(crate) mod mail_attachments;
 pub(crate) mod mail_html;
 pub mod mail_placement;
 pub mod mailbox_cursor;

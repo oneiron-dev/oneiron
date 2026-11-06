@@ -350,6 +350,24 @@ impl DisclosureContext {
         })
     }
 
+    /// [`Self::resolve`] read in the caller's snapshot `txn` (fix list row
+    /// 17645): the same mode and the same [`DisclosableSet`] fold, opening
+    /// no snapshot of its own, for a caller that judges rows in that one
+    /// read beside it.
+    pub(crate) fn resolve_in(vault: &Vault, txn: &RoTxn<'_>, set: InterlocutorSet) -> Result<Self> {
+        Ok(Self {
+            mode: DisclosureMode::from_set(&set),
+            disclosable: DisclosableSet::resolve_with_once_in(
+                vault,
+                txn,
+                &set,
+                false,
+                &BTreeMap::new(),
+            )?,
+            interlocutors: set,
+        })
+    }
+
     #[must_use]
     pub fn mode(&self) -> DisclosureMode {
         self.mode

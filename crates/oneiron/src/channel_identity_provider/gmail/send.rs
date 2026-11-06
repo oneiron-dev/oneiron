@@ -37,6 +37,9 @@ use base64::Engine as _;
 
 use super::{EMAIL_CHANNEL, GmailDelegatedAdapter, MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id};
 use crate::Vault;
+use crate::channel_identity_provider::mail_attachments::{
+    MailAttachment, MailMessageIdentity, RetainedMailMessage, hash_attachments, hash_message,
+};
 use crate::channel_identity_provider::native_mail::{
     approve_canonical_mail_send_once, canonical_mail_send_digest, canonical_recipient,
 };
@@ -58,6 +61,10 @@ mod plan_store;
 
 /// Prefix of every Gmail send plan's content ref.
 pub const GMAIL_SEND_PLAN_REF_PREFIX: &str = "gmail:plan:v1:";
+/// Prefix of the content ref of a Gmail send plan with files (fix list row
+/// 17645): it seals under its own domain, its files and the exact message
+/// they send in after every field a plan without files seals.
+pub(crate) const GMAIL_ATTACHED_SEND_PLAN_REF_PREFIX: &str = "gmail:plan:v2:";
 
 const RECEIPT_GMAIL_MESSAGE_ID: &str = "gmail_message_id";
 const RECEIPT_GMAIL_THREAD_ID: &str = "gmail_thread_id";
@@ -143,6 +150,13 @@ pub struct GmailSendPlan {
     date: String,
     message_id: CanonicalMessageId,
     reply: Option<GmailReplyThread>,
+    /// The files the plan sends, in their order (fix list row 17645); empty
+    /// for a send without.
+    attachments: Vec<MailAttachment>,
+    /// The exact message a plan with files sends, written once when it was
+    /// frozen and held by its host; `None` for a send without files, which
+    /// renders at egress.
+    message: Option<MailMessageIdentity>,
     content_ref: String,
 }
 
@@ -214,6 +228,8 @@ impl GmailSendPlan {
             date,
             message_id,
             reply,
+            attachments: Vec::new(),
+            message: None,
             content_ref: String::new(),
         };
         plan.seal();
@@ -298,6 +314,71 @@ impl GmailSendPlan {
         Ok(self)
     }
 
+    /// Sends `attachments` with this plan, in their order (fix list row
+    /// 17645), each the exact copy its host admitted. The plan then seals
+    /// under its own domain and waits for [`Self::with_message`]: a plan
+    /// with files is written once, when it is frozen
+    /// ([`Self::render_with_files`]), and never at egress.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for an empty list, or a file whose name or
+    /// type a part header may not carry.
+    pub(crate) fn with_attachments(mut self, attachments: Vec<MailAttachment>) -> Result<Self> {
+        if attachments.is_empty() {
+            return Err(Error::InvalidConfig(
+                "gmail send attachments name no file".to_owned(),
+            ));
+        }
+        for file in &attachments {
+            file.validate()?;
+        }
+        self.attachments = attachments;
+        self.message = None;
+        self.seal();
+        Ok(self)
+    }
+
+    /// The exact RFC 5322 bytes this plan with files sends: its headers
+    /// with no hygiene header, then its body and `files`, the copies of its
+    /// files in their order, under `multipart/mixed`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a plan without files, or files that are
+    /// not exactly its own copies.
+    pub(crate) fn render_with_files(&self, files: &[&[u8]]) -> Result<Vec<u8>> {
+        if self.attachments.is_empty() || files.len() != self.attachments.len() {
+            return Err(Error::InvalidConfig(
+                "gmail send files are not the plan's own".to_owned(),
+            ));
+        }
+        let mut out = String::new();
+        self.push_headers(&mut out, &BTreeMap::new())?;
+        let paired = self
+            .attachments
+            .iter()
+            .zip(files.iter().copied())
+            .collect::<Vec<_>>();
+        crate::channel_identity_provider::mail_attachments::push_mixed_body(
+            &mut out,
+            &self.body_text,
+            self.body_html.as_deref(),
+            &paired,
+        )?;
+        Ok(out.into_bytes())
+    }
+
+    /// Binds this plan with files to `message`, the exact bytes
+    /// [`Self::render_with_files`] wrote: their length and BLAKE3 seal into
+    /// its content ref, so the one press is for exactly those bytes.
+    #[must_use]
+    pub(crate) fn with_message(mut self, message: MailMessageIdentity) -> Self {
+        self.message = Some(message);
+        self.seal();
+        self
+    }
+
     /// The content ref the host puts on `intent.content_ref`.
     #[must_use]
     pub fn content_ref(&self) -> &str {
@@ -336,8 +417,16 @@ impl GmailSendPlan {
     }
 
     fn seal(&mut self) {
+        // A plan with files seals under its own domain and prefix (fix list
+        // row 17645); a plan without seals as before.
+        let attached = !self.attachments.is_empty();
+        let domain: &[u8] = if attached {
+            b"oneiron.gmail.send.plan.v2"
+        } else {
+            b"oneiron.gmail.send.plan.v1"
+        };
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron.gmail.send.plan.v1");
+        hasher.update(domain);
         hash_part(&mut hasher, &self.from_mailbox);
         hash_optional(&mut hasher, self.from_display_name.as_deref());
         for part in [
@@ -379,44 +468,72 @@ impl GmailSendPlan {
                 hash_part(&mut hasher, &named.address);
             }
         }
-        self.content_ref = format!("{GMAIL_SEND_PLAN_REF_PREFIX}{}", hasher.finalize().to_hex());
+        // Then its files, counted, each in its slot, and the exact message
+        // they send in.
+        if attached {
+            hasher.update(b"attachments");
+            hash_attachments(&mut hasher, &self.attachments);
+            hash_message(&mut hasher, self.message.as_ref());
+        }
+        let prefix = if attached {
+            GMAIL_ATTACHED_SEND_PLAN_REF_PREFIX
+        } else {
+            GMAIL_SEND_PLAN_REF_PREFIX
+        };
+        self.content_ref = format!("{prefix}{}", hasher.finalize().to_hex());
     }
 
     /// Renders the RFC 5322 bytes, with the CA-05 hygiene headers replayed
     /// from the frozen dispatch payload. The body is base64 so no line of user
     /// text can reach the header block or exceed the line limit.
     fn render(&self, hygiene_headers: &BTreeMap<String, String>) -> Result<Vec<u8>> {
+        let mut out = String::new();
+        self.push_headers(&mut out, hygiene_headers)?;
+        crate::channel_identity_provider::mail_html::push_mail_body(
+            &mut out,
+            &self.body_text,
+            self.body_html.as_deref(),
+        );
+        Ok(out.into_bytes())
+    }
+
+    /// Writes the plan's header block, through its MIME-Version, with the
+    /// CA-05 hygiene headers `hygiene_headers` names.
+    fn push_headers(
+        &self,
+        out: &mut String,
+        hygiene_headers: &BTreeMap<String, String>,
+    ) -> Result<()> {
         if hygiene_headers.len() > MAX_HYGIENE_HEADERS {
             return Err(Error::InvalidConfig(
                 "gmail send carries too many hygiene headers".to_owned(),
             ));
         }
-        let mut out = String::new();
         match &self.from_display_name {
             Some(name) => push_header(
-                &mut out,
+                out,
                 "From",
                 &format!("{} <{}>", encode_word(name), self.from_mailbox),
             ),
-            None => push_header(&mut out, "From", &self.from_mailbox),
+            None => push_header(out, "From", &self.from_mailbox),
         }
         if self.recipients.is_empty() {
-            push_header(&mut out, "To", &self.to);
+            push_header(out, "To", &self.to);
         } else {
-            push_recipient_headers(&mut out, &self.recipients);
+            push_recipient_headers(out, &self.recipients);
         }
-        push_header(&mut out, "Subject", &encode_word(&self.subject));
-        push_header(&mut out, "Date", &self.date);
-        push_header(&mut out, "Message-ID", &format!("<{}>", self.message_id));
+        push_header(out, "Subject", &encode_word(&self.subject));
+        push_header(out, "Date", &self.date);
+        push_header(out, "Message-ID", &format!("<{}>", self.message_id));
         if let Some(reply) = &self.reply {
-            push_header(&mut out, "In-Reply-To", &format!("<{}>", reply.in_reply_to));
+            push_header(out, "In-Reply-To", &format!("<{}>", reply.in_reply_to));
             let references = reply
                 .references
                 .iter()
                 .map(|reference| format!("<{reference}>"))
                 .collect::<Vec<_>>()
                 .join("\r\n ");
-            push_header(&mut out, "References", &references);
+            push_header(out, "References", &references);
         }
         for (name, value) in hygiene_headers {
             if name.is_empty()
@@ -430,15 +547,10 @@ impl GmailSendPlan {
                 ));
             }
             validate_header_text(value, 900, "gmail send hygiene header")?;
-            push_header(&mut out, name, value);
+            push_header(out, name, value);
         }
-        push_header(&mut out, "MIME-Version", "1.0");
-        crate::channel_identity_provider::mail_html::push_mail_body(
-            &mut out,
-            &self.body_text,
-            self.body_html.as_deref(),
-        );
-        Ok(out.into_bytes())
+        push_header(out, "MIME-Version", "1.0");
+        Ok(())
     }
 }
 
@@ -485,8 +597,15 @@ fn push_recipient_headers(out: &mut String, recipients: &[OutboundRecipient]) {
     }
 }
 
-/// The plan owns these; a hygiene header may not restate one.
+/// The plan owns these, and every `Content-*` field a MIME part's own
+/// semantics are (fix list row 17645); a hygiene header may not restate one.
 fn is_reserved_header(name: &str) -> bool {
+    if name
+        .get(..8)
+        .is_some_and(|head| head.eq_ignore_ascii_case("content-"))
+    {
+        return true;
+    }
     [
         "from",
         "sender",
@@ -639,6 +758,10 @@ pub struct GmailSendSink<'a, W> {
     identity_id: EntityId,
     wire: W,
     plans: BTreeMap<String, GmailSendPlan>,
+    /// The one message a plan with files sends, and its holder's judgement
+    /// of the send (fix list row 17645); `None` for a sink that sends plans
+    /// without files only.
+    retained: Option<&'a dyn RetainedMailMessage>,
 }
 
 impl<'a, W> GmailSendSink<'a, W> {
@@ -656,7 +779,45 @@ impl<'a, W> GmailSendSink<'a, W> {
             identity_id,
             wire,
             plans: BTreeMap::new(),
+            retained: None,
         }
+    }
+
+    /// Binds the sink to the one send with files it may make (fix list row
+    /// 17645): `retained` judges that send again in the writer that admits
+    /// it and opens its exact message at egress. A plan with files sends
+    /// nothing without it.
+    #[must_use]
+    pub(crate) fn with_retained_message(mut self, retained: &'a dyn RetainedMailMessage) -> Self {
+        self.retained = Some(retained);
+        self
+    }
+
+    /// The exact message `plan`, a plan with files, sends: opened by the
+    /// holder bound to it, after its send is judged once more, and checked
+    /// against the length and BLAKE3 the plan was sealed with. The dispatch
+    /// carries no hygiene header for it: the message was frozen with none.
+    fn retained_message(
+        &self,
+        plan: &GmailSendPlan,
+        hygiene_headers: &BTreeMap<String, String>,
+    ) -> std::result::Result<zeroize::Zeroizing<Vec<u8>>, &'static str> {
+        if !hygiene_headers.is_empty() {
+            return Err("gmail_send_headers_invalid");
+        }
+        let (Some(retained), Some(message)) = (self.retained, plan.message.as_ref()) else {
+            return Err("gmail_send_message_missing");
+        };
+        if retained.content_ref() != plan.content_ref {
+            return Err("gmail_send_message_missing");
+        }
+        let raw = retained
+            .open_for_egress()
+            .map_err(|_| "gmail_send_message_refused")?;
+        if !message.matches(&raw) {
+            return Err("gmail_send_message_mismatch");
+        }
+        Ok(raw)
     }
 
     /// Registers one frozen plan.
@@ -727,8 +888,18 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         {
             return OutboundExecutionOutcome::failed("gmail_send_sender_mismatch");
         }
-        let Ok(raw) = plan.render(&request.hygiene_headers) else {
-            return OutboundExecutionOutcome::failed("gmail_send_headers_invalid");
+        // A plan with files sends the message it was frozen with, as its
+        // holder opens it; nothing is rendered again (fix list row 17645).
+        let raw = if plan.attachments.is_empty() {
+            let Ok(raw) = plan.render(&request.hygiene_headers) else {
+                return OutboundExecutionOutcome::failed("gmail_send_headers_invalid");
+            };
+            zeroize::Zeroizing::new(raw)
+        } else {
+            match self.retained_message(plan, &request.hygiene_headers) {
+                Ok(raw) => raw,
+                Err(reason) => return OutboundExecutionOutcome::failed(reason),
+            }
         };
         let mut fields = BTreeMap::new();
         fields.insert(RECEIPT_SEND_PLAN_REF.to_owned(), plan.content_ref.clone());
@@ -818,6 +989,14 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .with_possible_delivery()
             }
         }
+    }
+
+    /// A send with files is judged again by the holder of its message, in
+    /// the writer that admits it, before any decision is recorded (fix list
+    /// row 17645).
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        self.retained
+            .map_or(Ok(()), |retained| retained.admit_in(txn))
     }
 
     /// One `users.messages.send` delivers the plan's raw message to every

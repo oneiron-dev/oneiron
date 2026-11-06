@@ -546,6 +546,18 @@ impl Memory<'_> {
                 row.on_provider_delete = rule;
             }
             if let Some(status) = input.status {
+                // A disconnected mailbox's drafted replies with files end
+                // whole here (fix list row 17645); a paused one's wait, and
+                // refuse at the press and at egress while it is paused.
+                if status == MailSourceStatus::Disconnected
+                    && row.status != MailSourceStatus::Disconnected
+                {
+                    super::reply_erase::erase_reply_attachment_dependents_in_txn(
+                        &crate::secret_custody::CustodyWrite::of(vault),
+                        txn,
+                        &id,
+                    )?;
+                }
                 row.status = status;
             }
             if let Some(details) = input.calendar_details {
@@ -625,7 +637,8 @@ impl Memory<'_> {
 
 /// An actor's erase takes its id out of every source (FIX 3520): a personal
 /// mailbox or a calendar it owned keeps no owner, so no one changes it, and
-/// its rows read to no one.
+/// its rows read to no one. Its drafted replies with files end whole in the
+/// same writer (fix list row 17645).
 pub(crate) fn erase_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -635,6 +648,11 @@ pub(crate) fn erase_source_actor_in_txn(
     for (id, mut row) in sources {
         let mut changed = false;
         if row.owner == Some(*actor) {
+            super::reply_erase::erase_reply_attachment_dependents_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                wtxn,
+                &id,
+            )?;
             row.owner = None;
             changed = true;
         }

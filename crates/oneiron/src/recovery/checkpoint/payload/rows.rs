@@ -500,6 +500,11 @@ families! {
     // An actor's stamp token is two ids, no payload (FIX 10930), and so is a token-use row
     // (FIX 11965).
     Class::Structure => PROVENANCE_ACTOR_STAMP_TOKEN PROVENANCE_ACTOR_STAMP_TOKEN_USE;
+    // A drafted reply's retained message is sealed under its revision's own ConnectorResume
+    // key, which stays in custody and retires with the revision; the rows it depends on are
+    // two ids, no payload (fix list row 17645).
+    Class::Other(Client::Sealed(CustodyKind::ConnectorResume)) => MAIL_PACK_REPLY_COPY;
+    Class::Structure => MAIL_PACK_REPLY_DEPENDENCY;
     Class::Other(Client::Dispatch(OtherClient::Body)) => PROVENANCE_BODY_ERASE
         PROVENANCE_BODY_ERASED PROVENANCE_BODY_INLINE PROVENANCE_BODY_KEY;
     Class::Other(Client::Dispatch(OtherClient::Response)) => PROVENANCE_BODY_RESPONSE

@@ -54,6 +54,19 @@ impl DisclosableSet {
         once: &BTreeMap<EntityId, Scope>,
     ) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
+        Self::resolve_with_once_in(vault, &txn, roster, reader, once)
+    }
+
+    /// [`Self::resolve_with_once`] read in the caller's snapshot `txn`
+    /// (fix list row 17645): the same fold, opening no snapshot of its own,
+    /// for a caller that judges other rows in that one read.
+    pub(crate) fn resolve_with_once_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        roster: &InterlocutorSet,
+        reader: bool,
+        once: &BTreeMap<EntityId, Scope>,
+    ) -> Result<Self> {
         let mut terms = roster
             .entries()
             .iter()
@@ -63,7 +76,7 @@ impl DisclosableSet {
                     let contact = EntityId::from_hex(hex)?;
                     match once.get(&contact) {
                         Some(scope) => Ok(Some(scope.clone())),
-                        None => contact_clearance_in(vault, &txn, contact).map(Some),
+                        None => contact_clearance_in(vault, txn, contact).map(Some),
                     }
                 }
                 (_, None) => Ok(Some(Scope::default())),

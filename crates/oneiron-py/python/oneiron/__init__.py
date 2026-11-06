@@ -5883,10 +5883,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def draft(self, spec):
-            """Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves."""
+            """Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more); a Google mailbox's may carry exact artifact versions. The owner approves it."""
             return json.loads(_translate(lambda: self._client.vault_mail_reply_draft(json.dumps(spec))))
         def drafts(self, spec):
-            """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state."""
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size and digest, frozen plan and state."""
             return json.loads(_translate(lambda: self._client.vault_mail_reply_drafts(json.dumps(spec))))
         def discard(self, spec):
             """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
