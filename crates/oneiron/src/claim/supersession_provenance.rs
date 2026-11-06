@@ -216,7 +216,10 @@ pub(crate) fn conflict_marker(
         envelope,
     })
 }
-pub(super) fn write_coaching(
+/// Writes the `conflict.open` marker naming `new` against `old` in `txn`,
+/// signed with this host's retained machine key; a replay finds it landed and
+/// writes nothing.
+pub(crate) fn write_coaching(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     new: &EntityId,
@@ -249,6 +252,11 @@ fn landed(
     let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
     // Approval is the gate's result, not part of the deterministic candidate.
     expected.approval = existing.approval;
+    // A stored marker keeps the MACHINE signature its writer attached; the
+    // marker rebuilt here is compared unsigned, so a replay finds it.
+    let mut existing = existing;
+    existing.evidence = crate::authority::evidence_without_machine_signature(&existing);
+    expected.evidence = crate::authority::evidence_without_machine_signature(&expected);
     if existing != expected {
         return Err(Error::InvalidClaimBody(
             "supersession companion identity collision",

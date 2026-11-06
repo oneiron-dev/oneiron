@@ -236,6 +236,29 @@ pub(super) fn promote_one_answering(
     } else {
         computed_meet
     };
+    // ARCH-0003 #observed-vs-stated (FIX 21842): a `preference.*` want the
+    // user's own turns show, three times across two or more sessions, is
+    // Observed, held beside what they stated. The engine counts it off the
+    // surviving evidence rows; a tainted or imported meet, a supersession and
+    // any other family keep the computed meet.
+    let observed = computed_meet == ClaimSource::Generated
+        && candidate.supersedes.is_none()
+        && crate::claim::is_preference_predicate(candidate.candidate.predicate())
+        && {
+            let txn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(PromotionRejection::store)?;
+            super::observed::observed_preference_support_in_txn(vault, &txn, &surviving).map_err(
+                |error| PromotionRejection::engine_in("observed preference read failed", error),
+            )?
+        };
+    let computed_meet = if observed {
+        ClaimSource::Observed
+    } else {
+        computed_meet
+    };
     let source = computed_meet;
     let imported = source == ClaimSource::Imported;
     let import_review = import.review.filter(|_| imported);
@@ -459,6 +482,26 @@ pub(super) fn promote_one_answering(
             return Err(Error::InvalidClaimBody(
                 "consolidation write was not granted Auto; no approval queue is created",
             ));
+        }
+        // OF-023: an observed want whose answer differs from a standing
+        // stated one opens the pair's conflict; both stay active.
+        if observed {
+            for stated in super::observed::stated_preference_peers_in_txn(
+                vault,
+                &*wtxn,
+                &candidate.claim_id,
+                &landed,
+            )? {
+                crate::claim::write_coaching(
+                    vault,
+                    wtxn,
+                    &candidate.claim_id,
+                    &stated,
+                    &landed,
+                    &envelope,
+                    candidate.learned_at,
+                )?;
+            }
         }
         // An Auto write counts on the agent's own-rate window. Its first
         // crossing leaves a typed check; the write itself stays Auto.
