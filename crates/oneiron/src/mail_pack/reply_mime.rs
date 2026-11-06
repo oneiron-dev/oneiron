@@ -3,9 +3,10 @@
 //! a Microsoft 365 mailbox sends through Graph. Every field the owner
 //! approves is frozen when the draft is written and hashed into its content
 //! ref, and the bytes sent are rendered from exactly those fields, with the
-//! dispatch's frozen hygiene headers. One recipient, no attachments, UTF-8
-//! text in base64 and, when drafted, an HTML alternative beside it (fix list
-//! row 17645), threaded by `In-Reply-To` and `References` (RFC 5322).
+//! dispatch's frozen hygiene headers. One recipient or, for a reply to
+//! several, every To and Cc in its role (fix list row 17645), no
+//! attachments, UTF-8 text in base64 and, when drafted, an HTML alternative
+//! beside it, threaded by `In-Reply-To` and `References` (RFC 5322).
 
 use std::collections::BTreeMap;
 
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_identity_provider::mail_html::{push_mail_body, sanitize_mail_html};
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::error::{Error, Result};
+use crate::outbound::{OutboundRecipient, OutboundRecipientRole};
 use crate::write_envelope::thread_claim::{canonical_message_id, canonical_message_id_list};
 
 /// The prefix of a frozen reply's content ref.
@@ -39,8 +41,13 @@ fn invalid(message: &str) -> Error {
 pub(super) struct ReplyMessage {
     /// The mailbox it is sent from: the source's own address.
     pub(super) from: String,
-    /// Its one recipient, canonical.
+    /// Its first recipient, in To, canonical.
     pub(super) to: String,
+    /// Every recipient of a reply to several, canonical, in its role and
+    /// place, `to` first (fix list row 17645); empty for a reply to `to`
+    /// alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) recipients: Vec<OutboundRecipient>,
     pub(super) subject: String,
     pub(super) body: String,
     /// The HTML alternative, as the mail HTML gate wrote it again; `None`
@@ -62,6 +69,8 @@ pub(super) struct ReplyMessage {
 pub(super) struct ReplyDraft<'d> {
     pub(super) from: &'d str,
     pub(super) to: &'d str,
+    /// Every recipient of a reply to several, `to` first; empty for one.
+    pub(super) recipients: &'d [OutboundRecipient],
     pub(super) subject: &'d str,
     pub(super) body: &'d str,
     /// The HTML alternative as drafted, before the mail HTML gate.
@@ -81,12 +90,24 @@ impl ReplyMessage {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] for a malformed sender or recipient, a
-    /// Subject that is too long or carries a control character, a body that
-    /// is too long, HTML the mail HTML gate refuses, a malformed
-    /// `Message-ID`, or an unrepresentable time.
+    /// recipient list that is no message's whole list, a Subject that is too
+    /// long or carries a control character, a body that is too long, HTML the
+    /// mail HTML gate refuses, a malformed `Message-ID`, or an
+    /// unrepresentable time.
     pub(super) fn new(draft: &ReplyDraft<'_>) -> Result<Self> {
         let from = canonical_recipient(draft.from)?;
         let to = canonical_recipient(draft.to)?;
+        let recipients = draft
+            .recipients
+            .iter()
+            .map(|named| -> Result<OutboundRecipient> {
+                Ok(OutboundRecipient::new(
+                    named.role,
+                    canonical_recipient(&named.address)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        OutboundRecipient::check_list(&to, &recipients).map_err(invalid)?;
         header_text(draft.subject, MAX_SUBJECT_BYTES)?;
         if draft.body.len() > MAX_BODY_BYTES {
             return Err(invalid("the body is too long"));
@@ -133,6 +154,7 @@ impl ReplyMessage {
         Ok(Self {
             from,
             to,
+            recipients,
             subject: draft.subject.to_owned(),
             body: draft.body.to_owned(),
             html,
@@ -169,7 +191,30 @@ impl ReplyMessage {
             hasher.update(b"html");
             hash_part(&mut hasher, html);
         }
+        // So do the recipients of a reply to several, counted, each in its
+        // role and place; a reply to one hashes as before.
+        if !self.recipients.is_empty() {
+            hasher.update(b"recipients");
+            hasher.update(&(self.recipients.len() as u64).to_le_bytes());
+            for named in &self.recipients {
+                hash_part(&mut hasher, named.role.as_str());
+                hash_part(&mut hasher, &named.address);
+            }
+        }
         format!("{REPLY_MESSAGE_REF_PREFIX}{}", hasher.finalize().to_hex())
+    }
+
+    /// Every address the reply is delivered to, in its place: `to` alone,
+    /// or each recipient of a reply to several.
+    pub(super) fn delivery_addresses(&self) -> Vec<&str> {
+        if self.recipients.is_empty() {
+            vec![self.to.as_str()]
+        } else {
+            self.recipients
+                .iter()
+                .map(|named| named.address.as_str())
+                .collect()
+        }
     }
 
     /// The RFC 5322 bytes, with the hygiene headers the dispatch froze. The
@@ -187,7 +232,24 @@ impl ReplyMessage {
         }
         let mut out = String::new();
         push_header(&mut out, "From", &self.from);
-        push_header(&mut out, "To", &self.to);
+        if self.recipients.is_empty() {
+            push_header(&mut out, "To", &self.to);
+        } else {
+            for (role, name) in [
+                (OutboundRecipientRole::To, "To"),
+                (OutboundRecipientRole::Cc, "Cc"),
+            ] {
+                let addresses = self
+                    .recipients
+                    .iter()
+                    .filter(|named| named.role == role)
+                    .map(|named| named.address.as_str())
+                    .collect::<Vec<_>>();
+                if !addresses.is_empty() {
+                    push_header(&mut out, name, &addresses.join(",\r\n "));
+                }
+            }
+        }
         push_header(&mut out, "Subject", &encode_word(&self.subject));
         push_header(&mut out, "Date", &self.date);
         push_header(&mut out, "Message-ID", &format!("<{}>", self.message_id));

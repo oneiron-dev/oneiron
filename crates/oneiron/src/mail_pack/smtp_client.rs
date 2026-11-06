@@ -3,10 +3,13 @@
 //! rustls with the platform's roots, from the first byte (port 465) or after
 //! `STARTTLS` on the submission port (587), one command at a time. It
 //! authenticates only over TLS (`PLAIN`, `LOGIN`, or `XOAUTH2` with a
-//! token), names one sender and one recipient, and sends one message. Every
-//! reply is bounded, and every command ends by a deadline. Once the data's
-//! final dot is written, a missing answer is no proof the message was not
-//! taken: the submission is uncertain, never refused.
+//! token), names one sender and every recipient of the one message it
+//! sends (fix list row 17645). A server that refuses any recipient is told
+//! `RSET` before any data goes: the message reaches all of its recipients or
+//! none of them. Every reply is bounded, and every command ends by a
+//! deadline. Once the data's final dot is written, a missing answer is no
+//! proof the message was not taken: the submission is uncertain, never
+//! refused.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -278,21 +281,38 @@ impl SmtpSession {
         }
     }
 
-    /// Submits `message` from `from` to `to`, its data dot-stuffed.
-    pub(super) fn submit(&mut self, from: &str, to: &str, message: &[u8]) -> Submitted {
-        if !envelope_address(from) || !envelope_address(to) {
+    /// Submits `message` from `from` to every address of `recipients`, one
+    /// `RCPT` each, its data dot-stuffed. A refused recipient resets the
+    /// transaction before `DATA`: no subset of the recipients is sent to.
+    pub(super) fn submit(&mut self, from: &str, recipients: &[&str], message: &[u8]) -> Submitted {
+        if recipients.is_empty()
+            || !envelope_address(from)
+            || !recipients.iter().copied().all(envelope_address)
+        {
             return Submitted::NotSent("smtp_envelope_address_unsupported");
         }
-        for (command, accepted) in [
-            (format!("MAIL FROM:<{from}>"), &[250][..]),
-            (format!("RCPT TO:<{to}>"), &[250, 251][..]),
-            ("DATA".to_owned(), &[354][..]),
-        ] {
-            match self.command(&command) {
-                Ok(code) if accepted.contains(&code) => {}
-                Ok(_) => return Submitted::NotSent("smtp_envelope_refused"),
+        match self.command(&format!("MAIL FROM:<{from}>")) {
+            Ok(250) => {}
+            Ok(_) => return Submitted::NotSent("smtp_envelope_refused"),
+            Err(_) => return Submitted::NotSent("smtp_connection_lost"),
+        }
+        for address in recipients {
+            match self.command(&format!("RCPT TO:<{address}>")) {
+                Ok(250 | 251) => {}
+                Ok(_) => {
+                    self.reset();
+                    return Submitted::NotSent("smtp_recipient_refused");
+                }
                 Err(_) => return Submitted::NotSent("smtp_connection_lost"),
             }
+        }
+        match self.command("DATA") {
+            Ok(354) => {}
+            Ok(_) => {
+                self.reset();
+                return Submitted::NotSent("smtp_envelope_refused");
+            }
+            Err(_) => return Submitted::NotSent("smtp_connection_lost"),
         }
         self.wire.set_deadline(Instant::now() + DATA_DEADLINE);
         // Until the final dot is written the server takes nothing.
@@ -307,6 +327,15 @@ impl SmtpSession {
             Ok(reply) if reply.code == 250 => Submitted::Accepted(reply.lines.join(" ")),
             Ok(_) => Submitted::NotSent("smtp_message_refused"),
             Err(_) => Submitted::Uncertain("smtp_no_final_reply"),
+        }
+    }
+
+    /// Abandons the mail transaction before any data went (RFC 5321
+    /// §4.1.1.5): the server keeps none of its recipients. An unanswered
+    /// `RSET` changes nothing; the session ends next, with no data sent.
+    fn reset(&mut self) {
+        if self.command("RSET").is_err() {
+            tracing::debug!("smtp session reset without its RSET answered");
         }
     }
 

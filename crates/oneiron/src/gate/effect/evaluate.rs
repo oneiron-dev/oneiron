@@ -4,7 +4,69 @@ use super::*;
 
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
+///
+/// Fix list row 17645: one mail message to several recipients
+/// (`provenance.mail_recipients`) is one effect, judged for every recipient
+/// in this same writer before its one approval is spent: each recipient's
+/// contact, STOP, scope and standing-grant judgment is its own, with the
+/// recipient as the counterparty, under the message's one digest. The
+/// message's governance is its first recipient's, the one its approval,
+/// budget and envelope are recorded on; its decision is the most
+/// restrictive any recipient met, so one recipient's hold or denial holds or
+/// denies the whole message, and no recipient's grant releases another.
 pub(crate) fn evaluate_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
+) -> Result<ExternalEffectGovernance> {
+    let mut governance = evaluate_counterparty_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        required_grant_id,
+        prepared,
+        approval_context,
+    )?;
+    for recipient in &effect.provenance.mail_recipients {
+        if effect.counterparty.as_deref() == Some(recipient.address.as_str()) {
+            continue;
+        }
+        let mut addressed = effect.clone();
+        addressed.counterparty = Some(recipient.address.clone());
+        let judged = evaluate_counterparty_policy(
+            store,
+            wtxn,
+            &addressed,
+            policy,
+            required_grant_id,
+            prepared,
+            approval_context,
+        )?;
+        if outcome_restriction(judged.decision.outcome())
+            > outcome_restriction(governance.decision.outcome())
+        {
+            governance.decision = judged.decision;
+        }
+    }
+    Ok(governance)
+}
+
+/// How far `outcome` restricts an effect: a denial most, then a hold.
+const fn outcome_restriction(outcome: GateOutcome) -> u8 {
+    match outcome {
+        GateOutcome::Allow => 0,
+        GateOutcome::Pending => 1,
+        GateOutcome::Deny => 2,
+    }
+}
+
+/// [`evaluate_external_effect_policy`] for `effect`'s one counterparty.
+fn evaluate_counterparty_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,

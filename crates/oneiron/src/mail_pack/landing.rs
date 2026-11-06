@@ -286,11 +286,12 @@ impl<'v> Landing<'v> {
                 && prior.content_hashes.contains(&hash)
             {
                 drop(txn);
-                // The same words with the whole message read: the body stage
-                // and its attachments land on the occurrence, no new revision.
-                if let Some(full) = full {
-                    self.settle_full_in_place(&key, full)?;
-                }
+                // The same words: the reply headers land on the occurrence
+                // whole (a message landed before its To and Cc were kept
+                // gains them, fix list row 17645), and with the whole
+                // message read, so do the body stage and its attachments; no
+                // new revision.
+                self.settle_same_in_place(&key, headers, full)?;
                 return Ok(LandOutcome::Same);
             }
             let turn = prior.as_ref().map_or(
@@ -498,40 +499,50 @@ impl<'v> Landing<'v> {
 }
 
 impl Landing<'_> {
-    /// Records that the occurrence `key` was read whole when its words are
-    /// those it landed with already: its stage is the body, it keeps the
-    /// message's attachments, and it leaves the body queue.
-    fn settle_full_in_place(
+    /// Records the occurrence `key` landed again with the words it landed
+    /// with already: it keeps the reply headers `headers` give, whole, and
+    /// when the message was read whole (`full`), its stage is the body, it
+    /// keeps the message's attachments, and it leaves the body queue.
+    fn settle_same_in_place(
         &self,
         key: &(EntityId, [u8; 32]),
-        full: &MailFull,
+        headers: &MailHeaders,
+        full: Option<&MailFull>,
     ) -> MemoryResult<()> {
         let vault = self.vault;
+        let reply = MailReplyHeaders::of(headers);
         vault.with_write_txn_grouped(|wtxn| {
             let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
                 return Ok(());
             };
             // A message erased meanwhile stays forgotten: its fence is not
-            // given its attachments again.
+            // given its headers or attachments again.
             if matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
                 return Ok(());
             }
-            if occurrence.stage == MailStage::Body && occurrence.attachments == full.attachments {
+            let reply_changed = occurrence.reply.as_ref() != Some(&reply);
+            let full = full.filter(|full| {
+                occurrence.stage != MailStage::Body || occurrence.attachments != full.attachments
+            });
+            if !reply_changed && full.is_none() {
                 return Ok(());
             }
-            let first_body = occurrence.stage == MailStage::Headers;
-            occurrence.stage = MailStage::Body;
-            occurrence.attachments.clone_from(&full.attachments);
+            occurrence.reply = Some(reply);
             occurrence.updated_at = self.imported_at;
-            BODY_QUEUE.delete(
-                &vault.store,
-                wtxn,
-                &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
-            )?;
-            if first_body {
-                let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
-                sync.bodies += 1;
-                SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+            if let Some(full) = full {
+                let first_body = occurrence.stage == MailStage::Headers;
+                occurrence.stage = MailStage::Body;
+                occurrence.attachments.clone_from(&full.attachments);
+                BODY_QUEUE.delete(
+                    &vault.store,
+                    wtxn,
+                    &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
+                )?;
+                if first_body {
+                    let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
+                    sync.bodies += 1;
+                    SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+                }
             }
             OCCURRENCES.put(&vault.store, wtxn, key, &occurrence)
         })?;
