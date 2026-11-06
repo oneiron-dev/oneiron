@@ -3,7 +3,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use oneiron_model::llm::{BudgetAccountingSnapshot, BudgetGuard, BudgetLease, BudgetMeterRange};
+use oneiron_model::llm::{
+    BudgetAccountingSnapshot, BudgetGuard, BudgetLease, BudgetLeaseState, BudgetMeterRange,
+};
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
@@ -55,6 +57,26 @@ impl NativeMeterSnapshot {
             start_used_units: self.start_used_units,
             end_used_units: self.accounting.read.used_units,
         }
+    }
+
+    /// Each retained call and its token-derived state and first-settlement range
+    /// from this snapshot. Missing observations remain unknown; empty ranges
+    /// and calls outside the interval are retained, not classified as excluded.
+    pub(crate) fn observed_calls(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            AdmittedCallId,
+            &str,
+            Option<BudgetLeaseState>,
+            Option<BudgetMeterRange>,
+        ),
+    > {
+        self.calls
+            .iter()
+            .zip(&self.accounting.leases)
+            .zip(&self.accounting.meter_ranges)
+            .map(|((call, state), range)| (call.origin, call.lease.id(), *state, *range))
     }
 
     pub(crate) fn included_calls(

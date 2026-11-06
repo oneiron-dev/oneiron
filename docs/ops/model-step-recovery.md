@@ -71,6 +71,15 @@ A settled lease's amount keeps its native settlement convention. It is not a
 billing credit or proof that summing selected lease amounts reproduces a meter
 delta, including at counter saturation.
 
+The original line's `NativeMeterSnapshot::observed_calls` retains each selected
+call's original coordinate and lease id beside its optional typed state and
+first-settlement range from that same owned snapshot. It preserves positional
+pairing and unknown observations instead of filtering to included intervals.
+It reads no live guard and makes no payment or exclusion decision. A settled
+empty range may still qualify for existing GROSS inclusion; a missing observation
+is not Open, Aborted, unpaid or zero. The existing `included_calls` reader is
+unchanged, and no per-aggregate exclusion record is created by this reader.
+
 ### Retained native NET invoices
 
 A separate private financial row retains each original admitted call by its full
