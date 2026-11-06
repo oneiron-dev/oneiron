@@ -1,7 +1,8 @@
 //! The graphic compiler: an asset a design plan places becomes editable
 //! DrawingML shapes (an SVG in the closed subset) or a verified image binding
-//! (PNG or JPEG). Nothing is rasterized here: unsupported SVG is refused, and
-//! rasterizing is a separate output choice with its own derivation receipt.
+//! (PNG or JPEG). `compile_graphic` never rasterizes unsupported SVG. The
+//! held-picture compatibility raster is a separate output with its own
+//! derivation receipt; it reuses this compiler's existing closed geometry.
 //!
 //! The binding is checked before the bytes. The engine's asset record must
 //! name the plan's handle and media type, its provenance must be complete for
@@ -13,7 +14,10 @@ mod asset;
 mod drawingml;
 mod geometry;
 mod path;
+mod raster;
 mod svg;
+
+pub(crate) use raster::held_svg_png;
 #[cfg(test)]
 mod tests;
 

@@ -110,6 +110,20 @@ pub enum Conversion {
     SmartArtTextWritten { nodes: u32 },
     /// An imported picture shows this media part the deck holds.
     HeldMediaShown { part: String },
+    /// An optional Office compatibility PNG, derived only from the held SVG's
+    /// existing closed geometry. The source SVG remains in the package and the
+    /// picture's SVG extension. Host export records bind this receipt to the
+    /// actual artifact version, actor and recorded time.
+    SvgFallbackDerived {
+        input_part: String,
+        input_hash: crate::edit::Digest,
+        output_part: String,
+        output_hash: crate::edit::Digest,
+        pixels: [u32; 2],
+        emu_per_px: i64,
+        process: String,
+        process_version: String,
+    },
     /// A reshaped table's frame took its grid's size.
     TableFrameFitted { extent: (i64, i64) },
     /// A table merge is not drawn: a corner row or column went, the order
@@ -357,6 +371,7 @@ impl Conversion {
                 format!("SmartArt text written for {nodes} node(s)")
             }
             Self::HeldMediaShown { part } => format!("picture shows held media {part}"),
+            Self::SvgFallbackDerived { .. } => serde_json::to_string(self).unwrap_or_default(),
             Self::TableFrameFitted { extent: (cx, cy) } => {
                 format!("table frame fitted to its grid: {cx} x {cy} EMU")
             }

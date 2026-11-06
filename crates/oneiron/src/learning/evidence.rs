@@ -63,8 +63,8 @@ fn bounded_ref(text: &str, what: &'static str) -> Result<()> {
 /// Admits `evidence` into `cell` and re-projects the cell in the same
 /// transaction. Recording the same receipt again replaces its row.
 ///
-/// Returns the cell's estimate after the fold (`None` only when the window has
-/// faded every run to nothing).
+/// Returns the cell's estimate after the fold (`None` when the window has
+/// faded every run to nothing, or the subject was hard-deleted).
 ///
 /// # Errors
 ///
@@ -123,6 +123,13 @@ pub(crate) fn record_evidence_in_txn(
         return Err(Error::InvalidClaimBody(
             "an evidence weight is positive and finite",
         ));
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &cell.subject)? {
+        tracing::warn!(
+            subject = %cell.subject.to_hex(),
+            "learning evidence was not recorded: its subject was hard-deleted"
+        );
+        return Ok(None);
     }
     let digest = ensure_cell_in_txn(vault, wtxn, cell, evidence.observation.form())?;
     let row = EvidenceRow::of(evidence, anchor);
