@@ -485,7 +485,7 @@ pub(super) async fn handle_window_sync(
                 }
             };
             if imported.pending.is_none()
-                && let Some(positions) = positions
+                && let Some(positions) = positions.as_ref()
                 && let Err(error) = positions.finish(server.vault(), &doc)
             {
                 tracing::warn!(%error, "optional own-device position import did not settle");
@@ -517,6 +517,15 @@ pub(super) async fn handle_window_sync(
                 direct_tx.send(frame).map_err(|_| {
                     ProtocolError::Persistence("residence acknowledgment channel closed".into())
                 })?;
+            }
+            if imported.pending.is_none()
+                && let Some(positions) = positions
+            {
+                conn_state
+                    .asset_bodies
+                    .get_mut()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain_own_device_positions(&server.reassert_manager, &window, positions);
             }
         }
         window_sub_tags::VV_RESPONSE => {
