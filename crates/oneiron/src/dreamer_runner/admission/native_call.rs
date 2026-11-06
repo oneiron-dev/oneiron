@@ -26,6 +26,7 @@ struct NativeCallObligation {
     invoice: NativeCallInvoice,
     terminal_claims: Vec<EntityId>,
     meter: NativeCallMeter,
+    gross_coverage: NativeGrossCoverage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +48,21 @@ enum NativeCallMeter {
     Settled {
         start_used_units: u64,
         end_used_units: u64,
+    },
+}
+
+/// A real aggregate settlement included this lease's native meter interval.
+/// GROSS inclusion alone does not settle its potentially different NET invoice.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum NativeGrossCoverage {
+    Unknown,
+    Included {
+        meter_start_used_units: u64,
+        meter_end_used_units: u64,
+        aggregate_units: u64,
+        settled_units: u64,
+        at: u64,
     },
 }
 
@@ -99,12 +115,14 @@ pub(crate) fn retain_native_call_in_txn(
         invoice: NativeCallInvoice::Admitted,
         terminal_claims: Vec::new(),
         meter: NativeCallMeter::Unknown,
+        gross_coverage: NativeGrossCoverage::Unknown,
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
         original.invoice = NativeCallInvoice::Admitted;
         original.terminal_claims.clear();
         original.meter = NativeCallMeter::Unknown;
+        original.gross_coverage = NativeGrossCoverage::Unknown;
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -238,5 +256,59 @@ pub(crate) fn record_native_call_meter_in_txn(
         }
         _ if row.meter == settled => Ok(()),
         _ => Err(invalid_dreamer_runner("native call settled meter differs")),
+    }
+}
+
+/// Optional source evidence in the aggregate's writer. Failed evidence rolls
+/// back only its child transaction; the original charge and receipts stand.
+pub(super) fn record_native_gross_settlement_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    settlement: &super::SettleDreamerBudget,
+    settled_units: u64,
+    native: &super::NativeMeterSnapshot,
+) {
+    let recorded = (|| -> Result<()> {
+        let interval = native.interval();
+        if !native.matches_settlement(&settlement.budget_id, settlement.child_attempt)
+            || interval.end_used_units < interval.start_used_units
+            || settlement.actual_units < interval.end_used_units - interval.start_used_units
+        {
+            return Err(invalid_dreamer_runner("native aggregate meter differs"));
+        }
+        let coverage = NativeGrossCoverage::Included {
+            meter_start_used_units: interval.start_used_units,
+            meter_end_used_units: interval.end_used_units,
+            aggregate_units: settlement.actual_units,
+            settled_units,
+            at: settlement.now,
+        };
+        let mut child = vault.store.env.nested_write_txn(wtxn)?;
+        for (origin, lease_id, range) in native.included_calls() {
+            let Some(mut row) = CALLS.get(&vault.store, &child, &origin)? else {
+                return Err(invalid_dreamer_runner("native aggregate admission missing"));
+            };
+            if row.line != settlement.budget_id || row.lease != lease_id {
+                return Err(invalid_dreamer_runner("native aggregate original differs"));
+            }
+            let meter = NativeCallMeter::Settled {
+                start_used_units: range.start_used_units,
+                end_used_units: range.end_used_units,
+            };
+            if row.meter != NativeCallMeter::Unknown && row.meter != meter {
+                return Err(invalid_dreamer_runner("native aggregate interval differs"));
+            }
+            if row.gross_coverage != NativeGrossCoverage::Unknown && row.gross_coverage != coverage
+            {
+                return Err(invalid_dreamer_runner("native aggregate coverage differs"));
+            }
+            row.meter = meter;
+            row.gross_coverage = coverage.clone();
+            CALLS.put(&vault.store, &mut child, &origin, &row)?;
+        }
+        child.commit().map_err(Error::from)
+    })();
+    if let Err(error) = recorded {
+        tracing::warn!(kind = ?error.kind(), %error, "native aggregate inclusion skipped");
     }
 }

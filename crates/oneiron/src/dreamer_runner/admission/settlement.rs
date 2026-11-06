@@ -148,6 +148,17 @@ impl DreamerRunnerStore<'_> {
         input: SettleDreamerBudget,
         step_bindings: &[StepReceipt],
     ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_budget_with_native_meter(input, step_bindings, None)
+    }
+
+    /// The actual registered meter's selected native intervals, committed
+    /// beside the existing aggregate charge. They do not pay a NET invoice.
+    pub(crate) fn settle_budget_with_native_meter(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepReceipt],
+        native: Option<&NativeMeterSnapshot>,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
         self.vault.with_write_txn_grouped(|wtxn| {
             let mut unpinned = Vec::with_capacity(step_bindings.len());
             for binding in step_bindings {
@@ -155,7 +166,20 @@ impl DreamerRunnerStore<'_> {
                     unpinned.push(*binding);
                 }
             }
-            self.settle_budget_and_step_receipts_in_txn(wtxn, input, &unpinned)
+            let settled =
+                self.settle_budget_and_step_receipts_in_txn(wtxn, input.clone(), &unpinned)?;
+            if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(native) = native
+            {
+                super::native_call::record_native_gross_settlement_in_txn(
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual.actual_units,
+                    native,
+                );
+            }
+            Ok(settled)
         })
     }
 

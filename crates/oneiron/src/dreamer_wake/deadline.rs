@@ -88,6 +88,10 @@ impl WakePassDeadline {
         self.admitted_budget_line.as_ref()?.for_attempt(attempt_id)
     }
 
+    pub(super) fn original_budget_line(&self) -> Option<&AdmittedBudgetLine> {
+        self.admitted_budget_line.as_ref()
+    }
+
     pub(super) fn admitted_call_id(
         &self,
         attempt_id: AttemptId,

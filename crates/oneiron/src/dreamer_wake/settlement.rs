@@ -364,17 +364,20 @@ impl DreamerWakeDriver<'_> {
         meter: &WakeAttemptMeter,
         now: u64,
     ) -> Result<&'static str> {
-        let (charged, receipts) = meter.settlement();
+        let measured = meter.settlement();
+        let charged = measured.charged_units;
+        let receipts = measured.receipts;
         let settlement = SettleDreamerBudget {
             budget_id: line.to_owned(),
             child_attempt: attempt_id,
             actual_units: charged,
             now,
         };
-        let error = match self
-            .store
-            .settle_budget_with_step_receipts(settlement.clone(), &receipts)
-        {
+        let error = match self.store.settle_budget_with_native_meter(
+            settlement.clone(),
+            &receipts,
+            measured.native.as_ref(),
+        ) {
             Ok(DreamerBudgetSettlementOutcome::NoReservation) => return Ok("no_reservation"),
             Ok(_) if charged == 0 => return Ok("refunded"),
             Ok(_) if receipts.is_empty() => return Ok("charged"),
