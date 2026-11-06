@@ -54,8 +54,8 @@ pub(crate) fn run_graph_question_with_proposals(
     )
 }
 
-/// Captures entity rows from the prepared native text context, not caller ids.
-/// Media and failed reads remain unknown until their whole read set is captured.
+/// Captures the prepared text context and native media reads, not caller ids.
+/// Failed reads remain unknown.
 #[expect(
     clippy::too_many_arguments,
     reason = "the existing graph call lends its input-source accumulator"
@@ -115,18 +115,16 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
             }
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
-                *source_rows = None;
                 let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
-                super::graph_ask::unit_images(&lane, &context)?
+                super::graph_ask::unit_images_sourced(&lane, &context, source_rows)?
             } else {
                 Vec::new()
             };
             let audio = if answerer.reads_audio() && record.definition.media.audio {
-                *source_rows = None;
                 let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
-                super::graph_ask::unit_audio(&lane, &context)?
+                super::graph_ask::unit_audio_sourced(&lane, &context, source_rows)?
             } else {
                 Vec::new()
             };

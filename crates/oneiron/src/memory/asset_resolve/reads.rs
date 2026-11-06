@@ -176,13 +176,25 @@ pub(crate) fn asset_image_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
 ) -> MemoryResult<Option<(ImageBytes, EvidenceVersion)>> {
-    Ok(asset_forms_in_lane(lane, asset, true, &mut |_| false)?
-        .value
-        .and_then(|forms| forms.image)
-        .map(|image| {
-            let evidence = image.evidence(asset);
-            (image.pixels, evidence)
-        }))
+    asset_image_in_lane_sourced(lane, asset, &mut |_| {})
+}
+
+/// Observe actual entity reads, including derived rows not served as text.
+/// `None` marks an unknown source without changing the media result.
+pub(crate) fn asset_image_in_lane_sourced(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+    on_read: &mut dyn FnMut(Option<EntityId>),
+) -> MemoryResult<Option<(ImageBytes, EvidenceVersion)>> {
+    Ok(
+        asset_forms_in_lane_sourced(lane, asset, true, &mut |_| false, on_read)?
+            .value
+            .and_then(|forms| forms.image)
+            .map(|image| {
+                let evidence = image.evidence(asset);
+                (image.pixels, evidence)
+            }),
+    )
 }
 
 /// The audio clip `asset` holds, as its media type and encoded bytes, read
@@ -193,7 +205,17 @@ pub(crate) fn asset_audio_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
 ) -> MemoryResult<Option<(String, Vec<u8>)>> {
-    Ok(asset_blob_in_lane(lane, asset)?
+    asset_audio_in_lane_sourced(lane, asset, &mut |_| {})
+}
+
+/// Observe actual entity reads behind the encoded audio.
+/// `None` marks an unknown source without changing the media result.
+pub(crate) fn asset_audio_in_lane_sourced(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+    on_read: &mut dyn FnMut(Option<EntityId>),
+) -> MemoryResult<Option<(String, Vec<u8>)>> {
+    Ok(asset_blob_in_lane_sourced(lane, asset, on_read)?
         .value
         .as_ref()
         .and_then(audio_of)
@@ -207,16 +229,27 @@ fn asset_blob_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
 ) -> MemoryResult<ScopedReadResult<Option<(String, Vec<u8>)>>> {
+    asset_blob_in_lane_sourced(lane, asset, &mut |_| {})
+}
+
+fn asset_blob_in_lane_sourced(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+    on_read: &mut dyn FnMut(Option<EntityId>),
+) -> MemoryResult<ScopedReadResult<Option<(String, Vec<u8>)>>> {
     let vault = lane.vault();
     lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let body = rows
             .into_iter()
             .next()
             .flatten()
+            .inspect(|row| on_read(Some(row.id)))
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
             .and_then(|row| row.body);
         match body {
-            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, &body),
+            Some(body) => {
+                super::blob::resolve_asset_blob_in_lane_sourced(vault, txn, &body, on_read)
+            }
             None => Ok(None),
         }
     })
@@ -235,6 +268,16 @@ pub(crate) fn asset_forms_in_lane(
     images_only: bool,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
+    asset_forms_in_lane_sourced(lane, asset, images_only, admits, &mut |_| {})
+}
+
+fn asset_forms_in_lane_sourced(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+    images_only: bool,
+    admits: &mut dyn FnMut(usize) -> bool,
+    on_read: &mut dyn FnMut(Option<EntityId>),
+) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
         value: (row, media, image, derived),
@@ -244,11 +287,14 @@ pub(crate) fn asset_forms_in_lane(
             .into_iter()
             .next()
             .flatten()
+            .inspect(|row| on_read(Some(row.id)))
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
             .and_then(|row| row.body);
         // The bytes in the snapshot that admitted the row (FIX 9949).
         let media = match &row {
-            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, body)?,
+            Some(body) => {
+                super::blob::resolve_asset_blob_in_lane_sourced(vault, txn, body, on_read)?
+            }
             None => None,
         };
         let image = match (row.as_deref(), media.as_ref().and_then(image_of)) {
@@ -317,6 +363,7 @@ pub(crate) fn asset_forms_in_lane(
             .value
             .into_iter()
             .flatten()
+            .inspect(|row| on_read(Some(row.id)))
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET_TEXT)
             .collect();
         rows.sort_by_key(|row| std::cmp::Reverse((row.learned_at, row.id)));

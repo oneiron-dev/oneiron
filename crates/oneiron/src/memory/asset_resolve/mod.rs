@@ -57,7 +57,10 @@ pub(super) use generation::asset_body;
 #[cfg(test)]
 pub(crate) use generation::generated_asset_body;
 pub(super) use hydrated::serve_hydrated_views;
-pub(crate) use reads::{asset_audio_in_lane, asset_forms_in_lane, asset_image_in_lane};
+pub(crate) use reads::{
+    asset_audio_in_lane, asset_audio_in_lane_sourced, asset_forms_in_lane, asset_image_in_lane,
+    asset_image_in_lane_sourced,
+};
 pub use reads::{hydrated_asset, pull_image, resolve_audio_ref, resolve_image_ref};
 pub use types::{
     AssetConsumer, HydratedAsset, ImageViewRequest, LandedImage, PixelRegion, PulledImage,

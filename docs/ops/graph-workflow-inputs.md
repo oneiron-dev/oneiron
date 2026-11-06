@@ -5,7 +5,7 @@
 The declaration only records attribution. It does not admit a call or change
 its reader, principal, lease, budget, or scope.
 
-For text-only graph inputs, the workflow records the entity IDs in the native
+For text graph inputs, the workflow records the entity IDs in the native
 prepared `GraphUnitContext.sources`. These are the unit and evidence bodies
 that passed the existing same-snapshot reads and checks. Earlier-stage answer
 claims enter the set only when a later input actually reads them. The runner
@@ -13,11 +13,18 @@ does not turn caller-named IDs or typed-question side-table keys into source
 entities.
 
 The graph producer reports after the whole workflow returns successfully.
+Native media reads add the actual rows returned by the same reader, before
+kind, body, format, or size filters. Image attribution includes every returned
+derived row, even when its text is discarded. Images and audio also name the
+native content entity that the blob reader just read and hash-checked in the
+same transaction. Blob hashes, edge rows, and policy metadata are not cast to
+entity IDs. A withheld or absent media form keeps the old text-only fallback;
+served-form receipts still cover only the images and audio handed to the model.
+
 A failed graph input reports unknown before its error returns. A missing or
-withheld input and any image or audio read also keep the graph set unknown;
-the complete media read set is not captured by this path yet. The existing
-abstentions, completed stages, proposal writes, and error results are unchanged.
-An unknown read set is not a refusal.
+withheld prepared input and an unavailable media source identity also keep the
+graph set unknown. The existing abstentions, completed stages, proposal writes,
+and error results are unchanged. An unknown read set is not a refusal.
 
 Read-set writes are best-effort. A recording error warns and attempts to mark
 the producer unknown instead of failing the workflow. The attempt's terminal
