@@ -59,6 +59,12 @@ pub struct OnlineAxisSample {
 /// implementing a Beta bound should use `Posterior::lower_bound`, not a copy of
 /// its formula. Each `pull` consumes one unit of the supplied slice budget.
 pub trait GoalAxisBandit {
+    /// The goal revision this source froze, when its samples use that goal's
+    /// criteria. A goal-agnostic source leaves its revision unknown.
+    fn goal_revision(&self) -> Option<&str> {
+        None
+    }
+
     /// The frozen record an arm's questions read, when the host binds one.
     /// `None` leaves a custom bandit's unknown or record-independent basis unchanged.
     fn arm_record(&self, _arm: AxisArm) -> Option<(EntityId, &SkillRecord)> {

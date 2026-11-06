@@ -209,7 +209,10 @@ impl RunHostDoor {
     }
 
     pub(crate) fn bind_media_step(&self, step: RunMediaStep) {
-        *self.media_step.lock().unwrap_or_else(PoisonError::into_inner) = Some(step);
+        *self
+            .media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(step);
     }
 
     /// Takes the entry's binding after native execution, before its outcome settles.

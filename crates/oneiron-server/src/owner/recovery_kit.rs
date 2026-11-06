@@ -133,3 +133,17 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<KitStatusView> {
 pub(crate) fn kit_id(id: KitId) -> String {
     hex(&id.0)
 }
+
+/// The recovery-authority holding machine: the named one, else this install.
+/// This default is shared by the stopped command and the running target's door.
+pub(crate) fn authority_holding_machine(
+    vault: &oneiron::Vault,
+    named: Option<oneiron::EntityId>,
+) -> oneiron::Result<Option<oneiron::EntityId>> {
+    match named {
+        Some(machine) => Ok(Some(machine)),
+        None => vault
+            .local_machine()
+            .map(|machine| machine.map(|machine| machine.id)),
+    }
+}

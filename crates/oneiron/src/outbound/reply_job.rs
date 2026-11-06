@@ -139,6 +139,11 @@ pub struct ConnectorReplyJobResult {
     /// disabled-agent refusal), as a parked wake once waited on the owner.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub waits_on_owner: bool,
+    /// The edge the dispatch's receipt held a held or failed send to
+    /// (`retry_at`: a provider's wait, a delivery window or a pacing edge,
+    /// vault-clock seconds): the requeued job is due no sooner (FIX 11026).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<u64>,
 }
 
 impl ConnectorReplyJobResult {
@@ -155,6 +160,7 @@ impl ConnectorReplyJobResult {
             witness_repair: None,
             reason: None,
             waits_on_owner: false,
+            retry_at: None,
         }
     }
 
@@ -293,12 +299,13 @@ impl Vault {
             let wait =
                 (CONNECTOR_REPLY_RETRY_FIRST_SECS << shift).min(CONNECTOR_REPLY_RETRY_MAX_SECS);
             self.keep_connector_reply_result(claimed, job, result, now)?;
-            queue.requeue(RequeueAttempt {
+            queue.requeue_coalescing(RequeueAttempt {
                 id: claimed.id,
                 lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
                 attempt_count: claimed.attempt_count,
                 reason: reason(),
-                due_at: now.saturating_add(wait),
+                // FIX 11026: never before the edge the dispatch named.
+                due_at: now.saturating_add(wait).max(result.retry_at.unwrap_or(0)),
             })?;
             return Ok(None);
         }

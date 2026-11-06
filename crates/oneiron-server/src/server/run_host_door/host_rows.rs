@@ -8,11 +8,12 @@ use super::{
     LadderGraphAnswerer, Memory, MemoryError, MemoryResult, Modality, QuestionAnswersRequest,
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
     QuestionOutcomeWindowsRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
-    RenderRefusal, RunAdmission, RunMediaStep, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
-    closed_outcome_windows_in_lane, create_question_with_lane, decode, edit_question_with_lane,
-    encode, inside_host_dial, internal, on_caller_payer, owners, pause_question,
-    question_answers_in_lane, read_question_in_lane, resume_held_wave, run_graph_ask_receipted,
-    run_verdict, schedule_backfill_in_lane, select_graph_units_by_type, wave_plan, wave_receipt,
+    RenderRefusal, RunAdmission, RunMediaStep, SyncServer, TaskWaveRequest, Value, WriteActor,
+    agent_lane, closed_outcome_windows_in_lane, create_question_with_lane, decode,
+    edit_question_with_lane, encode, inside_host_dial, internal, on_caller_payer, owners,
+    pause_question, question_answers_in_lane, read_question_in_lane, resume_held_wave,
+    run_graph_ask_receipted, run_verdict, schedule_backfill_in_lane, select_graph_units_by_type,
+    wave_plan, wave_receipt,
 };
 
 /// One row the host serves, asked for the agent: never for a principal or
@@ -255,9 +256,9 @@ pub(super) fn host_row(
         AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => match granted_media(server, principal, verb) {
-            Some(operation) => {
-                granted_media_row(server, principal, line, attempt, media_step, verb, operation, input)
-            }
+            Some(operation) => granted_media_row(
+                server, principal, line, attempt, media_step, verb, operation, input,
+            ),
             None => Err(owners(verb, "ai.* media calls are the owner's")),
         },
     }
