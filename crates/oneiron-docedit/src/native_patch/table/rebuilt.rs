@@ -39,9 +39,10 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
-/// with one sole direct text element, that piece instead keeps the original run
-/// XML with only its text edited. Unsupported text shapes keep the static path;
-/// a run split across both keeps the existing static wrappers.
+/// with native text elements, that piece instead keeps the original run XML
+/// with each text element trimmed to its own retained character interval.
+/// Unsupported splices keep the static path; a run split across both keeps
+/// the existing static wrappers.
 pub(super) fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -252,7 +253,9 @@ pub(super) fn rebuilt(
                             && node.is(DML, "r")
                             && !(position < prefix && position + text.len() > old.len() - suffix)
                         {
-                            if let Some(original) = partial_run(bytes, tree, *at, &part) {
+                            if let Some(original) =
+                                partial_run(bytes, tree, *at, start - position..end - position)
+                            {
                                 run = original;
                             } else {
                                 let attributes: String = node
@@ -450,14 +453,27 @@ pub(super) fn rebuilt(
     Ok(out)
 }
 
-/// Edit the sole direct text of one retained run without rebuilding its XML.
-fn partial_run(bytes: &[u8], tree: &XmlTree, run: usize, text: &str) -> Option<String> {
-    let (at, node) = tree.child(run, DML, "t").ok()??;
-    if within(tree, run).any(|(other, node)| node.is(DML, "t") && other != at) {
-        return None;
-    }
+/// Trim each text element to its own part of one retained original run interval.
+fn partial_run(
+    bytes: &[u8],
+    tree: &XmlTree,
+    run: usize,
+    kept: std::ops::Range<usize>,
+) -> Option<String> {
     let original = &tree.nodes[run];
-    let edits = crate::edit::xml::replace_text(bytes, node, text)?
+    let mut edits = Vec::new();
+    let mut position = 0;
+    for (_, node) in within(tree, run).filter(|(_, node)| node.is(DML, "t")) {
+        let text: Vec<char> = node.text.chars().collect();
+        let start = kept.start.saturating_sub(position).min(text.len());
+        let end = kept.end.saturating_sub(position).min(text.len());
+        if start != 0 || end != text.len() {
+            let part: String = text[start..end].iter().collect();
+            edits.extend(crate::edit::xml::replace_text(bytes, node, &part)?);
+        }
+        position += text.len();
+    }
+    let edits = edits
         .into_iter()
         .map(|(range, value)| {
             (

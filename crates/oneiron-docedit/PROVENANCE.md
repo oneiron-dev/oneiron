@@ -389,9 +389,31 @@ text goes into the first character-data span and later text spans disappear,
 so their position relative to that replacement text is not claimed unchanged.
 Replaced CDATA and entity text uses the native helper's escaped text spelling.
 The prior static serializer still succeeds first, keeping its property/error
-selection. Missing, multiple or non-direct text elements, or a native helper
-that cannot produce the text splice, keep the previous static attribute path.
+selection. A native helper that cannot produce the text splice keeps the
+previous static attribute path; the extended text shapes are described below.
 Runs contributing to both retained intervals, fields, breaks, whole-run raw
 copies, empty/opaque segments, gaps, templates, matching and receipts are
 unchanged. This is source retention work, not full table-cell fallback,
 OF-509/OF-510, runtime or Office fidelity proof.
+
+
+## Original text-element ownership within one partial native table run
+
+The same field-free, single-retained-piece path now keeps the original run XML
+with multiple or non-direct DrawingML `a:t` elements too. Its retained interval
+is measured in original run characters. Text elements are visited in the same
+native descendant order used to read that run; each contributes only its own
+direct text. Each changed element keeps exactly its intersection with that
+interval, or empty text when outside it. Fully retained and originally empty
+text elements keep their lexical bytes. No inserted replacement text is assigned
+to an arbitrary original text element; it still uses the existing template.
+The existing `replace_text` helper edits only each element's direct character
+data, so edits of a parent text element and a nested text element do not overlap.
+One native splice applies those edits to the original run span, keeping run and
+text attributes, wrappers, unknown child XML, comments, processing instructions
+and gaps once under the same ancestors. Changed character data still uses the
+native helper's escaped text spelling and first-character-data placement.
+The prior serializer still succeeds first; a failed native text splice keeps
+the same static attribute path. Runs intersecting both retained pieces, fields,
+breaks, templates, matching and receipts are unchanged. This remains source-only
+preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity proof.
