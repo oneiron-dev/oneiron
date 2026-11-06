@@ -1,0 +1,112 @@
+# Published artifact backends over HTTP/1 stdio
+
+A host can run a published code artifact on its artifact-only listener. This
+initial runtime is one isolated guest per HTTP request. It holds no engine
+credential and has no engine-action grants. Ordinary computation and HTTP
+serving do not require such a grant.
+
+## Host execution profile
+
+Set an explicit `[artifact_backend]` section in the served configuration file.
+There are no image or resource defaults, and this section does not reuse
+`[browser]`. Ordinary serve, embedded serve through `build_server`, and managed
+serve pass the same profile to their server. An embedder constructing a server
+directly can use `SyncServer::with_artifact_backend`.
+
+The following values are an example, not defaults or a provisioned image:
+
+```toml
+[artifact_backend]
+runtime = "/usr/bin/podman"
+image = "example/app-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+uid = 10001
+gid = 10001
+memory_mib = 512
+cpu_millis = 1000
+pids = 64
+tmpfs_mib = 64
+bridge_buffer_bytes = 16384
+```
+
+The host provisions the runtime, pinned image and native fence launcher. The
+native untrusted-session selector keeps its existing backend selection and
+isolation requirements. No VM, image installation or deployment happens when
+this source is changed. An absent profile leaves existing static serving
+unchanged.
+
+## App contract and address
+
+Publish an Artifact-class code snapshot containing `oneiron.backend.json`:
+
+```json
+{
+  "transport": "http1_stdio",
+  "command": ["/usr/bin/python3", "/app/backend.py"]
+}
+```
+
+The command runs **inside the configured guest image**, not on the host. Its
+stdin receives one HTTP/1 request. Its stdout must contain the HTTP/1 response;
+application logs belong on stderr. It can stream its response. This is an inetd
+contract, not an adapter for an arbitrary process listening on a TCP port.
+The guest sees admitted regular-file projections under read-only `/app`.
+Executable bits are retained; snapshot symlink metadata is not recreated as
+host symlinks. Writable temporary storage is the native guest's bounded tmpfs.
+
+On the artifact listener, use `/_apps/<artifact>/`. The native `_t/<token>` and
+`_s/<selector-kind>/<selector-value>` URL positions work after the artifact id,
+just as on `/a/`. Entry URLs redirect to the canonical selector form. Query
+selectors are consumed by the router; other query parameters reach the app.
+The guest sees only its application-relative request target and a fixed
+`Host: artifact.invalid`, never the reader's link capability path. Requests
+can use any HTTP method, and their original bodies are streamed, not collected
+under a new body-size cap.
+
+These new routes exist only on the artifact-only listener. They are not API
+routes. Existing `/a/` URLs, static headers, method handling and CSP are unchanged.
+Configured cloud subdomain rewriting continues to serve its existing static
+paths. A cloud edge must explicitly forward this new backend route to the
+artifact listener with a local authority outside the configured artifact
+domains. The existing public/internal subdomain rewrite is static-only;
+automatic app-subdomain backend selection is not part of this slice.
+
+## Authority and process lifetime
+
+One read transaction admits the actual pointer, its target Scope, selector and
+reader tier. It uses the same taint/stale policy, quarantined-path exclusion,
+repo-mark projections, masked byte reader and output hashes as static serving.
+The runtime mounts only those projected bytes in a fresh host-owned scratch
+child. It does not mount an owner's checkout or a private preview process.
+The snapshot's paths are validated before any filesystem write. The scratch
+parent remains private on the host; only the readable child enters the guest.
+
+No owner/read Authorization, binding proof, engine headers, forwarding
+attestation, incoming host cookie or link capability is passed to the guest.
+This first per-request transport does not forward cookies or accept app
+Set-Cookie responses. Application-cookie namespace/path isolation remains
+separate work; it must not reuse host authentication cookies. Hop-by-hop
+headers are rebuilt. Backend responses are no-store and use a path-scoped
+connect/form CSP for this app, with no frames or workers. This does not relax
+the API-origin or static-artifact policies.
+
+The response body owns the native session lease. The two blocking IO bridges
+own only its pipes. Completion, error, request cancellation or response drop
+aborts the HTTP connection, drops the native lease off the async worker, and
+joins the pipe workers before removing scratch. Native lease drop supplies
+process stop/reap. No new timeout substitutes for that custody.
+
+## Remaining work and evidence limits
+
+The separate artifact-backend pairing API creates an app's own principal and
+one-use holder pairing with empty action scope. This zero-action runtime does
+not inject or redeem that credential. Later owner Ask grants need a real
+scoped capability issuance and dispatcher join; an app label, snapshot hash,
+reader federation grant or owner credential is not that authority. There is
+no permissive egress proxy in this runtime.
+
+Persistent/declared-port applications, application cookies, automatic cloud
+app-host dispatch and grant-bearing engine calls remain work under OF-356.
+This implementation does not claim that the whole published-backend row is
+complete. Static source inspection and formatting are not runtime, isolation
+or compiler evidence. Publication still needs the Engine's passing production
+compile train. No tests are written, compiled or run under the decree.
