@@ -442,14 +442,12 @@ fn rebuilt_pass(
         };
         let tail = retained_runs(old.len() - suffix, old.len(), &mut pending_sources)?;
         *copied_sources = pending_sources;
-        if field_free {
-            original_sources.extend(
-                [p_pr_node, end_node]
-                    .into_iter()
-                    .flatten()
-                    .map(|(_, node)| node.span.clone()),
-            );
-        }
+        original_sources.extend(
+            [p_pr_node, end_node]
+                .into_iter()
+                .flatten()
+                .map(|(_, node)| node.span.clone()),
+        );
         emitted_sources.extend(edges);
         emitted_sources.extend(original_sources);
         Some(format!(
