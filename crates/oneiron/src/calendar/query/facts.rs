@@ -306,6 +306,10 @@ pub(in crate::calendar) struct CalendarEventFacts {
     wall_time: LaneFact<WallTimeFact>,
     /// The `calendar.tz` zone, which places an all-day EVENT's days.
     zone: LaneFact<String>,
+    /// Under the busy hold, the deciding kind is a held floating or all-day
+    /// one: the row keeps its header's interval and every zone's reach of
+    /// its wall time too (fix list row 17868).
+    held_civil: bool,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
     uids: Vec<String>,
@@ -358,8 +362,21 @@ impl CalendarEventFacts {
     /// alone. `None` for an anchored EVENT, or one whose wall time or zone
     /// this lane cannot read.
     fn wall_span(&self) -> Option<TimeRange> {
-        let (start, length) = self.civil_extent()?;
+        let (start, length) = self.placed_extent()?;
         self.civil_projector().span(start, length)
+    }
+
+    /// The civil start and civil length this row places: a floating or
+    /// all-day EVENT's ([`Self::civil_extent`]), or under the busy hold a
+    /// held floating or all-day kind's, which [`Self::civil_projector`]
+    /// spans across every zone's reach beside the header's interval (fix
+    /// list row 17868).
+    pub(in crate::calendar) fn placed_extent(&self) -> Option<(u64, u64)> {
+        match self.civil_extent() {
+            Some(extent) => Some(extent),
+            None if self.held_civil => self.wall_extent(),
+            None => None,
+        }
     }
 
     /// How this EVENT's civil time lands on the UTC clock: its days in its
@@ -393,6 +410,12 @@ impl CalendarEventFacts {
         ) {
             return None;
         }
+        self.wall_extent()
+    }
+
+    /// The civil start and civil length the admitted wall time reads, as
+    /// [`Self::civil_extent`] reads it, whatever the kind.
+    fn wall_extent(&self) -> Option<(u64, u64)> {
         let LaneFact::Read((start, end)) = self.wall_time else {
             return None;
         };
@@ -502,6 +525,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
     let mut wall_time: Option<(EntityId, LaneFact<WallTimeFact>)> = None;
     let mut zone: Option<(EntityId, LaneFact<String>)> = None;
+    let mut held_civil_kinds: Vec<EntityId> = Vec::new();
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
     let mut uids = Vec::new();
@@ -556,26 +580,21 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
             if hold == Hold::Busy {
                 family_member = true;
                 match body.predicate.as_str() {
-                    // A held kind is busy: its free transparency frees
-                    // nothing. A held floating or all-day kind still places
-                    // its civil time, so with its zone held too the EVENT
-                    // keeps every zone's reach, never only the written
-                    // zone's days (fix list row 17868).
+                    // A held kind reads as CAL-00's busy default, anchored
+                    // on the header. A held floating or all-day kind also
+                    // places its civil time across every zone's reach, so
+                    // with its zone held too the EVENT never narrows to the
+                    // written zone's days (fix list row 17868).
                     PREDICATE_CALENDAR_TIME_KIND => {
                         let value = decode_time_kind_value(&body.value)?;
-                        let fact = if matches!(
+                        if matches!(
                             value.kind,
                             crate::calendar::claims::CalendarTimeKind::Floating
                                 | crate::calendar::claims::CalendarTimeKind::AllDay
                         ) {
-                            LaneFact::Read(CalendarTimeKindValue {
-                                kind: value.kind,
-                                busy_transparency: CalendarBusyTransparency::Busy,
-                            })
-                        } else {
-                            LaneFact::Absent
-                        };
-                        replace_when_lower(&mut time_kind, claim_id, fact);
+                            held_civil_kinds.push(claim_id);
+                        }
+                        replace_when_lower(&mut time_kind, claim_id, LaneFact::Absent);
                     }
                     // A wall time only places occupancy; it frees nothing.
                     PREDICATE_CALENDAR_WALL_TIME => {
@@ -663,7 +682,11 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     // either way, and each (UID, original start) is one occurrence (FIX 9653).
     uids.sort_unstable();
     uids.dedup();
+    let held_civil = time_kind
+        .as_ref()
+        .is_some_and(|(id, _)| held_civil_kinds.contains(id));
     Ok(Some(CalendarEventFacts {
+        held_civil,
         origin: origin.map_or(LaneFact::Absent, |(_, fact)| fact),
         time_kind: time_kind.map_or(LaneFact::Absent, |(_, fact)| fact),
         wall_time: wall_time.map_or(LaneFact::Absent, |(_, fact)| fact),
