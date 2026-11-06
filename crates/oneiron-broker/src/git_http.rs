@@ -26,9 +26,11 @@
 //! 4. The broker installs that value as the one auth header, streams the
 //!    spool to the repository, and writes the reply as a streamed reply: its
 //!    header, its body in chunks exactly as they came, and the end. A reply
-//!    that holds the credential is cut ([`crate::Failure::ReplyHoldsKey`]),
+//!    that holds a literal form of the credential is cut
+//!    ([`crate::Failure::ReplyHoldsKey`]) before any byte of the form goes,
 //!    never rewritten: a rewrite would break pkt-line lengths and pack
-//!    checksums.
+//!    checksums. The model strip's rule of marking a run of escapes it cannot
+//!    settle does not apply: a ref name or a pack full of escapes passes.
 //!
 //! No step has a call deadline or a total size bound: a pack can be any
 //! size and take any time. Each step waits at most the exchange's own idle
