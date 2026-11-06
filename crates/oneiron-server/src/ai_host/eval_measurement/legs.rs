@@ -262,6 +262,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
             response_format: ResponseFormat::Text,
             locality: arm.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),

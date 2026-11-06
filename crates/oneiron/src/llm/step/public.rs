@@ -395,7 +395,7 @@ fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bo
 /// Whether `submitted` is the step `frozen` froze, apart from the fields a
 /// raw call's admission writes from the host's current configuration: the
 /// purpose's default tier, the model's catalog locality, the world it
-/// clears, and the host-only keyless stamp.
+/// clears, and the host-only keyless and paid stamps.
 fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) -> bool {
     let mut submitted = submitted.clone();
     let envelope = &mut submitted.request.envelope;
@@ -403,6 +403,7 @@ fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) ->
     envelope.tier.purpose_default = frozen.request.envelope.tier.purpose_default.clone();
     envelope.locality = frozen.request.envelope.locality.clone();
     envelope.host_keyless = frozen.request.envelope.host_keyless;
+    envelope.host_paid = frozen.request.envelope.host_paid;
     submitted == *frozen
 }
 
