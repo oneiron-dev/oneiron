@@ -1,11 +1,13 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use std::sync::Arc;
+
 use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
 use super::sieve_ports::SliceStep;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
+use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore, NativeNetTally};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
@@ -21,9 +23,30 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 pub(super) struct StepChargeTally {
     pub(super) units: u64,
     pub(super) step_bindings: Vec<StepReceipt>,
+    pub(super) native_net: Option<Arc<NativeNetTally>>,
 }
 
 impl StepChargeTally {
+    pub(super) fn for_context(ctx: &WakeAttemptContext<'_>) -> Self {
+        Self {
+            native_net: ctx.partition_net_tally(),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn publish_net(&self) {
+        if let Some(native) = &self.native_net {
+            native.publish();
+        }
+    }
+
+    fn record_charge(&mut self, binding: Option<StepReceipt>, units: u64) {
+        self.units = self.units.saturating_add(units);
+        if let Some(native) = &self.native_net {
+            native.record(binding, units);
+        }
+    }
+
     pub(super) fn checkpoint(&self) -> DreamerAttemptExecution {
         self.park_for(DREAMER_HARD_CUT_PARK_REASON, DreamerParkCause::Checkpoint)
     }
@@ -50,6 +73,7 @@ impl StepChargeTally {
         reason: &str,
         cause: DreamerParkCause,
     ) -> DreamerAttemptExecution {
+        self.publish_net();
         DreamerAttemptExecution::ParkWithSpend {
             reason: reason.to_owned(),
             cause,
@@ -79,6 +103,7 @@ impl StepChargeTally {
         reason: &str,
         response: &LlmResponse,
     ) -> Result<DreamerAttemptExecution> {
+        self.publish_net();
         let cause = DreamerParkCause::of_response(response);
         if !matches!(
             cause,
@@ -116,6 +141,7 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         reason: &str,
     ) -> Result<DreamerAttemptExecution> {
+        self.publish_net();
         forget_charged_step(vault, attempt_id, &step_hash)?;
         Ok(DreamerAttemptExecution::ParkWithSpend {
             reason: reason.to_owned(),
@@ -144,7 +170,7 @@ impl StepChargeTally {
             return Ok(());
         }
         self.step_bindings.push(binding);
-        self.record_usage(usage);
+        self.record_charge(Some(binding), usage_units(usage));
         Ok(())
     }
 
@@ -169,13 +195,16 @@ impl StepChargeTally {
     /// Failed schema correction has paid provider usage but no terminal step
     /// claim to memoize or mark as previously charged on a later wake.
     pub(super) fn record_usage(&mut self, usage: &LlmUsage) {
-        self.units = self.units.saturating_add(usage_units(usage));
+        self.record_charge(None, usage_units(usage));
     }
 
     /// Units a scoped agent's own generation spent on the attempt's guard
     /// (FIX 7508), charged once when its parent stops waiting on it.
     pub(super) fn record_units(&mut self, units: u64) {
         self.units = self.units.saturating_add(units);
+        if let Some(native) = &self.native_net {
+            native.discard();
+        }
     }
 }
 

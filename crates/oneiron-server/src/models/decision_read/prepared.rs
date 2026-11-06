@@ -51,6 +51,7 @@ impl<'reader, 'request> PreparedDecisionRead<'reader, 'request> {
             physical,
             release,
             admit_next,
+            None,
         )
     }
 }
@@ -64,12 +65,20 @@ impl DecisionReader {
         physical: Option<WorkPhysical>,
         release: Option<ReadRelease<'_>>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+        observations: Option<&mut Vec<oneiron::llm::decision::DecisionCompletionObservation>>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
         let reader = self;
         let read = async {
             let _worker = reader.hold_worker().await?;
             reader
-                .read_pack(prompts, questions, physical, release, admit_next)
+                .read_pack(
+                    prompts,
+                    questions,
+                    physical,
+                    release,
+                    admit_next,
+                    observations,
+                )
                 .await
         };
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
@@ -222,6 +231,7 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
                 Err(FatalLlmError::Auth.into())
             }
         };
+        let mut observations = Vec::new();
         let read = self.reader.read_prepared(
             &self.prompts,
             self.questions,
@@ -229,7 +239,19 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
             lease.work_context().map(|context| context.physical),
             may_send.map(|_| (&release as oneiron::llm::DispatchRelease<'_>, lease)),
             admit_next,
+            invoice.as_ref().map(|_| &mut observations),
         );
+        if let Some(invoice) = &invoice
+            && let Err(error) = invoice.record_completions(&observations)
+        {
+            tracing::warn!(%error, "native decision observations were not retained");
+        }
+        if read.is_err()
+            && let Some(invoice) = &invoice
+            && let Err(error) = invoice.record_failed_completions(&observations)
+        {
+            tracing::warn!(%error, "native failed decision quantity was not retained");
+        }
         if let (Some(invoice), Ok(outcome)) = (invoice, &read) {
             let usage = match outcome {
                 LabelReadGenerationOutcome::Complete(read) => &read.usage,

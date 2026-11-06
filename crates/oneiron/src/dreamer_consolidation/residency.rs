@@ -36,6 +36,7 @@ pub(super) fn spent_or_deferred(
     ctx: &WakeAttemptContext<'_>,
     charges: &StepChargeTally,
 ) -> Result<DreamerAttemptExecution> {
+    charges.publish_net();
     if waits_on_residency(&error) {
         Ok(residency_deferral(
             ctx.now_ms,

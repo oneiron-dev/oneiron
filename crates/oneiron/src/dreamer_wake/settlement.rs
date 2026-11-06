@@ -373,10 +373,12 @@ impl DreamerWakeDriver<'_> {
             actual_units: charged,
             now,
         };
-        let error = match self.store.settle_budget_with_native_meter(
+        let net = meter.result_net(charged);
+        let error = match self.store.settle_budget_with_native_evidence(
             settlement.clone(),
             &receipts,
             measured.native.as_ref(),
+            net.as_ref(),
         ) {
             Ok(DreamerBudgetSettlementOutcome::NoReservation) => return Ok("no_reservation"),
             Ok(_) if charged == 0 => return Ok("refunded"),

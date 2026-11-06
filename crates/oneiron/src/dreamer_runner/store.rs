@@ -625,6 +625,7 @@ impl<'a> DreamerRunnerStore<'a> {
         budget: super::SettleDreamerBudget,
         retry_at: u64,
         step_bindings: &[StepReceipt],
+        net: Option<&super::NativeNetSnapshot>,
     ) -> Result<()> {
         self.requeue_deferred(
             admitted,
@@ -632,6 +633,7 @@ impl<'a> DreamerRunnerStore<'a> {
             retry_at,
             step_bindings,
             super::SELECTION_DEFERRED_REASON,
+            net,
         )
     }
 
@@ -645,6 +647,7 @@ impl<'a> DreamerRunnerStore<'a> {
         budget: super::SettleDreamerBudget,
         retry_at: u64,
         step_bindings: &[StepReceipt],
+        net: Option<&super::NativeNetSnapshot>,
     ) -> Result<()> {
         self.requeue_deferred(
             admitted,
@@ -652,6 +655,7 @@ impl<'a> DreamerRunnerStore<'a> {
             retry_at,
             step_bindings,
             super::BACKLOG_DEFERRED_REASON,
+            net,
         )
     }
 
@@ -664,6 +668,7 @@ impl<'a> DreamerRunnerStore<'a> {
         retry_at: u64,
         step_bindings: &[StepReceipt],
         reason: &str,
+        net: Option<&super::NativeNetSnapshot>,
     ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
@@ -672,7 +677,19 @@ impl<'a> DreamerRunnerStore<'a> {
         self.vault.with_write_txn_grouped(|txn| {
             let unpinned =
                 super::deferral::unpinned_step_bindings_in_txn(self, txn, step_bindings)?;
-            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
+            let settled =
+                self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
+            if let super::DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(net) = net
+            {
+                super::admission::record_native_net_settlement_in_txn(
+                    self.vault,
+                    txn,
+                    &budget,
+                    actual.actual_units,
+                    net,
+                );
+            }
             self.attempts.requeue_in_txn(
                 txn,
                 crate::attempt_queue::RequeueAttempt {
