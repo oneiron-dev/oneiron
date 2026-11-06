@@ -120,9 +120,10 @@ existing Gate. Speaker labels grant no PERSON, biometric, or send authority.
 
 These doors use ordinary blob version, ASSET, high-water, erase, hold and archive
 machinery. They add no separate lifetime system or global-erasure guarantee.
-Revision-to-SESSION links, served owner routes and NOTE fallback landing remain
-separate work. No text-flattening adapter or duplicate SESSION lifecycle is
-installed, and no voiceprint consent is implied.
+Storage alone does not import a SESSION or NOTE; the owner-bound import door
+below performs that step. Served owner routes remain separate work. No
+text-flattening adapter or duplicate SESSION lifecycle is installed, and no
+voiceprint consent is implied.
 
 ## Typed SESSION input and selected-artifact reads
 
@@ -186,9 +187,39 @@ CHAT keeps the imported floor and unknown meeting speaker behavior above.
 
 An already-open sitting returns the native `RetryOpenSession` result. The door
 does not mint another SESSION or silently reuse this receipt for a later call.
-`pending_note_fallback` retains the normalizer's whole-batch NOTE input, including
-when turns land. It is not a NOTE id or a claim that a NOTE landed. An artifact
-with no turns returns that explicit pending input without a synthetic SESSION.
-The exact stored artifact and bulk receipt remain in the returned outcome. A
-source-trust-aware NOTE import door and served caller routes remain unconnected;
-no host-only MACHINE take or owner-authored truth is substituted for them.
+The exact stored artifact and bulk receipt remain in the returned outcome.
+Served caller routes remain unconnected; no host-only MACHINE take or
+owner-authored truth is substituted for them.
+
+## Native Imported NOTE fallback
+
+The same owner-bound writer also lands the normalizer's whole-batch NOTE
+fallback, including when turns land. An artifact with no turns can land that
+NOTE without a synthetic SESSION. `note_fallback` reports the native NOTE id
+and whether it landed now or was retained from an earlier import. It does not
+claim an approve-once receipt from `notes.import.review`: the original fresh,
+exact-byte bulk consent authorizes this import without a second prompt.
+
+The fallback uses the shipped `observation` kind, selected by
+`MEETING_TRANSCRIPT_NOTE_KIND`. Its namespace is the meeting source id plus the
+selected transcript artifact id, version and importing owner. The normalized
+source record id names the NOTE within that namespace. A retry does not
+replace existing edits, and a deleted or archived NOTE is not resurrected;
+the result reports its native Unchanged, Changed or Removed standing. A label
+revision has a distinct native version and therefore a distinct NOTE identity.
+
+The native notes importer writes the NOTE as its source MACHINE, not as the
+owner's own prose. That MACHINE's registry-derived trust is Imported. Its birth
+names the real importer. Its body retains both selected version pins and the
+original bulk receipt once as source provenance. The NOTE uses its source artifact's
+world and native title, secret-scan, document and authorship paths, with
+DerivedFrom edges to the transcript and source-audio artifacts. Its valid time
+uses capture time when present, otherwise the committing writer's arrival time.
+No duplicate artifact-byte store, import ledger or new approval group is added.
+The ordinary markdown and attached-folder importer paths keep their existing
+source, identities, births, title and secret handling.
+
+The SESSION and new NOTE commit together, or the native write error rolls back
+both. A busy SESSION outcome can still accompany a landed or retained NOTE.
+These are library doors; no served route, physical ASR execution, end-to-end
+runtime result or global-erasure guarantee is claimed here.
