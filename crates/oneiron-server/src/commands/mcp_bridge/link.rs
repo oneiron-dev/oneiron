@@ -339,8 +339,7 @@ struct Session {
 
 /// One request handed to the driver, and where its answer's chunks go.
 struct Outbound {
-    id: u64,
-    frame: Vec<u8>,
+    request: PreparedRequest,
     chunks: mpsc::UnboundedSender<Inbound>,
     max_reply_bytes: usize,
 }
@@ -357,8 +356,8 @@ enum Inbound {
     Closed(String),
     /// The server closed the socket because its credential was revoked.
     Revoked(String),
-    /// The socket ended before the request was written.
-    Unsent,
+    /// The socket ended before the request was written; its original body returns.
+    Unsent(Vec<u8>),
 }
 
 /// How an open ended.
@@ -402,7 +401,7 @@ impl SocketLink {
         &self,
         surface: McpSurface,
         credential: &Credential<'_>,
-        mut body: Vec<u8>,
+        body: Vec<u8>,
         bounds: &Bounds,
         mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Carried> {
@@ -415,18 +414,18 @@ impl SocketLink {
                 Carried::Unsent(body)
             }
         };
-        let body_text = match std::str::from_utf8(&body) {
+        let body = match String::from_utf8(body) {
             Ok(body) => body,
-            Err(_) => {
+            Err(error) => {
                 return Err(unsent(
                     Cut::Failed("the message is not UTF-8".to_owned()),
-                    body,
+                    error.into_bytes(),
                 ));
             }
         };
         let session = match self.session(credential, bounds.until) {
             Ok(session) => session,
-            Err(cut) => return Err(unsent(cut, body)),
+            Err(cut) => return Err(unsent(cut, body.into_bytes())),
         };
         let binding = match credential {
             Credential::Slip { sign, .. } => {
@@ -435,20 +434,17 @@ impl SocketLink {
             Credential::Owner { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame =
-            request_frame(id, surface, binding.as_deref(), body_text).map_err(Carried::Cut)?;
+        let request = request_frame(id, surface, binding, body).map_err(Carried::Cut)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
-        if session
-            .outbound
-            .send(Outbound {
-                id,
-                frame,
-                chunks,
-                max_reply_bytes: bounds.max_reply_bytes,
-            })
-            .is_err()
-        {
-            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
+        if let Err(error) = session.outbound.send(Outbound {
+            request,
+            chunks,
+            max_reply_bytes: bounds.max_reply_bytes,
+        }) {
+            return Err(unsent(
+                Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()),
+                error.0.request.body.into_bytes(),
+            ));
         }
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
@@ -463,12 +459,11 @@ impl SocketLink {
                     }
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
                     Ok(Some(Inbound::Sent)) => {
-                        drop(std::mem::take(&mut body));
                         if let Some(request_id) = request_id.take() {
                             request_id.release();
                         }
                     }
-                    Ok(Some(Inbound::Unsent)) => {
+                    Ok(Some(Inbound::Unsent(body))) => {
                         return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
                     }
                     Ok(Some(Inbound::Closed(why))) => return Err(Carried::Cut(Cut::Failed(why))),
@@ -687,15 +682,18 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                 let Some(request) = request else {
                     break "the bridge is ending".to_owned();
                 };
-                waiting.insert(request.id, ReplyWaiter {
+                let id = request.request.id;
+                waiting.insert(id, ReplyWaiter {
                     chunks: request.chunks,
                     sent: 0,
                     max_reply_bytes: request.max_reply_bytes,
                 });
-                if let Err(error) = socket.send(Message::Binary(request.frame.into())).await {
+                let frame = request.request.encode();
+                if let Err(error) = socket.send(Message::Binary(frame.into())).await {
                     break format!("the MCP socket broke: {error}");
                 }
-                let _ = waiting[&request.id].chunks.send(Inbound::Sent);
+                drop(request.request);
+                let _ = waiting[&id].chunks.send(Inbound::Sent);
             }
             frame = socket.next() => {
                 heard = tokio::time::Instant::now();
@@ -747,7 +745,9 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
         });
     }
     while let Ok(request) = requests.try_recv() {
-        let _ = request.chunks.send(Inbound::Unsent);
+        let _ = request
+            .chunks
+            .send(Inbound::Unsent(request.request.body.into_bytes()));
     }
     let _ = socket.close().await;
 }
@@ -758,49 +758,76 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
 fn request_frame(
     id: u64,
     surface: McpSurface,
-    binding: Option<&str>,
-    body: &str,
-) -> Result<Vec<u8>, Cut> {
-    #[derive(Serialize)]
-    struct Request<'a> {
-        #[serde(rename = "type")]
-        kind: &'static str,
-        id: u64,
-        seq: u64,
-        last: bool,
-        payload: Rpc<'a>,
-    }
-    #[derive(Serialize)]
-    struct Rpc<'a> {
-        method: &'static str,
-        params: Call<'a>,
-    }
-    #[derive(Serialize)]
-    struct Call<'a> {
-        surface: &'static str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        binding: Option<&'a str>,
-        body: &'a str,
-    }
-    let request = Request {
-        kind: "rpc.req",
+    binding: Option<String>,
+    body: String,
+) -> Result<PreparedRequest, Cut> {
+    let request = PreparedRequest {
         id,
-        seq: 0,
-        last: true,
-        payload: Rpc {
-            method: crate::handler::MCP_RPC_METHOD,
-            params: Call {
-                surface: surface.path(),
-                binding,
-                body,
-            },
-        },
+        surface: surface.path(),
+        binding,
+        body,
     };
-    let mut frame = vec![oneiron::sync::transport::TAG_RPC];
     request
-        .serialize(&mut rmp_serde::Serializer::new(&mut frame).with_struct_map())
+        .write(&mut std::io::sink())
         .map_err(|error| Cut::Failed(format!("could not frame the request: {error}")))?;
-    Ok(frame)
+    Ok(request)
+}
+
+/// The queued request keeps its original body, not a second encoded copy.
+struct PreparedRequest {
+    id: u64,
+    surface: &'static str,
+    binding: Option<String>,
+    body: String,
+}
+
+impl PreparedRequest {
+    fn encode(&self) -> Vec<u8> {
+        let mut frame = vec![oneiron::sync::transport::TAG_RPC];
+        // The same immutable primitive-only request already serialized before enqueue.
+        self.write(&mut frame)
+            .expect("a validated MCP request serializes to an in-memory buffer");
+        frame
+    }
+
+    fn write(&self, writer: &mut impl std::io::Write) -> Result<(), rmp_serde::encode::Error> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            id: u64,
+            seq: u64,
+            last: bool,
+            payload: Rpc<'a>,
+        }
+        #[derive(Serialize)]
+        struct Rpc<'a> {
+            method: &'static str,
+            params: Call<'a>,
+        }
+        #[derive(Serialize)]
+        struct Call<'a> {
+            surface: &'static str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            binding: Option<&'a str>,
+            body: &'a str,
+        }
+        let request = Request {
+            kind: "rpc.req",
+            id: self.id,
+            seq: 0,
+            last: true,
+            payload: Rpc {
+                method: crate::handler::MCP_RPC_METHOD,
+                params: Call {
+                    surface: self.surface,
+                    binding: self.binding.as_deref(),
+                    body: &self.body,
+                },
+            },
+        };
+        request.serialize(&mut rmp_serde::Serializer::new(writer).with_struct_map())
+    }
 }
 
 /// The HTTP answer a socket call carries back.
