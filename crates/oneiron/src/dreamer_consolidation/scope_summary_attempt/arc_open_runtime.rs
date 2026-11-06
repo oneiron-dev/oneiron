@@ -231,8 +231,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 Ok(request)
             };
             let purpose = shell.envelope.purpose.clone();
+            let scope = shell.envelope.scope.clone();
             let context = crate::llm::decision::DecisionCallContext {
                 purpose: &purpose,
+                scope: &scope,
                 extraction_egress: call.inference.extraction_egress,
                 generation: Some(&generation),
             };

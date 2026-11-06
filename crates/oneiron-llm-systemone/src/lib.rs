@@ -44,6 +44,39 @@ pub struct SystemOneHttpRequest {
     pub time_left: Duration,
 }
 
+/// One validated logical read and the exact native request built for it.
+/// It stays tied to the seat that built it until that seat sends its owned bytes.
+pub struct PreparedSystemOneRead<'seat> {
+    seat: &'seat SystemOneSeat,
+    request: SeatRequest,
+    sent: SystemOneHttpRequest,
+}
+
+impl<'seat> PreparedSystemOneRead<'seat> {
+    /// The actual endpoint, model, headers and transformed body, before credentials.
+    /// Inspecting this request does not authorize or send it.
+    pub fn request(&self) -> &SystemOneHttpRequest {
+        &self.sent
+    }
+
+    /// Sends this read on its original seat without rebuilding its body.
+    /// The caller supplies its current work time after admission. A borrowed
+    /// credential release remains at the transport's physical boundary.
+    pub fn ask_recorded<'call>(
+        mut self,
+        lease: &'call BudgetLease,
+        time_left: Duration,
+        release: Option<DispatchRelease<'call>>,
+    ) -> SeatReadFuture<'call>
+    where
+        'seat: 'call,
+    {
+        self.sent.time_left = time_left;
+        let seat = self.seat;
+        Box::pin(seat.send_prepared(self, lease, true, release))
+    }
+}
+
 /// A reply as it came: its status, and its body for a success, at most
 /// [`MAX_RESPONSE_BYTES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +270,23 @@ impl SystemOneSeat {
         })
     }
 
+    /// Validates and builds this read once, without a lease, credential or I/O.
+    /// The same transformed body can be inspected before a paid admission and
+    /// then sent by the returned read on this seat alone.
+    pub async fn prepare_read(
+        &self,
+        request: SeatRequest,
+        time_left: Duration,
+    ) -> LlmResult<PreparedSystemOneRead<'_>> {
+        request.validate_remote()?;
+        let sent = self.build(&request, time_left).await?;
+        Ok(PreparedSystemOneRead {
+            seat: self,
+            request,
+            sent,
+        })
+    }
+
     /// A recorded read with its caller's release checked at the transport's
     /// physical send boundary. The seat never stores the borrowed check.
     pub fn ask_recorded_released<'a>(
@@ -257,10 +307,28 @@ impl SystemOneSeat {
         capture: bool,
         release: Option<DispatchRelease<'_>>,
     ) -> SeatRead {
+        let prepared = match self.prepare_read(request, time_left).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return SeatRead {
+                    request: None,
+                    result: Err(error),
+                };
+            }
+        };
+        self.send_prepared(prepared, lease, capture, release).await
+    }
+
+    async fn send_prepared(
+        &self,
+        prepared: PreparedSystemOneRead<'_>,
+        lease: &BudgetLease,
+        capture: bool,
+        release: Option<DispatchRelease<'_>>,
+    ) -> SeatRead {
+        let PreparedSystemOneRead { request, sent, .. } = prepared;
         let mut digests = None;
         let result = async {
-            request.validate_remote()?;
-            let sent = self.build(&request, time_left).await?;
             if capture {
                 // Fingerprint the built JSON tree, not the pre-transform request
                 // or its wire encoding. The host warns/skips missing evidence.

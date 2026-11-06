@@ -11,7 +11,7 @@ use crate::llm::decision::{
 use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
-use oneiron_model::llm::{CallPurpose, ExtractionEgressPredicate};
+use oneiron_model::llm::{CallPurpose, ExtractionEgressPredicate, Scope};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -81,6 +81,8 @@ impl<'a> DecisionPack<'a> {
 /// The provider still resolves its own model binding; this carries no caller binding.
 pub struct DecisionCallContext<'a> {
     pub purpose: &'a CallPurpose,
+    /// The original prepared request's complete scope, not its evidence references.
+    pub scope: &'a Scope,
     pub extraction_egress: Option<&'a dyn ExtractionEgressPredicate>,
     /// The caller's per-invocation allowance, checked at each native generation start.
     pub generation: Option<&'a dyn DecisionGenerationAdmission>,
