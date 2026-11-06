@@ -287,6 +287,7 @@ impl Vault {
             AuthorityOp::SlipMint(SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             }),
             now,
         )?;
@@ -592,11 +593,13 @@ impl Vault {
             SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             },
         )
     }
     /// [`Self::mint_slip_in_txn`] for a whole logged mint action: a renewal's
-    /// names the slip it renews (FIX 5481).
+    /// names the slip it renews (FIX 5481), and a redeemed link's names the
+    /// member who approved it (FIX 11713).
     pub(super) fn mint_slip_action_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
