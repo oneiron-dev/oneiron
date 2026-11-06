@@ -39,6 +39,8 @@ use markup5ever::{expanded_name, local_name, namespace_prefix, ns};
 mod tag_sets;
 
 mod control;
+mod pending_table_text;
+use self::pending_table_text::PendingTableText;
 pub use control::TreeSinkOperation;
 mod data;
 
@@ -112,7 +114,7 @@ pub struct TreeBuilder<Handle, Sink> {
     template_modes: RefCell<Vec<InsertionMode>>,
 
     /// Pending table character tokens.
-    pending_table_text: RefCell<Vec<(SplitStatus, StrTendril)>>,
+    pending_table_text: RefCell<PendingTableText>,
 
     /// Quirks mode as set by the parser.
     /// FIXME: can scripts etc. change this?
@@ -156,6 +158,7 @@ pub struct TreeBuilder<Handle, Sink> {
 
     coalesce_table_text: bool,
     pending_table_text_reservation: Option<control::PendingTableTextReservation>,
+    pending_table_storage_reservation: Option<control::PendingTableStorageReservation>,
 
     // Keep last: stack storage must be freed before the captured reservation.
     open_elements_reservation: Option<control::OpenElementsReservation<Handle>>,
@@ -192,6 +195,7 @@ where
             current_line: Cell::new(1),
             coalesce_table_text: false,
             pending_table_text_reservation: None,
+            pending_table_storage_reservation: None,
             open_elements_reservation: None,
         }
     }
@@ -236,6 +240,7 @@ where
             current_line: Cell::new(1),
             coalesce_table_text: false,
             pending_table_text_reservation: None,
+            pending_table_storage_reservation: None,
             open_elements_reservation: None,
         };
 
