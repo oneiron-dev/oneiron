@@ -29,23 +29,24 @@ pub struct EvalTaskInput {
     pub case: EntityId,
     pub family: EntityId,
     pub stratum: Option<String>,
-    /// The Dreamer job type the attempt ran.
+    /// The Dreamer job type or the source task's response-only kind.
     pub kind: String,
-    /// The attempt's input, read as JSON exactly.
+    /// The frozen task input, read as JSON exactly.
     pub input: JsonValue,
-    /// The case's anchoring labels: the frozen check each answer is scored
-    /// against.
+    /// A receipt case's anchoring labels. Repair tasks instead carry their
+    /// dedicated in-memory grader on [`super::EvalReleasedTask`].
     pub labels: Vec<EvalLabel>,
-    /// BLAKE3 of the attempt's payload bytes.
+    /// BLAKE3 of the attempt's payload or the exact capture fingerprint.
     pub source_hash: [u8; 32],
-    /// BLAKE3 of the input's JSON text: the task every leg is given.
+    /// BLAKE3 of the input's JSON text for receipt tasks, or the complete
+    /// source contract and grader for Repair tasks.
     pub task_hash: [u8; 32],
     /// The rows the case and its labels were read from (FIX 5761); `None`
     /// when any is unknown.
     pub source_rows: Option<Vec<EntityId>>,
 }
 
-type Released = std::result::Result<EvalTaskInput, MeasurementUnavailable>;
+pub(super) type Released = std::result::Result<EvalTaskInput, MeasurementUnavailable>;
 
 /// `value` as JSON, exactly: a binary or extension value, a non-text key, a
 /// repeated key or a non-finite number has no JSON reading.
@@ -111,7 +112,7 @@ fn attempt_of(case: &EvalCase) -> Option<AttemptId> {
 }
 
 /// The case's task from its kept attempt.
-fn hydrate(vault: &Vault, txn: &heed::RoTxn<'_>, case: EvalCase) -> Result<Released> {
+pub(super) fn hydrate(vault: &Vault, txn: &heed::RoTxn<'_>, case: EvalCase) -> Result<Released> {
     let Some(attempt) = attempt_of(&case) else {
         return Ok(Err(MeasurementUnavailable::UnsupportedTaskPayload));
     };
@@ -147,6 +148,26 @@ fn hydrate(vault: &Vault, txn: &heed::RoTxn<'_>, case: EvalCase) -> Result<Relea
     }))
 }
 
+/// The release and case on one snapshot. This reads only ledger metadata;
+/// source admission is a separate scoped read, never implied by membership.
+pub(super) fn released_case_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    measurement: &[u8; 32],
+    case: &EntityId,
+) -> Result<std::result::Result<(EvalMeasurement, EvalCase), MeasurementUnavailable>> {
+    let row = measurement_in_txn(vault, txn, measurement)?.ok_or(Error::EntityNotFound)?;
+    if !released(vault, txn, &row)? || !row.members.contains(case) {
+        return Ok(Err(MeasurementUnavailable::NotReleased));
+    }
+    let cohort = cohort_in_txn(vault, txn, &row.request.cohort)?;
+    if cohort.membership_digest != row.request.membership_digest || cohort.cases != row.members {
+        return Ok(Err(MeasurementUnavailable::CohortMoved));
+    }
+    let member = case_in_txn(vault, txn, case)?.ok_or(Error::CorruptedIndex("eval cohort case"))?;
+    Ok(Ok((row, member)))
+}
+
 impl Vault {
     /// The task one member of a claimed measurement was given, for the
     /// measuring host alone: the stored claim, its three Candidate
@@ -162,17 +183,10 @@ impl Vault {
         case: &EntityId,
     ) -> Result<std::result::Result<EvalTaskInput, MeasurementUnavailable>> {
         let txn = self.store.env.read_txn()?;
-        let row = measurement_in_txn(self, &txn, measurement)?.ok_or(Error::EntityNotFound)?;
-        if !released(self, &txn, &row)? || !row.members.contains(case) {
-            return Ok(Err(MeasurementUnavailable::NotReleased));
-        }
-        let cohort = cohort_in_txn(self, &txn, &row.request.cohort)?;
-        if cohort.membership_digest != row.request.membership_digest || cohort.cases != row.members
-        {
-            return Ok(Err(MeasurementUnavailable::CohortMoved));
-        }
-        let member =
-            case_in_txn(self, &txn, case)?.ok_or(Error::CorruptedIndex("eval cohort case"))?;
+        let (_, member) = match released_case_in_txn(self, &txn, measurement, case)? {
+            Ok(released) => released,
+            Err(reason) => return Ok(Err(reason)),
+        };
         hydrate(self, &txn, member)
     }
 }

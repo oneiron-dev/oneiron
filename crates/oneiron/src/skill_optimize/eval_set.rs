@@ -50,6 +50,7 @@ pub mod doors;
 mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+mod released_task;
 mod repair_case;
 mod repair_task;
 mod replay_input;
@@ -86,6 +87,7 @@ pub use measurement::{
     MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
     eval_seat_canary,
 };
+pub use released_task::{EvalReleasedTask, EvalTaskRead};
 pub use repair_case::{EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseRequest};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
