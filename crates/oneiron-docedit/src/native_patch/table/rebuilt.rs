@@ -37,7 +37,9 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// neighbors: positive retained text at the first/last nonempty direct child,
 /// and an original first pPr or last endParaRPr. Skipped children block bridges.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
-/// paragraph keeps its original XML once; partial segments stay static.
+/// paragraph keeps its original XML once. A partial ordinary run keeps its own
+/// attributes only when it contributes to exactly one retained head/tail piece;
+/// a run split across both keeps the existing static wrappers.
 pub(super) fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -242,7 +244,25 @@ pub(super) fn rebuilt(
                         runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
                     } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
-                        runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);
+                        let mut run = run_xml(Some((*at, *node)), para_node, &part).ok()?;
+                        // A split run keeps the old wrappers; one retained piece keeps its attrs once.
+                        if field_free
+                            && node.is(DML, "r")
+                            && !(position < prefix && position + text.len() > old.len() - suffix)
+                        {
+                            let attributes: String = node
+                                .attr_spans
+                                .iter()
+                                .filter(|(name, _)| {
+                                    name.as_str() != "xmlns" && !name.starts_with("xmlns:")
+                                })
+                                .map(|(_, span)| {
+                                    format!(" {}", String::from_utf8_lossy(&bytes[span.clone()]))
+                                })
+                                .collect();
+                            run.insert_str(1 + node.qualified.len(), &attributes);
+                        }
+                        runs.push_str(&run);
                     } else {
                         let raw = std::str::from_utf8(&bytes[node.span.clone()]).ok()?;
                         let mut owned = raw.to_owned();
