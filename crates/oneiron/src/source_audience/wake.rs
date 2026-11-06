@@ -201,23 +201,6 @@ pub(crate) fn note_policy_windows(
 }
 
 #[cfg(feature = "sync")]
-/// Files the window `label` under `policy` if it does not stand there yet:
-/// a loaded window the drain found carrying the policy.
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn file_policy_window(vault: &Vault, policy: &EntityId, label: &str) -> Result<()> {
-    let hash = window_hash(label);
-    vault.with_write_txn_grouped(|txn| {
-        if WINDOWS.get(&vault.store, txn, &(*policy, hash))?.is_none() {
-            WINDOWS.put(&vault.store, txn, &(*policy, hash), &label.to_owned())?;
-        }
-        Ok(())
-    })
-}
-
-#[cfg(feature = "sync")]
 /// Takes the window hashed `hash` off `policy`'s list: it no longer
 /// carries the policy, or this vault no longer stores it.
 ///

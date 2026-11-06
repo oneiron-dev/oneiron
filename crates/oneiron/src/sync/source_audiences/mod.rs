@@ -493,7 +493,12 @@ pub(crate) fn mirror_record(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Resu
 /// copy goes in the scrub ([`refresh_and_scrub`]) before this writes, and
 /// another vault's narrower copy or a contradiction admission refused stands.
 /// Whether the map changed.
-fn write_events(vault: &Vault, map: &LoroMap, policies: &BTreeSet<EntityId>) -> Result<bool> {
+fn write_events(
+    vault: &Vault,
+    map: &LoroMap,
+    policies: &BTreeSet<EntityId>,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
     let receipts = {
         let rtxn = vault.store.env.read_txn()?;
         let mut receipts = Vec::new();
@@ -508,9 +513,22 @@ fn write_events(vault: &Vault, map: &LoroMap, policies: &BTreeSet<EntityId>) -> 
     };
     let mut wrote = false;
     for (map_key, event) in receipts {
-        if map_get_bytes(map, &map_key).is_none() {
-            map_insert_bytes(map, &map_key, &encode_event(&event)?)?;
-            wrote = true;
+        let held = encode_event(&event)?;
+        match map_get_bytes(map, &map_key) {
+            None => {
+                map_insert_bytes(map, &map_key, &held)?;
+                wrote = true;
+            }
+            // The receipt this vault holds is the meet of every copy it
+            // merged (an actor another replica erased taken out): it replaces
+            // a wider one the window carries, whose bytes stay in its
+            // history, so the window goes history-free first.
+            Some(carried) if carried != held => {
+                pin_history_free(vault, pin)?;
+                map_insert_bytes(map, &map_key, &held)?;
+                wrote = true;
+            }
+            Some(_) => {}
         }
     }
     Ok(wrote)
@@ -695,7 +713,7 @@ pub(crate) fn refresh_and_scrub(
     // Last: the receipts of the policies the map still carries, so a
     // redaction rides where its unredacted copy went.
     let carried: BTreeSet<EntityId> = carried_heads(&map).into_keys().collect();
-    changed |= write_events(vault, &map, &carried)?;
+    changed |= write_events(vault, &map, &carried, pin)?;
     if changed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -714,7 +732,18 @@ pub(crate) fn refresh_and_scrub(
 /// Whether `doc`'s map carries a revision of `policy`: what the policy wake
 /// reads of a window it persisted again (fix list row 17203).
 fn carries_policy(doc: &LoroDoc, policy: &EntityId) -> bool {
-    holds_map(doc) && carried_heads(&doc.get_map(SOURCE_AUDIENCES_MAP)).contains_key(policy)
+    carried_revision(doc, policy).is_some()
+}
+
+/// The revision of `policy` `doc`'s map carries as its head (`Some(None)`
+/// for a head that conflicts), or `None` when it carries none.
+fn carried_revision(doc: &LoroDoc, policy: &EntityId) -> Option<Option<u64>> {
+    if !holds_map(doc) {
+        return None;
+    }
+    carried_heads(&doc.get_map(SOURCE_AUDIENCES_MAP))
+        .remove(policy)
+        .map(|head| head.map(|head| head.revision))
 }
 
 /// Pins the window `pin` names history-free, before a carrier goes.

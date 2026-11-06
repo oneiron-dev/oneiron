@@ -23,7 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::source_audience::{
-    PolicyWake, advance_policy_wake, file_policy_window, forget_policy_window, policy_wakes,
+    PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,
     policy_windows_after,
 };
 use crate::sync::WindowManager;
@@ -93,13 +93,17 @@ impl WindowManager {
         budget: &mut usize,
     ) -> Result<()> {
         // A loaded window that took the policy live, since its last export
-        // or persist, is filed first: the list below then holds it.
+        // or persist, is filed first, as an export files it: one filed with
+        // an older revision than this vault's starts the wake over, so a
+        // cursor past it never retires the wake without it.
         for key in self.loaded_keys() {
-            let carries = self
+            let carried = self
                 .window(&key)
-                .is_some_and(|window| super::carries_policy(&window.doc, policy));
-            if carries {
-                file_policy_window(self.vault(), policy, key.as_str())?;
+                .and_then(|window| super::carried_revision(&window.doc, policy));
+            if let Some(revision) = carried {
+                let mut filed = std::collections::BTreeMap::new();
+                filed.insert(*policy, revision);
+                note_policy_windows(self.vault(), key.as_str(), &filed)?;
             }
         }
         let windows = policy_windows_after(self.vault(), policy, wake, *budget)?;
