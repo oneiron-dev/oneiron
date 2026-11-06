@@ -9,7 +9,7 @@ use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
-use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, bind_compaction_caller};
+use oneiron::code_run::{CompactionHostBinding, GatedActorWrite};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
@@ -27,10 +27,12 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 mod active_run;
+mod compaction_home;
 mod description_route;
 mod native_run;
 mod off_record_run;
 use self::active_run::ActiveRuns;
+use self::compaction_home::caller_compaction_seat;
 use self::native_run::run_engine_native_code_mode;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
 
@@ -686,15 +688,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
                 .or_else(|| {
-                    // The host's own binding of the caller: the actor its
-                    // credential writes as, where its connection sits and
-                    // the slip it proved. Never a tool argument.
-                    let host = bind_compaction_caller(
+                    caller_compaction_seat(
+                        provider.as_ref(),
+                        request.actor,
                         write_actor,
-                        request.actor.locality(),
                         opener.clone(),
-                    );
-                    provider.compaction(host, &request.actor.stream_connection.0, None)
+                    )
                 });
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.
