@@ -160,7 +160,14 @@ impl MicroVmBackend for ContainerBackend {
         proxy: &CredentialEgressProxy,
         output: &mut dyn super::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.run_with_proxy_cancellable(vm, image, budget, proxy, &StepCancellation::never(), output)
+        self.run_with_proxy_cancellable(
+            vm,
+            image,
+            budget,
+            proxy,
+            &StepCancellation::never(),
+            output,
+        )
     }
     /// Runs one guest under its step's token (FIX 600). A watcher holds this
     /// run's own session: once `cancel` fires it cuts the protocol stream
@@ -256,7 +263,8 @@ impl MicroVmBackend for ContainerBackend {
         let session = Mutex::new(Some(guest));
         let (finish, finished) = mpsc::channel();
         let mut output_failed = false;
-        let mut output_frame = |stream: crate::engine_executor::JsCodeModeStream<'_>, frame: Vec<u8>| {
+        let mut output_frame = |stream: crate::engine_executor::JsCodeModeStream<'_>,
+                                frame: Vec<u8>| {
             let result = output.write_output_frame(stream, frame);
             output_failed |= result.is_err();
             result

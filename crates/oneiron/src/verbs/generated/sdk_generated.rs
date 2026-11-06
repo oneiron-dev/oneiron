@@ -1174,6 +1174,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.proactivity.digest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ProactivityDigestRequest,
+                >(),
+            ),
+            (
                 "vault.inbox.lens",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_inbox_lens::InboxLensRequest,
@@ -7395,6 +7401,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.weave.digest_feedback.put",
     "vault.weave.owner.digest.render",
     "vault.inbox.concerns.review",
+    "vault.proactivity.digest",
     "vault.inbox.lens",
     "vault.inbox.groups",
     "vault.inbox.groups.resolve",
@@ -8545,6 +8552,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.inbox.concerns.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
         }
+        "vault.proactivity.digest" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        >(),
         "vault.inbox.lens" => {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
         }
@@ -12404,6 +12414,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.inbox.concerns.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.proactivity.digest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20425,6 +20442,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.inbox.concerns.review" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.proactivity.digest" => {
+            let _input: crate::memory::ProactivityDigestRequest = decode(value.clone())?;
+        }
         "vault.inbox.lens" => {
             let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
         }
@@ -24462,6 +24482,7 @@ pub fn invoke(
         "vault.inbox.concerns.review" => {
             encode(vault_inbox_concerns_review(memory, decode(value)?)?)
         }
+        "vault.proactivity.digest" => encode(vault_proactivity_digest(memory, decode(value)?)?),
         "vault.inbox.lens" => encode(vault_inbox_lens(memory, decode(value)?)?),
         "vault.inbox.groups" => encode(vault_inbox_groups(memory, decode(value)?)?),
         "vault.inbox.groups.resolve" => encode(vault_inbox_groups_resolve(memory, decode(value)?)?),
@@ -28568,6 +28589,12 @@ pub fn vault_inbox_concerns_review(
         memory,
         &memory.embedded_owner("vault.inbox.concerns.review")?,
     )
+}
+pub fn vault_proactivity_digest(
+    memory: &Memory<'_>,
+    input: crate::memory::ProactivityDigestRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>> {
+    memory.proactivity_digest_as_owner(&memory.embedded_owner("vault.proactivity.digest")?, &input)
 }
 pub fn vault_inbox_lens(
     memory: &Memory<'_>,
