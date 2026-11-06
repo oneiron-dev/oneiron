@@ -675,6 +675,9 @@ class Oneiron:
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
+            return Oneiron._VaultProactivityVerbs(self._client)
+        @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs":
             return Oneiron._VaultSkillsVerbs(self._client)
         @property
@@ -1937,6 +1940,12 @@ class Oneiron:
         def resolve(self, spec):
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
+    class _VaultProactivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def digest(self, spec):
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
