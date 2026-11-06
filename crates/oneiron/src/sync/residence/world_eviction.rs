@@ -44,6 +44,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use loro::VersionVector;
 
+use super::{ContentWorld, WindowIndexEntry};
 use crate::EntityId;
 use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
@@ -341,11 +342,16 @@ fn local_world_windows(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<Vec
         .collect())
 }
 
-/// Removes the thin read caches of `worlds`' items: each item an opened
+/// Removes the thin read caches of `worlds`' items. An item an opened
 /// marker (`ro:e:`) maps to one of their windows, or a thin index row
-/// (`ri:w:{window}:{item}`) of one lists, with every index row of those
-/// windows' index rows. A cache a legal hold names stays. Returns the caches
-/// removed and the ones held.
+/// (`ri:w:{window}:{item}`) of one lists, is that world's by its window: its
+/// cache goes whole, with every index row that lists it. A copy fetched or
+/// listed in any other window, a base one included, goes when the home
+/// witnessed its row as of one of `worlds` alone (FIX 14534, Engine 11-06
+/// 08:34 call 5 = A): that copy only, as another fetch or listing of the
+/// same item may witness it shared. A copy with no witness, or a shared or
+/// base one, stays, and so does a cache a legal hold names. Returns the
+/// fetched copies removed and the items held.
 fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let mut items = BTreeSet::new();
@@ -359,47 +365,101 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
                 items.insert(item);
             }
         }
+        let witnessed = |witness: ContentWorld| {
+            witness
+                .exclusive()
+                .is_some_and(|world| worlds.contains(&world))
+        };
+        let mut copies = BTreeSet::new();
+        for row in vault.store.sync_state.prefix_iter(txn, "ri:c:")? {
+            let (key, witness) = row?;
+            if witnessed(ContentWorld::decode(&witness))
+                && let Some(item) = key
+                    .strip_prefix("ri:c:")
+                    .and_then(|id| EntityId::from_hex(id).ok())
+            {
+                copies.insert(item);
+            }
+        }
+        let mut listings = Vec::new();
         for row in vault.store.sync_state.prefix_iter(txn, "ri:w:")? {
-            let (key, _) = row?;
+            let (key, entry) = row?;
             let Some((window, item)) = key
                 .strip_prefix("ri:w:")
                 .and_then(|rest| rest.rsplit_once(':'))
             else {
                 continue;
             };
-            if of_worlds(window, worlds)
-                && let Ok(item) = EntityId::from_hex(item)
-            {
+            let Ok(item) = EntityId::from_hex(item) else {
+                continue;
+            };
+            if of_worlds(window, worlds) {
                 items.insert(item);
-            }
-        }
-        let mut erased = Vec::new();
-        let mut held = 0;
-        for item in items {
-            match vault
-                .store
-                .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+            } else if rmp_serde::from_slice::<WindowIndexEntry>(&entry)
+                .is_ok_and(|entry| witnessed(entry.content_world))
             {
-                Ok(()) => erased.push(item),
-                Err(error) if is_hold_refusal(&error) => held += 1,
-                Err(error) => return Err(error),
+                listings.push((item, key.to_string()));
             }
         }
-        let cached = erased
-            .iter()
-            .map(|item| format!("ri:b:{}", item.to_hex()))
-            .collect::<Vec<_>>();
+        let mut held = BTreeSet::new();
+        let mut erased = Vec::new();
+        for item in items {
+            if cache_held(vault, txn, item)? {
+                held.insert(item);
+            } else {
+                erased.push(item);
+            }
+        }
         let mut removed = 0;
-        for key in &cached {
-            if vault.store.sync_state.get(txn, key)?.is_some() {
+        for item in &erased {
+            if vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:b:{}", item.to_hex()))?
+                .is_some()
+            {
                 removed += 1;
             }
         }
         // Each erased item's cache rows go with its index rows, in whichever
         // window listed it.
         super::prune::erase_item_caches_in_txn(&vault.store, txn, &erased)?;
-        Ok((removed, held))
+        for item in copies {
+            if held.contains(&item) || cache_held(vault, txn, item)? {
+                held.insert(item);
+                continue;
+            }
+            if vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:b:{}", item.to_hex()))?
+                .is_some()
+            {
+                removed += 1;
+            }
+            super::prune::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
+        }
+        for (item, key) in listings {
+            if held.contains(&item) || cache_held(vault, txn, item)? {
+                held.insert(item);
+                continue;
+            }
+            vault.store.sync_state.delete(txn, &key)?;
+        }
+        Ok((removed, held.len()))
     })
+}
+
+/// Whether a legal hold keeps `item`'s cache; any other failure fails.
+fn cache_held(vault: &Vault, txn: &heed::RoTxn<'_>, item: EntityId) -> Result<bool> {
+    match vault
+        .store
+        .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+    {
+        Ok(()) => Ok(false),
+        Err(error) if is_hold_refusal(&error) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Removes `window`'s local copy in bounded steps, with the window held
