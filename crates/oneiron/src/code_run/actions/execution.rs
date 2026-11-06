@@ -226,11 +226,12 @@ impl ActionRegistry {
             // A replayed search keeps only the hits this caller reads now; a
             // replayed verb answer, what its door releases now (FIX 8158).
             let key = principal.selected_read_key();
+            // Owned: the dispatch below takes the call itself.
             let replayed_verb = match &call {
-                SelfCall::AgentVerb(verb_call) => Some(verb_call.verb.as_str()),
+                SelfCall::AgentVerb(verb_call) => Some(verb_call.verb.as_str().to_owned()),
                 _ => None,
             };
-            let replay = verb_door.as_deref().zip(replayed_verb);
+            let replay = verb_door.as_deref().zip(replayed_verb.as_deref());
             return record
                 .replay_cursor()
                 .dispatch(call)
