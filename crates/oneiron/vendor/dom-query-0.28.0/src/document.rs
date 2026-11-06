@@ -255,6 +255,64 @@ impl Document {
     }
 }
 
+impl Document {
+    /// Consume the parser's whole input attribute allocation and its admission.
+    pub fn create_element_with_tag_attributes(
+        &self,
+        name: QualName,
+        attrs: html5ever::tokenizer::TagAttributes,
+        flags: ElementFlags,
+    ) -> NodeId {
+        let mut nodes = self.tree.nodes.borrow_mut();
+        let new_elem_id = NodeId::new(nodes.len());
+        let template_contents = if flags.template {
+            Some(NodeId::new(nodes.len() + 1))
+        } else {
+            None
+        };
+
+        let element = match self.tree.take_prepared_attributes() {
+            Some(prepared) => Element::new_with_prepared_attributes(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+                prepared,
+            ),
+            None => Element::new_with_tag_attributes(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+            ),
+        };
+        let data = NodeData::Element(element);
+
+        nodes.push(TreeNode::new(new_elem_id, data));
+
+        if let Some(fragment_id) = template_contents {
+            nodes.push(TreeNode::new(fragment_id, NodeData::Fragment));
+            // The template's content is considered outside of the main document,
+            // so its DocumentFragment remains parentless.
+        }
+
+        new_elem_id
+    }
+
+    /// Keep input admission through filtering and the final input-vector free.
+    pub fn add_tag_attributes_if_missing(
+        &self,
+        target: &NodeId,
+        attrs: html5ever::tokenizer::TagAttributes,
+    ) {
+        self.tree.update_node(target, |node| {
+            if let Some(element) = node.as_element_mut() {
+                element.add_tag_attributes_if_missing(attrs);
+            }
+        });
+    }
+}
+
 impl TreeSink for Document {
     type ElemName<'a> = Ref<'a, QualName>;
     /// The overall result of parsing.
@@ -325,40 +383,7 @@ impl TreeSink for Document {
         attrs: Vec<Attribute>,
         flags: ElementFlags,
     ) -> Self::Handle {
-        let mut nodes = self.tree.nodes.borrow_mut();
-        let new_elem_id = NodeId::new(nodes.len());
-        let template_contents = if flags.template {
-            Some(NodeId::new(nodes.len() + 1))
-        } else {
-            None
-        };
-
-        let element = match self.tree.take_prepared_attributes() {
-            Some(prepared) => Element::new_with_prepared_attributes(
-                name,
-                attrs,
-                template_contents,
-                flags.mathml_annotation_xml_integration_point,
-                prepared,
-            ),
-            None => Element::new(
-                name,
-                attrs,
-                template_contents,
-                flags.mathml_annotation_xml_integration_point,
-            ),
-        };
-        let data = NodeData::Element(element);
-
-        nodes.push(TreeNode::new(new_elem_id, data));
-
-        if let Some(fragment_id) = template_contents {
-            nodes.push(TreeNode::new(fragment_id, NodeData::Fragment));
-            // The template's content is considered outside of the main document,
-            // so its DocumentFragment remains parentless.
-        }
-
-        new_elem_id
+        self.create_element_with_tag_attributes(name, attrs.into(), flags)
     }
 
     /// Create a comment node.

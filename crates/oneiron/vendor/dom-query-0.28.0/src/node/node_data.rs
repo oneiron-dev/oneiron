@@ -81,6 +81,7 @@ pub struct Element {
 
     // Attribute storage is freed before its parser admission is returned.
     pub(crate) attrs_reservation: Option<AttributeReservation>,
+    pub(crate) input_attrs_reservation: Option<AttributeReservation>,
 }
 
 impl Element {
@@ -97,12 +98,32 @@ impl Element {
             template_contents,
             mathml_annotation_xml_integration_point,
             attrs_reservation: None,
+            input_attrs_reservation: None,
         }
+    }
+
+    pub(crate) fn new_with_tag_attributes(
+        name: QualName,
+        attrs: html5ever::tokenizer::TagAttributes,
+        template_contents: Option<NodeId>,
+        mathml_annotation_xml_integration_point: bool,
+    ) -> Self {
+        let (attrs, reservation) = attrs.into_parts();
+        let mut element = Self::new(
+            name,
+            attrs,
+            template_contents,
+            mathml_annotation_xml_integration_point,
+        );
+        // Wrapping may reuse the input allocation. This hold is not admission
+        // for a distinct wrapping destination or a later vector replacement.
+        element.input_attrs_reservation = reservation.map(AttributeReservation::from_tag_guard);
+        element
     }
 
     pub(crate) fn new_with_prepared_attributes(
         name: QualName,
-        attrs: Vec<Attribute>,
+        attrs: impl IntoIterator<Item = Attribute>,
         template_contents: Option<NodeId>,
         mathml_annotation_xml_integration_point: bool,
         mut prepared: PreparedAttributes,
@@ -116,6 +137,7 @@ impl Element {
             template_contents,
             mathml_annotation_xml_integration_point,
             attrs_reservation: prepared.reservation,
+            input_attrs_reservation: None,
         }
     }
 
@@ -275,6 +297,32 @@ impl Element {
 
         let missing = attrs
             .into_iter()
+            .filter(|attr| !existing_names.contains(&attr.name));
+        if self.attrs_reservation.is_some() {
+            for attr in missing {
+                self.attrs.push(attr);
+            }
+        } else {
+            self.attrs.extend(missing);
+        }
+    }
+
+    pub(crate) fn add_tag_attributes_if_missing(
+        &mut self,
+        attrs: html5ever::tokenizer::TagAttributes,
+    ) {
+        let attrs = match attrs.into_unreserved() {
+            Ok(attrs) => return self.add_attrs_if_missing(attrs),
+            Err(attrs) => attrs,
+        };
+        let existing_names = self
+            .attrs
+            .iter()
+            .map(|attr| attr.name.clone())
+            .collect::<Vec<_>>();
+        let missing = attrs
+            .into_iter()
+            .map(wrap_attr)
             .filter(|attr| !existing_names.contains(&attr.name));
         if self.attrs_reservation.is_some() {
             for attr in missing {

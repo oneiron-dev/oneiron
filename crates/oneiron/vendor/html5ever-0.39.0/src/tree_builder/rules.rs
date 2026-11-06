@@ -13,6 +13,7 @@ use crate::encoding::extract_a_character_encoding_from_a_meta_element;
 use crate::interface::Quirks;
 use crate::tokenizer::states::{Rawtext, Rcdata, ScriptData};
 use crate::tokenizer::TagKind::{EndTag, StartTag};
+use crate::tokenizer::TagAttributes;
 use crate::tree_builder::tag_sets::*;
 use crate::tree_builder::types::*;
 use crate::tree_builder::{
@@ -116,7 +117,7 @@ where
             // https://html.spec.whatwg.org/multipage/parsing.html#the-before-html-insertion-mode
             InsertionMode::BeforeHtml => {
                 let anything_else = |token: Token| {
-                    stop_on_none!(self.create_root(vec![]));
+                    stop_on_none!(self.create_root(TagAttributes::default()));
                     ProcessResult::Reprocess(InsertionMode::BeforeHead, token)
                 };
 
@@ -189,7 +190,7 @@ where
                     Token::Tag(tag!(<html>)) => self.step(InsertionMode::InBody, token),
 
                     Token::Tag(tag @ tag!(<base> | <basefont> | <bgsound> | <link> | <meta>)) => {
-                        stop_on_none!(self.insert_and_pop_element_for(tag.clone()));
+                        stop_on_none!(self.insert_and_pop_element_for(stop_on_none!(self.clone_tag(&tag))));
 
                         // Step 1. If the element has a charset attribute, and getting an encoding from its value
                         // results in an encoding, and the confidence is currently tentative, then change the encoding
@@ -272,7 +273,7 @@ where
 
                             // Step 2. Let template be the result of insert a foreign element for template start tag, with HTML namespace and true.
                             let template =
-                                stop_on_none!(self.insert_foreign_element(tag.clone(), ns!(html), true));
+                                stop_on_none!(self.insert_foreign_element(stop_on_none!(self.clone_tag(&tag)), ns!(html), true));
 
                             // Step 3 - 8.
                             // Attach a shadow root with declarative shadow host element, mode, clonable, serializable, delegatesFocus, and "named".
@@ -429,7 +430,7 @@ where
                         if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(top, &tag.attrs)) {
                             return ProcessResult::Stopped;
                         }
-                        self.sink.add_attrs_if_missing(top, tag.attrs);
+                        self.add_tag_attributes(top, tag.attrs);
                     }
                     ProcessResult::Done
                 },
@@ -451,7 +452,7 @@ where
                             if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(node, &tag.attrs)) {
                                 return ProcessResult::Stopped;
                             }
-                            self.sink.add_attrs_if_missing(node, tag.attrs)
+                            self.add_tag_attributes(node, tag.attrs)
                         },
                         _ => {},
                     }
@@ -795,7 +796,7 @@ where
                         InsertionMode::InBody,
                         Token::Tag(Tag {
                             kind: StartTag,
-                            attrs: vec![],
+                            attrs: TagAttributes::default(),
                             ..tag
                         }),
                     )

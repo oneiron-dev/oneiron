@@ -301,6 +301,67 @@ where
         self
     }
 
+    /// Install before input to admit input attribute vectors and every checked
+    /// parser clone. Sink callbacks receive the whole owning carrier and must
+    /// retain its guard until the input allocation is freed or transferred.
+    /// Destination storage and attribute payload copies need separate admission.
+    pub fn with_tag_attributes_reservation<R, G, S, M, C, A>(
+        mut self,
+        reserve: G,
+        settle: S,
+        map_error: M,
+        create_element: C,
+        add_attributes: A,
+    ) -> Self
+    where
+        E: Send + 'static,
+        R: Send + Sync + 'static,
+        G: Fn(usize) -> Result<R, E> + Send + Sync + 'static,
+        S: Fn(&mut R, usize) -> Result<(), E> + Send + Sync + 'static,
+        M: Fn(ReserveError<E>) -> E + Send + Sync + 'static,
+        C: Fn(
+                &Sink,
+                crate::QualName,
+                crate::tokenizer::TagAttributes,
+                crate::tree_builder::ElementFlags,
+            ) -> Sink::Handle
+            + Send
+            + 'static,
+        A: Fn(&Sink, &Sink::Handle, crate::tokenizer::TagAttributes) + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        let reservation: crate::tokenizer::TagAttributesReservation =
+            Arc::new(move |attrs, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match attrs.try_reserve(additional, &reserve, &settle) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert_with(|| map_error(refusal));
+                        false
+                    }
+                }
+            });
+        self.tokenizer
+            .set_tag_attributes_reservation(Arc::clone(&reservation));
+        self.tokenizer.sink.sink.set_tag_attributes_hooks(
+            crate::tree_builder::TagAttributesHooks {
+                reserve: reservation,
+                create: Box::new(create_element),
+                add: Box::new(add_attributes),
+            },
+        );
+        self
+    }
+
     /// Install before input to reserve native pending-table vector storage.
     /// Native capacity is measured and its reservation moves with the vector
     /// through take and flush. The iterator frees before returning admission.

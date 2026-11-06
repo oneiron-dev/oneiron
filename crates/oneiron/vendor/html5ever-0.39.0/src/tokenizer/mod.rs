@@ -35,6 +35,9 @@ use crate::macros::{time, unwrap_or_return};
 use crate::tendril::StrTendril;
 use crate::{Attribute, LocalName, QualName, SmallCharSet};
 
+mod attributes;
+pub use attributes::{TagAttributeGuard, TagAttributes, TagAttributesIntoIter};
+pub(crate) use attributes::TagAttributesReservation;
 mod char_ref;
 mod interface;
 pub mod states;
@@ -156,7 +159,8 @@ pub struct Tokenizer<Sink> {
     current_tag_had_duplicate_attributes: Cell<bool>,
 
     /// Current tag attributes.
-    current_tag_attrs: RefCell<Vec<Attribute>>,
+    current_tag_attrs: RefCell<TagAttributes>,
+    tag_attributes_reservation: Option<TagAttributesReservation>,
 
     /// Current attribute name.
     current_attr_name: RefCell<TextBuffer>,
@@ -219,7 +223,8 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             current_tag_name: RefCell::new(TextBuffer::new()),
             current_tag_self_closing: Cell::new(false),
             current_tag_had_duplicate_attributes: Cell::new(false),
-            current_tag_attrs: RefCell::new(vec![]),
+            current_tag_attrs: RefCell::new(TagAttributes::default()),
+            tag_attributes_reservation: None,
             current_attr_name: RefCell::new(TextBuffer::new()),
             current_attr_value: RefCell::new(StrTendril::new()),
             attribute_value_reservation: None,
@@ -684,7 +689,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
         self.current_tag_name.borrow_mut().clear();
         self.current_tag_self_closing.set(false);
         self.current_tag_had_duplicate_attributes.set(false);
-        *self.current_tag_attrs.borrow_mut() = vec![];
+        *self.current_tag_attrs.borrow_mut() = TagAttributes::default();
     }
 
     fn create_tag(&self, kind: TagKind, c: char) -> bool {
@@ -732,15 +737,29 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             self.current_attr_name.borrow_mut().clear();
             self.current_attr_value.borrow_mut().clear();
         } else {
+            let mut attrs = self.current_tag_attrs.borrow_mut();
+            if self.tag_attributes_reservation.as_ref()
+                .is_some_and(|reservation| !reservation(&mut attrs, 1))
+            {
+                self.stopped.set(true);
+                return;
+            }
             let name = LocalName::from(self.current_attr_name.borrow().as_str());
             self.current_attr_name.borrow_mut().clear();
-            self.current_tag_attrs.borrow_mut().push(Attribute {
+            attrs.push(Attribute {
                 // The tree builder will adjust the namespace if necessary.
                 // This only happens in foreign elements.
                 name: QualName::new(None, ns!(), name),
                 value: mem::take(&mut self.current_attr_value.borrow_mut()),
             });
         }
+    }
+
+    pub(crate) fn set_tag_attributes_reservation(
+        &mut self,
+        reservation: TagAttributesReservation,
+    ) {
+        self.tag_attributes_reservation = Some(reservation);
     }
 
     pub(crate) fn set_doctype_reservation(

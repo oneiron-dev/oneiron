@@ -9,7 +9,7 @@
 
 use markup5ever::ns;
 
-use crate::interface::Attribute;
+use super::TagAttributes;
 use crate::tendril::StrTendril;
 use crate::tokenizer::states;
 use crate::LocalName;
@@ -48,7 +48,7 @@ pub struct Tag {
     ///
     /// An example of a self closing tag is `<foo />`.
     pub self_closing: bool,
-    pub attrs: Vec<Attribute>,
+    pub attrs: TagAttributes,
     /// Whether duplicate attributes were encountered during tokenization.
     /// This is used for CSP nonce validation - elements with duplicate
     /// attributes are not nonceable per the CSP spec.
