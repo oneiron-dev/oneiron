@@ -237,6 +237,7 @@ async fn serve_prepared<A: AppHost>(
             mesh.end_streams().await;
         }
         upgrades.drained().await;
+        mesh_server.release_send_executor_leases().await;
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;
         }
@@ -309,6 +310,9 @@ async fn serve_prepared<A: AppHost>(
         mesh.end_streams().await;
     }
     upgrades.drained().await;
+    // This machine's send executor leases go to another machine while the
+    // device-sync link can still carry the release (FIX 4747 slice 4).
+    mesh_server.release_send_executor_leases().await;
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }
