@@ -7,7 +7,8 @@ use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::coreutils_text::{
-    LinePosition, copy_text_parts, copy_utf8_field, join_graph_path_with_reader, page_grep_lines,
+    LinePosition, checkpoint, copy_text_parts, copy_utf8_field, join_graph_path_with_reader,
+    page_grep_lines,
 };
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
@@ -52,18 +53,35 @@ struct WalkFrame {
 }
 
 impl WalkPosition {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![u8::from(self.root_done)];
+    fn to_bytes(
+        &self,
+        reader: &crate::batch::secret_scan::ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        append_position_bytes(&mut bytes, &[u8::from(self.root_done)], reader, scan_bytes)?;
         put_optional(
             &mut bytes,
             self.lines.map(|lines| lines.to_bytes()).as_deref(),
-        );
+            reader,
+            scan_bytes,
+        )?;
         for frame in &self.frames {
-            put_field(&mut bytes, frame.name.as_bytes());
-            put_optional(&mut bytes, frame.page.as_deref().map(str::as_bytes));
-            bytes.extend_from_slice(&(frame.passed as u64).to_be_bytes());
+            put_field(&mut bytes, frame.name.as_bytes(), reader, scan_bytes)?;
+            put_optional(
+                &mut bytes,
+                frame.page.as_deref().map(str::as_bytes),
+                reader,
+                scan_bytes,
+            )?;
+            append_position_bytes(
+                &mut bytes,
+                &(frame.passed as u64).to_be_bytes(),
+                reader,
+                scan_bytes,
+            )?;
         }
-        bytes
+        Ok(bytes)
     }
 
     fn from_bytes(
@@ -121,18 +139,46 @@ impl WalkPosition {
     }
 }
 
-fn put_field(bytes: &mut Vec<u8>, field: &[u8]) {
-    bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
-    bytes.extend_from_slice(field);
+fn append_position_bytes(
+    bytes: &mut Vec<u8>,
+    field: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
+    for chunk in field.chunks(scan_bytes.max(char::MAX.len_utf8())) {
+        checkpoint(reader)?;
+        bytes.extend_from_slice(chunk);
+    }
+    Ok(())
 }
 
-fn put_optional(bytes: &mut Vec<u8>, field: Option<&[u8]>) {
+fn put_field(
+    bytes: &mut Vec<u8>,
+    field: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
+    append_position_bytes(
+        bytes,
+        &(field.len() as u32).to_be_bytes(),
+        reader,
+        scan_bytes,
+    )?;
+    append_position_bytes(bytes, field, reader, scan_bytes)
+}
+
+fn put_optional(
+    bytes: &mut Vec<u8>,
+    field: Option<&[u8]>,
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> Result<()> {
     match field {
         Some(field) => {
-            bytes.push(1);
-            put_field(bytes, field);
+            append_position_bytes(bytes, &[1], reader, scan_bytes)?;
+            put_field(bytes, field, reader, scan_bytes)
         }
-        None => bytes.push(0),
+        None => append_position_bytes(bytes, &[0], reader, scan_bytes),
     }
 }
 
@@ -239,7 +285,12 @@ impl GraphFsResolver<'_, '_> {
         let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk, reader)?;
         Ok(WalkOutput {
             bytes: walk.out.into_bytes(),
-            next_cursor: cut.then(|| scope.seal_bytes(&at.to_bytes())),
+            next_cursor: cut
+                .then(|| {
+                    at.to_bytes(reader, self.options.page_byte_cap)
+                        .map(|position| scope.seal_bytes(&position))
+                })
+                .transpose()?,
             total: walk.total,
             receipt: walk.receipt,
         })
