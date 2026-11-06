@@ -40,7 +40,7 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied,
-    RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_place,
+    RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_is_free_work, offer_place,
 };
 use oneiron::llm::{HostInferenceBinding, Segment, SegmentClock, SegmentKind, SegmentManifest};
 use oneiron::{
@@ -221,17 +221,14 @@ pub struct OfferLadder {
     listed: Option<Arc<[AgentModel]>>,
 }
 
-/// The serving rung's host-attested custody (FIX 11893): a local payer on
-/// device, or on its own server with no key. A keyed owner endpoint stays
-/// paid. Budget rules keep reading the offer directly; this value only
-/// annotates host work and receipts.
+/// The serving rung's host-attested custody (FIX 11893): free work by the
+/// run admission's own rule, a local payer with no key on this device or on
+/// its own server. A keyed owner endpoint stays paid, on this device too, as
+/// does a paid provider's managed worker served over its native channel
+/// (FIX 14889). Budget rules keep reading the offer directly; this value
+/// only annotates host work and receipts.
 fn physical_for(binding: &OfferBinding) -> WorkPhysical {
-    let free_route = match binding.locality {
-        ModelLocality::OnDevice => true,
-        ModelLocality::OwnServer => binding.custody == KeyCustody::Keyless,
-        ModelLocality::ThirdParty => false,
-    };
-    if binding.payer == Payer::Local && free_route {
+    if offer_is_free_work(binding) {
         WorkPhysical::KeylessOwnServer
     } else {
         WorkPhysical::Paid
@@ -538,6 +535,21 @@ impl OfferLadder {
                     && rung.offer.binding.locality == ModelLocality::OwnServer
                     && rung.offer.binding.custody == KeyCustody::Keyless
             })
+    }
+
+    /// Whether every rung a call on this ladder may reach is free work by
+    /// the run admission's own rule, at any locality (FIX 14889): keyless
+    /// own-server work, or a free on-device offer. A paid on-device rung, a
+    /// paid provider's managed worker over its native channel, keeps the
+    /// door paid, as does an empty ladder. Read from the host-bound ladder,
+    /// never from a caller's request.
+    #[must_use]
+    pub(crate) fn all_free_work(&self) -> bool {
+        !self.rungs.is_empty()
+            && self
+                .rungs
+                .iter()
+                .all(|rung| offer_is_free_work(&rung.offer.binding))
     }
 
     /// Whether every rung of this ladder is within `scope`'s locality ceiling
