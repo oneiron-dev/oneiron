@@ -5085,6 +5085,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/seat_child_slip.rs",
+     "purpose": "FIX 10624: the credential of an official CLI a seat host runs under one claimed BYOA attempt (ARCH-0069 T1…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/sequence_ancestry.rs",
      "purpose": "Causally vouched history may arrive after its already-observed descendant",
      "surface": {
@@ -5106,6 +5117,7 @@
      "kind": "src",
      "notable": [
       "CapabilitySlip",
+      "SeatChildCredential",
       "SignedCaveat",
       "SlipCaveat",
       "TrustedContactCredential",
@@ -5114,9 +5126,9 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 24,
-      "fn": 19,
-      "struct": 5
+      "crate-vis": 26,
+      "fn": 26,
+      "struct": 6
      }
     },
     {
@@ -16890,7 +16902,7 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 4
      }
     },
@@ -17453,13 +17465,33 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/result_read/query.rs",
      "purpose": "`query`: the values a JSON path picks out of a result, or the rows of a line table (JSON lines, CSV, TSV)…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/query/selection.rs",
+     "purpose": "What a query picks, as it picks it: the values it holds for one reply, and the selection it streams into a…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/run_body.rs",
+     "purpose": "One result body of a run, read a piece at a time through the run's storage, and the live cutoff a scoped…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -26166,7 +26198,7 @@
      "purpose": "Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 8,
       "struct": 4,
@@ -26202,7 +26234,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -26362,6 +26394,19 @@
      "surface": {
       "crate-vis": 7,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeclaredHostSecret"
+     ],
+     "path": "src/dispatch_byoa/seat_secrets.rs",
+     "purpose": "The secrets a seat run declares, and the holder its T1 grants are minted for (FIX 10624; ARCH-0069's custody…",
+     "surface": {
+      "fn": 3,
       "struct": 1
      }
     },
@@ -34614,6 +34659,16 @@
      "purpose": "Recording dispatch and callable-skill answers for one JS host",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/host/live_cutoff.rs",
+     "purpose": "A scoped child's guest reads stop at its live cutoff (FIX 8233)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -54277,7 +54332,7 @@
      "purpose": "The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -65061,7 +65116,7 @@
      "purpose": "FIX 4313: minting and renewing a secret grant",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -90095,7 +90150,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 254,
+     "files": 255,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90284,9 +90339,9 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 187,
+     "files": 189,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
@@ -90508,7 +90563,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90599,7 +90654,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91616,7 +91671,7 @@
    },
    "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6444,
+   "source_files": 6449,
    "test_files": 895
   },
   "oneiron-android": {
@@ -91778,7 +91833,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 97,
+      "const": 102,
       "re-export": 1,
       "type": 1
      }
@@ -92015,7 +92070,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 35
+      "re-export": 36
      }
     },
     {
@@ -92288,6 +92343,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SeatClaimSlipBinding"
+     ],
+     "path": "src/authority/seat_claim_binding.rs",
+     "purpose": "FIX 10624: the seat claim a seat-child slip carries, signed in its claims beside `grant_ref` and…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SlipClaims",
       "SlipMintAction"
      ],
@@ -92347,7 +92416,7 @@
      "purpose": "`rmpv::Value` decoding for every authority type",
      "surface": {
       "crate-vis": 1,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -92661,7 +92730,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92726,7 +92795,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 61,
+   "source_files": 62,
    "test_files": 1
   },
   "oneiron-base": {
@@ -102301,7 +102370,7 @@
      "path": "src/supervisor/inference_worker/drive.rs",
      "purpose": "A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -126543,7 +126612,7 @@
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "re-export": 1,
       "struct": 9
@@ -126658,6 +126727,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "OwnSecretDelivery",
       "RunSecretDestinations",
       "SecretDestination",
       "SecretDestinations",
@@ -126668,8 +126738,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 6,
-      "struct": 4
+      "fn": 8,
+      "struct": 5
      }
     },
     {
