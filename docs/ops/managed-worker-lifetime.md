@@ -103,10 +103,11 @@ The reranker keeps its HTTP route, so the device-only reranking guard still
 sends it a device-only row empty. Other Unix targets retain their existing
 transport semantics: no PID check, no on-device offer.
 
-## External ASR serving epochs
+## External media serving epochs
 
-A direct transcription rung captures its configured external ASR supervisor
-when the media runtime is built. The full worker row and provider must still
+A direct transcription rung captures its configured external ASR supervisor;
+a direct VoxCPM2 speech rung captures its external VoxCPM2 supervisor. Both are
+captured when the media runtime is built. The full worker row and provider must still
 match the hosted instance, and the wire model and endpoint must match the
 rung. Each call keeps that captured worker; it never looks up a replacement
 from a returned receipt.

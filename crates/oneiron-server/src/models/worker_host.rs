@@ -873,22 +873,26 @@ pub(super) fn external_workers(
     bound
 }
 
-/// The direct transcription rung's external ASR worker, captured while its
+/// The direct media rung's external worker, captured while its
 /// configured row and provider still match the hosted instance (FIX 9200).
 /// A different endpoint or a brokered wire has no binding here.
-pub(super) fn external_asr_worker(
+pub(super) fn external_media_worker(
     provider_name: &str,
     provider: &ProviderConfig,
     rows: &[WorkerConfig],
     wire_model: &str,
+    kind: WorkerKind,
 ) -> Option<InferenceWorker> {
-    if provider.key_secret.is_some()
-        || !matches!(
+    let provider_matches = match kind {
+        WorkerKind::Asr => matches!(
             provider.kind,
             crate::config::models::ProviderKind::LocalOpenaiCompat
                 | crate::config::models::ProviderKind::OpenaiCompat
-        )
-    {
+        ),
+        WorkerKind::VoxCpm2 => provider.kind == crate::config::models::ProviderKind::Voxcpm2,
+        _ => false,
+    };
+    if provider.key_secret.is_some() || !provider_matches {
         return None;
     }
     let host = HOST.get()?;
@@ -897,7 +901,7 @@ pub(super) fn external_asr_worker(
         if row.binding.provider != provider_name
             || row.binding.model != wire_model
             || row.mode != WorkerMode::External
-            || row.kind != WorkerKind::Asr
+            || row.kind != kind
             || row.endpoint.as_deref().is_some_and(|endpoint| {
                 endpoint.trim_end_matches('/') != provider.base_url.trim_end_matches('/')
             })
