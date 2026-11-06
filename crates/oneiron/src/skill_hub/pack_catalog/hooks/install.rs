@@ -279,7 +279,9 @@ impl Vault {
                     hook.body_hash,
                     format!("pack:{pack}@{content_hash}/hooks/{}", hook.name),
                 )
-                .with_class(CodeArtifactClass::Artifact);
+                // Its repo_ref names the pack slot, which only a hook body
+                // may (FIX 11260): an Artifact's must parse as a repository.
+                .with_class(CodeArtifactClass::Hook);
                 batch = batch
                     .put(
                         &code,

@@ -8,21 +8,35 @@
 //! the caller's deadline leaves the work pending where it stands, never run
 //! without a turn, never refused and never reported Healthy.
 //!
-//! What must hold of the whole runs whole: the artifact's validation, the
-//! preflight that admits every row in one aborted transaction, the NOTE
-//! workflow plan, the equivalence of the recaptured window, and the manifest,
-//! published last and only once every page is done. The rebuild, the
-//! forward replay and the per-row checks after it run a page at a time, with
-//! the replay's cross-pass ledgers kept from page to page.
+//! Artifact validation yields between ordered groups, rows and nested history
+//! checks over one immutable source, using the existing row page size. Single
+//! metadata values, text splices, head and quote equality/hash, container sort,
+//! retained-parent and workflow checks, encoding and its envelope checksum
+//! still run whole. The outer canonical digest yields between BLAKE3 chunks.
+//! Aborted-transaction preflight and the NOTE workflow plan also run whole;
+//! manifest construction yields between its original whole pack/hash chunks.
+//! Recapture yields between structural stages while retaining one store read
+//! view. After that view drops, native pad normalization runs whole in the
+//! completion turn; pure snapshot equality then resumes one row at a time.
+//! The rebuild, forward replay and per-row checks run a page at a time, with
+//! replay's cross-pass ledgers kept between pages. The manifest is published
+//! last, only after all work completes.
+
+mod encoded_digest;
+use encoded_digest::EncodedDigest;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use loro::LoroDoc;
 
-use super::canonical::{CanonicalSnapshot, RebuildAt, invalid, rebuild_page, rebuild_start};
+use super::canonical::{
+    CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
+    RebuildAt, invalid, rebuild_page, rebuild_start,
+};
 use super::ladder::{
-    PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt, verify_page,
+    CanonicalComparison, ManifestChunks, PreparedRecovery, RecoveryBudget, RecoveryTier, limit,
+    prepare_rebuilt_with_manifest, verify_page,
 };
 use crate::error::Result;
 use crate::sync::bridge::Materializer;
@@ -34,7 +48,7 @@ use crate::{EntityId, Vault};
 /// The phase a recovery stands in, in the order it runs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecoveryPhase {
-    /// The artifact as this vault recovers it, validated whole.
+    /// The artifact as this vault recovers it, one group or window-row page per turn.
     Validate,
     /// The fresh window, a page of rows at a time.
     Rebuild,
@@ -42,7 +56,7 @@ pub(crate) enum RecoveryPhase {
     Preflight,
     /// The forward replay, a page of rows at a time.
     Replay,
-    /// The per-row checks, a page at a time, and the equivalence, whole.
+    /// Paged row checks, staged recapture and row-by-row snapshot comparison.
     Verify,
     /// The repaired manifest, published last.
     Publish,
@@ -77,11 +91,17 @@ pub(crate) struct RecoveryWork {
     source: CanonicalSnapshot,
     digest: [u8; 32],
     phase: RecoveryPhase,
+    validation: Option<CanonicalValidation>,
+    encoded_digest: Option<EncodedDigest>,
+    preflight_manifest: Option<ManifestChunks>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
     prepared: Option<PreparedRecovery>,
     forward: Option<ForwardRun>,
     verified: usize,
+    /// In-progress structural recapture (FIX 10316 partial), if any.
+    capture: Option<CanonicalCapture>,
+    comparison: Option<CanonicalComparison>,
 }
 
 impl RecoveryWork {
@@ -98,11 +118,16 @@ impl RecoveryWork {
             source: snapshot.clone(),
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
+            validation: None,
+            encoded_digest: None,
+            preflight_manifest: None,
             doc: None,
             rebuilt: RebuildAt::default(),
             prepared: None,
             forward: None,
             verified: 0,
+            capture: None,
+            comparison: None,
         }
     }
 
@@ -122,7 +147,16 @@ impl RecoveryWork {
             let Ok(turn) = self.turn(vault, deadline) else {
                 return Ok(RecoveryProgress::Pending(self.cursor()));
             };
-            self.page(vault, materializer)?;
+            let result = self.page(vault, materializer);
+            if result.is_err() && self.phase == RecoveryPhase::Validate {
+                self.validation = None;
+                self.encoded_digest = None;
+            }
+            if result.is_err() && self.phase == RecoveryPhase::Preflight {
+                self.preflight_manifest = None;
+                self.doc = None;
+            }
+            result?;
             drop(turn);
             if self.phase != RecoveryPhase::Complete
                 && deadline.is_some_and(|deadline| Instant::now() >= deadline)
@@ -154,6 +188,10 @@ impl RecoveryWork {
     /// Where the work stands.
     pub(crate) fn cursor(&self) -> RecoveryCursor {
         let next_key = match self.phase {
+            RecoveryPhase::Validate => self
+                .validation
+                .as_ref()
+                .map(|validation| format!("validate {}", validation.position())),
             RecoveryPhase::Rebuild => Some(self.rebuilt.position()),
             RecoveryPhase::Replay => self.forward.as_ref().map(|forward| {
                 let (pass, key) = forward.position();
@@ -189,14 +227,41 @@ impl RecoveryWork {
         let page = self.budget.max_obligations.max(1);
         match self.phase {
             RecoveryPhase::Validate => {
-                // An actor this vault erased reads as no one in the artifact
-                // too (FIX 3878): the recovery checks, installs and compares
-                // only that form. Full domain validation precedes quarantine
-                // and every durable write.
-                self.source = self.source.with_actors_erased_here(vault)?;
-                let encoded = self.source.encode()?;
-                limit(encoded.len(), self.budget.max_bytes)?;
-                self.digest = *blake3::hash(&encoded).as_bytes();
+                if self.encoded_digest.is_none() {
+                    // An actor this vault erased reads as no one in the artifact
+                    // too (FIX 3878): the recovery checks, installs and compares
+                    // only that form. Full domain validation precedes quarantine
+                    // and every durable write.
+                    if self.validation.is_none() {
+                        self.source = self.source.with_actors_erased_here(vault)?;
+                    }
+                    if !self
+                        .validation
+                        .get_or_insert_with(CanonicalValidation::default)
+                        .advance(&self.source, page)?
+                    {
+                        return Ok(());
+                    }
+                    let encoded = self
+                        .source
+                        .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                    limit(encoded.len(), self.budget.max_bytes)?;
+                    self.encoded_digest = Some(EncodedDigest::new(encoded));
+                }
+                if !self
+                    .encoded_digest
+                    .as_mut()
+                    .expect("validated encoding is retained for hashing")
+                    .advance(page)
+                {
+                    return Ok(());
+                }
+                self.digest = self
+                    .encoded_digest
+                    .take()
+                    .expect("completed canonical hashing")
+                    .into_digest();
+                self.validation = None;
                 self.doc = Some(rebuild_start());
                 self.phase = RecoveryPhase::Rebuild;
             }
@@ -237,7 +302,15 @@ impl RecoveryWork {
                     .prepared
                     .as_ref()
                     .ok_or_else(|| invalid("recovery verify"))?;
-                if verify_page(vault, prepared, &self.source, &mut self.verified, page)? {
+                if verify_page(
+                    vault,
+                    prepared,
+                    &self.source,
+                    &mut self.verified,
+                    page,
+                    &mut self.capture,
+                    &mut self.comparison,
+                )? {
                     self.phase = RecoveryPhase::Publish;
                 }
             }
@@ -259,12 +332,38 @@ impl RecoveryWork {
     /// The whole-bundle preflight over the rebuilt window, then the
     /// manifest's tier and quarantine, before any durable write.
     fn preflight(&mut self, vault: &Vault, materializer: &Materializer) -> Result<()> {
+        if self.preflight_manifest.is_none() {
+            let doc = self
+                .doc
+                .take()
+                .ok_or_else(|| invalid("recovery preflight"))?;
+            crate::sync::bridge::preflight_validated_canonical_recovery(
+                vault,
+                materializer,
+                &self.source,
+                &doc,
+            )?;
+            self.doc = Some(doc);
+            self.preflight_manifest = Some(ManifestChunks::default());
+        }
+        if !self
+            .preflight_manifest
+            .as_mut()
+            .expect("preflight started manifest construction")
+            .advance(&self.source, self.budget.max_obligations)?
+        {
+            return Ok(());
+        }
+        let expected = self
+            .preflight_manifest
+            .take()
+            .expect("completed manifest construction")
+            .into_manifest(self.digest);
         let doc = self
             .doc
             .take()
             .ok_or_else(|| invalid("recovery preflight"))?;
-        crate::sync::bridge::preflight_canonical_recovery(vault, materializer, &self.source, &doc)?;
-        let prepared = prepare_rebuilt(&self.path, &self.source, self.budget, doc)?;
+        let prepared = prepare_rebuilt_with_manifest(&self.path, expected, self.budget, doc)?;
         // A task whose fact the source refused reads as a refusal here before
         // the replay can read its authority.
         if !self.source.suppressed_tasks.is_empty() {
