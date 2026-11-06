@@ -72,8 +72,8 @@ pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
 pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
-pub(crate) use credit_join::standing_credit_observation_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
+pub(crate) use credit_join::{StandingCreditObservation, standing_credit_observation_in_txn};
 mod decay_fit;
 mod late_credit;
 mod pack_learning;
@@ -156,7 +156,7 @@ pub(crate) use host::{
     run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
 };
 mod judge_binding;
-pub(crate) use judge_binding::finalize_run_judge_in_txn;
+pub(crate) use judge_binding::{finalize_run_judge_in_txn, pinned_judge_model};
 mod derivation_witness;
 mod queue_revision;
 pub(crate) use derivation_witness::{

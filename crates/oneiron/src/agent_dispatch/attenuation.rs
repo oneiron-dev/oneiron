@@ -220,6 +220,12 @@ impl AgentDispatcher<'_> {
         // The delegation the fork was minted under is the id's for good: its
         // pin keeps it across every later put, delete and restore.
         bind_delegation_parent_in_txn(&self.vault.store, wtxn, &fork_ref, parent_attempt)?;
+        crate::context_board::inherit_board_layout_in_txn(
+            self.vault,
+            wtxn,
+            &source_ref,
+            &fork_ref,
+        )?;
         Ok(fork)
     }
 
