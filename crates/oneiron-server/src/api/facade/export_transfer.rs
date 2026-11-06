@@ -185,6 +185,12 @@ pub(super) fn vault_export_answer(
     let auth = call.auth();
     let surface = call.surface();
     let vault = &server.vault;
+    // An export a code run calls follows the world settings as before owner
+    // ruling 1-EXPORT = B (FIX 9591): its run's release judges its rows.
+    let input = &ExportOptions {
+        in_code_run: super::host_doors::support::in_code_run(),
+        ..input.clone()
+    };
     if input.delivery.unwrap_or_default() == ExportDelivery::Inline {
         let (output, rows) = match (proof, action, owner) {
             (Some(proof), _, _) if proof.claims().holder_ref == "host" => vault
