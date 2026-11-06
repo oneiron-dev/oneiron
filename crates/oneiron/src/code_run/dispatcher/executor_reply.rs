@@ -16,7 +16,11 @@ pub(crate) struct ExecutorReply {
 
 /// Lent by one recording host for one synchronous dispatch.
 pub(crate) trait ExecutorReplyPublisher {
-    fn publish(&self, value: &mut Value) -> Result<Option<ExecutorReply>>;
+    fn publish(
+        &self,
+        value: &mut Value,
+        commit: &mut dyn FnMut(&mut heed::RwTxn<'_>, &Value, &ExecutorReply) -> Result<()>,
+    ) -> Result<Option<ExecutorReply>>;
     fn adopt(&self, reply: ExecutorReply, value: &Value) -> Result<()>;
 }
 

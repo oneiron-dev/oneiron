@@ -228,12 +228,37 @@ impl<'a> HostSelfDispatcher<'a> {
             expected,
             None,
             |wtxn| {
-                match digest {
-                    Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, now),
-                    None => tracing::warn!(
-                        receipt = %write.receipt.to_hex(),
-                        "a program write's answer did not digest; its step stays issued"
-                    ),
+                settle_answer(vault, wtxn, write, digest, now);
+                Ok(())
+            },
+        )
+    }
+
+    /// Settles a canonical write's receipt in the writer publishing its reply.
+    /// The reservation already stamped its owner and bound its program step.
+    pub(super) fn put_write_receipt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt: &CodeRunReplayRecord,
+        expected: CodeRunReplayGeneration,
+        program: Option<&ProgramWrite>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(Error::InvariantViolation(
+                "a canonical reply receipt needs its vault writer",
+            ));
+        };
+        let now = vault.now_recorded_at();
+        let digest = answer_digest(receipt);
+        vault.put_code_run_replay_record_if_generation_in_txn(
+            wtxn,
+            receipt,
+            Some(expected),
+            None,
+            |_| Ok(()),
+            |wtxn| {
+                if let Some(write) = program {
+                    settle_answer(vault, wtxn, write, digest, now);
                 }
                 Ok(())
             },
@@ -262,6 +287,22 @@ impl<'a> HostSelfDispatcher<'a> {
         if let ExecutorStorage::Canonical(vault) = &self.storage {
             note_program_write_uncertain(vault, write, vault.now_recorded_at());
         }
+    }
+}
+
+fn settle_answer(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    write: &ProgramWrite,
+    digest: Option<[u8; 32]>,
+    now: u64,
+) {
+    match digest {
+        Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, now),
+        None => tracing::warn!(
+            receipt = %write.receipt.to_hex(),
+            "a program write's answer did not digest; its step stays issued"
+        ),
     }
 }
 
