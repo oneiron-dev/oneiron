@@ -157,7 +157,7 @@ def main():
                 "patched_dtoa_sha256":sha(source / "dtoa.c"),
                 "wit_sha256":sha(ROOT / "crates/oneiron/wit/code-run.wit"),
                 "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js",
-                                                 HERE / "reader_forks.js", HERE / "diff.js",
+                                                 HERE / "reader_forks.js", HERE / "diff.js", HERE / "runtime.d.ts",
                                                  HERE / "hook_guest.c", HERE / "hook_bootstrap.js",
                                                  HERE / "generate_bridge.py", HERE / "build.py"]},
                 "artifacts":artifacts}

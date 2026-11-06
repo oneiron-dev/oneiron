@@ -195,8 +195,9 @@ pub(super) fn admit(
 
 /// [`admit_owner`] for a connector's call through the OpenAI-compatible
 /// proxy (OF-445): the vault's inference policy for the model, on the raw
-/// routes' meter. The proxy has already authenticated its connector and
-/// narrowed the model to one `[models]` configures.
+/// routes' meter. The proxy has already authenticated its connector;
+/// [`admit_owner`] binds the selected model as configured here or registered
+/// in the catalog.
 pub(super) fn admit_proxied(
     server: &SyncServer,
     request: &mut LlmRequest,

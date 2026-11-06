@@ -25,17 +25,18 @@ mod body;
 pub(super) mod carrier;
 mod changed_scan;
 // An escaped key's span (FIX 1369).
-mod escaped_span;
+use oneiron_store::batch::secret_scan::mask::escaped_span;
 mod file_plane;
 pub(super) mod known_marks;
 mod known_note;
 mod leaf_keys;
+mod promoted_message_parts;
 pub(super) mod retained_repo;
 pub(super) mod side_row;
 pub(super) mod spool;
 pub(super) mod stream_known;
 mod text;
-mod text_log;
+use oneiron_store::batch::secret_scan::mask::text_log;
 mod text_spans;
 mod wipe;
 
@@ -72,6 +73,7 @@ use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
+pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
@@ -134,6 +136,35 @@ pub(crate) fn rebind_mask_origin_in_txn(
     }
     origin.record = *new;
     MASK_ORIGIN.put(store, wtxn, custody, &origin)
+}
+
+/// Keeps an immutable part whole in existing custody. Only its handle leaves
+/// this writer; the original bytes, including any signature, are never masked.
+/// The caller has already detected a secret in the part and supplies its exact
+/// owning record and position, so erase reaches this record's custody as usual.
+pub(crate) fn seal_whole_part_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    place: &str,
+    value: &[u8],
+    reason: Option<&'static str>,
+    at: u64,
+) -> Result<String> {
+    let mut plan = Masker::default();
+    plan.found.push(Found {
+        value: Zeroizing::new(value.to_vec()),
+        reason: reason.unwrap_or(REASON_KNOWN_VALUE),
+        record,
+        place: place.to_owned(),
+    });
+    let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
+    handles
+        .get(value)
+        .map(|(handle, _)| handle.clone())
+        .ok_or(Error::InvariantViolation(
+            "a sealed part's custody record has no handle",
+        ))
 }
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
@@ -660,6 +691,7 @@ impl Masker {
                 ),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
+                model_reveal_allowed: true,
                 value_bytes: std::mem::take(&mut *found.value),
                 status: SecretCustodyStatus::Active,
                 registered_at: at,

@@ -33,8 +33,8 @@ use super::model::{DocumentStatus, EsignState, SigningStatus, invalid};
 use super::notice_dispatch::EsignNotice;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::store::attempt_id::AttemptId;
-use crate::store::attempt_state::AttemptState;
 use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 

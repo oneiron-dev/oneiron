@@ -1,0 +1,250 @@
+/* ── the vault page — what app-vault.html carries beyond the chassis ── */
+
+/* the sheet holds body + inspector (owner 08-14 eve): the inspector is
+   WORK, so it rides inside the sheet as its right column */
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* the search field: quiet, right of the head, filters as you type */
+.pane-head .vsearch {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 6px 11px; width: 220px; margin-left: 14px;
+}
+.pane-head .vsearch::placeholder { color: var(--silver-4); }
+.pane-head .vsearch:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.pane-head .vsearch::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* quickfilter — world chips + state filters, chrome-owned */
+.filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.filters .set { display: flex; align-items: center; gap: 4px; }
+.filters .set > .label { margin-right: 6px; }
+.chip {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--silver-3); padding: 3px 9px;
+  border: 1px solid transparent; border-radius: 4px;
+  transition: color 160ms ease;
+}
+.chip:hover { color: var(--silver-1); }
+.chip.on { color: var(--silver-1); background: var(--bg-well); }
+.chip:disabled { cursor: default; }
+.chip.dead { color: var(--silver-4); }
+/* an active column filter reads as a chip with its ×; click removes it */
+.chip.fchip { display: inline-flex; align-items: center; gap: 7px; }
+.chip.fchip .x { color: var(--silver-3); font-size: 12px; line-height: 1; }
+.chip.fchip:hover .x { color: var(--safelight); }
+.filters .act { padding: 0; margin-left: 4px; }
+
+/* as-of scrubber — a crimson hairline: what did the vault believe then.
+   drag it or arrow it; the ledger reconstructs itself at that date */
+.asof { display: flex; align-items: center; gap: 12px; padding: 2px 0 4px; }
+.asof .track { flex: 1; position: relative; height: 14px; cursor: ew-resize; touch-action: none; }
+.asof .track::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 6.5px;
+  height: 1px; background: var(--rule-strong);
+}
+.asof .handle {
+  position: absolute; top: 2px; width: 1.5px; height: 10px; margin-left: -0.75px;
+  background: var(--safelight);
+}
+.asof .track:hover .handle, .asof .track:focus-visible .handle { height: 14px; top: 0; }
+.asof .track:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 3px; }
+.asof .date {
+  font-family: var(--mono); font-size: 11px; color: var(--silver-3);
+  font-feature-settings: "tnum" 1; min-width: 122px; text-align: right; white-space: nowrap;
+}
+.asof .act { padding: 0; }
+
+/* ── the ledger · a real table (owner 08-18): sort on the head, filter
+   from the head, sticky heads, keyboard rows. dividers are SPACE, not
+   lines (owner 08-14 eve): the ledger keeps space under its column
+   heads; rows divide by rhythm and hover ── */
+.ledger-wrap { position: relative; }
+table.ledger { table-layout: fixed; }
+table.ledger td { border-top: 0; }
+table.ledger thead th {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--bg-elevated);
+  padding: 8px 10px 10px;                /* space under the heads, not a rule */
+  font-family: var(--bitmap); letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.th-in { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.th-sort {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: var(--silver-3); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: color 160ms ease;
+}
+.th-sort:hover, th.sorted .th-sort { color: var(--silver-1); }
+.th-sort .arrow {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0;
+  color: var(--silver-2); width: 8px; text-align: left;   /* reserved: no shift on sort */
+}
+.th-flt {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 3px;
+  color: var(--silver-3); opacity: 0; cursor: pointer;
+  transition: opacity 160ms ease, color 160ms ease;
+}
+th:hover .th-flt, .th-flt:focus-visible, th.filtered .th-flt, th.popped .th-flt { opacity: 1; }
+th.popped { z-index: 7; }   /* the open popover clears its neighbours */
+th.filtered .th-flt { color: var(--silver-1); }
+.th-flt:hover { color: var(--safelight); }
+/* widths live in COLUMNS (one source of truth); css keeps the alignment */
+table.ledger .c-conf { text-align: right; }
+table.ledger .c-actor, table.ledger .c-dot { text-align: center; }
+table.ledger th.c-conf .th-in { flex-direction: row-reverse; }
+table.ledger tbody tr { cursor: pointer; scroll-margin: 40px 0 12px; }
+table.ledger td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the row highlight is soft (owner 08-15): radius on the run's ends */
+@media (hover:hover) {
+  table.ledger tbody tr:hover td { background: var(--bg-well); }
+  table.ledger tbody tr:hover td:first-child { border-radius: 5px 0 0 5px; }
+  table.ledger tbody tr:hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+table.ledger tr.selected td { background: var(--bg-well); }
+table.ledger tr.selected td:first-child { border-radius: 5px 0 0 5px; }
+table.ledger tr.selected td:last-child { border-radius: 0 5px 5px 0; }
+/* the row open in the inspector: a hair of ink at its left edge */
+table.ledger tr.open td:first-child { box-shadow: inset 2px 0 0 var(--silver-3); }
+.pred { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+.pred:hover { color: var(--safelight); }        /* every mono token is a door */
+.src { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+.clk { font-family: var(--mono); font-size: 12px; color: var(--silver-3); }
+.clk.hollow { color: var(--silver-4); }
+.confn { font-family: var(--mono); font-size: 11.5px; color: var(--silver-4); font-feature-settings: "tnum" 1; }
+.unverified {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--amber); text-transform: uppercase; margin-left: 8px;
+}
+.succ { font-family: var(--mono); font-size: 11px; color: var(--silver-3); margin-left: 8px; }
+.succ:hover { color: var(--safelight); }
+/* empty result: one serif line, no picture */
+.empty {
+  font-family: var(--serif); font-size: 14px; font-style: italic;
+  color: var(--silver-3); padding: 18px 10px;
+}
+
+/* ── the filter popover: radius 8, --shadow-pop; hangs from its head ── */
+.fpop {
+  position: absolute; top: calc(100% - 2px); left: 0; z-index: 6;
+  min-width: 190px; max-width: 320px;
+  padding: 10px 12px 12px;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column; gap: 8px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0; text-transform: none;
+  white-space: normal; text-align: left; cursor: default;
+  animation: fpop-in 180ms cubic-bezier(0.23,1,0.32,1);
+}
+th.c-conf .fpop, th.c-actor .fpop, th.c-dot .fpop { left: auto; right: 0; }
+@keyframes fpop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.fpop .label { letter-spacing: 0.12em; }
+.fpop .fchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.fpop .fin {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 6px 10px; width: 100%; min-width: 0;
+}
+.fpop .fin::placeholder { color: var(--silver-4); }
+.fpop .fin:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.fpop .frow { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 8px; }
+.fpop .frow span { color: var(--silver-3); font-size: 11px; }
+
+/* on this day — one quiet strip, cormorant-free (voice stays rare) */
+.otd { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; }
+.otd .claim { font-style: italic; color: var(--silver-3); font-size: 13.5px; }
+
+/* ── inspector (owner 08-14 eve): the claim's context is WORK, not
+   chrome — it lives inside the sheet as its right column, one hairline
+   between it and the ledger. ── */
+aside.inspector {
+  width: 320px; flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--bg-well);        /* a tinted zone divides, not a line (owner) */
+  display: flex; flex-direction: column; gap: 16px;
+}
+.trail { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.trail a { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.trail a:hover { color: var(--safelight); }
+.trail .sep { color: var(--silver-4); font-size: 10px; }
+.trail a.here { color: var(--silver-2); }
+/* share is an icon (owner 08-18): a small act at the trail's end */
+.trail .ibtn {
+  margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 5px; color: var(--silver-3); cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+.trail .ibtn:hover { color: var(--safelight); background: var(--bg-elevated); }
+.insp-title { font-family: var(--serif); font-size: 16.5px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+.insp-sec { display: flex; flex-direction: column; gap: 6px; }
+.kv { display: flex; align-items: baseline; gap: 10px; }
+.kv .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); width: 74px; flex: none; }
+.kv .v { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.kv .v.inline { display: flex; align-items: center; gap: 7px; }
+.kv .v a:hover { color: var(--safelight); }
+.kv .v .succ { margin-left: 4px; }
+
+/* two clocks: solid = occurred, hollow = learned, hairline = hindsight */
+.twoclocks { display: flex; flex-direction: column; gap: 5px; padding: 8px 0 2px; }
+.tc-row { display: flex; align-items: center; gap: 10px; }
+.tc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--silver-2); flex: none; }
+.tc-dot.hollow { background: none; border: 1.5px solid var(--silver-3); }
+.tc-row .when { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.tc-row .what { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); }
+.tc-gap { margin-left: 3px; padding-left: 13px; border-left: 1px solid var(--rule-strong); }
+.tc-gap .meta-line { font-size: 10.5px; }
+
+.evidence { display: flex; flex-direction: column; gap: 6px; }
+.evidence .quote {
+  font-family: var(--serif); font-size: 13px; font-style: italic;
+  color: var(--silver-2); line-height: 1.5;
+  background: var(--bg-well); padding: 10px 12px;
+}
+
+/* actor-scoped opinion — an aside, never blended into the neutral claim;
+   authorship = a trailing byline (owner 07-07), the seal keeps the ledger */
+.aside-note { display: flex; gap: 9px; align-items: baseline; }
+.aside-note .claim { font-size: 13px; font-style: italic; color: var(--silver-3); }
+.aside-note .byline { font-family: var(--mono); font-size: 11px; }
+
+.insp-actions { display: flex; gap: 14px; padding-top: 4px; }
+
+/* ── the selection (owner 09-07: bulk actions — normal table ops) ──
+   a small square at the row's left, faint until the hand or a selection
+   brings it up; the head's square selects every row shown. while anything
+   is selected the filters row becomes the selection line: the count and
+   the acts that apply. the outcome lands as ONE receipt line. ── */
+table.ledger .c-sel { width: 22px; padding-left: 4px; padding-right: 0; }
+.selbox {
+  display: inline-block; width: 12px; height: 12px; padding: 0;
+  border-radius: 3px; border: 1px solid var(--rule-strong); background: transparent;
+  vertical-align: middle; cursor: pointer; opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+thead .selbox { opacity: 0.55; }
+@media (hover: hover) { tbody tr:hover .selbox { opacity: 1; } }
+.selbox:focus-visible, .selbox.on, .selbox.some, tbody tr.selected .selbox, .ledger-wrap.has-sel .selbox { opacity: 1; }
+.selbox.on { background: var(--silver-2); border-color: var(--silver-2); }
+.selbox.some::after { content: ""; display: block; width: 6px; height: 2px; background: var(--silver-2); margin: 4px auto 0; }
+.selbar .meta-line { display: inline; color: var(--silver-1); margin-right: 2px; }
+.selbar .act { padding: 0; }
+.selbar .set { gap: 6px; }
+.filters .selreceipt { display: inline; margin-left: auto; color: var(--silver-3); }
+
+/* the claim is the content: below 1400px the ledger gives source + by back to
+   the record (both live in the inspector) so the claim keeps ~30ch */
+@media (max-width: 1400px) {
+  table.ledger .c-src, table.ledger .c-actor { display: none; }
+}
+table.ledger td:first-child { min-width: 200px; }

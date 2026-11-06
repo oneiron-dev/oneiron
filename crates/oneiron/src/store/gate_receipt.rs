@@ -1,10 +1,10 @@
 //! Deterministic receipt projection of a stored gate decision.
 
-use std::collections::BTreeMap;
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
 use crate::store::receipt_row::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, ReceiptKind, ReceiptRecord, hex_lower,
 };
+use crate::store::{GateDecisionRecord, GateLoopFamily, GateLoopSource, GateSystemNoticeRecord};
+use std::collections::BTreeMap;
 
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
@@ -75,7 +75,15 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
             .or_else(|| Some(record.actor_class.clone())),
         on_behalf_of: None,
         outcome: record.outcome.clone(),
-        job_ref: None,
+        job_ref: record
+            .context
+            .links
+            .iter()
+            .filter(|link| {
+                link.family == GateLoopFamily::Action && link.source == GateLoopSource::Runner
+            })
+            .find_map(|link| link.attempt)
+            .map(|attempt| hex_lower(&attempt)),
         trigger_ref: record
             .claim_id
             .map(|id| format!("claim:{}", hex_lower(&id)))

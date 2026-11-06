@@ -15,15 +15,18 @@
 //! never list or prune each other's files, then a sequence number one past
 //! the highest already there. Retention orders by that number, never by the
 //! clock, so a clock that steps back cannot make a new backup look oldest.
-//! A backup holds every record its image carries, so while any legal hold
-//! stands none expires (ARCH-0038 #legal-hold). A label whose handoff policy
+//! A backup holds every record its image carries, so while a customer legal
+//! hold stands none expires (ARCH-0038 #legal-hold). A host order keeps no
+//! backup: its order-scoped clone lives in the host's separate legal-hold
+//! store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05). A label whose handoff policy
 //! a managed setup installed keeps each backup until its node's supervisor
 //! acks the stage copy (`handoff`).
 //!
 //! Once a backup lands, what it covered is recorded beside it
 //! (`.<label>.backup-watermark.json`), so a host can tell whether the vault
-//! changed since ([`oneiron::recovery::checkpoint::last_backed_up`]). A
-//! backup asked for is always taken, changed or not.
+//! changed since ([`oneiron::recovery::checkpoint::last_backed_up`]). Its
+//! watermark also distinguishes automatic selection from a whole-vault request.
+//! An explicit backup asked for is always taken, changed or not.
 //!
 //! A restored vault is created sealed (OF-570 maximum tier) by one rule,
 //! [`restore_target_seal`]: over a vault or beside it, at that vault's tier;
@@ -170,7 +173,8 @@ pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
     pub(crate) checkpoint_id: String,
-    /// Older backups deleted to honour `keep`; none while a legal hold stands.
+    /// Older backups deleted to honour `keep`; none while a customer legal
+    /// hold stands.
     pub(crate) pruned: Vec<String>,
     /// Why a hosted vault's backup carries none of its host-order legal
     /// holds, for its host to alert on (FIX 6598); absent where it carries
@@ -197,6 +201,24 @@ pub(crate) fn take_as(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
+    finish_take(vault, plan, produced)
+}
+
+/// Takes the scheduled automatic selection, never an explicit whole-vault request.
+pub(crate) fn take_automatic(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<BackupOutcome> {
+    let produced =
+        finalize::produce_automatic(vault, plan).map_err(finalize::Unproduced::into_error)?;
+    finish_take(vault, plan, produced)
+}
+
+fn finish_take(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    produced: finalize::Produced,
+) -> anyhow::Result<BackupOutcome> {
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
     if let Err(error) = produced.accept(plan) {
@@ -286,7 +308,7 @@ fn parse_sequence(field: &str) -> Option<u64> {
 /// Deletes this vault's oldest backups beyond `plan.keep`; returns their
 /// names. `spared`, the backup a `take` just wrote, is never deleted and
 /// counts as one kept; with none spared, the newest `keep` stay. Nothing
-/// goes while a legal hold stands: the listing and acks are read first, then
+/// goes while a customer legal hold stands: the listing and acks are read first, then
 /// the holds are read and each unlink and directory sync runs while the
 /// vault's writer is held ([`oneiron::Vault::with_backup_hold_exclusion`]),
 /// so a hold placed meanwhile commits before the read or after the sync
@@ -393,11 +415,14 @@ pub(crate) fn prune(
 /// `backup_retain_until` has passed on the vault's clock (OF-163, FIX 1931);
 /// returns their names. `None` while that has not happened: no marker, or a
 /// deadline still ahead, when the schedule backs up and prunes as before.
-/// A standing legal hold defers the drop as it holds [`prune`]: the holds
+/// A standing customer legal hold defers the drop as it holds [`prune`]: the holds
 /// are read again and each unlink and directory sync runs while the vault's
 /// writer is held. Neither `keep`, a held prune nor a handoff pin keeps one:
 /// the Owners' deletion let them go, and their stage acks go with them. The
-/// caller holds the backup lock.
+/// caller holds the backup lock. The automatic custody companion beside
+/// these backups expires under the same deletion deadline and hold recheck;
+/// only this lineage's sealed head and keyless log go, never local keys or
+/// an independent target.
 pub(crate) fn prune_deleted_vault_backups(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
@@ -448,6 +473,7 @@ pub(crate) fn prune_deleted_vault_backups(
     payload_retention::settle(vault, plan, &gone, inventories);
     payload_retention::sweep(vault, plan);
     handoff::sweep_orphan_stage_acks(plan);
+    vault.retire_deleted_backup_custody(&plan.dir)?;
     Ok(Some(gone))
 }
 

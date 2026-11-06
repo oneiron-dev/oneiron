@@ -50,6 +50,7 @@ use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::memory::MemoryResult;
 
 mod composed_reads;
+mod credential_read;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {
@@ -155,6 +156,7 @@ impl Memory<'_> {
                         entity_type: put.entity_type,
                         occurred: put.occurred,
                         learned_at: put.learned_at,
+                        row_version: None,
                         data: put.data.to_vec(),
                         allow_maintenance: false,
                         allow_reserved_predicate: false,
@@ -581,7 +583,9 @@ fn staged_claims(
 fn unresolved_reference() -> Error {
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
-        reason_codes: vec![crate::store::gate_reason::GateReasonCode::DenyUnresolvedRecordReference.as_str()],
+        reason_codes: vec![
+            crate::store::gate_reason::GateReasonCode::DenyUnresolvedRecordReference.as_str(),
+        ],
     })
 }
 

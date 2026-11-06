@@ -106,6 +106,7 @@ pub fn callable_helper_measurement_requests(
                 floor_slices: FloorSlicePolicy::default(),
                 canary: eval_seat_canary(seat).map(str::to_owned),
                 method: MeasurementMethodPin::current(),
+                retry: 0,
             },
         ));
     }

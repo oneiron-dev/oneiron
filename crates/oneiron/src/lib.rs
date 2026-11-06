@@ -37,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
@@ -54,6 +55,7 @@ pub mod registry {
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
     pub use oneiron_base::registry::*;
 
+    pub mod export;
     pub mod pack_byte_map;
 
     // Only the `#[cfg(test)]` type-registry suite names this door.
@@ -61,7 +63,7 @@ pub mod registry {
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
 pub use oneiron_base::request_limits;
-pub mod heap_drop;
+pub use oneiron_store::heap_drop;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) use oneiron_store::session_overlay;
@@ -129,6 +131,7 @@ pub use oneiron_base::tokenizer;
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
 pub use oneiron_base::extraction_eval;
@@ -150,6 +153,7 @@ pub mod policy_model;
 pub mod receipt;
 pub mod share;
 pub mod share_travel;
+pub mod source_audience;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -183,6 +187,7 @@ pub mod guest_document_share;
 pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
+pub mod mail_pack;
 pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
@@ -242,6 +247,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
@@ -252,6 +258,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.

@@ -9,8 +9,8 @@ mod relay_protocol;
 mod transport;
 pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
-    EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal,
-    LoopbackRefusalReason,
+    CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse,
+    LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason,
 };
 pub use host_net_floor::{
     HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,

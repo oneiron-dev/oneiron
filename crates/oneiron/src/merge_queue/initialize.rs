@@ -9,7 +9,7 @@
 //! green. An unrelated existing queue is never adopted.
 use std::collections::BTreeMap;
 
-use super::check_execute::{held, judge_run, new_receipt};
+use super::check_execute::{held, judge_run, new_receipt, snapshot_input_scope_taint};
 use super::check_inputs::{
     QueueCheckExecution, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs,
     QueueCheckInvocation, QueueCheckNeed, QueueCheckReceipt, QueueCheckTarget,
@@ -20,9 +20,9 @@ use super::check_store::{
 };
 use super::plan::RepoCheckPlan;
 use super::{CheckPhase, MergeQueue, REPO_CHECK_PLAN_PATH};
-use crate::store::contract_oracle::{CommandOutput, ContractOracle, WorkspaceGraph, invalid};
 use crate::error::Result;
 use crate::git_wire::lock_repository;
+use crate::store::contract_oracle::{CommandOutput, ContractOracle, WorkspaceGraph, invalid};
 
 impl MergeQueue<'_> {
     /// Runs claimed init `work`: both baseline phases of the frozen plan
@@ -86,6 +86,7 @@ impl MergeQueue<'_> {
             if let Some(status) = self.baseline_moved(&config)? {
                 return self.finish_baseline(work, status, receipts);
             }
+            let (input_scope, input_taint) = snapshot_input_scope_taint(self.vault, config.repo)?;
             let inputs = QueueCheckInputs {
                 store: self.repo.identity().as_hex(),
                 repo: config.repo,
@@ -99,8 +100,10 @@ impl MergeQueue<'_> {
                 commands: plan.phase(phase).to_vec(),
                 contract_outputs: plan.contract_outputs.clone(),
                 environment: environment.clone(),
+                input_scope,
+                input_taint,
             };
-            let mut receipt = new_receipt(work, inputs)?;
+            let mut receipt = new_receipt(work, &config.approval, inputs)?;
             let tree = self.pinned_tree(&config.baseline_tree)?;
             let invocation = QueueCheckInvocation {
                 target: &receipt.inputs.target,

@@ -22,7 +22,9 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTIT
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 
-pub(crate) use crate::store::principal_record::{NoStanding, PACT_STANDING_LAPSED, PrincipalStanding};
+pub(crate) use crate::store::principal_record::{
+    NoStanding, PACT_STANDING_LAPSED, PrincipalStanding,
+};
 
 /// What the Grant rule does when the pact membership check itself fails with
 /// a store or decode error rather than a refusal (CALLS `FIX 7511 membership

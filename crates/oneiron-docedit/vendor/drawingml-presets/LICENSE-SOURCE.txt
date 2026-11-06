@@ -1,0 +1,15 @@
+Ecma International default copyright notice
+
+Official policy URL:
+https://ecma-international.org/policies/by-ipr/ecma-text-copyright-policy/
+Version 3, approved December 2025; retrieved 2026-11-05.
+
+LICENSE.txt is the complete default COPYRIGHT NOTICE, Copyright License and
+Disclaimer from that page, including the full AS-IS warranty paragraph.
+Its UTF-8 SHA-256 is:
+4b5bc7b49306d0e117fecf2485a4bdde955256df935199d29cec5e61157d0e93
+
+The derivative connection-site data implements OOXML functionality under
+clause (iv), which expressly permits copying the specified functionality
+into standard-conformant products. No BSD, Apache POI, or community
+redistribution notice is asserted as a grant for these bytes.

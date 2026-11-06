@@ -2,11 +2,11 @@
 
 use heed::RoTxn;
 
+use super::CodeRevision;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, LegacyCompact, Raw, SideTable};
 use crate::store::Store;
-use super::CodeRevision;
 
 /// Finalized code-revision row (hand-rolled MessagePack map). Key: revision id.
 pub(crate) const RECORDS: SideTable<EntityId, CodeRevision, Raw> =

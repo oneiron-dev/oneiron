@@ -1,4 +1,7 @@
-//! Query-free retrieval context, preserved verbatim for offline replay.
+//! Core half of `store::retrieval_telemetry::state`: its store-layer items live in `oneiron_store::retrieval_telemetry::state` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::retrieval_telemetry::state::*;
 
 use super::types::{RetrievalScoreBreakdown, RetrievalSignal};
 use serde::{Deserialize, Serialize};
@@ -25,7 +28,19 @@ pub struct RetrievalState {
     pub last_action: u8,
     pub intent_class: u8,
 }
+
 impl RetrievalState {
+    /// Previous-verb tags shared by the script policy and sandbox loop; zero is the seed.
+    pub(crate) const ACTION_SEARCH: u8 = 1;
+    pub(crate) const ACTION_EXPAND: u8 = 2;
+    pub(crate) const ACTION_DRILL_UP: u8 = 3;
+    pub(crate) const ACTION_DRILL_DOWN: u8 = 4;
+    pub(crate) const ACTION_WIDEN_TEMPORAL: u8 = 5;
+    pub(crate) const ACTION_READ: u8 = 6;
+    pub(crate) const ACTION_STOP: u8 = 7;
+    pub(crate) const ACTION_ABSTAIN: u8 = 8;
+    pub(crate) const ACTION_CONTINUE: u8 = 9;
+
     /// Continuous, bounded coordinates shared by live selection and sleep replay.
     /// Counts use x/(1+x); outcome fields never enter the policy context.
     pub fn policy_context(&self) -> [f64; 16] {
@@ -47,7 +62,8 @@ impl RetrievalState {
             f64::from(self.temporal_spread.max(0.0))
                 / (1.0 + f64::from(self.temporal_spread.max(0.0))),
             count(u32::from(self.hops)),
-            f64::from(self.last_action.min(5)) / 5.0,
+            f64::from(self.last_action.min(Self::ACTION_CONTINUE))
+                / f64::from(Self::ACTION_CONTINUE),
             f64::from(self.intent_class.min(4)) / 4.0,
         ]
     }
@@ -122,24 +138,4 @@ impl RetrievalState {
         }
         Ok(())
     }
-}
-
-/// A caller's turn identity. Each run remains independent; grouping is a read
-/// projection, never a collapsing write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RetrievalTurn {
-    pub turn_id: [u8; 16],
-    pub episode_id: [u8; 16],
-    pub turn_idx: u64,
-}
-
-/// Query-free opt-in replay context. A host can point at its authorized, immutable
-/// query packet (or session message) and corpus snapshot. Neither raw query
-/// content nor a query hash is written to telemetry. An absent reference means
-/// this row alone cannot reconstruct that part of the request.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RetrievalReplayInputs {
-    pub query_ref: Option<String>,
-    pub config: serde_json::Value,
-    pub corpus_snapshot_ref: Option<String>,
 }

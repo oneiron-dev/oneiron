@@ -14,8 +14,8 @@ use super::{
     whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
-use crate::authority::{HolderExportRequest};
-use crate::batch::export::secret_supplement_record::{HolderExportNeed};
+use crate::authority::HolderExportRequest;
+use crate::batch::export::secret_supplement_record::HolderExportNeed;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
@@ -34,6 +34,9 @@ pub(crate) struct ExportSnapshotRun {
         crate::store::result_manifest::CodeRunRawOutput,
         Option<&'static str>,
     )>,
+    /// Live result names that resolve to one of `outputs`, judged with it.
+    pub(crate) bindings: Vec<(crate::code_run::CodeRunResultBinding, Option<&'static str>)>,
+    pub(crate) determinism: Option<crate::code_run::CodeRunDeterminism>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
     pub(crate) receipts: Vec<(
@@ -68,6 +71,9 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
+    /// The row's birth envelope, read in this snapshot (FIX 1178); `None`
+    /// outside an archive cut, and for a row no door stamped.
+    pub(crate) birth: Option<crate::provenance::birth::RowBirth>,
 }
 
 impl Vault {
@@ -493,6 +499,14 @@ impl Vault {
             if let ExportSnapshotEntityBody::Bytes(body) = &body {
                 thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, body));
             }
+            // FIX 1178: the row's birth, read in this snapshot. The writer
+            // holds it until the carried set is final and masks it then; the
+            // lossy OKF cut carries no birth.
+            let birth = if cut == ExportCut::Archive {
+                crate::provenance::birth::row_birth_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                None
+            };
             writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
@@ -503,6 +517,7 @@ impl Vault {
                 pack_source,
                 task_receipts,
                 archived_receipts,
+                birth,
             })?;
         }
         for entry in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.store, &rtxn)? {
@@ -639,6 +654,9 @@ impl Vault {
         let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
+            let replay = self.get_code_run_replay_record_in_txn(rtxn, &run_id)?;
+            let determinism = replay.as_ref().and_then(|record| record.determinism);
+            let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
                 let withheld =
@@ -657,6 +675,22 @@ impl Vault {
                 }
                 occurrences.push((output, withheld));
             }
+            // A binding travels only beside the occurrence its handle and
+            // path name; a dangling name is not evidence of a result. Same
+            // bytes under another path are another occurrence, so a binding
+            // never takes a same-hash occurrence's judgment. Withholding the
+            // occurrence withholds the handle too, never the name, path or reason.
+            let bindings = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    occurrences
+                        .iter()
+                        .find(|(output, _)| {
+                            output.handle == binding.handle && output.path == binding.path
+                        })
+                        .map(|(_, withheld)| (binding, *withheld))
+                })
+                .collect();
             // Each receipt goes beside the manifest of the occurrence it
             // describes, judged as that occurrence is.
             let receipts = self
@@ -672,6 +706,8 @@ impl Vault {
             writer.run(ExportSnapshotRun {
                 run_id,
                 outputs: occurrences,
+                bindings,
+                determinism,
                 receipts,
             })?;
             runs.push(run_id);
@@ -688,7 +724,7 @@ fn note_diary_author(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
-) -> Result<Option<crate::note::NoteActor>> {
+) -> Result<Option<crate::store::note_body::NoteActor>> {
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
     #[cfg(not(feature = "sync"))]

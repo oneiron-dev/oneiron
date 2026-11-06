@@ -13,7 +13,7 @@ pub(crate) struct RetrievalVisibility<'read, 'vault> {
     /// One relationship authority for every node the walk checks in `txn`,
     /// so the grants and relationship claims load once per walk, not once
     /// per node (FIX 11648).
-    held: HeldAuthority<'vault>,
+    held: HeldAuthority,
 }
 
 impl<'vault> ScopedRead<'vault> {
@@ -31,7 +31,7 @@ impl<'vault> ScopedRead<'vault> {
             policy,
             filter,
             txn,
-            held: HeldAuthority::default(),
+            held: HeldAuthority::for_request(requested),
         })
     }
 
@@ -54,7 +54,7 @@ impl<'vault> ScopedRead<'vault> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
-        authority: &HeldAuthority<'vault>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         // Audience, NOTE privacy, relationship grants, credential scope and
         // type/scalar ceilings all live in the shared row predicate; graph
@@ -97,9 +97,10 @@ impl<'vault> ScopedRead<'vault> {
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         turn: &EntityId,
-        authority: &HeldAuthority<'vault>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let floor = self.actor_retrieval_floor(policy)?;
+        let floor_authority = authority.for_peer();
         let parts = match self.session_view {
             Some(view) => {
                 view.port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
@@ -117,7 +118,7 @@ impl<'vault> ScopedRead<'vault> {
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, authority)? {
+            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, &floor_authority)? {
                 return Ok(false);
             }
         }

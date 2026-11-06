@@ -60,6 +60,44 @@ fn export_key(repo: &GitWireRepo, revision: EntityId) -> RepoRevisionKey {
     }
 }
 
+/// Domain separating per-vault/per-actor opaque Git author pseudonyms from
+/// every other derived id (FIX 5020).
+const OPAQUE_GIT_AUTHOR_DOMAIN: &[u8] = b"oneiron:origin-git-author:v1";
+
+/// Opaque public Git author/committer strings for `actor` in `vault`'s
+/// projection: `actor-<pseudonym>` and `<pseudonym>@actor.invalid`.
+///
+/// The pseudonym derives from the vault input and the actual actor bytes
+/// only, never from repo, path or LFS identity. A rooted vault hashes its
+/// replica-stable authority genesis id under the `authority` input label,
+/// so the same vault and actor project the same strings on every device;
+/// an unrooted vault, or one whose authority read fails, hashes its local
+/// store id under the `store` label instead, adding no new refusal. The
+/// typed actor and request provenance stay the actual actor; only these
+/// two Git strings are opaque. A public deterministic hash is linkable
+/// within a vault by design: no anonymity or unlinkability is claimed.
+pub(in crate::origin) fn opaque_git_author(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<(String, String)> {
+    let genesis = vault.authority_vault_id().ok().flatten();
+    let pseudonym = match genesis {
+        Some(id) => entity_id_from_hash_material(
+            OPAQUE_GIT_AUTHOR_DOMAIN,
+            &[b"authority", &id, actor.as_bytes()],
+        )?,
+        None => entity_id_from_hash_material(
+            OPAQUE_GIT_AUTHOR_DOMAIN,
+            &[b"store", vault.vault_id().as_bytes(), actor.as_bytes()],
+        )?,
+    }
+    .to_hex();
+    Ok((
+        format!("actor-{}", pseudonym),
+        format!("{}@actor.invalid", pseudonym),
+    ))
+}
+
 impl Vault {
     /// Reads the stable Git projection of a finalized engine revision.
     pub fn exported_engine_commit(
@@ -183,28 +221,54 @@ impl Vault {
         let message = export_message(metadata, provenance)?;
         // An author erased before the seal holds the export (FIX 7348).
         let author = metadata.author.ok_or(Error::EntityNotFound)?;
-        let oid = write_commit(
-            git,
-            repo,
-            GitCommitRequest {
-                tree,
-                parents,
-                author_name: author.to_hex(),
-                author_email: format!("{}@actor.invalid", author.to_hex()),
-                authored_at: i64::try_from(revision.finalized_at)
-                    .map_err(|_| Error::ArithmeticOverflow("export timestamp"))?,
-                message: message.into_bytes(),
-                extra_headers: Vec::new(),
-            },
-            revision.finalized_at,
-        )?;
+        let authored_at = i64::try_from(revision.finalized_at)
+            .map_err(|_| Error::ArithmeticOverflow("export timestamp"))?;
+        // A finalized revision keeps its stable projection: reuse the
+        // stored oid when one exists, after every check above has run
+        // (FIX 5020 never rewrites an existing Git object). Only a first
+        // projection builds a commit, with opaque author strings.
+        let oid = match self.exported_engine_commit(repo, revision.revision_id)? {
+            Some(oid) => oid,
+            None => {
+                let (author_name, author_email) = opaque_git_author(self, author)?;
+                write_commit(
+                    git,
+                    repo,
+                    GitCommitRequest {
+                        tree,
+                        parents,
+                        author_name,
+                        author_email,
+                        authored_at,
+                        message: message.into_bytes(),
+                        extra_headers: Vec::new(),
+                    },
+                    revision.finalized_at,
+                )?
+            }
+        };
         if let Err(refused) = judge(&oid)? {
             return Ok(Err(refused));
+        }
+        // A refused publication must not release the stable projection's root.
+        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
+        let keep_outcome = git.write_keep_ref(repo, &oid, revision.finalized_at)?;
+        if !keep_outcome.is_applied() {
+            return Err(Error::InvariantViolation(
+                "origin keep-ref could not be written",
+            ));
         }
         let projected = self.with_write_txn_grouped(|txn| {
             if let Err(refused) = check(txn)? {
                 return Ok(Err(refused));
             }
+            self.keep_engine_export_in_txn(
+                txn,
+                &repo_id,
+                &oid,
+                revision.revision_id,
+                revision.finalized_at,
+            )?;
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
                 if old != oid.as_str() {
@@ -220,7 +284,6 @@ impl Vault {
         if let Err(refused) = projected {
             return Ok(Err(refused));
         }
-        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
         let intent = entity_id_from_hash_material(
             b"oneiron:engine-export-intent:v1",
             &[
@@ -277,9 +340,13 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope = crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+        // The target's code-document identity, as its writers key it (FIX
+        // 12761).
+        let target_scope = self.resolve_repo_identity(
+            &crate::git_wire::mutation_commands::canonical_mutation_repo_ref(repo.repo_root())?,
+        )?;
         for frontier in revision.file_frontiers.values() {
-            if frontier.repo != target_scope {
+            if frontier.repo != target_scope.as_str() {
                 return Err(Error::InvariantViolation(
                     "engine commit belongs to another repository",
                 ));

@@ -9,13 +9,14 @@
 use super::codec::{invalid, reply_summary};
 use super::doors::ScopeSources;
 use super::request::REQUEST_VERSION;
-use crate::store::attempt_id::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::StoreRead;
+use crate::store::attempt_id::AttemptId;
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
@@ -191,16 +192,16 @@ pub(super) fn source_set_id(session: &EntityId, turns: &[EntityId]) -> [u8; 32] 
 
 /// A sitting's summary covers TURNs of its sitting, each still live and not
 /// archived; it is not served once one is not.
-pub(super) fn validate_session_covers_in_txn(
+pub(super) fn validate_session_covers_through_in(
     vault: &Vault,
+    dbs: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     session: &EntityId,
     covers: &[EntityId],
 ) -> Result<()> {
     for covered in covers {
-        if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, covered)?
-            != Some(*session)
-            || crate::vault::live_entity_row_in_txn(&vault.store, txn, covered)?.live_type()
+        if crate::compaction::turn_session_membership_in_txn(dbs, txn, covered)? != Some(*session)
+            || crate::vault::live_entity_row_in_txn(dbs, txn, covered)?.live_type()
                 != Some(ENTITY_TYPE_TURN)
             || vault.archive_tombstone_in_txn(txn, covered)?.is_some()
         {

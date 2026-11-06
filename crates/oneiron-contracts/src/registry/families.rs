@@ -36,7 +36,7 @@ pub enum TypeByteFamily {
 
 /// One canonical family allocation range. Overflow ranges reserve capacity,
 /// not a new behavior for the kinds that spill into them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct TypeByteFamilyEntry {
     pub family: TypeByteFamily,
     pub name: &'static str,

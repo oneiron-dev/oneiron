@@ -66,6 +66,27 @@ Oneiron-vault secret-scan mode (`scan-on`/`scan-off`), read from the actual
 vault switch at run time. (Competitor rows serialize it as `secretScan`.) It
 is not a claim about any competitor's own scanner.
 
+## Reader tokenizer slice
+
+For provider wire names that tiktoken 0.12 actually maps, `beam measure`
+budgets the delivered context with that vendored encoding before every
+measured gate: pack L2 admission, item, merged/split, serialized and envelope
+accounting, plus own-trace, chat and the final context clip. The counter is
+`count_ordinary` over raw context text. Unknown wire names (Claude, Gemini
+and friends) stay admitted on the current engine-normalized `o200k` path and
+are explicitly non-reader-measured PART: no guessed encoding, no ratio, no
+refusal, no override read.
+
+Each measured row discloses `context_tokenizer_id` (the counter that actually
+budgeted it), `reader_tokenizer_id` (`None` for the unknown slice),
+`context_tokens` (delivered raw context in the actual counter),
+`engine_normalized_context_tokens` (the same raw context in `o200k`), and
+`context_token_budget` (`None` when the budget was off). Provider framing and
+usage stay in `query_cost`; offline ingest/index accounting stays
+engine-normalized. The context-budget-off leg sets the builder budget to `0`
+and skips the final clip; all other row, field, window and authority limits
+stay on.
+
 ## Data and comparison boundaries
 
 The bundled LongMemEval-S and BEAM tier files are small conformance samples,

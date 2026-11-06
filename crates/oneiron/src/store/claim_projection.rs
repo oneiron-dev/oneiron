@@ -1,11 +1,11 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::write_envelope::claim_body::ClaimBody;
 use crate::scan_check::ScanCount;
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 /// Posting-list row of one claim under its predicate's projection index.
 /// Key: bytes32 (blake3 of predicate) + id16.
@@ -172,19 +172,22 @@ pub(crate) fn remove_claim_projection_index_in_rows(
     Ok(())
 }
 pub(crate) fn maintain_claim_projection_index(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
+    let store = write.store;
     remove_claim_projection_index(store, txn, id)?;
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
-    let world = body.world.unwrap_or_else(crate::write_envelope::claim_body::base_world_id);
+    let world = body
+        .world
+        .unwrap_or_else(crate::write_envelope::claim_body::base_world_id);
     reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
     WORLD_INDEX.put(store, txn, &(world, id), &())?;
-    crate::blob_artifact::record_version_claim(store, txn, body)?;
+    crate::blob_artifact::record_version_claim(write, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)
@@ -351,9 +354,9 @@ pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
     Ok(ids)
 }
 
-use rmpv::Value;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
+use rmpv::Value;
 
 /// Reads the immutable writer identity already stamped by `WriteEnvelope`
 /// into candidate evidence. Missing, duplicate, malformed, or reserved actor

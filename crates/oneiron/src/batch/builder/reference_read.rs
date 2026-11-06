@@ -14,10 +14,10 @@ use crate::Vault;
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{RecordedClaimGateDecision};
-use crate::store::gate_reason::{GateReasonCode};
+use crate::gate::RecordedClaimGateDecision;
 use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::store::gate_reason::GateReasonCode;
 use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
@@ -52,19 +52,54 @@ fn put_targets_admitted(
     txn: &RoTxn<'_>,
     ops: &[BatchOp],
 ) -> Result<bool> {
+    head_targets_admitted(
+        vault,
+        reader,
+        txn,
+        ops.iter().filter_map(|op| match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
+            _ => None,
+        }),
+    )
+}
+
+/// The same target judgment for the actual heads a projector will mutate.
+pub(super) fn head_targets_admitted(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &RoTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<bool> {
     if vault.turn_doors_owner_in(reader, txn)? {
         return Ok(true);
     }
     let mut judged = BTreeSet::new();
-    for op in ops {
-        let (BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. }) = op else {
-            continue;
-        };
-        if judged.insert(*id) && !crate::batch::put_target_admitted_in(reader, txn, id)? {
+    for id in ids {
+        if judged.insert(id) && !crate::batch::put_target_admitted_in(reader, txn, &id)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// Typed references of actual written heads, read after the whole batch stages.
+pub(super) fn projected_head_claims(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    ids: &BTreeSet<EntityId>,
+) -> Result<Vec<GatedClaim>> {
+    ids.iter()
+        .map(|id| {
+            let body = vault
+                .get_claim_in_txn(txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            Ok(GatedClaim {
+                id: *id,
+                body,
+                envelope: None,
+            })
+        })
+        .collect()
 }
 
 /// Every CLAIM body the preflight gates, in op order, derived in `txn` as the

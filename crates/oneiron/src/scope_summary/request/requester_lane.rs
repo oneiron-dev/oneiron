@@ -7,24 +7,30 @@
 //! longer live. A lane that read as its requester's own adds nothing to the
 //! declaration, which stays the one every other door declares. A narrowed
 //! lane must read every source its summary plans, judged in the plan's own
-//! snapshot (FIX 11829): a requester summarizes only what it reads.
+//! snapshot (FIX 11829): a requester summarizes only what it reads. NOTE
+//! planning also rebuilds this lane in the plan's own snapshot (FIX 6322).
 
 use rmpv::Value;
 
 use super::super::codec::invalid;
 use super::super::derivation;
+use super::super::doors::RequesterReadBasis;
 use super::{
     ScopeSummaryPlan, ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget,
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
 use crate::Vault;
-use crate::ports::{ClaimReadStatus};
 use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::error::Result;
+use crate::ports::ClaimReadStatus;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
 
 /// The declaration key a narrowed requester's frozen lane rides under.
 const REQUESTER_LANE_KEY: &str = "requester_lane";
+/// The actual live key's owner-exemption eligibility, not its holder's identity.
+const REQUESTER_OWNER_EXEMPTION_KEY: &str = "requester_owner_exemption";
+/// Whether the actual key uses the relationship-only grant gate.
+const REQUESTER_RELATIONSHIP_GRANTS_KEY: &str = "requester_relationship_grants";
 /// The purpose a NOTE set's summary takes unless its caller names another
 /// (FIX 5757): never a session recap.
 const NOTE_SET_PURPOSE: &str = "note_summary";
@@ -81,6 +87,14 @@ impl Vault {
                 return Err(invalid("summary request must be a map"));
             };
             fields.push((Value::from(REQUESTER_LANE_KEY), frozen));
+            fields.push((
+                Value::from(REQUESTER_OWNER_EXEMPTION_KEY),
+                Value::Boolean(lane.actor_key().facets_owner_exempt_in(self, txn)?),
+            ));
+            fields.push((
+                Value::from(REQUESTER_RELATIONSHIP_GRANTS_KEY),
+                Value::Boolean(lane.actor_key().uses_relationship_grants()),
+            ));
             let input = Value::Map(fields);
             let plan = plan_in_txn(self, txn, &input)?;
             require_sources_in_lane(lane, txn, &plan)?;
@@ -150,7 +164,7 @@ fn lane_value(frozen: &FrozenReadLane) -> Result<Value> {
 }
 
 /// The lane a declaration froze; its requester's own when it froze none.
-fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
+pub(super) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     let Value::Map(fields) = input else {
         return Err(invalid("summary request must be a map"));
     };
@@ -164,4 +178,61 @@ fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid("summary requester lane invalid"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid("summary requester lane invalid"))
+}
+
+/// The actual native base a NOTE declaration's frozen narrowing is met with.
+/// Non-principal declarations require both producer-captured facts; an owner
+/// id alone never restores an exemption a transferred credential did not hold.
+pub(super) fn declared_read_basis(
+    input: &Value,
+    lane: &FrozenReadLane,
+) -> Result<RequesterReadBasis> {
+    if lane.is_principal() {
+        return Ok(RequesterReadBasis::Principal);
+    }
+    let Value::Map(fields) = input else {
+        return Err(invalid("summary request must be a map"));
+    };
+    let flag = |name| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .and_then(|(_, value)| value.as_bool())
+            .ok_or_else(|| invalid("summary requester read basis missing or invalid"))
+    };
+    Ok(RequesterReadBasis::Narrowed {
+        owner_exemption: flag(REQUESTER_OWNER_EXEMPTION_KEY)?,
+        relationship_grants: flag(REQUESTER_RELATIONSHIP_GRANTS_KEY)?,
+    })
+}
+
+/// Preserve the producer's exact narrowing on a NOTE re-declaration. These
+/// are bounds, not new read authority; the native planner checks them again.
+pub(in crate::scope_summary) fn inherit_note_requester_lane(
+    original: &Value,
+    declaration: &mut Value,
+) -> Result<()> {
+    let lane = declared_lane(original)?;
+    if lane.is_principal() {
+        return Ok(());
+    }
+    declared_read_basis(original, &lane)?;
+    let originals = original
+        .as_map()
+        .ok_or_else(|| invalid("summary request must be a map"))?;
+    let Value::Map(fields) = declaration else {
+        return Err(invalid("summary request must be a map"));
+    };
+    for name in [
+        REQUESTER_LANE_KEY,
+        REQUESTER_OWNER_EXEMPTION_KEY,
+        REQUESTER_RELATIONSHIP_GRANTS_KEY,
+    ] {
+        let field = originals
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .ok_or_else(|| invalid("summary requester read basis missing or invalid"))?;
+        fields.push(field.clone());
+    }
+    Ok(())
 }

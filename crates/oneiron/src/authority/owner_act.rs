@@ -179,6 +179,37 @@ fn grant_verb(act: OwnerActKind) -> &'static str {
     }
 }
 
+/// Whether a scope of `kind` with `expires_at` and `member` names `act`
+/// for `agent` at `at` (FIX 4703): the shared member/verb/confers predicate
+/// behind [`grant_names_act`] and the signed-Mint check, over explicit parts
+/// so no dummy Grant is built. Source-equivalent for Grant rows.
+fn scope_names_act(
+    scope: &crate::federation::Scope,
+    kind: crate::federation::FederationGrantKind,
+    expires_at: Option<u64>,
+    member: EntityId,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> bool {
+    AGENT_GRANTABLE_ACTS.contains(&act)
+        && member == agent
+        && crate::federation::FederationGrant::scope_confers_at(scope, kind, expires_at, at)
+        && matches!(
+            &scope.verbs,
+            oneiron_authority::federation::ScopeAxis::Some(verbs) if verbs.contains(grant_verb(act))
+        )
+}
+
+/// Whether `scope` names `world` as the target of its act (FIX 4703): the
+/// shared worlds-axis predicate behind [`grant_names_world`] and the
+/// signed-Mint check.
+fn scope_names_world(scope: &crate::federation::Scope, world: EntityId) -> bool {
+    scope
+        .worlds
+        .contains(&oneiron_authority::federation::ScopeId(world))
+}
+
 /// Policy hook (same CALLS row): whether FederationGrant `grant` names `act`
 /// for `agent` at `at`, as a named action grant does (`policy.change` is the
 /// precedent): its member is the agent, it confers at `at`, and its authority
@@ -191,13 +222,15 @@ fn grant_names_act(
     act: OwnerActKind,
     at: u64,
 ) -> bool {
-    AGENT_GRANTABLE_ACTS.contains(&act)
-        && grant.member_ref == agent
-        && grant.confers_at(at)
-        && matches!(
-            &grant.authority_scope.verbs,
-            oneiron_authority::federation::ScopeAxis::Some(verbs) if verbs.contains(grant_verb(act))
-        )
+    scope_names_act(
+        &grant.authority_scope,
+        grant.kind,
+        grant.expires_at,
+        grant.member_ref,
+        agent,
+        act,
+        at,
+    )
 }
 
 /// Policy hook (CALLS "FIX 4480 agent tighten Grant line", accepted with the
@@ -208,10 +241,57 @@ fn grant_names_act(
 /// tighten only lowers exposure. The verbs axis stays explicit
 /// ([`grant_names_act`]): a grant over every verb still names no act.
 fn grant_names_world(grant: &crate::federation::FederationGrant, world: EntityId) -> bool {
-    grant
-        .authority_scope
-        .worlds
-        .contains(&oneiron_authority::federation::ScopeId(world))
+    scope_names_world(&grant.authority_scope, world)
+}
+
+/// Whether a signed owner-agent Mint's parts name a tighten of `world` for
+/// `agent` at `at` (FIX 4703, main-log WorldPrivacy slice only): the exact
+/// [`grant_names_act`] + [`grant_names_world`] semantics over the Mint's
+/// signed member/scope/expiry/kind, without building a Grant. A `GitPush`
+/// kind never names (G1-PUSH); only `Access` Mints confer.
+pub(super) fn signed_owner_agent_mint_names_world_act(
+    member: EntityId,
+    scope: &crate::federation::Scope,
+    kind: crate::federation::FederationGrantKind,
+    expires_at: Option<u64>,
+    agent: EntityId,
+    world: EntityId,
+    at: u64,
+) -> bool {
+    kind == crate::federation::FederationGrantKind::Access
+        && scope_names_act(
+            scope,
+            kind,
+            expires_at,
+            member,
+            agent,
+            OwnerActKind::WorldPrivacy,
+            at,
+        )
+        && scope_names_world(scope, world)
+}
+
+/// A signed Access Mint naming `topology_seal` for `agent` at the decided
+/// core's time, using the exact live Grant member/verb/confers predicate.
+/// Topology seals have no world-target check.
+pub(super) fn signed_owner_agent_mint_names_topology_act(
+    member: EntityId,
+    scope: &crate::federation::Scope,
+    kind: crate::federation::FederationGrantKind,
+    expires_at: Option<u64>,
+    agent: EntityId,
+    at: u64,
+) -> bool {
+    kind == crate::federation::FederationGrantKind::Access
+        && scope_names_act(
+            scope,
+            kind,
+            expires_at,
+            member,
+            agent,
+            OwnerActKind::TopologySeal,
+            at,
+        )
 }
 
 /// What this replica holds of an agent act's Grant.

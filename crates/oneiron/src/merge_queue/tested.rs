@@ -21,10 +21,10 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
-use crate::store::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire};
 use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::contract_oracle::ContractOracle;
 use crate::store::{
     code_revision_identity::queue_provenance_id,
     code_revision_record::{CodeRevision, CodeTreeInventory},
@@ -244,7 +244,7 @@ impl MergeQueue<'_> {
                 "the checked-init work is gone",
             );
         };
-        let passing = |receipt: &&super::QueueCheckReceipt, phase: CheckPhase| {
+        let passing = |receipt: &&super::StoredQueueCheckReceipt, phase: CheckPhase| {
             let inputs = &receipt.inputs;
             matches!(
                 &inputs.target,
@@ -274,7 +274,7 @@ impl MergeQueue<'_> {
                 "the checked baseline has no passing receipt for both phases",
             );
         };
-        let link = |receipt: &super::QueueCheckReceipt, phase| QueueReceiptLink {
+        let link = |receipt: &super::StoredQueueCheckReceipt, phase| QueueReceiptLink {
             phase,
             mask: 0,
             work_ref: work.work_ref().to_owned(),
