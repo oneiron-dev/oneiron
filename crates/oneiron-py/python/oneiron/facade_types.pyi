@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1270 facade rows, 4607 declarations.
-Inputs: 1200 of 1270 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1102 of 1270 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1271 facade rows, 4608 declarations.
+Inputs: 1201 of 1271 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1103 of 1271 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7341,19 +7341,20 @@ class SharedMemberAddRequest(TypedDict):
     vault_id: str
     member: str
     role: NotRequired[FederationGrantRole | None]
-    holder_key: NotRequired[str | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: str
+    invitation: str
 class InvitationSlip(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
-class SharedMemberInvited(TypedDict):
-    receipt: SharedActExecutionReceipt
-    credential: NotRequired[InvitationSlip | None]
-class InvitationSlipRequest(TypedDict):
+class InvitationCodeRequest(TypedDict):
     vault_id: str
     member: str
     invitation: str
-    holder_key: str
+class InvitationCode(TypedDict):
+    code: str
+    expires_at: int
 class SharedMemberRoleRequest(TypedDict):
     vault_id: str
     member: str
