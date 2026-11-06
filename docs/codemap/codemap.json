@@ -46099,7 +46099,7 @@
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -106534,7 +106534,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BudgetGuard"
@@ -106543,7 +106543,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 17,
+      "fn": 18,
       "struct": 1
      }
     },
@@ -125955,7 +125955,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 13,
       "re-export": 1,
       "struct": 1
