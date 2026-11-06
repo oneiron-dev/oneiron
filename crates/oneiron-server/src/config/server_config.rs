@@ -426,6 +426,9 @@ pub struct ServeConfig {
     /// The `[device_sync]` section: the home this machine dials, absent until
     /// the config file names it. Absent means it dials no one.
     pub device_sync: Option<super::DeviceSyncConfig>,
+    /// Each `[[shared_env]]` entry: one dedicated shared vault environment
+    /// this host keeps open for leave checks and housekeeping (FIX 2051).
+    pub shared_env: Vec<super::SharedEnvConfig>,
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -565,6 +568,7 @@ impl Default for ServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
