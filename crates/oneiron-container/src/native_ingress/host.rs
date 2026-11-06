@@ -2,13 +2,13 @@ use super::{
     bridge,
     io::{self, SocketIo},
 };
-use crate::{EgressRelay, LoopbackConnection};
+use crate::{EgressRelay, HostNetPermit, LoopbackConnection};
 use std::{
     fs::File,
     io::{Read, Write},
     net::SocketAddr,
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::FromRawFd,
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::{Path, PathBuf},
@@ -57,6 +57,11 @@ impl HostEndpoint {
         // creating any socket. The returned end carries its own permit.
         let returned_room = self.relay.host_net_floor().acquire(1, 0)?;
         let bridge_room = self.relay.host_net_floor().acquire(2, 2)?;
+        let buffer_room = self
+            .relay
+            .host_net_floor()
+            .acquire_bytes((2 * super::CHUNK) as u64)?;
+        let bridge_room = HostNetPermit::new((bridge_room, buffer_room));
         let wire = connect_uds(&self.endpoint, &waiting)?;
         let mut channel = SocketIo {
             socket: &wire,
