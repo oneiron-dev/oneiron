@@ -94,6 +94,7 @@ impl Vault {
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
+            .transpose()?
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
@@ -180,12 +181,14 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
+        let mut unlanded_bodies = Vec::new();
         carried_bodies::restore(
             &vault,
             &mut image,
             bodies,
             &mut room,
             (body_custody.as_ref(), &retired),
+            &mut unlanded_bodies,
         )
         .map_err(Rejected::landing)?;
         // A queue row landed from its carried bytes goes unleased, as the
@@ -309,6 +312,11 @@ impl Vault {
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
+            // A NOTE that cites a record this restore did not open, or one
+            // the source erased since the cut, loses that citation and its
+            // quote, history included, as the live erase scrubs it (FIX
+            // 18270). Every row it reads is back by now.
+            crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(cancelled)
@@ -337,6 +345,19 @@ impl Vault {
                 .map_err(Rejected::receipt)?;
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
+        }
+        // The reopened destination now has its actual custody binding.
+        // Journal each released instance there before dropping its mapping.
+        if !unlanded_bodies.is_empty()
+            && matches!(custody, Custody::Keep | Custody::Landed | Custody::Fork(_))
+        {
+            vault.with_write_txn_grouped(|txn| {
+                crate::code_run::retire_unlanded_inline_body_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &unlanded_bodies,
+                )
+            })?;
         }
         // Each pad a row names by reference rests again with the pad its
         // custody holds, or is withheld by its world's setting; any other is
