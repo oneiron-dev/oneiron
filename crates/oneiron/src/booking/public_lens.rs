@@ -123,9 +123,7 @@ pub fn validate_booking_page_model(
     if model.preview != booking_slot_preview(mask) {
         return Err(BookingPageModelError::InvalidPreview);
     }
-    if model.visitor_tz.len() > 64
-        || crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err()
-    {
+    if crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err() {
         return Err(BookingPageModelError::InvalidTimeZone);
     }
     if model.owner_display.trim().is_empty() {
