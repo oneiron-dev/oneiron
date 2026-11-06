@@ -248,8 +248,11 @@ impl FileSpool {
                 bytes,
             }),
             failed => {
-                self.truncate_from(at)?;
-                Err(failed.err().unwrap_or_else(spool_failed))
+                let error = failed.err().unwrap_or_else(spool_failed);
+                if let Err(cleanup_error) = self.truncate_from(at) {
+                    tracing::warn!(error = %cleanup_error, "export staged-body cleanup failed");
+                }
+                Err(error)
             }
         }
     }
