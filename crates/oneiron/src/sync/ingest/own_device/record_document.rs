@@ -28,28 +28,6 @@ use crate::{EntityId, Vault};
 
 use crate::store::window_record_sources::RecordDocumentPair as PairDigest;
 
-impl PairDigest {
-    fn of(
-        raw: &[u8],
-        head: &CarriedRecordDocument,
-        snapshot: &[u8],
-        refinement: Option<&RefinementOriginSource>,
-    ) -> Result<Self> {
-        let refinement = refinement.map(|source| {
-            let mut digest = blake3::Hasher::new();
-            digest.update(&source.revision().0);
-            digest.update(source.raw());
-            *digest.finalize().as_bytes()
-        });
-        Ok(Self {
-            row: *blake3::hash(raw).as_bytes(),
-            head: *blake3::hash(&head.encode()?).as_bytes(),
-            snapshot: *blake3::hash(snapshot).as_bytes(),
-            refinement,
-        })
-    }
-}
-
 struct ImportSpan {
     vault: PathBuf,
     window: String,

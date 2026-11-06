@@ -107,10 +107,13 @@ pub(super) fn restore(
             );
         }
         let rebuilt = super::record_documents::opened::reconstruct_window_opened(
+            &carriers[indexes[0]].window,
             groups,
             opened,
             &mut restored.dropped,
         )?;
+        restored.record_sources.push(rebuilt.sources);
+        let rebuilt = rebuilt.groups;
         if rebuilt.len() != indexes.len() {
             return Err(bad_part());
         }
