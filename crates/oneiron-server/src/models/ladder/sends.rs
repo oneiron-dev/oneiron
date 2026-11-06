@@ -76,7 +76,7 @@ impl OfferLadder {
                 return Ok(Sent::Held);
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-            let warmth = cache_warmth::Sending::of(&rung, &bound);
+            let warmth = cache_warmth::Sending::of(&self.rests, &rung, &bound);
             let sent = gate.generate(bound, permit.lease());
             let Some(answered) = call
                 .deadline
@@ -167,7 +167,7 @@ impl OfferLadder {
         });
         loop {
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-            let warmth = cache_warmth::Sending::of(&rung, &call);
+            let warmth = cache_warmth::Sending::of(&self.rests, &rung, &call);
             let ended = match gate.stream(call, permit.lease()) {
                 Ok(stream) => {
                     let budgets = self.rests.reply_budgets();
