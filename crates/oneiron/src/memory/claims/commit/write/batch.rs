@@ -137,8 +137,20 @@ impl Memory<'_> {
             .iter()
             .map(|write| requested_approval(write.source, write.input.scope.as_ref()))
             .collect();
+        if writes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lane = self
+            .core_write_lane()
+            .map_err(|error| BatchRefusal { index: None, error })?;
         loop {
-            let failure = match self.attempt_claim_batch(row, &mut writes, &rekeyed, &approvals) {
+            let failure = match self.attempt_claim_batch(
+                row,
+                &mut writes,
+                &rekeyed,
+                &approvals,
+                lane.as_ref(),
+            ) {
                 Ok(()) => break,
                 Err(failure) => failure,
             };
@@ -183,6 +195,7 @@ impl Memory<'_> {
         writes: &mut [ClaimWrite<'_>],
         rekeyed: &[bool],
         approvals: &[ClaimApprovalStatus],
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<(), BatchFailure> {
         let mut envelopes = Vec::with_capacity(writes.len());
         for (index, write) in writes.iter().enumerate() {
@@ -201,7 +214,7 @@ impl Memory<'_> {
         let failed_at = Cell::new(None::<usize>);
         let hard_deleted = Cell::new(None::<EntityId>);
         self.vault
-            .try_with_actor_content_write_txn(actor, |content| {
+            .try_with_actor_content_write_txn(actor, lane, |content| {
                 for (index, (write, envelope)) in writes.iter_mut().zip(envelopes).enumerate() {
                     failed_at.set(Some(index));
                     if envelope.actor() != actor {
