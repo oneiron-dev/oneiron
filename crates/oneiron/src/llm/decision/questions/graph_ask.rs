@@ -833,12 +833,28 @@ pub(super) fn unit_images(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionImage>> {
+    unit_images_sourced(lane, context, &mut None)
+}
+
+pub(super) fn unit_images_sourced(
+    lane: &ScopedRead<'_>,
+    context: &GraphUnitContext,
+    source_rows: &mut Option<Vec<EntityId>>,
+) -> Result<Vec<DecisionImage>> {
     let mut images: Vec<DecisionImage> = Vec::new();
     for source in &context.sources {
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
-        let Some((pixels, evidence)) = crate::memory::asset_image_in_lane(lane, source.id)
+        let Some((pixels, evidence)) =
+            crate::memory::asset_image_in_lane_sourced(lane, source.id, &mut |id| match id {
+                Some(id) => {
+                    if let Some(rows) = source_rows.as_mut() {
+                        rows.push(id);
+                    }
+                }
+                None => *source_rows = None,
+            })
             .map_err(|_| Error::CorruptedIndex("graph ask image"))?
         else {
             continue;
@@ -875,12 +891,28 @@ pub(super) fn unit_audio(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionAudio>> {
+    unit_audio_sourced(lane, context, &mut None)
+}
+
+pub(super) fn unit_audio_sourced(
+    lane: &ScopedRead<'_>,
+    context: &GraphUnitContext,
+    source_rows: &mut Option<Vec<EntityId>>,
+) -> Result<Vec<DecisionAudio>> {
     let mut audio: Vec<DecisionAudio> = Vec::new();
     for source in &context.sources {
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
-        let Some((media_type, bytes)) = crate::memory::asset_audio_in_lane(lane, source.id)
+        let Some((media_type, bytes)) =
+            crate::memory::asset_audio_in_lane_sourced(lane, source.id, &mut |id| match id {
+                Some(id) => {
+                    if let Some(rows) = source_rows.as_mut() {
+                        rows.push(id);
+                    }
+                }
+                None => *source_rows = None,
+            })
             .map_err(|_| Error::CorruptedIndex("graph ask audio"))?
         else {
             continue;
@@ -908,7 +940,6 @@ pub(super) fn unit_audio(
     }
     Ok(audio)
 }
-
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed. An abstention that asked the next authorised role (OF-506)

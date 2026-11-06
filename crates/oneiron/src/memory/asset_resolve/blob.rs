@@ -90,6 +90,15 @@ pub(super) fn resolve_asset_blob_in_lane(
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> MemoryResult<Option<(String, Vec<u8>)>> {
+    resolve_asset_blob_in_lane_sourced(vault, txn, body, &mut |_| {})
+}
+
+pub(super) fn resolve_asset_blob_in_lane_sourced(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    body: &[u8],
+    on_read: &mut dyn FnMut(Option<EntityId>),
+) -> MemoryResult<Option<(String, Vec<u8>)>> {
     let Some(blob) = AssetBlobRef::of_body(body) else {
         return Ok(None);
     };
@@ -97,9 +106,10 @@ pub(super) fn resolve_asset_blob_in_lane(
         .port_blob_get(txn, &blob.hash)?
         .filter(|bytes| blob.names(bytes))
         .ok_or_else(|| MemoryError::from(crate::error::Error::CorruptedIndex("asset blob")))?;
+    // BlobStore just read this native content entity in the same transaction.
+    on_read(crate::blob_artifact::blob_artifact_asset_entity_id(&blob.hash).ok());
     Ok(Some((blob.media_type, bytes)))
 }
-
 /// [`resolve_asset_blob_in_lane`] for a reader that holds a store rather
 /// than a lane (the media backfill): `read` reads one stored row's body by
 /// id in the reader's own snapshot. A blob that is absent, or bytes that are
