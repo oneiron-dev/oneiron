@@ -318,6 +318,12 @@ impl Memory<'_> {
         }
         // Its author is the uploader: the fork's authorship entry names a
         // stamp token that resolves here to the authenticated actor.
+        // Its operations edit its text alone: every other part of the NOTE,
+        // its citations and title among them, stands as the parent held it
+        // at the frontier, for a later merge carries the fork into the NOTE.
+        if !same_outside_text(&opening, &basis) {
+            return Ok(Err("NOTE fork changes more than its text"));
+        }
         // Every authorship entry the parent held at the frontier stands
         // unchanged, and the fork adds its own entry alone: a later merge
         // carries the fork's authorship map into the NOTE.
@@ -372,6 +378,21 @@ impl Memory<'_> {
         )?;
         Ok(Ok(()))
     }
+}
+
+/// Whether `fork` holds what `opening` holds in every root container but the
+/// body text and the authorship map: a fork's own edit changes only those.
+fn same_outside_text(opening: &loro::LoroDoc, fork: &loro::LoroDoc) -> bool {
+    let (loro::LoroValue::Map(before), loro::LoroValue::Map(after)) =
+        (opening.get_deep_value(), fork.get_deep_value())
+    else {
+        return false;
+    };
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|key| !matches!(key.as_str(), "body" | "authorship"))
+        .all(|key| before.get(key) == after.get(key))
 }
 
 /// Whether two encoded frontiers name the same frontier.
