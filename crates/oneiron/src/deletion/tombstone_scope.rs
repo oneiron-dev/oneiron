@@ -13,7 +13,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use oneiron_authority::federation::Scope;
 
 #[cfg(feature = "sync")]
@@ -43,12 +43,14 @@ pub(crate) fn capture_deleted_scope_in_txn(
     id: &EntityId,
     request: Option<&[u8; 16]>,
 ) {
-    capture_deleted_scope_for_store_in_txn(&vault.store, txn, id, request);
+    capture_deleted_scope_in_store_txn(&vault.store, txn, id, request);
 }
 
-/// The same capture for a deletion seam that already holds the store.
-pub(crate) fn capture_deleted_scope_for_store_in_txn(
-    store: &crate::store::Store,
+/// [`capture_deleted_scope_in_txn`] for a writer that holds the store alone,
+/// as a Grant's withdrawal does (FIX 11780): the same capture, never failing
+/// the delete it runs in.
+pub(crate) fn capture_deleted_scope_in_store_txn(
+    store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     request: Option<&[u8; 16]>,
@@ -111,7 +113,7 @@ pub(crate) fn deleted_scope_in(
 /// shell), a held row is rebound to `request` whenever `request` is some and
 /// differs from the row's; nothing else changes.
 fn capture_in_txn(
-    store: &crate::store::Store,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     request: Option<&[u8; 16]>,
