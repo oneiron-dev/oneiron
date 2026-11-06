@@ -5,16 +5,26 @@
 //! ([`StartCompaction`]). The start's body carries the capture, so the
 //! start's digest binds it. A continuation seeds its child from that capture
 //! in the writer that puts the child's replay row: each epoch becomes an
-//! alias of the source's row, and the ledger lands again as the child's. It
-//! never reads the source's ledger as it stands later. Nothing is minted,
-//! billed or receipted again. The coverage and fold modules keep their own
-//! codecs and write rules.
+//! alias of the source's row, and the ledger lands again as the child's.
+//! From the source's ledger as it stands then, the seed reads only the
+//! folds' words. Nothing is minted, billed or receipted again. The coverage
+//! and fold modules keep their own codecs and write rules.
 //!
 //! The capture keeps no epoch's digest, so no start body holds a hash of a
 //! summary's words (FIX 928). The seed takes each digest from the source's
 //! own row, which a withdrawal clears, and an alias whose summary is
 //! withdrawn keeps none. A withdrawal then changes no start body and no
 //! start digest that a continuation or its child's frozen seed binds.
+//!
+//! The capture keeps no fold's words either: no summary and no note (FIX
+//! 18694). The start-body codec writes none, so no start body holds a
+//! fold's prose, and an erase of a record a fold came from has nothing there
+//! to retire. This closes FIX 18694 for start bodies. The seed takes each
+//! fold's words from the source's own ledger in the seed's writer
+//! ([`StartCompaction::with_source_words_in_txn`]). An erase of any of the
+//! fold's records takes them from that ledger in the erasing writer, so a
+//! withdrawn fold is inherited with none. No start body is rewritten, so no
+//! start digest changes.
 //!
 //! After a failed step, the copied row holds that step's calls, but the
 //! capture is the earlier start's (FIX 18695). The fold verbs those calls
@@ -36,7 +46,7 @@ use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::support::{expect_map, invalid_code_run_replay, map_get, str_value};
 use crate::code_run::{CodeRunBridgeCall, CodeRunReplayRecord, SelfDispatchOutcome, SelfEffect};
 use crate::compaction::{
-    FoldCompactAsked, FoldLedger, FoldMarked, FoldReply, FoldUnfolded, SelfFoldCall,
+    FoldCompactAsked, FoldLedger, FoldMarked, FoldRecord, FoldReply, FoldUnfolded, SelfFoldCall,
     parse_fold_handle,
 };
 use crate::store::Store;
@@ -50,15 +60,18 @@ pub(crate) struct StartCompaction {
     /// without its digest (FIX 928).
     coverage: Vec<CodeRunCompactionCoverage>,
     /// The run's fold ledger: its handles, `last`, marks, unfolds and
-    /// compact ask as they stood. No fold keeps its receipt here: the run
-    /// that ran it keeps that.
+    /// compact ask as they stood. Each fold keeps its span, sources, byline
+    /// and references, but no words and no receipt ([`captured_fold`], FIX
+    /// 18694). The codec writes none, whatever the ledger holds. A seed
+    /// takes the words from the source's own ledger.
+    #[serde(serialize_with = "serialize_captured_ledger")]
     folds: FoldLedger,
 }
 
 impl StartCompaction {
     /// The compaction of `prefix`'s run as `txn` holds it, kept inside
-    /// `prefix` (FIX 4198). A step start reads it in its own writer. A fold
-    /// that a withdrawn record reached keeps no words, and no epoch keeps
+    /// `prefix` (FIX 4198). A step start reads it in its own writer. No
+    /// fold keeps its words or its receipt (FIX 18694), and no epoch keeps
     /// its digest (FIX 928).
     ///
     /// # Errors
@@ -69,10 +82,7 @@ impl StartCompaction {
         txn: &heed::RoTxn<'_>,
         prefix: &CodeRunReplayRecord,
     ) -> Result<Self> {
-        let mut folds = base_code_run_folds_in_txn(store, txn, prefix.run_id)?;
-        for fold in &mut folds.folds {
-            fold.execution = None;
-        }
+        let folds = captured_ledger(base_code_run_folds_in_txn(store, txn, prefix.run_id)?);
         let coverage = coverage_rows_in_txn(store, txn, prefix.run_id)?
             .into_iter()
             .map(CodeRunCompactionCoverage::without_digest)
@@ -149,23 +159,71 @@ impl StartCompaction {
         }
     }
 
-    /// Whether a captured fold keeps its words (FIX 4198). A start that
-    /// holds one travels in a checkpoint as parts, so its rest names the
-    /// words' owners.
-    pub(crate) fn keeps_words(&self) -> bool {
-        self.folds.folds.iter().any(|fold| fold.summary.is_some())
+    /// This capture with each fold's words as `source`'s own base ledger
+    /// holds them in `txn`, the seed's writer (FIX 4198, FIX 18694). A start
+    /// carries no fold's words. An erase of any record a fold came from
+    /// takes them from that ledger in the erasing writer, and this read
+    /// withholds them once any is withdrawn. So a withdrawn fold comes back
+    /// with none, never with words it had before. `None` when that ledger
+    /// holds no fold of a captured fold's handle.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, a ledger that does not decode, and an invariant
+    /// error for a fold that the ledger holds otherwise than this capture
+    /// but for its words.
+    pub(crate) fn with_source_words_in_txn(
+        mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        source: EntityId,
+    ) -> Result<Option<Self>> {
+        let live = base_code_run_folds_in_txn(&vault.store, txn, source)?;
+        for fold in &mut self.folds.folds {
+            let Some(held) = live.fold(fold.fold) else {
+                return Ok(None);
+            };
+            if captured_fold(held) != captured_fold(fold) {
+                return Err(Error::InvariantViolation(
+                    "an inherited fold is not its source's",
+                ));
+            }
+            fold.summary.clone_from(&held.summary);
+            fold.note.clone_from(&held.note);
+        }
+        Ok(Some(self))
     }
+}
 
-    /// Who owns the words the captured folds keep (FIX 4198): the byline of
-    /// each fold that keeps its words, and every record they came from. The
-    /// start's owner walk names them, so an erase of any reaches its rest.
-    pub(crate) fn word_owners(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.folds
-            .folds
-            .iter()
-            .filter(|fold| fold.summary.is_some())
-            .flat_map(|fold| std::iter::once(fold.actor).chain(fold.sources.iter().copied()))
+/// `fold` as a step start captures it (FIX 4198, FIX 18694): its handle,
+/// span, sources, byline and references, with no words (no summary and no
+/// note) and no receipt. The run that ran the fold keeps its receipt, and
+/// the run's own ledger keeps its words.
+fn captured_fold(fold: &FoldRecord) -> FoldRecord {
+    FoldRecord {
+        summary: None,
+        note: None,
+        execution: None,
+        ..fold.clone()
     }
+}
+
+/// `ledger` with each fold as [`captured_fold`] leaves it (FIX 18694).
+fn captured_ledger(mut ledger: FoldLedger) -> FoldLedger {
+    for fold in &mut ledger.folds {
+        *fold = captured_fold(fold);
+    }
+    ledger
+}
+
+/// The start-body codec of a captured ledger (FIX 18694): each fold
+/// without its words or receipt, whatever `ledger` holds. No start body
+/// then holds a fold's prose.
+fn serialize_captured_ledger<S: serde::Serializer>(
+    ledger: &FoldLedger,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    captured_ledger(ledger.clone()).serialize(serializer)
 }
 
 /// What a continuation's seed inherited of its source's compaction, by id
@@ -213,8 +271,9 @@ impl InheritedCompaction {
 /// 4198). Each epoch becomes an alias that changes only its run, with the
 /// digest the source's own row holds now: none once its summary is
 /// withdrawn (FIX 928). The ledger lands as the child's through the fold
-/// module's own landing. The capture must lie inside `child`'s copied
-/// prefix.
+/// module's own landing, each fold with the words
+/// [`StartCompaction::with_source_words_in_txn`] read in this writer (FIX
+/// 18694). The capture must lie inside `child`'s copied prefix.
 ///
 /// # Errors
 ///

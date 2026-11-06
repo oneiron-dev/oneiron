@@ -86,7 +86,7 @@ pub(super) struct StartIndex {
 
 impl StartIndex {
     /// Every kept start `txn` holds whose prefix holds an ask a checkpoint
-    /// carries apart, or whose captured folds keep words (FIX 4198).
+    /// carries apart.
     fn of(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
         let mut index = Self {
             starts: BTreeMap::new(),

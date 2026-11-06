@@ -61,10 +61,11 @@ impl FrozenSeed {
     /// The frozen state, the prefix row and the compaction a child seeds
     /// from `proved`. The compaction the start captured is proved to the
     /// copied prefix (FIX 4198): after a failed step that is the row the
-    /// failure left, and no later source state takes its place. The child's
-    /// ledger then gives out handles past every one that a copied call's
-    /// fold answer names (FIX 18695). A fold answer that does not decode
-    /// refuses with the storage error.
+    /// failure left, and no later source state takes its place. Its folds
+    /// carry no words: the seed reads those from the source's own ledger
+    /// (FIX 18694). The child's ledger then gives out handles past every
+    /// one that a copied call's fold answer names (FIX 18695). A fold
+    /// answer that does not decode refuses with the storage error.
     fn from_start(
         proved: ProvedStart,
         row: &StoredRunContinuation,
@@ -295,6 +296,12 @@ pub(super) fn create(
         return Err(ContinuationRefusal::NoCheckpoint);
     }
     let (state, mut child, compaction) = FrozenSeed::from_start(proved, &row)?;
+    // FIX 18694: the start carries no fold's words. Each fold takes them
+    // from the source's own ledger in this writer, none once withdrawn. A
+    // captured fold that ledger no longer holds proves no start.
+    let compaction = compaction
+        .with_source_words_in_txn(vault, &txn, row.source_run)?
+        .ok_or(ContinuationRefusal::NoCheckpoint)?;
     let config = state.config(template);
     child.run_id = template.run_id;
     child.live_run = None;

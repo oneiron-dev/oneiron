@@ -7,12 +7,10 @@
 //! each such ask, owed to every target its host resolved for the call. The
 //! image row holds its skeleton, the stub a retired reply leaves, with no
 //! carried ask in it. A step start whose prefix holds such a spawn travels
-//! the same way: its rest, and each ask. So does a start whose captured
-//! folds keep words, its rest alone when its prefix holds no such ask, so
-//! the rest's owners name each record those words came from (FIX 4198).
-//! Erasing one target retires only the asks of the calls it seats, so every
-//! other part stays restorable; two calls that reach one target are two
-//! parts.
+//! the same way: its rest, and each ask. A start's captured folds keep no
+//! words (FIX 18694), so they never make it travel apart. Erasing one target
+//! retires only the asks of the calls it seats, so every other part stays
+//! restorable; two calls that reach one target are two parts.
 //!
 //! A restore recomposes each row or start once, after every part's
 //! disposition is known ([`recompose_replay_record`]). A row or start that
@@ -95,7 +93,7 @@ pub(crate) fn replay_row_parts(value: &[u8]) -> Option<ReplayParts> {
 
 /// [`replay_row_parts`], its encode failures returned.
 fn row_parts(value: &[u8]) -> Result<Option<ReplayParts>> {
-    let Some(mut record) = canonical_record(value, false) else {
+    let Some(mut record) = canonical_record(value) else {
         return Ok(None);
     };
     let mut requests = take_asks(&mut record)?;
@@ -120,9 +118,8 @@ fn row_parts(value: &[u8]) -> Result<Option<ReplayParts>> {
 /// FIX 9180 (coord-b slice d): the parts a checkpoint carries of the step
 /// start body `bytes`: its rest, the body with each carried ask of its
 /// prefix taken out, and each such ask. `None` for a start whose prefix
-/// holds none and whose captured folds keep no words (FIX 4198), and for
-/// one that does not decode, does not encode again to its exact bytes, or
-/// whose parts do not encode.
+/// holds none, and for one that does not decode, does not encode again to
+/// its exact bytes, or whose parts do not encode.
 pub(crate) fn step_start_parts(bytes: &[u8]) -> Option<ReplayParts> {
     start_parts(bytes).unwrap_or_else(|error| {
         tracing::warn!(
@@ -138,7 +135,7 @@ fn start_parts(bytes: &[u8]) -> Result<Option<ReplayParts>> {
     let Ok(mut body) = rmp_serde::from_slice::<StepStartBody>(bytes) else {
         return Ok(None);
     };
-    let Some(mut record) = canonical_record(&body.record, body.compaction.keeps_words()) else {
+    let Some(mut record) = canonical_record(&body.record) else {
         return Ok(None);
     };
     if encode_start(&body).ok().as_deref() != Some(bytes) {
@@ -154,17 +151,16 @@ fn start_parts(bytes: &[u8]) -> Result<Option<ReplayParts>> {
 }
 
 /// The record `bytes` encode, when one of its calls holds an ask a
-/// checkpoint carries apart, or its start travels apart (`apart`, FIX
-/// 4198), and it encodes again to exactly `bytes` (CALLS "replay parts need
-/// canonical bytes"): only such a record recomposes to its own bytes when
-/// every part is live; any other travels whole, as before.
-fn canonical_record(bytes: &[u8], apart: bool) -> Option<CodeRunReplayRecord> {
+/// checkpoint carries apart and it encodes again to exactly `bytes` (CALLS
+/// "replay parts need canonical bytes"): only such a record recomposes to
+/// its own bytes when every part is live; any other travels whole, as
+/// before.
+fn canonical_record(bytes: &[u8]) -> Option<CodeRunReplayRecord> {
     let record = decode_code_run_replay_record(bytes).ok()?;
-    if !apart
-        && !record
-            .bridge_calls
-            .iter()
-            .any(|call| spawn_ask_part(call).is_some())
+    if !record
+        .bridge_calls
+        .iter()
+        .any(|call| spawn_ask_part(call).is_some())
     {
         return None;
     }
