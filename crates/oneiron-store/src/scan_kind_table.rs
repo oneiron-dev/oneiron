@@ -444,7 +444,7 @@ impl EngineScan {
             Self::ReceiptSourceRows => 153,
             Self::SyncPrefixRows => 154,
             Self::DependentWalkRows => 155,
-            Self::MachineTransitionFrontier => 156,
+            Self::MachineTransitionFrontier => 247,
         }]
     }
 }
