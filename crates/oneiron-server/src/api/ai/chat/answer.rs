@@ -209,7 +209,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     let ai = ai.clone();
     let landed = (Arc::clone(&vault), agent);
     let turn = ai.enter_turn();
-    let message = handle.message_id();
+    let message = handle.recorded_message_id();
     let producer = Producer {
         bus,
         stream,
@@ -285,16 +285,20 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 },
             );
         }
-        let example = reply_example(
-            &answered,
-            &ReplyEnd {
-                message,
-                result: &result,
-                saved: saved.as_ref(),
-                fell_back,
-            },
-            example_call,
-        );
+        let example = message
+            .or_else(|| saved.as_ref().map(|receipt| receipt.message_id))
+            .and_then(|message| {
+                reply_example(
+                    &answered,
+                    &ReplyEnd {
+                        message,
+                        result: &result,
+                        saved: saved.as_ref(),
+                        fell_back,
+                    },
+                    example_call,
+                )
+            });
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
