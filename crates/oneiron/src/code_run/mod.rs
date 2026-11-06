@@ -153,7 +153,7 @@ pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
     erase_settled_reply_of_erased_run_in_txn, redact_fold_answers, replay_carriage, replay_owners,
     response_erased_error, retire_actor_responses_in_txn, retire_fold_answers_in_txn,
-    retire_sourced_code_outputs_in_txn, wait_reply_in_txn,
+    retire_sourced_code_outputs_in_txn, soft_delete_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
