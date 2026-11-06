@@ -326,6 +326,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        body.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
 
         // F5 newest-wins (ONE-1892): the ACTIVE verdict for a

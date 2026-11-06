@@ -4,6 +4,7 @@
 
 use oneiron::llm::{WorkClass, WorkContext};
 
+use super::drafter_example::{ReplyCall, ReplyEnd, keep_reply_example, reply_example};
 use super::{
     AgentWakeSignals, AiHandle, Answer, AnswerOpen, AnswerOutcome, AnswerRefused, Answering, Arc,
     AssistantMessage, BTreeMap, BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose,
@@ -59,6 +60,14 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         craft,
         assertions,
     } = answer;
+    // FIX 15128: who asked and what the captured call was read from, for
+    // the reply's drafter example.
+    let example_call = ReplyCall {
+        agent,
+        requester: model_call_caller,
+        sources: sources.clone(),
+        today_sources: today_sources.clone(),
+    };
     // The exact request the reply's craft rides in, read before it is sent.
     let craft = craft.and_then(|entries| {
         let digest = admitted.request.canonical_hash_hex().ok()?;
@@ -121,6 +130,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         model_call_room,
         model_call_no_record_at_arrival,
     );
+    let answered = model_call.answered();
     let started = vault
         .policy_budget_guard(
             format!("chat:{}", handle.message_id().to_hex()),
@@ -185,6 +195,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     let ai = ai.clone();
     let landed = (Arc::clone(&vault), agent);
     let turn = ai.enter_turn();
+    let message = handle.message_id();
     let producer = Producer {
         bus,
         stream,
@@ -240,12 +251,26 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 },
             );
         }
+        let example = reply_example(
+            &answered,
+            &ReplyEnd {
+                message,
+                result: &result,
+                saved: saved.as_ref(),
+                fell_back,
+            },
+            example_call,
+        );
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
             text,
             fell_back,
         });
+        // FIX 15128: the drafter's example, once the outcome is handed on.
+        if let Some(example) = example {
+            keep_reply_example(&landed.0, example);
+        }
     });
     Ok(Answering {
         handle,

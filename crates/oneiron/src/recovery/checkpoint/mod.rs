@@ -78,9 +78,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
-    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
-    BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup, last_backed_up,
-    verify_with_pins,
+    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSelection,
+    BackupSnapshotReceipt, BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup,
+    last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -335,6 +335,7 @@ impl Vault {
             created_at,
             None,
             ArtifactKind::Checkpoint,
+            BackupSelection::WholeVault,
             None,
             &write_budget::Unfloored,
         )
@@ -360,6 +361,7 @@ impl Vault {
             created_at,
             Some(owner),
             ArtifactKind::Checkpoint,
+            BackupSelection::WholeVault,
             None,
             &write_budget::Unfloored,
         )
@@ -399,10 +401,32 @@ impl Vault {
             created_at,
             owner,
             ArtifactKind::Backup,
+            BackupSelection::WholeVault,
             registry,
             budget,
         )
     }
+    /// Takes an automatic backup, distinct from an explicit whole-vault request.
+    /// Its receipt and watermark retain the automatic selection even when no rows
+    /// were omitted. Unknown world associations keep their existing placement.
+    pub fn snapshot_automatic_backup_within(
+        &self,
+        path: &Path,
+        created_at: u64,
+        registry: Option<&str>,
+        budget: &dyn RecoveryWriteBudget,
+    ) -> Result<BackupSnapshotReceipt> {
+        self.snapshot_checkpoint_checked(
+            path,
+            created_at,
+            None,
+            ArtifactKind::Backup,
+            BackupSelection::Automatic,
+            registry,
+            budget,
+        )
+    }
+
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
     /// Model-dependent vectors enter the normal pending-embedding queue; no vector
     /// from another owner or old model can be served while that queue is rebuilt.

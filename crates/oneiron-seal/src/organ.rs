@@ -548,7 +548,8 @@ fn inspect(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError>
     let asker = call.asker();
     let (operation, ledger) = pdf_work_operation(asker.clone())?;
     let mut limits = work_limits(&asker, &operation.observed, &ledger);
-    limits.stream_decode_bytes = Some(usize::try_from(args.stream_decode_bytes).unwrap_or(usize::MAX));
+    limits.stream_decode_bytes =
+        Some(usize::try_from(args.stream_decode_bytes).unwrap_or(usize::MAX));
     let failed = |err: SealError| -> Result<Answer, OrganError> {
         let failure = InspectReply::Failed(Failure::of(err, Some(pdf), &memory)?);
         report(&failure, &operation.observed, &memory)
