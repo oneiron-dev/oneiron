@@ -25,6 +25,10 @@ struct Start {
     tmpfs_mib: u32,
     reconnect_ms: u64,
     bridge_token: String,
+    uid: u32,
+    gid: u32,
+    mounts_bytes: u64,
+    mounts_digest: [u8; 32],
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -44,6 +48,8 @@ pub(crate) fn run() -> Result<()> {
         || start.pids == 0
         || start.tmpfs_mib == 0
         || start.reconnect_ms == 0
+        || start.uid == 0
+        || start.gid == 0
     {
         return Err(Error::Protocol("native session bounds"));
     }
@@ -68,6 +74,7 @@ pub(crate) fn run() -> Result<()> {
     }
     super::boot::prepare_pids(start.pids)?;
     let control = connect_control(&start.bridge_token)?;
+    super::native_mounts::prepare(&mut channel, start.mounts_bytes, start.mounts_digest)?;
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::Path::new("/run/oneiron-native");
     std::fs::create_dir(directory)?;
@@ -93,7 +100,7 @@ pub(crate) fn run() -> Result<()> {
     // SAFETY: pre_exec only applies the existing syscall-only privilege drop.
     unsafe {
         command.pre_exec(move || {
-            super::boot::restrict_native_child(start.pids, start.tmpfs_mib)
+            super::boot::restrict_native_child(start.pids, start.tmpfs_mib, start.uid, start.gid)
                 .map_err(std::io::Error::other)
         });
     }
