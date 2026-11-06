@@ -22,7 +22,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::{TimeRange, Vault};
 
-use super::machine_standing::{InstallCounted, Standing};
+use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::*;
 
 /// The record would name more rows than one authority entry may: the log's
@@ -37,9 +37,12 @@ const NOT_COUNTED: &str =
 /// The `MembershipExecution` transition, after the shape, signature,
 /// retired, sequence-floor, parent-merge and vault checks and before any
 /// roster check: its signer is a machine's install key, never a roster key
-/// (FIX 2222), and some chain of the machine must name the key. It
-/// withdraws every slip minted under each Grant the record names, in
-/// `state.slips`, one merged in later included.
+/// (FIX 2222), and some chain of the machine must name the key. While
+/// that machine is a live carrier at the record's parents, under the one
+/// carrier rule in the roster view, it withdraws every slip minted under
+/// each Grant the record names, in `state.slips`, one merged in later
+/// included; a record a removed machine signed counts and withdraws
+/// nothing.
 pub(super) fn apply_membership_execution(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -54,16 +57,30 @@ pub(super) fn apply_membership_execution(
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
-    let named = Standing::new(state, pin, counted).names_key(record.machine, key);
-    if !named || state.roster.contains_key(signer) {
+    let standing = Standing::new(state, pin, counted);
+    if !standing.names_key(record.machine, key) || state.roster.contains_key(signer) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
+    // The withdrawals land only while the carrier is live at the record's
+    // causal parents under the one carrier rule, judged pin-free in the
+    // roster view so every replica agrees: a machine removed before it
+    // signed (its key still named by the Removed chain) withdraws nothing.
+    // The executing person's standing is never judged again.
+    let admitted = standing.admits_owner_act_signer(
+        record.machine,
+        key,
+        StandingView::Under(MachineAdmitter::Roster),
+    );
+    drop(standing);
     if state
         .seqs
         .get(signer)
         .is_some_and(|prior| entry.seq <= *prior)
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
+    if !admitted {
+        return Ok(());
     }
     for grant in &record.withdrawn_grants {
         state.slips.revoke_grant(grant.to_hex());
@@ -102,6 +119,8 @@ impl Vault {
         };
         let record = record(machine);
         record.validate()?;
+        // The writer clears its intent only once these withdrawals land.
+        let withdrawn_grants = record.withdrawn_grants.clone();
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(machine, &key);
         let fold = self
@@ -129,8 +148,10 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
+        let withdrawn = |grant: &EntityId| after.slips.revoked_grants.contains(&grant.to_hex());
         if !after.valid_entries.contains(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
+            || !withdrawn_grants.iter().all(withdrawn)
         {
             return Err(authority_refused(NOT_COUNTED));
         }
