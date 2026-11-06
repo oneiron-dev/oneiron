@@ -33,7 +33,7 @@ use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
 pub(crate) use self::admit::{put_staged_capsule, refresh_staged_request, store_fork_response};
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
-pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
+pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
 pub(super) use self::erase::{capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor};
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
