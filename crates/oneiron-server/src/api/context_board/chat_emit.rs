@@ -160,8 +160,13 @@ pub(super) fn capture_chat_context(
 /// shows as an index-only handle. `None` when a row is in no section, or in
 /// more than one.
 fn settled_memories(memories: &MemoriesSection, render: &BoardRender) -> Option<MemoriesSection> {
-    let mut settled = memories.clone();
-    settled.rows.clear();
+    let mut settled = MemoriesSection {
+        version: memories.version.clone(),
+        budget: memories.budget,
+        rows: Vec::new(),
+        companion: memories.companion.clone(),
+        disclosure: memories.disclosure.clone(),
+    };
     let mut matched = 0;
     for foreign_pass in [false, true] {
         for section in &render.shed.sections {
