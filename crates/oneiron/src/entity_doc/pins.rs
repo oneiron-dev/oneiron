@@ -634,10 +634,12 @@ impl Vault {
 /// What a pin that differs from `prior`, the one held here, does where the
 /// two are twins and one is of the history a canonical restore's successor
 /// replaced here (FIX 3464): a copy of the replaced history is held, as its
-/// twin on the successor is here, and an erase it carries reaches that twin;
-/// the successor's twin, which quotes this vault's document, takes the
-/// replaced one's place, keeping an erase the replaced one carried. Any
-/// other stands as a conflict.
+/// twin on the successor is here; the successor's twin, which quotes this
+/// vault's document, takes the replaced one's place, keeping an erase the
+/// replaced one carried; and two bindings in the successor that read the
+/// same span of the same version text are one pin, the one held here
+/// standing. An erase a held copy or twin carries reaches the pin held
+/// here. Any other stands as a conflict.
 #[cfg(feature = "sync")]
 fn superseded_twin_in_txn(
     vault: &Vault,
@@ -653,14 +655,24 @@ fn superseded_twin_in_txn(
     if !prior.twin_of(pin) {
         return Ok(PinMerge::Conflict);
     }
-    match (prior.within(&replaced), pin.within(&replaced)) {
-        (false, true) if pin.actor == DocActor::Erased && prior.actor != DocActor::Erased => {
+    let held = match (prior.within(&replaced), pin.within(&replaced)) {
+        (false, true) => true,
+        (false, false) => {
+            let bound = bound_in(vault, txn, message, prior);
+            bound.is_some() && bound == bound_in(vault, txn, message, pin)
+        }
+        _ => false,
+    };
+    if held {
+        if pin.actor == DocActor::Erased && prior.actor != DocActor::Erased {
             let mut erased = prior.clone();
             erased.actor = DocActor::Erased;
             ENTITY_DOC_PIN.put(&vault.store, txn, key, &erased)?;
-            Ok(PinMerge::Written)
+            return Ok(PinMerge::Written);
         }
-        (false, true) => Ok(PinMerge::Held),
+        return Ok(PinMerge::Held);
+    }
+    match (prior.within(&replaced), pin.within(&replaced)) {
         (true, false) if quotes_document(vault, txn, message, pin) => {
             let mut twin = pin.clone();
             if prior.actor == DocActor::Erased {
@@ -671,6 +683,28 @@ fn superseded_twin_in_txn(
         }
         _ => Ok(PinMerge::Conflict),
     }
+}
+
+/// The span `pin` reads in `entity`'s document as this vault holds it and the
+/// text of the version it quotes, where that span reads its quote (FIX
+/// 3464); `None` where it does not resolve.
+#[cfg(feature = "sync")]
+fn bound_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    pin: &CitationPin,
+) -> Option<(usize, usize, String)> {
+    let bound = || -> Result<Option<(usize, usize, String)>> {
+        let h = storage::head(&vault.store, txn, entity)?;
+        let doc = storage::load(&vault.store, txn, &h)?;
+        let origin = doc.fork(&pin.anchor.frontier)?;
+        let (start, end) = super::verbs::resolve(&origin, *entity, &pin.anchor)?;
+        let text = origin.text();
+        let quote: String = text.chars().skip(start).take(end - start).collect();
+        Ok((quote == pin.anchor.quote).then_some((start, end, text)))
+    };
+    bound().ok().flatten()
 }
 
 /// Whether `pin` quotes `entity`'s document as this vault holds it: the
