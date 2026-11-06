@@ -55,7 +55,7 @@ impl ShadowBridgeHost<'_> {
 
     /// Binds `name` to the result `handle` at its occurrence `path`; a
     /// rebind replaces the name's entry in place.
-    fn bind(&mut self, name: String, handle: String, path: String) {
+    pub(super) fn bind(&mut self, name: String, handle: String, path: String) {
         let binding = CodeRunResultBinding::new(name, handle, path);
         match self.bound.iter_mut().find(|held| held.name == binding.name) {
             Some(held) => *held = binding,
