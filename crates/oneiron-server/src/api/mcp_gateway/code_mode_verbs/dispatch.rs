@@ -369,10 +369,9 @@ pub(super) fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, Ag
         // (FIX 3194).
         (None, Some(retry_after)) => Err(oneiron::Error::ProviderUnavailable { retry_after }),
         (None, None) => Ok(Err(AgentVerbRefusal {
-            hook_notice: error
-                .hook_notice
-                .as_ref()
-                .map(|_| serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)),
+            hook_notice: error.hook_notice.as_ref().map(|_| {
+                serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)
+            }),
             code: error.kind.to_owned(),
         })),
     }
