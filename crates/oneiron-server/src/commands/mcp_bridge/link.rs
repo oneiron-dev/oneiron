@@ -40,6 +40,7 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::bridge_auth::UpgradeHeaders;
 use super::reply_body::ReplyBody;
+use super::request_id::RequestId;
 use crate::cli::{McpSurface, McpTransport};
 use oneiron_vault_contract::BINDING_HEADER;
 
@@ -156,9 +157,10 @@ impl Link {
         credential: &Credential<'_>,
         mut body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Cut> {
         if let Some(socket) = &self.socket {
-            match socket.exchange(surface, credential, body, bounds) {
+            match socket.exchange(surface, credential, body, bounds, request_id.as_deref_mut()) {
                 Ok(exchange) => return Ok(exchange),
                 Err(Carried::Cut(cut)) => return Err(cut),
                 // Nothing reached the server: this request goes over HTTP.
@@ -173,8 +175,14 @@ impl Link {
             ));
         };
         let binding = sign().map_err(Cut::Failed)?;
-        self.http
-            .post(&self.endpoint(surface), bearer, &binding, body, bounds)
+        self.http.post(
+            &self.endpoint(surface),
+            bearer,
+            &binding,
+            body,
+            bounds,
+            request_id,
+        )
     }
 }
 
@@ -205,6 +213,7 @@ impl HttpLink {
         binding: &str,
         body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Cut> {
         let request = self
             .client
@@ -241,6 +250,9 @@ impl HttpLink {
             let mut received = 0usize;
             loop {
                 let stalls_at = tokio::time::Instant::now() + bounds.idle;
+                if let Some(request_id) = request_id.take() {
+                    request_id.release();
+                }
                 match timeout_at(stalls_at.min(deadline), response.chunk()).await {
                     Err(_) if stalls_at < deadline => return Err(Cut::Idle),
                     Err(_) => return Err(Cut::Deadline),
@@ -392,6 +404,7 @@ impl SocketLink {
         credential: &Credential<'_>,
         mut body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Carried> {
         // The owner has no other carrier: what a slip sends over HTTP fails.
         let owner = matches!(credential, Credential::Owner { .. });
@@ -449,7 +462,12 @@ impl SocketLink {
                         return Err(Carried::Cut(Cut::Idle));
                     }
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
-                    Ok(Some(Inbound::Sent)) => drop(std::mem::take(&mut body)),
+                    Ok(Some(Inbound::Sent)) => {
+                        drop(std::mem::take(&mut body));
+                        if let Some(request_id) = request_id.take() {
+                            request_id.release();
+                        }
+                    }
                     Ok(Some(Inbound::Unsent)) => {
                         return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
                     }
