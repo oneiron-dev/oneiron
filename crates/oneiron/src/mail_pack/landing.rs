@@ -384,6 +384,7 @@ impl<'v> Landing<'v> {
                 searched,
                 attachments: Vec::new(),
                 reply: None,
+                listed_in: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
