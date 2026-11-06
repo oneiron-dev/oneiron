@@ -30,8 +30,13 @@ enum Restriction {
     /// A verified `SlipGrantRevoke`: the Grant, in hex as a slip's claims
     /// name it, whose every slip is withdrawn.
     SlipGrantRevoke(String),
-    /// A verified `SlipConsume`: every id its proven branch had burnt, the
-    /// single-use ancestors it spent among them.
+    /// A verified membership execution record (FIX 12335): each Grant it
+    /// names, in hex as a slip's claims name it, whose every slip is
+    /// withdrawn.
+    GrantsWithdrawn(BTreeSet<String>),
+    /// A verified `SlipConsume` or `RemovalArchiveConsume`: every id its
+    /// proven branch had burnt, the single-use ancestors a `SlipConsume`
+    /// spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
     /// A verified machine removal: the removing admitter's chain on the
     /// removal's own branch, whose head is the terminal revision. Only the
@@ -72,6 +77,11 @@ impl RevokeFacts {
                 Restriction::SlipGrantRevoke(grant_ref) => {
                     state.slips.revoke_grant(grant_ref.clone());
                 }
+                Restriction::GrantsWithdrawn(grants) => {
+                    for grant in grants {
+                        state.slips.revoke_grant(grant.clone());
+                    }
+                }
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
@@ -93,7 +103,8 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
         AuthorityOp::RevokeActor { .. }
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SlipGrantRevoke { .. } => true,
+        | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. } => true,
         op => removes_machine(op),
     }
 }
@@ -212,7 +223,8 @@ pub(super) fn derive_revoke_facts(
 impl RevokeFacts {
     /// Adds the slip withdrawals and burns the projection dropped. Selecting
     /// one of two colliding confirmations removes the loser and every entry
-    /// after it, a `SlipRevoke` or `SlipConsume` among them, and a revoked or
+    /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
+    /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
     /// its restriction through the ordinary fold; each dropped one is proved
     /// on its own signed branch, as an actor revocation is.
@@ -232,7 +244,18 @@ impl RevokeFacts {
                 AuthorityOp::SlipGrantRevoke { grant_ref } => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
-                AuthorityOp::SlipConsume { .. } => Restriction::SlipBurn(BTreeSet::new()),
+                AuthorityOp::MembershipExecution(record) if !record.withdrawn_grants.is_empty() => {
+                    Restriction::GrantsWithdrawn(
+                        record
+                            .withdrawn_grants
+                            .iter()
+                            .map(EntityId::to_hex)
+                            .collect(),
+                    )
+                }
+                AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
+                    Restriction::SlipBurn(BTreeSet::new())
+                }
                 _ => continue,
             };
             let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
