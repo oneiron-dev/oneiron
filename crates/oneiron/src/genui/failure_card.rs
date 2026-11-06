@@ -123,7 +123,7 @@ pub struct SurfacedFailureCardInput {
 /// noncanonical refs or mismatched agent/pre-fail checkpoint bindings.
 pub fn surfaced_failure_card(
     vault: &Vault,
-    input: SurfacedFailureCardInput,
+    mut input: SurfacedFailureCardInput,
 ) -> Result<SurfacedFailureCard> {
     if matches!(
         input.failure_class,
@@ -172,6 +172,17 @@ pub fn surfaced_failure_card(
             input.pre_fail_checkpoint_ref,
             route,
         )?;
+    } else if input.diagnosis == FailureDiagnosisState::NotRun
+        && let Some(route) = super::failure_card_coach::diagnosed_route(vault, &input)
+        && require_diagnosed_route(
+            vault,
+            input.failing_attempt_id,
+            input.pre_fail_checkpoint_ref,
+            &route,
+        )
+        .is_ok()
+    {
+        input.diagnosis = FailureDiagnosisState::Diagnosed(route);
     }
     let diagram = mark_run_tree_failure(input.tree, input.failing_attempt_id)?;
     let qa = validated_qa_feed(vault, input.qa)?;
