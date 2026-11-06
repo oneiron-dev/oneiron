@@ -403,20 +403,41 @@ pub(crate) fn resolved_machine_history_from(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<ClaimTransitionProjection> {
+    resolved_machine_history_with_sources_from(rows, store, txn, fold, target)
+        .map(|(projection, _)| projection)
+}
+
+/// The same resolved history beside the carrier entities it actually read.
+pub(crate) fn resolved_machine_history_with_sources(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
+    resolved_machine_history_with_sources_from(&StoreRows, store, txn, fold, target)
+}
+
+fn resolved_machine_history_with_sources_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
     let (projection, carriers) = machine_history(rows, store, txn, fold, target)?;
     // A carrier awaiting its owner's answer leaves the history incomplete, as
     // one that has not arrived does: no approval projects from it yet.
-    for id in carriers {
+    for id in &carriers {
         if !crate::gate::claim_consolidation_eligible_in_txn(
             store,
             txn,
-            &id,
+            id,
             crate::gate::ConsolidationReader::MachineHistory,
         )? {
             return Err(missing());
         }
     }
-    Ok(projection)
+    Ok((projection, carriers))
 }
 
 /// The history a restrictive transition stages on: every carrier, held or

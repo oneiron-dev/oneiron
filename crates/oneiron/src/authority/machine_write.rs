@@ -294,6 +294,15 @@ fn proof(body: &ClaimBody) -> Result<Option<(EntityId, u64, Option<MachineWriteS
 /// Whether any asserted author resolves to a stored MACHINE row. Scan all
 /// occurrences before strict parsing so duplicate actor fields cannot hide it.
 fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)]) -> Result<bool> {
+    names_machine_observing(store, txn, entries, |_| {})
+}
+
+fn names_machine_observing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entries: &[(Value, Value)],
+    mut observe: impl FnMut(EntityId),
+) -> Result<bool> {
     for (_, value) in entries
         .iter()
         .filter(|(key, _)| key.as_str() == Some("actor_entity_ref"))
@@ -302,6 +311,7 @@ fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)
             && let Ok(raw_id) = bytes.as_slice().try_into()
             && let Ok(actor_id) = EntityId::from_bytes(raw_id)
             && EntityStoreRead::port_entity_with_raw(store, txn, &actor_id, |raw| {
+                observe(actor_id);
                 Ok(EntityMetadataHeader::parse(raw)
                     .is_some_and(|header| header.entity_type == ENTITY_TYPE_MACHINE))
             })?
@@ -318,6 +328,16 @@ pub(crate) fn machine_claim_needs_history(
     txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {
+    machine_claim_needs_history_observing(store, txn, body, |_| {})
+}
+
+/// The same check, naming each actor entity whose stored bytes it consults.
+pub(crate) fn machine_claim_needs_history_observing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+    observe: impl FnMut(EntityId),
+) -> Result<bool> {
     if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
         return Ok(false);
     }
@@ -330,7 +350,7 @@ pub(crate) fn machine_claim_needs_history(
     {
         return Ok(true);
     }
-    names_machine(store, txn, entries)
+    names_machine_observing(store, txn, entries, observe)
 }
 
 /// Read-time machine identity is derived from the CURRENT entity kind and
