@@ -3,7 +3,7 @@
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
 use super::*;
-use crate::code_run::{ResultOccurrence, unmarked_secret};
+use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
@@ -325,6 +325,11 @@ impl RecordingJsHost<'_, '_> {
         if found.child_source && !self.gated_write.reader_job_live()? {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
+        // A scoped child's read of its own result or a finding stops at its
+        // live cutoff too, and the read made carries it (FIX 8233).
+        if self.live_cutoff_reached() {
+            return Ok(Err(result_refusal(READER_TASK_SETTLED)));
+        }
         let rows = match found.rows.clone() {
             None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
@@ -359,7 +364,7 @@ impl RecordingJsHost<'_, '_> {
             range,
             foreign,
         )?
-        .map(|read| (read, rows)))
+        .map(|read| (read.with_live_cutoff(self.live_cutoff()), rows)))
     }
 
     /// What `reference` names for a read by this run: its own result first,
@@ -454,7 +459,13 @@ impl RecordingJsHost<'_, '_> {
         ))?;
         Ok(match self.checked_result(target)? {
             Ok(read) => {
-                let mut card = read.card(storage)?;
+                // A card its live cutoff cut answers `reader_task_settled`,
+                // whatever the cut left (FIX 8233).
+                let card = read.card(storage);
+                if self.live_cutoff_reached() {
+                    return Ok(result_refusal(READER_TASK_SETTLED));
+                }
+                let mut card = card?;
                 // A whole fold result's card says what the fold covered, as
                 // its store's did: this step's receipt, or its committed one.
                 if read.range().is_none() {
@@ -558,7 +569,13 @@ impl RecordingJsHost<'_, '_> {
             ResultFacet::Query => Some(storage.code_run_output_sink()?),
             _ => None,
         };
-        Ok(match read.read(storage, facet, input, sink.as_mut())? {
+        // A read its live cutoff cut answers `reader_task_settled`, whatever
+        // the cut left; a cut selection is never published (FIX 8233).
+        let reply = read.read(storage, facet, input, sink.as_mut());
+        if self.live_cutoff_reached() {
+            return Ok(result_refusal(READER_TASK_SETTLED));
+        }
+        Ok(match reply? {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
@@ -636,6 +653,9 @@ impl RecordingJsHost<'_, '_> {
                 "stored result read refused: tainted".into(),
             ));
         }
+        // A scoped child reads the chunk only before its live cutoff,
+        // checked again before the chunk is released (FIX 8233).
+        self.check_live_cutoff("stored result")?;
         let bytes = storage
             .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
             .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
@@ -647,6 +667,7 @@ impl RecordingJsHost<'_, '_> {
                 "stored result read refused: {reason}"
             )));
         }
+        self.check_live_cutoff("stored result")?;
         Ok(Some(bytes))
     }
 
