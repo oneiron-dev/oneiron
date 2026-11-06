@@ -23,13 +23,18 @@ raises ``ENGINE_UNAVAILABLE`` from :meth:`EmbeddedEngine.start`.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+from typing import TYPE_CHECKING
 
 from . import Oneiron, OneironError, _translate
 from . import _native
+
+if TYPE_CHECKING:
+    from .shared_env import SharedAcceptance, SharedEnvBootstrapOutcome
 
 __all__ = ["EmbeddedEngine", "EngineConnection", "EngineReply", "EngineRequest"]
 
@@ -200,6 +205,39 @@ class EmbeddedEngine:
     def close(self) -> None:
         """Stops the engine in order; its handles refuse ``ENGINE_CLOSED`` after."""
         _translate(self._engine.close)
+
+    def bootstrap_shared_env(
+        self,
+        acceptance: "SharedAcceptance",
+        entry: dict[str, Any],
+        *,
+        dimensions: int | None = None,
+        config_file: str | os.PathLike[str] | None = None,
+    ) -> "SharedEnvBootstrapOutcome":
+        """Imports the original acceptance into ``entry["path"]`` and opens that same target in this engine's current shared-env registry.
+
+        ``entry`` is the explicit shared-env entry as the native ``SharedEnvConfig`` reads it:
+        ``{"path", "vault_id", "member", "home_url", "credential_file"}``,
+        with ``vault_id`` as a JSON number (native ``u64``), not the decimal-string
+        invitation ``vault_id``. The target config resolves as :meth:`start` does,
+        never from the personal vault. The credential file must already hold the
+        accepting invitee's key.
+
+        Outer setup and task failures raise here. Once import answers, its native
+        result and committed flag remain separate on the returned object. Keep the
+        acceptance for its complete receipt regardless of either result. This call
+        does not persist the entry in host configuration.
+        """
+        from .shared_env import SharedEnvBootstrapOutcome
+
+        config = os.fspath(config_file) if config_file is not None else None
+        return SharedEnvBootstrapOutcome(
+            _translate(
+                lambda: self._engine.bootstrap_shared_env(
+                    acceptance._native, json.dumps(entry), dimensions, config
+                )
+            )
+        )
 
     def __enter__(self) -> "EmbeddedEngine":
         return self
