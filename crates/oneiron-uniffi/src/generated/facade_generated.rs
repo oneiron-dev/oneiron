@@ -715,17 +715,17 @@ export_facade! {
 "vault.retrieval.runs" => fn vault_retrieval_runs(&self, input: RetrievalRunsRequest) -> Vec<RetrievalRunEvidence> = |client| {
     let input: oneiron::task_verb::sdk::RetrievalRunsRequest = crate::codec::lower_record("vault.retrieval.runs", input)?;
     let output = client.vault_retrieval_runs(&input)?;
-    crate::codec::lift_record("vault.retrieval.runs", &output)
+    crate::codec::lift_retrieval_run_evidences("vault.retrieval.runs", output)
 };
 "vault.retrieval.run" => fn vault_retrieval_run(&self, input: RetrievalRunRequest) -> Option<RetrievalRunEvidence> = |client| {
     let input: oneiron::task_verb::sdk::RetrievalRunRequest = crate::codec::lower_record("vault.retrieval.run", input)?;
     let output = client.vault_retrieval_run(&input)?;
-    crate::codec::lift_record("vault.retrieval.run", &output)
+    crate::codec::lift_retrieval_run_evidence_opt("vault.retrieval.run", output)
 };
 "vault.retrieval.turn" => fn vault_retrieval_turn(&self, input: RetrievalTurnRequest) -> Vec<RetrievalRunEvidence> = |client| {
     let input: oneiron::task_verb::sdk::RetrievalTurnRequest = crate::codec::lower_record("vault.retrieval.turn", input)?;
     let output = client.vault_retrieval_turn(&input)?;
-    crate::codec::lift_record("vault.retrieval.turn", &output)
+    crate::codec::lift_retrieval_run_evidences("vault.retrieval.turn", output)
 };
 "vault.retrieval.outcomes.put" => fn vault_retrieval_outcomes_put(&self, input: RetrievalOutcome) -> Vec<RetrievalOutcomeRecord> = |client| {
     let input: oneiron::store::RetrievalOutcome = crate::codec::lower_record("vault.retrieval.outcomes.put", input)?;
@@ -735,7 +735,7 @@ export_facade! {
 "vault.retrieval.outcomes.end" => fn vault_retrieval_outcomes_end(&self, input: RetrievalEndOutcome) -> Vec<RetrievalRunEvidence> = |client| {
     let input: oneiron::store::RetrievalEndOutcome = crate::codec::lower_record("vault.retrieval.outcomes.end", input)?;
     let output = client.vault_retrieval_outcomes_end(&input)?;
-    crate::codec::lift_record("vault.retrieval.outcomes.end", &output)
+    crate::codec::lift_retrieval_run_evidences("vault.retrieval.outcomes.end", output)
 };
 "vault.retrieval.trace" => fn vault_retrieval_trace(&self, input: RetrievalTraceRequest) -> Option<RetrievalTrace> = |client| {
     let input: oneiron::task_verb::sdk::RetrievalTraceRequest = crate::codec::lower_record("vault.retrieval.trace", input)?;
@@ -745,7 +745,7 @@ export_facade! {
 "vault.retrieval.export" => fn vault_retrieval_export(&self, input: RetrievalDiagnosticRequest) -> RetrievalDiagnosticExport = |client| {
     let input: oneiron::task_verb::sdk::RetrievalDiagnosticRequest = crate::codec::lower_record("vault.retrieval.export", input)?;
     let output = client.vault_retrieval_export(&input)?;
-    crate::codec::lift_record("vault.retrieval.export", &output)
+    crate::codec::lift_retrieval_diagnostic_export("vault.retrieval.export", output)
 };
 "vault.retrieval.replay" => fn vault_retrieval_replay(&self, input: RetrievalDiagnosticRequest) -> RetrievalDiagnosticReplay = |client| {
     let input: oneiron::task_verb::sdk::RetrievalDiagnosticRequest = crate::codec::lower_record("vault.retrieval.replay", input)?;

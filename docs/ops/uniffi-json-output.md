@@ -367,3 +367,17 @@ other finite fields keep the original whole-record codec. Neither conversion
 changes native reads, claim redaction, inputs, typed records, client calls,
 hooks or authority. These selected output conversions are not end-to-end
 depth, heap or runtime proof.
+
+
+`vault.retrieval.runs`, `vault.retrieval.run`, `vault.retrieval.turn`,
+`vault.retrieval.outcomes.end` and `vault.retrieval.export` consume each
+present replay input's required configuration JSON before converting the
+retrieval evidence record. All configurations across the result are consumed
+before a conversion error can return. Required null configurations remain
+present, missing replay inputs and missing runs remain missing, and empty
+lists stay empty. Run and outcome order, diagnostic contract versions,
+references, traces, clocks and finite numeric conversions keep the original
+whole-result codec and per-verb diagnostics. Native telemetry reads,
+redaction, inputs, typed records, clients, hooks and authority are unchanged.
+This is selected output conversion, not end-to-end depth, heap or runtime
+proof.
