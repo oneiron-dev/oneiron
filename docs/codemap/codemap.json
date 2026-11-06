@@ -60676,7 +60676,7 @@
      "path": "src/recovery/canonical/capture.rs",
      "purpose": "One coordinated capture of a quiescent canonical window",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -61944,7 +61944,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/work.rs",
