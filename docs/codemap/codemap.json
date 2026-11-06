@@ -62330,10 +62330,30 @@
      "purpose": "Three-tier repair driver: whole validation and publication, the work between them paged on the vault's fair…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/ladder/equivalence.rs",
+     "purpose": "Pure row equality of one owned recapture after native pad normalization",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/ladder/manifest_chunks.rs",
+     "purpose": "The native manifest chunks, in their original serialization and error order",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -62515,6 +62535,16 @@
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/work/encoded_digest.rs",
+     "purpose": "Resumable outer hashing of the original bounded canonical byte buffer",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92203,7 +92233,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 125,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92702,7 +92732,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6529,
+   "source_files": 6532,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96792,7 +96822,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp/paused.rs",

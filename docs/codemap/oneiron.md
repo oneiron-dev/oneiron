@@ -5075,7 +5075,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/document/materialize.rs` | src | m | 3 crate-vis | — | Scoped NOTE replacement and immutable-workflow preflight in one transaction |
 | `src/recovery/document/retained.rs` | src | s | 4 crate-vis | — | The retained parent values a pending NOTE fork needs (FIX 8829) |
 | `src/recovery/document/workflow.rs` | src | m | 6 crate-vis | — | Durable NOTE workflow capture and reference validation without CRDT op IDs |
-| `src/recovery/ladder.rs` | src | m | 3 struct · 1 enum · 7 fn · 1 const · 5 crate-vis | PreparedRecovery, RecoveryBudget, RecoveryManifest, RecoveryTier | Three-tier repair driver: whole validation and publication, the work between them paged on the vault's fair… |
+| `src/recovery/ladder.rs` | src | m | 3 struct · 1 enum · 7 fn · 1 const · 8 crate-vis | PreparedRecovery, RecoveryBudget, RecoveryManifest, RecoveryTier | Three-tier repair driver: whole validation and publication, the work between them paged on the vault's fair… |
+| `src/recovery/ladder/equivalence.rs` | src | s | 3 crate-vis | — | Pure row equality of one owned recapture after native pad normalization |
+| `src/recovery/ladder/manifest_chunks.rs` | src | s | 3 crate-vis | — | The native manifest chunks, in their original serialization and error order |
 | `src/recovery/maintenance.rs` | src | s | 2 struct · 2 fn | WindowRebootstrapReport, WindowRecoveryReport | The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch and recovery ladder): capture a… |
 | `src/recovery/maintenance_tests.rs` | test | m | — | — | The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch, recovery ladder and the… |
 | `src/recovery/privacy_kit.rs` | src | m | 3 fn · 2 re-export · 1 crate-vis | — | Vault-scoped 2-of-3 offline recovery kits; no person-level master secret |
@@ -5094,6 +5096,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/validation/manifest.rs` | src | m | 3 crate-vis | — | Owned resumable manifest and order checks over one immutable canonical snapshot |
 | `src/recovery/validation/window_rows.rs` | src | m | 3 crate-vis | — | Window row validation with owned indexes and a cursor between admitted turns |
 | `src/recovery/work.rs` | src | m | 8 crate-vis | — | A canonical window recovery as resumable work (Rule 5, FIX 8821) |
+| `src/recovery/work/encoded_digest.rs` | src | s | 4 crate-vis | — | Resumable outer hashing of the original bounded canonical byte buffer |
 | `src/registry/export.rs` | src | s | 2 struct · 1 fn | RegistrySnapshot, ZoneRow | Engine-owned kind/family/zone export (FIX 7830) |
 | `src/registry/pack_byte_map/doors.rs` | src | m | 6 fn · 11 crate-vis | — | Local installation commands and name-based instance admission |
 | `src/registry/pack_byte_map/hex_bytes.rs` | src | s | 2 crate-vis | — | Canonical hex identities, never opaque byte-array credential containers |
