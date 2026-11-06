@@ -29,6 +29,7 @@ use crate::store::code_snapshot::RepoRef;
 
 use oneiron_store::git_wire::import_fetch::profile;
 pub(super) use profile::ImportProcessProfile;
+pub use profile::SOURCE_RELAY_TICKET_HEADER;
 
 /// The scratch ref the one fetched outside ref lands on.
 const IMPORT_SCRATCH_REF: &str = "refs/oneiron-import/source";
@@ -118,31 +119,68 @@ pub(super) fn init_private_bare_store(
 }
 
 impl GitWire<'_> {
-    /// Fetches exactly `source_ref` from the https repository `url` into a
-    /// fresh private bare scratch store, then proves it: the ref names
-    /// `head`, `head` and `base` are commits, `base` is an ancestor of
-    /// `head`, and `head`'s whole graph is present. `authorization`, when
-    /// given, is the complete `Authorization` header value the custody door
-    /// handed this call; it reaches the child's environment only.
+    /// Fetches exactly `source_ref` from the anonymous https repository
+    /// `url` into a fresh private bare scratch store, then proves it: the
+    /// ref names `head`, `head` and `base` are commits, `base` is an
+    /// ancestor of `head`, and `head`'s whole graph is present. A bound
+    /// source goes through [`Self::fetch_external_exact_via_relay`]: no
+    /// credential ever reaches the child.
     ///
     /// # Errors
-    /// A malformed URL or credential, a scratch store that cannot be made,
-    /// or a local read failure. A refused fetch or proof is an outcome.
+    /// A malformed URL, a scratch store that cannot be made, or a local
+    /// read failure. A refused fetch or proof is an outcome.
     pub fn fetch_external_exact(
         &self,
         url: &str,
         source_ref: &GitRefName,
         base: &GitOid,
         head: &GitOid,
-        authorization: Option<&str>,
     ) -> Result<GitImportFetchOutcome> {
         validate_source_url(url)?;
+        self.fetch_exact_into_scratch(url, source_ref, base, head, ImportProcessProfile::source)
+    }
+
+    /// Fetches exactly `source_ref` as [`Self::fetch_external_exact`] does,
+    /// from the invocation's own loopback source relay `relay_url` (OSH-3),
+    /// each request carrying the relay's `ticket` in a header the child's
+    /// environment holds, never its argv: the relay sends each exchange
+    /// through the credential broker, which alone installs the credential,
+    /// so the child carries none.
+    ///
+    /// # Errors
+    /// A URL that is not a loopback relay, a malformed ticket, a scratch
+    /// store that cannot be made, or a local read failure. A refused fetch
+    /// or proof is an outcome.
+    pub fn fetch_external_exact_via_relay(
+        &self,
+        relay_url: &str,
+        ticket: &str,
+        source_ref: &GitRefName,
+        base: &GitOid,
+        head: &GitOid,
+    ) -> Result<GitImportFetchOutcome> {
+        validate_argv_token(relay_url)?;
+        self.fetch_exact_into_scratch(relay_url, source_ref, base, head, |root| {
+            ImportProcessProfile::source_relay(root, relay_url, ticket)
+        })
+    }
+
+    /// The one exact fetch and its proof, into a fresh private bare scratch
+    /// store whose leg runs under the profile `profile` builds for its root.
+    fn fetch_exact_into_scratch(
+        &self,
+        url: &str,
+        source_ref: &GitRefName,
+        base: &GitOid,
+        head: &GitOid,
+        profile: impl FnOnce(&Path) -> Result<ImportProcessProfile>,
+    ) -> Result<GitImportFetchOutcome> {
         let scratch = tempfile::Builder::new()
             .prefix("oneiron-import-")
             .tempdir_in(&self.process_env.tmpdir)?;
         let root = scratch.path().canonicalize()?;
         let mut env = self.process_env.clone();
-        env.import_profile = Some(ImportProcessProfile::source(&root, authorization)?);
+        env.import_profile = Some(profile(&root)?);
         let output = init_private_bare_store(&env, &root, IMPORT_SCRATCH_REPO)?;
         if !output.success {
             return Ok(refused(&output, GitWireOperation::ImportScratchInit));
