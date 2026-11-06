@@ -327,9 +327,9 @@ impl Vault {
         // FIX 4520: a sealed call's live caller binding, captured before its
         // first ask can fail. Its session keeps it only when that ask fails.
         let caller = if sealed {
-            ask_repair::capture_caller_binding(memory, wait_id)
+            ask_repair::capture_caller_binding(memory)
         } else {
-            None
+            Ok(None)
         };
         let asked = self
             .code_consent_question_text(wait_id)
@@ -349,9 +349,7 @@ impl Vault {
                     "connector call owner ask not queued"
                 );
             }
-            if let Some(caller) = caller {
-                self.retain_code_consent_caller(caller, wait_id, call_ref);
-            }
+            self.retain_code_consent_caller(caller, wait_id, call_ref);
         }
         outcome
     }

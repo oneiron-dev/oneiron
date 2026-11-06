@@ -34,7 +34,7 @@ pub(super) struct CodeConsentAskBindings {
 }
 
 impl CodeConsentAskBindings {
-    fn asks(&self) -> Result<MutexGuard<'_, BTreeMap<EntityId, RetainedCodeConsentAsk>>> {
+    fn locked(&self) -> Result<MutexGuard<'_, BTreeMap<EntityId, RetainedCodeConsentAsk>>> {
         self.asks
             .lock()
             .map_err(|_| Error::InvariantViolation("session code consent asks mutex poisoned"))
@@ -60,7 +60,7 @@ impl OffRecordSession<'_> {
         binding: Arc<SessionWitnessBinding>,
     ) -> Result<()> {
         let kept = &self.entry.code_consent_asks;
-        kept.asks()?.insert(
+        kept.locked()?.insert(
             wait_id,
             RetainedCodeConsentAsk {
                 wait_id,
@@ -71,7 +71,7 @@ impl OffRecordSession<'_> {
         // Close publishes `closing` before it clears the keep, so an ask
         // kept after that clear sees it here and goes.
         if !self.is_open_for_witness() {
-            kept.asks()?.remove(&wait_id);
+            kept.locked()?.remove(&wait_id);
         }
         Ok(())
     }
@@ -83,7 +83,7 @@ impl OffRecordSessionRegistry {
     pub(crate) fn retained_code_consent_asks(&self) -> Result<Vec<RetainedCodeConsentAsk>> {
         let mut retained = Vec::new();
         self.each_code_consent_asks(|kept| {
-            retained.extend(kept.asks()?.values().cloned());
+            retained.extend(kept.locked()?.values().cloned());
             Ok(())
         })?;
         Ok(retained)
@@ -94,7 +94,7 @@ impl OffRecordSessionRegistry {
     /// session keeps it.
     pub(crate) fn release_code_consent_ask(&self, wait_id: EntityId) -> Result<()> {
         self.each_code_consent_asks(|kept| {
-            kept.asks()?.remove(&wait_id);
+            kept.locked()?.remove(&wait_id);
             Ok(())
         })
     }
