@@ -239,13 +239,18 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
     {
         line(&mut ics, "DTSTAMP", &utc_stamp(stamp)?);
     }
-    for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
-        if let Some(at) = event
-            .pointer(&format!("/{field}/dateTime"))
-            .and_then(Value::as_str)
-            .and_then(utc_wall_seconds)
-        {
-            line(&mut ics, name, &utc_stamp(at)?);
+    if let Some((first, end)) = all_day_dates(event) {
+        line(&mut ics, "DTSTART;VALUE=DATE", &first);
+        line(&mut ics, "DTEND;VALUE=DATE", &end);
+    } else {
+        for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
+            if let Some(at) = event
+                .pointer(&format!("/{field}/dateTime"))
+                .and_then(Value::as_str)
+                .and_then(utc_wall_seconds)
+            {
+                line(&mut ics, name, &utc_stamp(at)?);
+            }
         }
     }
     if let Some(subject) = text_of(event.get("subject")) {
@@ -332,6 +337,93 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
     }
     ics.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
     Ok(ics)
+}
+
+/// Seconds in a day and in an hour.
+const DAY_SECS: i64 = 24 * 3600;
+const HOUR_SECS: i64 = 3600;
+
+/// An all-day event's days (fix list row 16309): its first day and the day
+/// after its last, `YYYYMMDD`, for `VALUE=DATE`. Graph tells an all-day
+/// event as the UTC instants of its own zone's midnights (the wire asks for
+/// UTC), so the zone's offset is read back from the start's UTC time of day
+/// ([`midnight_offset`]). Each instant is taken to the nearest midnight, so
+/// a daylight-saving change inside a multi-day event moves no day. `None`
+/// for an event that is not all-day.
+fn all_day_dates(event: &Value) -> Option<(String, String)> {
+    if event.get("isAllDay").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let instant = |field: &str| {
+        event
+            .pointer(&format!("/{field}/dateTime"))
+            .and_then(Value::as_str)
+            .and_then(utc_wall_seconds)
+            .and_then(|seconds| i64::try_from(seconds).ok())
+    };
+    let start = instant("start")?;
+    let end = instant("end").unwrap_or(start);
+    let zone = event
+        .get("originalStartTimeZone")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let offset = midnight_offset(start.rem_euclid(DAY_SECS), zone);
+    let day = |instant: i64| (instant + offset + DAY_SECS / 2).div_euclid(DAY_SECS);
+    let first = day(start);
+    let last = day(end).max(first + 1);
+    let date = |day: i64| {
+        chrono::DateTime::from_timestamp(day.checked_mul(DAY_SECS)?, 0)
+            .map(|date| date.format("%Y%m%d").to_string())
+    };
+    Some((date(first)?, date(last)?))
+}
+
+/// The offset east of UTC, in seconds, of a zone whose midnight is
+/// `time_of_day` seconds after a UTC midnight. A time of day after 12:00 is
+/// a zone east of UTC (its midnight falls on the UTC day before), one before
+/// 10:00 a zone west of it. From 10:00 to 12:00 it is a zone 10 to 12 hours
+/// west or 12 to 14 hours east: the event's own zone name tells which where
+/// it names one of them, else 10:00 is read as west (Hawaii) and the rest as
+/// east (New Zealand, Fiji, Tonga).
+fn midnight_offset(time_of_day: i64, zone: &str) -> i64 {
+    if time_of_day == 0 {
+        return 0;
+    }
+    if time_of_day > 12 * HOUR_SECS {
+        return DAY_SECS - time_of_day;
+    }
+    if time_of_day < 10 * HOUR_SECS {
+        return -time_of_day;
+    }
+    let zone = zone.to_ascii_lowercase();
+    let names = |hints: &[&str]| hints.iter().any(|hint| zone.contains(hint));
+    let west = names(&[
+        "hawai", "honolulu", "aleutian", "adak", "tahiti", "utc-10", "utc-11", "utc-12", "pago",
+        "niue", "midway", "dateline", "gmt+10", "gmt+11", "gmt+12",
+    ]);
+    let east = names(&[
+        "line islands",
+        "kiritimati",
+        "new zealand",
+        "auckland",
+        "fiji",
+        "tonga",
+        "samoa standard",
+        "apia",
+        "chatham",
+        "kamchatka",
+        "utc+12",
+        "utc+13",
+        "utc+14",
+        "gmt-12",
+        "gmt-13",
+        "gmt-14",
+    ]);
+    if west || (!east && time_of_day == 10 * HOUR_SECS) {
+        -time_of_day
+    } else {
+        DAY_SECS - time_of_day
+    }
 }
 
 /// A Graph `dateTime` in UTC (the wire asks for UTC): `2026-11-06T15:00:00.0000000`.
