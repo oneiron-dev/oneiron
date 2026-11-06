@@ -4456,6 +4456,16 @@ export_facade! {
     let output = client.vault_settings_web_connector_replace(&input)?;
     crate::codec::lift_record("vault.settings.web_connector.replace", &output)
 };
+"vault.settings.model_pack" => fn vault_settings_model_pack(&self) -> ModelPackSetting = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.settings.model_pack")?;
+    let output = client.vault_settings_model_pack(&input)?;
+    crate::codec::lift_record("vault.settings.model_pack", &output)
+};
+"vault.settings.model_pack.replace" => fn vault_settings_model_pack_replace(&self, input: ModelStackPreference) -> ModelPackSetting = |client| {
+    let input: oneiron::settings::ModelStackPreference = crate::codec::lower_record("vault.settings.model_pack.replace", input)?;
+    let output = client.vault_settings_model_pack_replace(&input)?;
+    crate::codec::lift_record("vault.settings.model_pack.replace", &output)
+};
 "vault.connectors.web.usage" => fn vault_connectors_web_usage(&self, input: WebConnectorUsageRead) -> WebConnectorUsagePage = |client| {
     let input: oneiron::web_connector::WebConnectorUsageRead = crate::codec::lower_record("vault.connectors.web.usage", input)?;
     let output = client.vault_connectors_web_usage(&input)?;

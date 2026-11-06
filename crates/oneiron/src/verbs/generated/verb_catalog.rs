@@ -895,6 +895,8 @@ pub enum AgentVerb {
     VaultModelsManifestReplace,
     VaultSettingsWebConnector,
     VaultSettingsWebConnectorReplace,
+    VaultSettingsModelPack,
+    VaultSettingsModelPackReplace,
     VaultConnectorsWebUsage,
     VaultModelsOneironerBind,
     VaultModelsRoutesRead,
@@ -2182,6 +2184,8 @@ impl AgentVerb {
         Self::VaultModelsManifestReplace,
         Self::VaultSettingsWebConnector,
         Self::VaultSettingsWebConnectorReplace,
+        Self::VaultSettingsModelPack,
+        Self::VaultSettingsModelPackReplace,
         Self::VaultConnectorsWebUsage,
         Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
@@ -3498,6 +3502,8 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
             Self::VaultSettingsWebConnector => "vault.settings.web_connector",
             Self::VaultSettingsWebConnectorReplace => "vault.settings.web_connector.replace",
+            Self::VaultSettingsModelPack => "vault.settings.model_pack",
+            Self::VaultSettingsModelPackReplace => "vault.settings.model_pack.replace",
             Self::VaultConnectorsWebUsage => "vault.connectors.web.usage",
             Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
@@ -4795,6 +4801,8 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -6111,6 +6119,8 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -7545,6 +7555,8 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -8433,6 +8445,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPackReplace
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
@@ -9594,6 +9607,8 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -10882,6 +10897,8 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -13904,6 +13921,12 @@ impl AgentVerb {
             }
             Self::VaultSettingsWebConnectorReplace => {
                 "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."
+            }
+            Self::VaultSettingsModelPack => {
+                "Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack."
+            }
+            Self::VaultSettingsModelPackReplace => {
+                "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries."
             }
             Self::VaultConnectorsWebUsage => {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
