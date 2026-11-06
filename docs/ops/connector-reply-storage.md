@@ -142,9 +142,9 @@ are not selected by this early publisher.
 
 This is not a bounded-memory implementation of the full connector result
 path. Individual typed JSON messages and credential-clearing comparisons
-still hold whole Values, as do non-array clearing inputs. Each SSE line,
-control replies and later retry responses still use their native in-memory
-readers. Event accumulation also stays in memory on a spool fallback. The stored STEP body is still an
+still hold whole Values, as do non-array clearing inputs. Each SSE line
+and later SSE event data remain in memory. Event accumulation also stays
+in memory on a spool fallback. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing within each message, and spool-aware stored replay admission remain separate
 work. This transaction repair selects only delivered connector answers,
