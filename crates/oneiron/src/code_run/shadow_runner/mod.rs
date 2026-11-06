@@ -47,8 +47,8 @@ pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowRe
 pub use self::release::{ShadowReleaseSource, read_for_model};
 pub(crate) use self::source::prepare_admitted_shadow_step_source;
 pub use self::source::{
-    PreparedShadowStep, ShadowSourceAdmission, prepare_shadow_step_source, shadow_route_prompt,
-    shadow_source_gone,
+    PreparedShadowStep, ShadowSourceAdmission, ShadowSourceWitness, prepare_shadow_step_source,
+    prepare_witnessed_shadow_step_source, shadow_route_prompt, shadow_source_gone,
 };
 pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
