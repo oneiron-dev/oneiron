@@ -836,7 +836,7 @@ fn stage_retrieval_run_with_visibility(
         trace.validate()?;
     }
     if let Some(existing) =
-        RETRIEVAL_RUN.get_with_key_capacity(target, &*wtxn, &record.run_id, |bytes| {
+        RETRIEVAL_RUN.get_with_backing_capacity(target, &*wtxn, &record.run_id, |bytes| {
             if let Some(memory) = memory.as_deref_mut() {
                 memory.materialized(0, bytes);
             }
@@ -966,7 +966,13 @@ fn stage_context_pack_retrieval_run_finalize(
         empty_reason,
         pack_config,
     } = finalize;
-    let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
+    let Some(mut record) =
+        RETRIEVAL_RUN.get_with_backing_capacity(target, &*wtxn, &run_id, |bytes| {
+            if let Some(memory) = memory.as_deref_mut() {
+                memory.materialized(0, bytes);
+            }
+        })?
+    else {
         if let Some(memory) = memory.as_deref_mut() {
             RETRIEVAL_RUN_PROVISIONAL.delete_with_key_capacity(target, wtxn, &run_id, |bytes| {
                 memory.materialized(0, bytes);
@@ -1314,7 +1320,7 @@ fn delete_retrieval_trace_fork_indexes_for_run_with_memory(
     mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     if let Ok(Some(record)) = RETRIEVAL_RUN
-        .get_with_key_capacity(target, &*wtxn, &run_id, |bytes| {
+        .get_with_backing_capacity(target, &*wtxn, &run_id, |bytes| {
             if let Some(memory) = memory.as_deref_mut() {
                 memory.materialized(0, bytes);
             }
