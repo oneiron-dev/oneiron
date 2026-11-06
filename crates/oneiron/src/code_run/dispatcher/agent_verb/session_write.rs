@@ -99,7 +99,10 @@ impl HostSelfDispatcher<'_> {
         ) {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
-                return Ok(answered(Err(AgentVerbRefusal { code: refused.code })));
+                return Ok(answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code: refused.code,
+                })));
             }
             None => return Ok(session_bound()),
         };
@@ -132,6 +135,7 @@ impl HostSelfDispatcher<'_> {
             // Nothing staged: the refusal reaches the guest as its code, the
             // room's as its Memory code.
             Err(refused) => answered(Err(ceiling.take().unwrap_or_else(|| AgentVerbRefusal {
+                hook_notice: None,
                 code: MemoryError::from(refused).code,
             }))),
         })
@@ -167,6 +171,7 @@ impl HostSelfDispatcher<'_> {
 /// A session-bound run's verb call that its room keeps no write for.
 fn session_bound() -> SelfDispatchOutcome {
     answered(Err(AgentVerbRefusal {
+        hook_notice: None,
         code: AGENT_VERB_SESSION_BOUND.to_owned(),
     }))
 }

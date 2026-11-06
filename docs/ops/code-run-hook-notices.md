@@ -32,10 +32,17 @@ reason codes stay unchanged, as does the refusal seen by JavaScript. The same
 `meta.hook_notices` collector returns this summary without rerunning the hook.
 Absent metadata remains unknown.
 
-This path covers successful calls through the MCP code-mode verb door and the
-saved native hook completions described above. It does not add notices to HTTP
-success bodies, other native verb-door implementations, ordinary code-mode
-refusals, or errors without a supplied notice source.
+An ordinary MCP code-mode refusal that supplied a hook notice keeps the same
+content-free summary beside its original code when recorded as a denial. The
+notice comes from that same error, not from its code. A refusal with no supplied
+notice remains unknown. Typed hook stops and provider retry errors keep their
+existing paths. This slice does not cover paths that replace the denial with a
+consent wait.
+
+This path covers successful calls through the MCP code-mode verb door, the
+saved native hook completions described above, and ordinary MCP refusals with
+a supplied notice. It does not add notices to HTTP success bodies, other native
+verb-door implementations, or errors without a supplied notice source.
 
 Update the engine and server together. The guest WIT, JavaScript bootstrap and
 component artifacts do not change for this host-side path.
