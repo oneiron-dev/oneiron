@@ -143,6 +143,10 @@ impl SyncClient {
     /// it left waiting included: the next exchange asks for them again.
     pub(crate) fn reset_window_pads(&mut self) {
         *self.window_pad_ledger() = WindowPadLedger::default();
+        self.document_parts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.deferred_sealed_updates.clear();
     }
 
