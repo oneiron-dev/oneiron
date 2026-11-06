@@ -47,6 +47,9 @@ pub(crate) struct ResidentSelfBrief {
     /// token acknowledges; `None` while the prefix the run carries needs no
     /// acknowledgment or no prefix was prepared.
     staged: Mutex<Option<StagedCandidate>>,
+    /// The prefix last handed out, sent again when a later boundary's
+    /// brief does not prepare.
+    last: Mutex<Option<(String, Vec<EntityId>)>>,
     /// The token the next prepared prefix is named by.
     next_token: AtomicU64,
 }
@@ -108,6 +111,7 @@ impl RunHostDoor {
             key: brief_key(self.actor, &self.board),
             owner,
             staged: Mutex::new(None),
+            last: Mutex::new(None),
             next_token: AtomicU64::default(),
         }))
     }
@@ -145,24 +149,49 @@ impl SelfBriefPort for ResidentSelfBrief {
         let (actor, board, owner) = (self.door.actor, self.door.board.clone(), self.owner);
         let prepared = on_server(&self.door.runtime, move |handle| {
             handle.block_on(prepare_prefix(&server, actor, &board, owner, fold))
-        })??;
+        })
+        .and_then(|prepared| prepared);
         let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(PreparedPrefix {
-            text,
-            sources,
-            candidate,
-        }) = prepared
-        else {
-            *staged = None;
-            return Ok(None);
-        };
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let token = BriefCandidateToken(self.next_token.fetch_add(1, Ordering::Relaxed));
-        *staged = candidate.map(|candidate| StagedCandidate { token, candidate });
-        Ok(Some(BriefPrefix {
-            text,
-            sources,
-            token,
-        }))
+        match prepared {
+            Ok(Some(PreparedPrefix {
+                text,
+                sources,
+                candidate,
+            })) => {
+                *staged = candidate.map(|candidate| StagedCandidate { token, candidate });
+                *last = Some((text.clone(), sources.clone()));
+                Ok(Some(BriefPrefix {
+                    text,
+                    sources,
+                    token,
+                }))
+            }
+            Ok(None) => {
+                *staged = None;
+                *last = None;
+                Ok(None)
+            }
+            // A brief that does not prepare never fails the run's request,
+            // which ran before it carried a brief: the prefix last handed out
+            // goes again unchanged (none before the first), and nothing is
+            // staged to acknowledge.
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    ?boundary,
+                    run = %self.door.run_id.to_hex(),
+                    "a pumped run's self brief did not prepare; its request keeps the last prefix"
+                );
+                *staged = None;
+                Ok(last.clone().map(|(text, sources)| BriefPrefix {
+                    text,
+                    sources,
+                    token,
+                }))
+            }
+        }
     }
 
     /// Acknowledges the staged candidate `token` names. A prefix with no
