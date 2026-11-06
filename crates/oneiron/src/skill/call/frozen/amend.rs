@@ -41,9 +41,9 @@ pub struct CallableAmendRequest {
 pub enum CallableAmendOutcome {
     /// The call's case now expects the corrected answer.
     Refrozen,
-    /// The call has no frozen case: it did not pass its contract, was too
-    /// long to keep, was trimmed or erased since, or never ran. Nothing is
-    /// stored.
+    /// The call has no frozen case the amender may amend: it did not pass
+    /// its contract, was too long to keep, was trimmed or erased since,
+    /// never ran, or was another caller's. Nothing is stored.
     NoCase,
     /// The corrected answer is longer than the `[limits]
     /// maintenance_text_bytes` row: the row asked, and nothing is stored.
@@ -73,12 +73,15 @@ impl CallableAmendReceipt {
 /// measured against the `[limits] maintenance_text_bytes` row, as at
 /// capture. Then one writer freezes the case again: the correction becomes
 /// its `answer` through the side-row wall, stamped with when, and a later
-/// correction replaces an earlier one. A call with no case stores nothing.
+/// correction replaces an earlier one. A call with no case stores nothing,
+/// and so does a call `by` did not make: it answers as one with no case, so
+/// the answer never tells another credential whether a call was frozen (FIX
+/// 12306).
 ///
 /// # Errors
 ///
-/// The write-actor check's refusals. The not-allowed refusal when `by` is
-/// not the call's caller or is the skill's author. Storage errors.
+/// The write-actor check's refusals. The not-allowed refusal when `by`, the
+/// call's caller, is the skill's author. Storage errors.
 pub fn amend_callable_case(
     vault: &Vault,
     by: &WriteActor,
@@ -92,7 +95,10 @@ pub fn amend_callable_case(
         let Some((key, row)) = case_in_txn(&vault.store, &rtxn, &input.receipt, input.seq)? else {
             return Ok(CallableAmendReceipt::no_case());
         };
-        check_amender_in_txn(vault, &rtxn, by, &key, &row)?;
+        if row.caller != CaseCaller::Actor(by.entity_ref()) {
+            return Ok(CallableAmendReceipt::no_case());
+        }
+        check_amender_in_txn(vault, &rtxn, by, &key)?;
         (key, row)
     };
     let skill = case_skill(&key)?;
@@ -114,7 +120,7 @@ pub fn amend_callable_case(
             return Ok(false);
         };
         if row.caller != CaseCaller::Actor(by.entity_ref()) {
-            return Err(not_allowed("only a call's caller amends its answer"));
+            return Ok(false);
         }
         row.answer = answer;
         row.amended_at = Some(at);
@@ -162,20 +168,16 @@ fn case_in_txn(
     Ok(CASES.get(store, txn, &key)?.map(|row| (key, row)))
 }
 
-/// `by` may amend the case `row` under `key` only as the call's caller, the
-/// principal the case was frozen for, and never as the author of the skill
-/// that ran: a case its author made never scores its skill's helpers.
+/// `by`, the call's caller, may amend the case under `key` only when it is
+/// not the author of the skill that ran: a case its author made never
+/// scores its skill's helpers.
 fn check_amender_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     by: &WriteActor,
     key: &[u8],
-    row: &FrozenCall,
 ) -> Result<()> {
     let actor = by.entity_ref();
-    if row.caller != CaseCaller::Actor(actor) {
-        return Err(not_allowed("only a call's caller amends its answer"));
-    }
     let skill = case_skill(key)?;
     let author = match vault.get_skill_record_in_txn(txn, &skill)? {
         Some(record) => crate::memory::skill_author_in_txn(vault, txn, &skill, &record)?,
