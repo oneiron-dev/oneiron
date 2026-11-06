@@ -43,14 +43,15 @@ impl Vault {
 }
 
 /// Whether a workbook the native engine refused with `error` goes to the
-/// precision fallback: every refusal but a malformed or over-limit package
-/// and invalid workbook content, the split the edit round trip's native
-/// recalc makes (`edit_roundtrip/native_recalc.rs`). An engine call (CALLS,
-/// FIX 2462).
+/// precision fallback: every refusal but a malformed or over-limit package,
+/// invalid workbook content, and a resource refusal. A machine short of the
+/// memory or time the native engine needed has less for LibreOffice, so that
+/// workbook keeps today's fullCalcOnLoad stamp. An engine call (CALLS, FIX
+/// 2462).
 pub(super) fn takes_precision_fallback(error: &FormulaError) -> bool {
     !matches!(
         error,
-        FormulaError::Package(_) | FormulaError::InvalidWorkbook(_)
+        FormulaError::Package(_) | FormulaError::InvalidWorkbook(_) | FormulaError::Resource(_)
     )
 }
 
