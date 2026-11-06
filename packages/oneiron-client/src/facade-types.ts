@@ -205,7 +205,7 @@ export type IdentitySettled = { ask: string; entity: string }
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityEffect` */
 export type IdentityEffect = "send" | "pay" | "invite" | "share"
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest` */
-export type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string }
+export type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string; provisional?: string | null }
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityActNow` */
 export type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown }
 /** `oneiron::verbs::InboxListRequest` */

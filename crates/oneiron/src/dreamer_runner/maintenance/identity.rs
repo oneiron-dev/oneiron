@@ -308,6 +308,10 @@ pub struct IdentityActNowRequest {
     pub prompt: String,
     /// The choice card's label for someone new, in the person's language.
     pub someone_new: String,
+    /// A provisional candidate's label template: `{name}` takes its name
+    /// and `{day}` the day it was first said. None keeps `{name} · {day}`.
+    #[serde(default)]
+    pub provisional: Option<String>,
 }
 
 /// Where a name an agent must act on stands.
@@ -594,7 +598,7 @@ impl Memory<'_> {
         let copy = IdentityCardCopy {
             prompt: input.prompt.clone(),
             someone_new: input.someone_new.clone(),
-            provisional: None,
+            provisional: input.provisional.clone(),
         };
         let vault = self.vault();
         let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, name.len() as u64);
