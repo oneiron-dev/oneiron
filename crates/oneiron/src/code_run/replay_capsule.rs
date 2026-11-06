@@ -411,10 +411,11 @@ impl WorkflowCaptureHandle {
     }
 }
 
-/// Captures a saved-workflow step's admitted request before it is sent: the
-/// step is its attempt's first call, made for `actor`. The returned handle
-/// finalizes only that call with its actual returned binding. A failure is
-/// logged and never fails the step.
+/// Captures a saved-workflow step's admitted request before it is sent:
+/// round `round` of the step's model calls (0 for its first, one more for
+/// each `self.use` tool round after it, FIX 7013), made for `actor`. The
+/// returned handle finalizes only that call with its actual returned
+/// binding. A failure is logged and never fails the step.
 pub fn capture_workflow_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -422,13 +423,14 @@ pub fn capture_workflow_step(
     actor: WriteActor,
     request: &LlmRequest,
     source_rows: Option<Vec<EntityId>>,
+    round: u64,
 ) -> Option<WorkflowCaptureHandle> {
     let run = EntityId::from_bytes(*attempt.as_bytes()).ok()?;
     let capture = StepCapture {
         attempt,
         lease_generation,
         run,
-        step: 0,
+        step: round,
         host: CapsuleHost::WorkflowStep,
         actor,
         request,
@@ -472,7 +474,8 @@ pub fn bind_workflow_step_answer(
         let request_hash = request.canonical_hash().map_err(|error| {
             crate::Error::InvalidConfig(format!("capsule answer request: {error}"))
         })?;
-        // A workflow step is its attempt's first call (`capture_workflow_step`).
+        // A step with no tool round answers in its first call, round 0
+        // (`capture_workflow_step`).
         let key = (run, u64::from(lease_generation), 0);
         bind_capsule_answer(vault, &key, request_hash, OutputRef::from_bytes(answer))
     });
