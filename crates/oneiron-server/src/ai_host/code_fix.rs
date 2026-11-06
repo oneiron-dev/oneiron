@@ -226,6 +226,64 @@ impl<'a> HostModels<'a> {
             .map(|(text, _)| text))
     }
 
+    /// One source-admitted call, retaining the binding of the rung that
+    /// answered. The hook replaces source data for each actual destination;
+    /// ordinary Coach calls keep their existing path.
+    pub(super) fn generate_admitted_recorded(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        rows: Option<Vec<EntityId>>,
+        sources: &dyn crate::models::SourceAdmission,
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>> {
+        let Some(seat) = self.runtime.seat(role) else {
+            return Ok(None);
+        };
+        let purpose = CallPurpose::Other {
+            name: self.purpose.to_owned(),
+        };
+        let request = LlmRequest {
+            model: seat.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(self.purpose.to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: seat.locality,
+                host_keyless: false,
+            },
+            messages,
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+            host_segments: None,
+        };
+        let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
+            return Ok(None);
+        };
+        let (response, binding) = self
+            .handle
+            .block_on(call.ladder.generate_admitted_recorded(
+                &self.run.sourced(rows),
+                call.request,
+                None,
+                sources,
+            ))
+            .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
+        let text = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        Ok(Some((text, binding)))
+    }
+
     /// [`Self::generate`], with the model of the rung that answered,
     /// fallback included.
     pub(super) fn generate_served(
