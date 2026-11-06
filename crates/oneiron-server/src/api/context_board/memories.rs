@@ -438,18 +438,24 @@ pub(crate) fn board_pins_projection<'a>(
 pub(crate) fn lane_pins_projection(
     read: &oneiron::claim::ScopedRead<'_>,
     hooks: &[oneiron::context_board::HookPin],
+    memories_storage: &mut super::super::context_pack::output_memory::RetainedMemoriesOutput,
 ) -> Result<Option<BoardPins>, ApiError> {
     let mut section = oneiron::MemoriesSection::pins_only(None);
+    memories_storage.retain(Some(&section));
     let automatic = read
         .manifest_pinned_refs()
         .map_err(|error| core_engine_error("manifest pin read failed", error))?;
     section
         .include_pinned_refs_with_disclosure(read, &automatic.value, None)
         .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
+    memories_storage.retain(Some(&section));
     section
         .include_hook_pins(read, hooks, None)
         .map_err(|error| core_engine_error("hook pin read failed", error))?;
+    memories_storage.retain(Some(&section));
     if section.rows.is_empty() {
+        drop(section);
+        memories_storage.retain(None);
         return Ok(None);
     }
     let delivered = pinned_row_ids(&section)?;
