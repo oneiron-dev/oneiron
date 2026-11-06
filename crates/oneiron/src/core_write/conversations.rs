@@ -6,8 +6,8 @@
 
 use super::batch::CoreWriteLane;
 use super::shape::{
-    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times, entity_id,
-    stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times,
+    encode_core_body, entity_id, stage_core_put, text_pairs, write_id,
 };
 use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
@@ -105,8 +105,9 @@ impl Vault {
     /// owner ([`Vault::turn_doors_owner`]) writes only into a conversation
     /// its own lane reads, judged in the batch's own writer (FIX 5939); the
     /// owner writes as before. Such a TURN sits in no private thread: its
-    /// thread keys are refused here, and its one edge is to the
-    /// conversation, which no thread holds. Nor does it put over a row its
+    /// thread keys are refused here. A fresh TURN joins the conversation's
+    /// actual local HEAD in this same writer; a re-put keeps its placement.
+    /// Nor does it put over a row its
     /// lane does not read: an id it names that a stored row holds is judged
     /// against that row first, in the same writer, before the put or its
     /// ChildOf lands (FIX 6068).
@@ -216,7 +217,11 @@ impl Vault {
         }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
+        let normalized_body = core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement);
+        let encoded_body = encode_core_body(&normalized_body)?;
+        let text_fields = core_text_pairs(input.text.as_deref().map(text_pairs), &normalized_body);
         let outside = std::cell::Cell::new(false);
+        let existed = std::cell::Cell::new(false);
         let committed = stage_core_put(
             self.batch(),
             &id,
@@ -227,13 +232,58 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation, &id)? {
-                return Ok(());
-            }
-            outside.set(true);
-            Err(crate::Error::EntityNotFound)
-        });
+        .commit_with_target_guard_and_hooks(
+            |txn| {
+                if admits(txn, &conversation, &id)? {
+                    existed.set(crate::ports::EntityStoreRead::port_entity_present(
+                        &self.store,
+                        txn,
+                        &id,
+                    )?);
+                    if existed.get()
+                        && crate::conversation_dag::exact_core_turn_retry_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                            &conversation,
+                            times.occurred,
+                            times.learned_at,
+                            &encoded_body,
+                        )?
+                        && crate::store::text_index::index::source_fields_in_txn(
+                            &self.store,
+                            txn,
+                            &id,
+                        )?
+                        .unwrap_or_default()
+                            == text_fields
+                    {
+                        return Ok(false);
+                    }
+                    return Ok(true);
+                }
+                outside.set(true);
+                Err(crate::Error::EntityNotFound)
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::permit_core_turn_in_txn(self, txn, &conversation, id)?;
+                }
+                Ok(())
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::join_core_turn_in_txn(
+                        self,
+                        txn,
+                        &conversation,
+                        id,
+                        times.learned_at,
+                    )?;
+                }
+                Ok(())
+            },
+        );
         if outside.get() {
             return Ok(None);
         }
@@ -242,7 +292,7 @@ impl Vault {
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
-            core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
+            normalized_body.into_owned(),
         )))
     }
 }
