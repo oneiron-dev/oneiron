@@ -20,7 +20,12 @@
 //!   promotion indexes it again.
 //!
 //! A row of these the room no longer holds reads through to base's, which
-//! is the record's truth while the room holds no entity row of it.
+//! is the record's truth while the room holds no entity row of it. The one
+//! exception is a revision the room staged and never saved (a put a later
+//! put replaced before a selected save): its frontier and its part of the
+//! history document are the room's alone. They go too, since they hold the
+//! record's body bytes; an aborted writer costs the room them, as it costs
+//! the room the record's pending journal entries.
 //!
 //! What stays: the room's staged totals (each field's document count and
 //! length, the document total), its HNSW rows and its phonetic postings. The
@@ -93,7 +98,8 @@ impl SessionOverlay {
     /// commits, as the media drop does: an aborted writer costs the room a
     /// read through to base's rows, which it still holds (a posting the room
     /// masked shows again), and the pending `Text`, `Vector` or `Phonetic`
-    /// entry of a record, never a shared row. A room that holds none
+    /// entry of a record and the revisions of it the room alone holds (module
+    /// docs), never a shared row. A room that holds none
     /// of them is left untouched. A segment this thread has installed on the
     /// overlay loses the same rows and entries,
     /// and a record that segment stages an entity row of is kept in both;
