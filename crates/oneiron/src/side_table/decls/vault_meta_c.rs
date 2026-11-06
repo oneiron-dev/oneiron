@@ -161,6 +161,10 @@ side_tables! {
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
     COACH_AGENT_HEALTH_CARD_BY_REVIEWER: VaultMeta b"coach:agent_health_card_by_reviewer:v1:" Raw;
+    /// Each agent-health card under every reviewer receipt it holds (FIX 10880): the
+    /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
+    /// u8(signal) + id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
     /// Each live agent-health card under every row its standing Coach draft was written from
     /// (FIX 10434): `draft_source_rows`. Key: id16(source) + id16(actor) + u8(signal) +
     /// id16(task).
