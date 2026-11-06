@@ -355,3 +355,21 @@ field-containing paragraphs (including conversion of fields to static text),
 unknown opaque segments, gap selection, matching and field-removal receipts
 keep their prior paths. This remains source-only work; full table-cell fallback,
 OF-509/OF-510 and Office fidelity are not claimed complete.
+
+
+## Attributes of one retained partial native table run
+
+In an actually reused field-free paragraph, a partial ordinary `a:r` that
+contributes text to exactly one retained common prefix or suffix now keeps its
+own non-namespace attributes in that one existing static run wrapper. Original
+attribute spans keep qualified names, quotes and entity spellings. The existing
+serializer still supplies the same inherited and own namespace declarations,
+run properties and escaped retained text. XML parsing rejects U+000B in text
+nodes, so a partial ordinary run's retained text produces one run, not multiple
+break-separated wrappers. A source run intersecting both retained intervals
+keeps the previous static wrappers; arbitrary identity attributes are not copied
+twice or assigned to a guessed side. The whole-run raw path, fields and their
+receipts, breaks, empty/opaque segments, gaps, added-paragraph and replacement
+templates, and retained-mapping selection are unchanged. This is source-only
+retention work, not full table-cell fallback, OF-509/OF-510 or Office fidelity
+proof.
