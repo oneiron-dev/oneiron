@@ -138,6 +138,8 @@ struct DreamerFile {
     task_prompt_file: Option<PathBuf>,
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
+    psych_mirror_prompt: Option<String>,
+    psych_mirror_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
     drafting: Option<drafting::DraftingFile>,
     /// `[models.dreamer.wording]`: the host's wording of the engine's asks
@@ -307,6 +309,9 @@ pub struct DreamerSettings {
     /// The wording a PERSON's `about` lines are written with (ARCH-0067).
     /// Without one, the engine's own (`PERSON_ABOUT_INSTRUCTION`).
     pub person_about_instruction: Option<String>,
+    /// The wording a person's Psych Mirror profile is written with
+    /// (ARCH-0025). Without one, the engine's own (`PSYCH_MIRROR_INSTRUCTION`).
+    pub psych_mirror_instruction: Option<String>,
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
@@ -482,6 +487,12 @@ impl ModelsFile {
                 "models.dreamer.person_about_prompt",
                 self.dreamer.person_about_prompt,
                 self.dreamer.person_about_prompt_file,
+                base,
+            )?,
+            psych_mirror_instruction: levels::prompt_text(
+                "models.dreamer.psych_mirror_prompt",
+                self.dreamer.psych_mirror_prompt,
+                self.dreamer.psych_mirror_prompt_file,
                 base,
             )?,
             urgent_digest_question: self

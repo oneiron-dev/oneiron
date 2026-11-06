@@ -35,6 +35,11 @@ pub use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 /// lines (ARCH-0067): one line per sensitivity band, from that band's facts.
 /// A payload discriminator on the Micro consolidation queue.
 pub const DREAMER_PERSON_ABOUT_ATTEMPT_TYPE: &str = "dreamer.person_about";
+/// `DreamerAttemptPayload.attempt_type` for one person's Psych Mirror
+/// profile in one facet and world (ARCH-0025, FIX 18867): three tiers from
+/// the claims about that person there. A payload discriminator on the Micro
+/// consolidation queue.
+pub const DREAMER_PSYCH_MIRROR_ATTEMPT_TYPE: &str = "dreamer.psych_mirror";
 /// Documented OPT-IN turn-body key naming the WORLD entity this turn's
 /// content belongs to (16-byte MessagePack binary; ILD D4 opt-in precedent).
 pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";

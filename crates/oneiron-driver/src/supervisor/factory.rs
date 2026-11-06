@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, ExtractionPorts, PersonAboutExecutor,
-    RoleBackends, RoleCall, ScopeSummaryExecutor, ThingChildHost,
+    PsychMirrorExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor, ThingChildHost,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
@@ -237,6 +237,9 @@ pub struct ConsolidationExecutorFactory {
     /// The host's wording for PERSON `about` lines. `None` writes them with
     /// the engine's own.
     person_about_instruction: Option<String>,
+    /// The host's wording for Psych Mirror profiles. `None` writes them
+    /// with the engine's own.
+    psych_mirror_instruction: Option<String>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
@@ -275,6 +278,7 @@ impl ConsolidationExecutorFactory {
             summary_instruction: None,
             model_windows: BTreeMap::new(),
             person_about_instruction: None,
+            psych_mirror_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
@@ -382,6 +386,14 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_person_about_instruction(mut self, instruction: String) -> Self {
         self.person_about_instruction = Some(instruction);
+        self
+    }
+
+    /// The instruction Psych Mirror profiles are written with (ARCH-0025).
+    /// Host configuration; without it the engine's own applies.
+    #[must_use]
+    pub fn with_psych_mirror_instruction(mut self, instruction: String) -> Self {
+        self.psych_mirror_instruction = Some(instruction);
         self
     }
 
@@ -560,6 +572,20 @@ impl ConsolidationExecutorFactory {
                 },
                 self.person_about_instruction.as_deref(),
             );
+            // Psych Mirror profiles ride the same narrative role.
+            let inner = PsychMirrorExecutor::new(
+                inner,
+                narrative.backend,
+                narrative.sourced,
+                guard,
+                self.actor,
+                narrative.model.clone(),
+                HostInferenceContext {
+                    binding: narrative.inference.binding.clone(),
+                    extraction_egress: narrative.inference.extraction_egress,
+                },
+                self.psych_mirror_instruction.as_deref(),
+            );
             let inner = WeaveRecipeExecutor {
                 inner,
                 runtime: runtime.take(),
@@ -574,9 +600,12 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
     type Exec<'p> = ConnectorEventExecutor<
         'p,
         WeaveRecipeExecutor<
-            PersonAboutExecutor<
+            PsychMirrorExecutor<
                 'p,
-                ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+                PersonAboutExecutor<
+                    'p,
+                    ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+                >,
             >,
             Option<&'p mut dyn WeaveRecipeRuntime>,
         >,
