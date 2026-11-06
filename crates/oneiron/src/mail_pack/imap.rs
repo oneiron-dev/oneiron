@@ -17,9 +17,9 @@
 //!   announces Gmail's `X-GM-EXT-1` it is Gmail's own `X-GM-MSGID`, as hex,
 //!   as the Gmail API and a Takeout export name it. Elsewhere it is named as
 //!   an mbox import names it: `mbox` and the first 32 hex of the BLAKE3 of
-//!   its `Message-ID` and the SHA-256 of its header block, so a message
-//!   exported with its header block unchanged lands once. One with no
-//!   `Message-ID` is named by where it is:
+//!   its `Message-ID`, the SHA-256 of its unfolded header block and its
+//!   `RFC822.SIZE`, so a message exported with its header block unchanged
+//!   lands once. One with no `Message-ID` is named by where it is:
 //!   `imapuid.<folder digest>.<UIDVALIDITY>.<UID>`.
 //! - **Folders are labels.** Every selectable folder is read but drafts and
 //!   the flagged and important views; trash and junk are looked in only to
@@ -63,7 +63,7 @@ use super::imap_client::{
 use super::mime::MimeMessage;
 use super::rest::refused;
 use super::source::MailProvider;
-use super::state::{MailPresence, OCCURRENCES, SYNC, occurrence_key};
+use super::state::{MailOccurrence, MailPresence, OCCURRENCES, SYNC, occurrence_key};
 use super::wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
@@ -196,7 +196,7 @@ enum Naming {
     /// By Gmail's own id of it (`X-GM-MSGID`), where the server announces
     /// `X-GM-EXT-1`.
     Gmail,
-    /// By its `Message-ID` and its header block.
+    /// By its `Message-ID`, its header block and its size.
     HeaderBlock,
 }
 
@@ -209,11 +209,11 @@ impl Naming {
         }
     }
 
-    /// The fetch item that names a message.
+    /// The fetch items that name a message.
     const fn item(self) -> &'static str {
         match self {
             Self::Gmail => "X-GM-MSGID",
-            Self::HeaderBlock => "BODY.PEEK[HEADER]",
+            Self::HeaderBlock => "RFC822.SIZE BODY.PEEK[HEADER]",
         }
     }
 
@@ -254,6 +254,9 @@ pub struct ImapMailWire<'v> {
     /// The headers this wire's session read, by message id, and where it
     /// read them; emptied when the session opens again.
     seen: RefCell<BTreeMap<String, (MailHeaders, Location)>>,
+    /// The messages the all-mail view named by their id alone, its headers
+    /// not read again; emptied with `seen`.
+    named_by_all_mail: RefCell<BTreeSet<String>>,
 }
 
 impl<'v> ImapMailWire<'v> {
@@ -265,7 +268,14 @@ impl<'v> ImapMailWire<'v> {
             key: rand::random(),
             session: RefCell::new(None),
             seen: RefCell::new(BTreeMap::new()),
+            named_by_all_mail: RefCell::new(BTreeSet::new()),
         }
+    }
+
+    /// Forgets what this wire's session read.
+    fn forget_seen(&self) {
+        self.seen.borrow_mut().clear();
+        self.named_by_all_mail.borrow_mut().clear();
     }
 }
 
@@ -353,25 +363,32 @@ fn folders_of(listed: Vec<ListedFolder>) -> Result<Vec<Folder>> {
     Ok(folders)
 }
 
-/// A message's id from its `Message-ID` and its header block, read from
-/// the start of `raw` (the block alone, or the whole message), as an mbox
-/// import gives it (fix list row 19145): `mbox` and the first 32 hex of the
-/// BLAKE3 of the `Message-ID` and the block's SHA-256. Copies of one
-/// message hash alike; another message reusing its `Message-ID` does not.
-pub(super) fn content_id(rfc_message_id: &str, raw: &[u8]) -> String {
+/// A message's id from its `Message-ID`, its header block, read from the
+/// start of `raw` (the block alone, or the whole message), and its `size`
+/// (`RFC822.SIZE`), as an mbox import gives it (fix list row 19145): `mbox`
+/// and the first 32 hex of the BLAKE3 of the `Message-ID`, the block's
+/// SHA-256 and the size. Copies of one message hash alike; another message
+/// reusing its `Message-ID`, or its whole header block with a body of
+/// another size, does not. A server that adds a header of its own to each
+/// folder's copy names the copies apart: a duplicate, never a lost message.
+pub(super) fn content_id(rfc_message_id: &str, raw: &[u8], size: u64) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(rfc_message_id.as_bytes());
     hasher.update(&header_digest(raw));
+    hasher.update(&size.to_be_bytes());
     format!("mbox{}", &hasher.finalize().to_hex()[..32])
 }
 
-/// The SHA-256 of the header block at the start of `raw`: each line up to
-/// the first empty one, ended by CRLF however it was ended, so a block read
-/// alone, read at the head of its whole message, or kept in an mbox file
-/// with bare line feeds hashes alike.
+/// The SHA-256 of the header block at the start of `raw`: each field up to
+/// the first empty line, unfolded (the line break before a line that starts
+/// with a space or a tab dropped, RFC 5322 2.2.3) and ended by CRLF however
+/// its lines were ended, so a block read alone, read at the head of its
+/// whole message, kept in an mbox file with bare line feeds, or folded
+/// another way hashes alike.
 fn header_digest(raw: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     let mut rest = raw;
+    let mut started = false;
     while !rest.is_empty() {
         let (line, next) = match rest.iter().position(|&byte| byte == b'\n') {
             Some(end) => (&rest[..end], &rest[end + 1..]),
@@ -381,9 +398,16 @@ fn header_digest(raw: &[u8]) -> [u8; 32] {
         if line.is_empty() {
             break;
         }
+        // A continuation line goes on the field before it.
+        if started && !matches!(line.first(), Some(b' ' | b'\t')) {
+            hasher.update(b"\r\n");
+        }
         hasher.update(line);
-        hasher.update(b"\r\n");
+        started = true;
         rest = next;
+    }
+    if started {
+        hasher.update(b"\r\n");
     }
     hasher.finalize().into()
 }
@@ -393,8 +417,22 @@ fn place_id(folder: &Folder, uid_validity: u64, uid: u64) -> String {
 }
 
 /// A Gmail id as the Gmail API writes it: lowercase hex.
-fn gmail_id(number: u64) -> String {
+pub(super) fn gmail_id(number: u64) -> String {
     format!("{number:x}")
+}
+
+/// Google's IMAP hosts: a session there announces `X-GM-EXT-1`.
+const GMAIL_IMAP_HOSTS: [&str; 2] = ["imap.gmail.com", "imap.googlemail.com"];
+
+/// Whether an IMAP source's account (`<username>@<host>`) is on Google's
+/// IMAP host, where the wire names each message by its Gmail id: read from
+/// the account alone, with no session.
+pub(super) fn imap_account_on_gmail(provider_account: &str) -> bool {
+    provider_account.rsplit_once('@').is_some_and(|(_, host)| {
+        GMAIL_IMAP_HOSTS
+            .iter()
+            .any(|gmail| host.eq_ignore_ascii_case(gmail))
+    })
 }
 
 /// The `X-GM-MSGID` a Gmail id carries; `None` for an id of another kind.
@@ -443,10 +481,13 @@ fn fetched_id(
             let rfc_message_id = MimeMessage::parse(raw)
                 .header("message-id")
                 .filter(|id| !id.is_empty());
-            Some(rfc_message_id.map_or_else(
-                || place_id(folder, uid_validity, uid),
-                |id| content_id(&id, raw),
-            ))
+            match rfc_message_id {
+                Some(id) => {
+                    let size = message.value("RFC822.SIZE").and_then(Item::number)?;
+                    Some(content_id(&id, raw, size))
+                }
+                None => Some(place_id(folder, uid_validity, uid)),
+            }
         }
     }
 }
@@ -725,7 +766,7 @@ impl ImapMailWire<'_> {
                     if let Some(old) = slot.take() {
                         old.session.logout();
                     }
-                    self.seen.borrow_mut().clear();
+                    self.forget_seen();
                     *slot = Some(open_session(source, secret, credential)?);
                 }
                 let open = slot
@@ -738,7 +779,7 @@ impl ImapMailWire<'_> {
                     }
                     Err(error) => {
                         *slot = None;
-                        self.seen.borrow_mut().clear();
+                        self.forget_seen();
                         Err(error)
                     }
                 }
@@ -831,6 +872,7 @@ impl ImapMailWire<'_> {
         {
             let txn = self.vault.store.env.read_txn()?;
             let seen = self.seen.borrow();
+            let mut by_id = self.named_by_all_mail.borrow_mut();
             for (uid, provider_id) in &learned {
                 let live = OCCURRENCES
                     .get(
@@ -839,7 +881,11 @@ impl ImapMailWire<'_> {
                         &occurrence_key(open.source, provider_id),
                     )?
                     .is_some_and(|occurrence| matches!(occurrence.presence, MailPresence::Present));
-                if live || seen.contains_key(provider_id) {
+                if seen.contains_key(provider_id) {
+                    named.push(provider_id.clone());
+                } else if live {
+                    // Named here alone, as far as this session read.
+                    by_id.insert(provider_id.clone());
                     named.push(provider_id.clone());
                 } else {
                     unread.push(*uid);
@@ -1137,9 +1183,30 @@ impl ImapMailWire<'_> {
         // The labels it has landed with stay, with this folder's: a body
         // read in one folder takes no other folder away.
         let folder = &open.folders[at.folder];
-        let mut labels = self.landed_labels(source, provider_id)?.unwrap_or_default();
+        let landed = self.landed_copy(source, provider_id)?;
+        let mut labels = landed
+            .as_ref()
+            .map(|copy| copy.labels.clone())
+            .unwrap_or_default();
         labels.extend(folder.message_labels());
-        let headers = headers_of(&read, provider_id.to_owned(), folder, dedup(labels));
+        let labels = dedup(labels);
+        // The mailbox sent it when any copy known is in a sent folder: one
+        // this session read, one it landed as or under, or this one.
+        let sent = self
+            .seen
+            .borrow()
+            .get(provider_id)
+            .is_some_and(|(held, _)| held.sent_by_mailbox)
+            || landed
+                .as_ref()
+                .and_then(|copy| copy.reply.as_ref())
+                .is_some_and(|reply| reply.sent_by_mailbox)
+            || open
+                .folders
+                .iter()
+                .any(|known| known.role == FolderRole::Sent && labels.contains(&known.label));
+        let mut headers = headers_of(&read, provider_id.to_owned(), folder, labels);
+        headers.sent_by_mailbox |= sent;
         let raw = if whole { read.raw.to_vec() } else { Vec::new() };
         Ok(Some((headers, raw)))
     }
@@ -1192,9 +1259,9 @@ impl ImapMailWire<'_> {
         let status = open.session.examine(&place.name)?;
         let below = self.held_below(open, source.source_ref, &place, status, uid_next)?;
         let label = place.message_label();
-        let gone: Vec<String> = {
+        let gone: BTreeSet<String> = {
             let txn = self.vault.store.env.read_txn()?;
-            let mut gone = Vec::new();
+            let mut gone = BTreeSet::new();
             for occurrence in
                 OCCURRENCES.iter_from(&self.vault.store, &txn, source.source_ref.as_bytes())?
             {
@@ -1202,18 +1269,28 @@ impl ImapMailWire<'_> {
                 let answers_for = match label {
                     Some(label) => occurrence.labels.iter().any(|held| held == label),
                     None => {
-                        occurrence.labels.is_empty() && below.lost.contains(&occurrence.provider_id)
+                        occurrence.labels.is_empty()
+                            && below.lost.contains_key(&occurrence.provider_id)
                     }
                 };
                 if matches!(occurrence.presence, MailPresence::Present)
                     && answers_for
                     && !below.held.contains(&occurrence.provider_id)
                 {
-                    gone.push(occurrence.provider_id);
+                    gone.insert(occurrence.provider_id);
                 }
             }
             gone
         };
+        // The rows of a message reported gone stay until its change is
+        // applied: a read whose change fails finds them again, and the next
+        // read, which finds that change applied, forgets them.
+        let mut forget = below.stale;
+        for (provider_id, uids) in below.lost {
+            if !gone.contains(&provider_id) {
+                forget.extend(uids);
+            }
+        }
         for provider_id in gone {
             let places = self.locate(open, source, &provider_id, true)?;
             // Gone only when no folder read holds a copy.
@@ -1234,9 +1311,9 @@ impl ImapMailWire<'_> {
                 }
             }
         }
-        // The rows of what left are forgotten only once each was answered
-        // for, so a read that fails part-way finds them again.
-        self.forget_uids(source.source_ref, uid_map_folder_key(&place), &below.stale)
+        // The other rows of what left are forgotten only once each was
+        // answered for, so a read that fails part-way finds them again.
+        self.forget_uids(source.source_ref, uid_map_folder_key(&place), &forget)
     }
 }
 
@@ -1244,10 +1321,10 @@ impl ImapMailWire<'_> {
 struct HeldBelow {
     /// The ids of the messages it holds.
     held: BTreeSet<String>,
-    /// The ids of the messages the map knew it to hold under its
-    /// UIDVALIDITY that it holds no more.
-    lost: BTreeSet<String>,
-    /// The map's rows of UIDs it holds no more, or of an older UIDVALIDITY.
+    /// The messages the map knew it to hold under its UIDVALIDITY that it
+    /// holds no more: the UIDs of each, by its id.
+    lost: BTreeMap<String, Vec<u64>>,
+    /// The map's rows of an older UIDVALIDITY.
     stale: Vec<u64>,
 }
 
@@ -1255,8 +1332,8 @@ impl ImapMailWire<'_> {
     /// What the open `place` holds below `top`: the UIDs one search
     /// answers, each named from the UID map, and only the UIDs the map does
     /// not hold read for what names them, a bounded batch at a time. The map
-    /// learns those; the rows it holds of UIDs the folder no longer holds,
-    /// and of an older UIDVALIDITY, are answered for the caller to forget.
+    /// learns those; the rows it holds of an older UIDVALIDITY, and of UIDs
+    /// the folder no longer holds, are answered for the caller to forget.
     fn held_below(
         &self,
         open: &mut OpenSession,
@@ -1267,7 +1344,7 @@ impl ImapMailWire<'_> {
     ) -> Result<HeldBelow> {
         let mut below = HeldBelow {
             held: BTreeSet::new(),
-            lost: BTreeSet::new(),
+            lost: BTreeMap::new(),
             stale: Vec::new(),
         };
         if top <= 1 {
@@ -1283,8 +1360,7 @@ impl ImapMailWire<'_> {
                 known.insert(uid);
                 below.held.insert(row.provider_id);
             } else if uid < top {
-                below.stale.push(uid);
-                below.lost.insert(row.provider_id);
+                below.lost.entry(row.provider_id).or_default().push(uid);
             }
         }
         let unknown = without(&present, &known);
@@ -1859,11 +1935,16 @@ impl MailProviderWire for ImapMailWire<'_> {
         })
     }
 
+    /// The labels of the folders this session read `provider_id` in; none
+    /// for one the all-mail view alone named, which it files under no label.
     fn listed_labels(&self, provider_id: &str) -> Option<Vec<String>> {
-        self.seen
+        if let Some((headers, _)) = self.seen.borrow().get(provider_id) {
+            return Some(headers.labels.clone());
+        }
+        self.named_by_all_mail
             .borrow()
-            .get(provider_id)
-            .map(|(headers, _)| headers.labels.clone())
+            .contains(provider_id)
+            .then(Vec::new)
     }
 
     /// A quoted string in `SEARCH` keys escapes a quote or a backslash with a
@@ -1992,13 +2073,12 @@ impl ImapMailWire<'_> {
             .and_then(|anchor| parse_anchor(&anchor)))
     }
 
-    /// The labels of the source's live copy of `provider_id`, when it has
-    /// landed one.
-    fn landed_labels(
+    /// The source's live copy of `provider_id`, when it has landed one.
+    fn landed_copy(
         &self,
         source: &MailSyncSource,
         provider_id: &str,
-    ) -> Result<Option<Vec<String>>> {
+    ) -> Result<Option<MailOccurrence>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(OCCURRENCES
             .get(
@@ -2006,7 +2086,18 @@ impl ImapMailWire<'_> {
                 &txn,
                 &occurrence_key(source.source_ref, provider_id),
             )?
-            .filter(|occurrence| matches!(occurrence.presence, MailPresence::Present))
+            .filter(|occurrence| matches!(occurrence.presence, MailPresence::Present)))
+    }
+
+    /// The labels of the source's live copy of `provider_id`, when it has
+    /// landed one.
+    fn landed_labels(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<Vec<String>>> {
+        Ok(self
+            .landed_copy(source, provider_id)?
             .map(|occurrence| occurrence.labels))
     }
 

@@ -8,9 +8,14 @@
 //!   (`X-GM-THRID`), so the live Gmail sync finds it landed and never lands
 //!   it twice, and its attachments open through the Gmail wire by their part
 //!   ids. A message with no Gmail id is refused.
-//! - An IMAP mailbox takes any mbox: a message's id is the hash of its
-//!   `Message-ID` and its header block, as the IMAP wire names it on a
-//!   server that is not Gmail (of its bytes when it has no `Message-ID`).
+//! - An IMAP mailbox on Google's IMAP host takes a Takeout export by the
+//!   same Gmail id, as the IMAP wire names a message there; it lands under
+//!   no label, and the live sync files it under the folders that hold it. A
+//!   message with no Gmail id is refused.
+//! - Any other IMAP mailbox takes any mbox: a message's id is the hash of
+//!   its `Message-ID`, its header block and its size with each line ended by
+//!   CRLF, as the IMAP wire names it on a server that is not Gmail (of its
+//!   bytes when it has no `Message-ID`).
 //!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
@@ -25,7 +30,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{address_list, reads_google_mail, rfc2822_seconds};
-use super::imap::content_id;
+use super::imap::{content_id, gmail_id, imap_account_on_gmail};
 use super::importer::{MONTH_SECONDS, copies};
 use super::landing::{LandOutcome, Landing};
 use super::mbox::{MboxMessage, MboxReader};
@@ -130,7 +135,7 @@ fn zip_unreadable(error: &zip::result::ZipError) -> MemoryError {
 
 /// The Gmail id of a Takeout message: the decimal `X-GM-MSGID` its
 /// separator (`From <id>@xxx <date>`) or its header carries, as the hex the
-/// Gmail API names it by.
+/// Gmail API and the IMAP wire on Gmail name it by.
 fn gmail_message_id(separator: &str, message: &MimeMessage<'_>) -> Option<String> {
     let from_separator = separator
         .strip_prefix("From ")
@@ -142,7 +147,22 @@ fn gmail_message_id(separator: &str, message: &MimeMessage<'_>) -> Option<String
             .header("x-gm-msgid")
             .and_then(|value| value.trim().parse::<u64>().ok())
     })?;
-    Some(format!("{id:x}"))
+    Some(gmail_id(id))
+}
+
+/// The size of the message `raw` as an IMAP server counts it
+/// (`RFC822.SIZE`): each line ended by CRLF.
+fn crlf_size(raw: &[u8]) -> u64 {
+    let mut size = 0_u64;
+    let mut previous = 0_u8;
+    for &byte in raw {
+        if byte == b'\n' && previous != b'\r' {
+            size += 1;
+        }
+        size += 1;
+        previous = byte;
+    }
+    size
 }
 
 /// A separator's date (`Wed Nov 06 01:02:03 +0000 2024`, or the zoneless
@@ -209,39 +229,64 @@ fn takeout_labels(value: &str) -> Vec<String> {
     labels
 }
 
+/// How an import names each message: as its source's live wire names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportNaming {
+    /// A Google mailbox: the Gmail API's id, thread and labels.
+    GmailApi,
+    /// An IMAP mailbox on Google's IMAP host: the Gmail id, as the IMAP wire
+    /// names a message where the server announces `X-GM-EXT-1`.
+    GmailImap,
+    /// Any other IMAP mailbox: its `Message-ID`, header block and size.
+    HeaderBlock,
+}
+
 /// One call's landings into one source.
 struct Intake<'v> {
     vault: &'v Vault,
     source: EntityId,
     row: MailSourceRow,
     landing: Landing<'v>,
-    /// Whether the source reads Gmail ids (a Takeout export).
-    gmail: bool,
+    naming: ImportNaming,
     newer_than: Option<u64>,
     report: MailMboxImportReport,
 }
 
 impl Intake<'_> {
+    /// A message's headers, its labels Takeout's; `None` for one its
+    /// source names by a Gmail id it does not carry.
     fn headers(&self, message: &MboxMessage, parsed: &MimeMessage<'_>) -> Option<MailHeaders> {
         let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
-        let (provider_id, thread_id, labels) = if self.gmail {
-            let id = gmail_message_id(&message.separator, parsed)?;
-            let thread = parsed
-                .header("x-gm-thrid")
-                .and_then(|value| value.trim().parse::<u64>().ok())
-                .map(|thread| format!("{thread:x}"));
-            let labels = parsed
+        let takeout = || {
+            parsed
                 .header("x-gmail-labels")
                 .map(|value| takeout_labels(&value))
-                .unwrap_or_default();
-            (id, thread, labels)
-        } else {
-            // Named as the IMAP wire names a message (fix list row 19145).
-            let id = rfc_message_id.as_deref().map_or_else(
-                || format!("mbox{}", &blake3::hash(&message.raw).to_hex()[..32]),
-                |message_id| content_id(message_id, &message.raw),
-            );
-            (id, None, Vec::new())
+                .unwrap_or_default()
+        };
+        let (provider_id, thread_id, labels) = match self.naming {
+            ImportNaming::GmailApi => {
+                let id = gmail_message_id(&message.separator, parsed)?;
+                let thread = parsed
+                    .header("x-gm-thrid")
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .map(|thread| format!("{thread:x}"));
+                (id, thread, takeout())
+            }
+            // Named as the IMAP wire on Gmail names it, never in the other
+            // namespace (fix list row 19145).
+            ImportNaming::GmailImap => (
+                gmail_message_id(&message.separator, parsed)?,
+                None,
+                takeout(),
+            ),
+            ImportNaming::HeaderBlock => {
+                // Named as the IMAP wire names a message (fix list row 19145).
+                let id = rfc_message_id.as_deref().map_or_else(
+                    || format!("mbox{}", &blake3::hash(&message.raw).to_hex()[..32]),
+                    |message_id| content_id(message_id, &message.raw, crlf_size(&message.raw)),
+                );
+                (id, None, Vec::new())
+            }
         };
         let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
         let received_at = separator_seconds(&message.separator).or(date).unwrap_or(0);
@@ -284,9 +329,14 @@ impl Intake<'_> {
             return Ok(());
         }
         let parsed = MimeMessage::parse(&message.raw);
-        let Some(headers) = self.headers(message, &parsed) else {
-            self.report
-                .refuse("a message with no Gmail id: not a Google Takeout export".to_owned());
+        let Some(mut headers) = self.headers(message, &parsed) else {
+            let reason = if self.naming == ImportNaming::GmailImap {
+                "a message with no Gmail id: a Gmail mailbox over IMAP names each message by \
+                 its Gmail id, which a Google Takeout export carries"
+            } else {
+                "a message with no Gmail id: not a Google Takeout export"
+            };
+            self.report.refuse(reason.to_owned());
             return Ok(());
         };
         if headers.labels.iter().any(|label| label == "CHAT") || !copies(&headers, self.newer_than)
@@ -307,11 +357,23 @@ impl Intake<'_> {
                 &occurrence_key(self.source, &headers.provider_id),
             )?
         };
-        if held.is_some_and(|held| {
+        if held.as_ref().is_some_and(|held| {
             held.stage == MailStage::Body || held.presence != MailPresence::Present
         }) {
             self.report.same += 1;
             return Ok(());
+        }
+        // An IMAP mailbox's labels are the folders its wire reads, which an
+        // mbox does not name: a copy the live sync landed keeps its own, and
+        // a new one waits for that sync to file it. It was sent by the
+        // mailbox when either says so.
+        if self.naming != ImportNaming::GmailApi {
+            if let Some(held) = held {
+                headers.labels = held.labels;
+                headers.sent_by_mailbox |= held.reply.is_some_and(|reply| reply.sent_by_mailbox);
+            } else {
+                headers.labels.clear();
+            }
         }
         let body = parsed.body();
         let full = MailFull {
@@ -483,13 +545,18 @@ impl Memory<'_> {
                 .filter(|progress| progress.size == size && progress.modified == modified);
             (row, progress)
         };
-        let gmail = reads_google_mail(row.provider);
-        if !gmail && row.provider != MailProvider::Imap {
+        let naming = if reads_google_mail(row.provider) {
+            ImportNaming::GmailApi
+        } else if row.provider != MailProvider::Imap {
             return Err(MemoryError::bad_request_with(
                 "an mbox file imports into a Google or an IMAP mailbox",
                 &["A Microsoft 365 mailbox copies through its own sync."],
             ));
-        }
+        } else if imap_account_on_gmail(&row.provider_account) {
+            ImportNaming::GmailImap
+        } else {
+            ImportNaming::HeaderBlock
+        };
         let at = crate::unix_seconds_now();
         let newer_than = match row.copy {
             MailCopySetting::SearchOnly => {
@@ -513,7 +580,7 @@ impl Memory<'_> {
             source,
             row,
             landing: Landing::new(vault, &owner, source, at)?,
-            gmail,
+            naming,
             newer_than,
             report: MailMboxImportReport {
                 source_ref: source.to_hex(),

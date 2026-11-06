@@ -27,7 +27,8 @@ use super::provider_delete::{
 };
 use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
-    MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key,
+    MailOccurrence, MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in,
+    occurrence_key,
 };
 use super::wire::{
     MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailMessageRef,
@@ -164,11 +165,33 @@ impl Step<'_> {
         )
     }
 
-    fn land_headers(&mut self, provider_id: &str) -> MemoryResult<()> {
-        if self.known(provider_id)? {
-            // A message named again in another folder carries it too.
+    fn occurrence(&self, provider_id: &str) -> Result<Option<MailOccurrence>> {
+        let txn = self.vault.store.env.read_txn()?;
+        OCCURRENCES.get(
+            &self.vault.store,
+            &txn,
+            &occurrence_key(self.source, provider_id),
+        )
+    }
+
+    /// Lands the headers of `provider_id`, named by a listing; `relist` is
+    /// the generation of the listing after an expired anchor it is part of.
+    fn land_headers(&mut self, provider_id: &str, relist: Option<u64>) -> MemoryResult<()> {
+        if let Some(held) = self.occurrence(provider_id)? {
             if let Some(listed) = self.wire.listed_labels(provider_id) {
-                merge_labels(self.vault, self.source, provider_id, &listed, self.at)?;
+                if relist.is_some()
+                    && held.listed_in != relist
+                    && matches!(held.presence, MailPresence::Present)
+                {
+                    // A listing after an expired anchor settles where a copy
+                    // is now: the first folder to name it gives its labels
+                    // whole (the all-mail view none), and each later one
+                    // adds its own.
+                    update_labels(self.vault, self.source, provider_id, &listed, self.at)?;
+                } else {
+                    // A message named again in another folder carries it too.
+                    merge_labels(self.vault, self.source, provider_id, &listed, self.at)?;
+                }
             }
             self.report.same += 1;
             return Ok(());
@@ -190,7 +213,7 @@ impl Step<'_> {
     fn added(&mut self, provider_id: &str) -> MemoryResult<()> {
         if !self.source_deleted(provider_id)? {
             if self.row.copy != MailCopySetting::SearchOnly {
-                self.land_headers(provider_id)?;
+                self.land_headers(provider_id, None)?;
             }
             return Ok(());
         }
@@ -287,6 +310,11 @@ impl Step<'_> {
     /// what landed already lands as the same.
     fn history(&mut self, pages: u32) -> MemoryResult<()> {
         let state = self.state()?;
+        // The listing after an expired anchor under way, if one is.
+        let relist = state
+            .relist
+            .filter(|relist| relist.generation == state.generation)
+            .map(|relist| relist.generation);
         let Some(anchor) = state.anchor else {
             return Ok(());
         };
@@ -332,6 +360,12 @@ impl Step<'_> {
                         } else {
                             update_labels(self.vault, self.source, &provider_id, &labels, self.at)?;
                             self.restore(&provider_id)?;
+                            // The feed's word on where a copy is now counts as
+                            // a naming in a listing under way: the listing adds
+                            // to its labels and never sets them back.
+                            if let Some(generation) = relist {
+                                self.mark_listed_one(&provider_id, generation)?;
+                            }
                         }
                     }
                     MailHistoryChange::LabelGone { label } => self.label_gone(&label)?,
@@ -417,13 +451,13 @@ impl Step<'_> {
                 &MailListQuery { newer_than },
                 state.backfill_page.as_deref(),
             )?;
-            for message in &listed.messages {
-                self.land_headers(&message.provider_id)?;
-            }
             let generation = state.generation;
             let relist = state
                 .relist
                 .filter(|relist| relist.generation == generation);
+            for message in &listed.messages {
+                self.land_headers(&message.provider_id, relist.map(|relist| relist.generation))?;
+            }
             if relist.is_some() {
                 self.mark_listed(&listed.messages, generation)?;
             }
