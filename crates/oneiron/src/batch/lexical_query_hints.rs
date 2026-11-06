@@ -9,11 +9,11 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -52,6 +52,13 @@ pub(super) enum RawPutDoor {
     /// and the crate's internal one — and the witness program writes its rows
     /// through `batch_in()` like every other engine door.
     WitnessMessage,
+    /// The FIX 7777 archive MESSAGE door
+    /// ([`super::BatchBuilder::put_archived_message`]).
+    ///
+    /// Reachable only by presenting a `memory::ArchivedMessageAdmission`,
+    /// whose sole constructor proves the body a canonical envelope an import
+    /// marked: a capability, like the witness arm, never a caller's flag.
+    ArchivedMessage,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
@@ -69,18 +76,14 @@ pub(super) fn validate_public_raw_put(
 ) -> Result<()> {
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            let body = crate::claim::validate_claim_body_and_decode(data, false)?;
+            // The actual write transaction validates the class descriptor;
+            // this builder-only preflight reads the envelope's source/predicate.
+            let body = crate::claim::decode_claim_body(data, false)?;
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
-            // The family refusal reaches the raw CLAIM door too, and it has to
-            // be its own check rather than a consequence of the two above.
-            // `validate_claim_body_and_decode` shape-validates this family —
-            // subject kind and value vocabulary — without requiring a source,
-            // and the envelope rule only rejects a source that IS present. So
-            // a structurally valid SOURCE-LESS expression preference passed
-            // both and reached the write path, which is the forked chain
-            // F90, F97 and F108 closed on every other door.
+            // The source rule alone does not refuse a source-less expression
+            // preference. Its lifecycle still belongs to the typed door.
             if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
                 &body.predicate,
             ) {
@@ -113,7 +116,12 @@ pub(super) fn validate_public_raw_put(
         // `Vault::batch_in()` — because a second engine-tier door disagreeing
         // about the same body is not a seam, it is a hole. The witness door
         // says so by name, with the ceiling's own proof in hand.
-        crate::registry::ENTITY_TYPE_MESSAGE if door != RawPutDoor::WitnessMessage => {
+        crate::registry::ENTITY_TYPE_MESSAGE
+            if !matches!(
+                door,
+                RawPutDoor::WitnessMessage | RawPutDoor::ArchivedMessage
+            ) =>
+        {
             return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             )));
@@ -121,7 +129,9 @@ pub(super) fn validate_public_raw_put(
         ENTITY_TYPE_SKILL => {
             crate::write_envelope::skill_record::validate_skill_record_bytes(data)?
         }
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::validate_agent_definition_bytes(data)?
+        }
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only
         // replicated door deliberately does NOT run this check — it accepts a
@@ -163,7 +173,10 @@ pub(super) fn validate_public_raw_put(
 }
 
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
-    let body = crate::note::decode_note_body_using(data, crate::note::NoteKind::wire)?;
+    let body = crate::store::note_body::decode_note_body_using(
+        data,
+        crate::store::note_body::NoteKind::wire,
+    )?;
     if !body.author_ref.is(*author) {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "NOTE author_ref must be the verified bound actor",
@@ -467,11 +480,12 @@ pub(super) struct DeletedLexicalQueryHints {
 }
 
 pub(super) fn delete_lexical_query_hint_claims_for_target(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     keep: &HashSet<EntityId>,
 ) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
     let mut result = DeletedLexicalQueryHints::default();
     let mut pending_targets = VecDeque::from([*target]);
     let mut visited_targets = HashSet::new();
@@ -488,7 +502,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
                 continue;
             }
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                deindex_entity_without_lexical_query_hint_cascade(store, wtxn, &hint_id)?;
+                deindex_entity_without_lexical_query_hint_cascade(write, wtxn, &hint_id)?;
             if existed {
                 pending_targets.push_back(hint_id);
                 result.deleted.push((hint_id, neighbors));

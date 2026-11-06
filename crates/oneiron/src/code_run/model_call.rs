@@ -14,6 +14,8 @@ use crate::compaction::output::OutputRef;
 use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ModelLocality, Result, Vault};
 
+mod signed_reasoning;
+
 pub const MODEL_CALL_SCHEMA: u8 = 2;
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
@@ -25,9 +27,10 @@ const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
 pub enum ModelCallPartRef {
     Output { occurrence: OutputRef },
     Message { message: EntityId, part_index: u64 },
+    Custody { handle: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelCallReasoningPart {
     pub kind: ReasoningPartKind,
@@ -41,6 +44,27 @@ pub struct ModelCallReasoningPart {
     pub occurrence: Option<ModelCallPartRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub produced_row: Option<EntityId>,
+    /// The exact captured part before the record's display representation is
+    /// selected. Only the writer may use it, and no serializer persists it.
+    #[serde(skip)]
+    pub(crate) terminal_part: Option<crate::ContentPart>,
+}
+
+impl std::fmt::Debug for ModelCallReasoningPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelCallReasoningPart")
+            .field("kind", &self.kind)
+            .field("text", &self.text.as_ref().map(|_| "<redacted>"))
+            .field("bytes", &self.bytes.as_ref().map(Vec::len))
+            .field("signature", &self.signature.as_ref().map(|_| "<redacted>"))
+            .field("occurrence", &self.occurrence)
+            .field("produced_row", &self.produced_row)
+            .field(
+                "terminal_part",
+                &self.terminal_part.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl ModelCallReasoningPart {
@@ -77,6 +101,7 @@ impl ModelCallReasoningPart {
                 signature: None,
                 occurrence: occurrence.map(|occurrence| ModelCallPartRef::Output { occurrence }),
                 produced_row,
+                terminal_part: None,
             });
         }
         match kind {
@@ -87,6 +112,7 @@ impl ModelCallReasoningPart {
                 signature: None,
                 occurrence: None,
                 produced_row,
+                terminal_part: Some(part.clone()),
             }),
             ReasoningPartKind::Encrypted => {
                 let (bytes, signature) = if let Some(data) = data {
@@ -104,6 +130,7 @@ impl ModelCallReasoningPart {
                     signature,
                     occurrence: None,
                     produced_row,
+                    terminal_part: Some(part.clone()),
                 })
             }
             ReasoningPartKind::Full | ReasoningPartKind::Summary => Some(Self {
@@ -113,6 +140,7 @@ impl ModelCallReasoningPart {
                 signature: signature.clone(),
                 occurrence: None,
                 produced_row,
+                terminal_part: Some(part.clone()),
             }),
         }
     }
@@ -151,6 +179,7 @@ impl ModelCallReasoningPart {
                 part_index,
             }),
             produced_row: Some(message),
+            terminal_part: None,
         })
     }
 
@@ -440,6 +469,10 @@ impl ErasedForm for ModelCallRecord {
             part.text = None;
             part.bytes = None;
             part.signature = None;
+            part.terminal_part = None;
+            if matches!(&part.occurrence, Some(ModelCallPartRef::Custody { .. })) {
+                part.occurrence = None;
+            }
         }
         match &mut self.kind {
             ModelCallKind::Generate {
@@ -486,6 +519,17 @@ pub(crate) fn erase_model_call_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    erase_model_call_actor_as_in_txn(vault, wtxn, actor, None)
+}
+
+/// Carries the live actor scrub's custody revokes under the erase's actual owner act.
+/// The declared scrub and restore/replay paths retain the local-only wrapper.
+pub(crate) fn erase_model_call_actor_as_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
     if crate::deletion::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
@@ -510,7 +554,7 @@ pub(crate) fn erase_model_call_actor_in_txn(
         let place = format!("side:{}", MODEL_CALLS.decl().name);
         let origin =
             crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
-        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
     Ok(())
@@ -575,7 +619,17 @@ pub fn record_model_call_in_txn(
     if MODEL_CALLS.get(&vault.store, txn, &key)?.is_some() {
         return Err(invalid("model-call record already exists"));
     }
-    MODEL_CALLS.put(vault, txn, &key, record)
+    // The whole-part custody and its sole reference commit together, even if
+    // an enclosing writer catches a failed evidence write and keeps working.
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let mut stored = record.clone();
+    signed_reasoning::seal_signed_reasoning_in_txn(vault, &mut savepoint, &mut stored)?;
+    for part in &mut stored.reasoning {
+        part.terminal_part = None;
+    }
+    MODEL_CALLS.put(vault, &mut savepoint, &key, &stored)?;
+    savepoint.commit()?;
+    Ok(())
 }
 
 pub fn model_call_in_txn(

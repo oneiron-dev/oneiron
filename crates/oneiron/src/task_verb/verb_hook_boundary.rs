@@ -38,7 +38,7 @@ use crate::runtime_hooks::verb::{
     VerbHookStorage,
 };
 use crate::runtime_hooks::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
 };
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
@@ -382,7 +382,7 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
     let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
     call.scope = memory
         .room_turn()
-        .map(|turn| format!("room:{}", turn.room.to_hex()));
+        .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
     Ok(call)
 }
 
@@ -462,6 +462,21 @@ fn row_pre_resumable(
     validate: fn(&str, &Value) -> MemoryResult<()>,
     session: Option<&HookSession>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
+    row_pre_with_saved(
+        memory, verb, args, resume, credential, validate, session, false,
+    )
+}
+
+fn row_pre_with_saved(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    resume: Option<VerbResume>,
+    credential: Option<VerbAskCredential>,
+    validate: fn(&str, &Value) -> MemoryResult<()>,
+    session: Option<&HookSession>,
+    require_saved: bool,
+) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
         memory.embedded_owner(verb)?.revalidate(memory.vault())?;
         crate::runtime_hooks::host_doors::admit_trigger(memory.vault(), verb, &args)?;
@@ -475,15 +490,31 @@ fn row_pre_resumable(
     let vault = memory.vault();
     let call = row_call(memory, verb)?;
     let turn = memory.task_work_turn();
-    let mut ended = match (session, credential) {
-        (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
-        (None, Some(credential)) => {
-            vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
+    let mut ended = if require_saved {
+        match session {
+            Some(session) => session.with_storage(vault, |storage| {
+                vault.pre_verb_hooks_retained_in(storage, call, args, &check, turn)
+            })?,
+            None => vault.pre_verb_hooks_retained_in(
+                VerbHookStorage::Canonical,
+                call,
+                args,
+                &check,
+                turn,
+            )?,
         }
-        (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
+    } else {
+        match (session, credential) {
+            (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
+            (None, Some(credential)) => {
+                vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
+            }
+            (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
+        }
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
+        pre.with_read_capture(memory.read_capture());
     }
     Ok(ended)
 }
@@ -555,22 +586,62 @@ fn chain_post(
 pub fn row(
     memory: &Memory<'_>,
     verb: &str,
-    mut args: Value,
+    args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
+    row_with_saved(memory, verb, args, run, false)
+}
+
+/// A workflow's caller-only retry from its retained tool checkpoint. The
+/// caller rebuilds its current task host and authority as on a first call;
+/// the native pre chain must also find the saved call before the body runs.
+/// A missing or nested saved invocation never becomes a fresh call.
+///
+/// # Errors
+///
+/// As [`row`], including an unavailable saved hook call.
+pub fn row_retained(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+) -> MemoryResult<Value> {
+    row_with_saved(memory, verb, args, run, true)
+}
+
+fn row_with_saved(
+    memory: &Memory<'_>,
+    verb: &str,
+    mut args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+    require_saved: bool,
+) -> MemoryResult<Value> {
+    // A call a budget window paced answers from its held row until its turn
+    // ran (FIX 8753), before any hook runs on it again.
+    if !require_saved
+        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
+    {
+        return reply;
+    }
     let secret = CustodySecret::lift(verb, &mut args);
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now. A credential
     // caller's reference comes first; else a handle the drain can rebuild is
     // its plain target; else only the caller's retry resumes it.
-    let credential = memory.verb_ask_credential();
-    let resume = memory
-        .plain_resume()
-        .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
-        .map(VerbResume::Row);
+    let (credential, resume) = if require_saved {
+        // Workflow task-host calls are caller-only; never rebind a drain target.
+        (None, None)
+    } else {
+        let credential = memory.verb_ask_credential();
+        let resume = memory
+            .plain_resume()
+            .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+            .map(VerbResume::Row);
+        (credential, resume)
+    };
     let pre_restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;
-    let pre = match row_pre_resumable(
+    let pre = match row_pre_with_saved(
         memory,
         verb,
         args,
@@ -578,6 +649,7 @@ pub fn row(
         credential,
         validate_input,
         session.as_ref(),
+        require_saved,
     )? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),

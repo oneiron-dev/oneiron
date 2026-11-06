@@ -39,56 +39,83 @@ impl UsageLedger {
         origin: UsageEventOrigin,
         source_rows: Option<Vec<EntityId>>,
     ) -> Result<UsageRecordResult, UsageError> {
-        event.validate()?;
-        // A meter records facts for every payer. A source never turns a
-        // quantity into a wallet debit, and an unknown price is not zero. A
-        // price past what an amount holds is that call's alone and never
-        // drops it: the call keeps its counts and frozen rates, unpriced for
-        // that reason (FIX 6407). Every other error stands.
-        let cost = match event.cost_input().map(|input| input.calculate()) {
-            None => None,
-            Some(Ok(cost)) => Some(cost),
-            Some(Err(UsageError::Overflow)) => {
-                event.unpriced = Some(UnpricedReason::PriceOverflow);
-                None
-            }
-            Some(Err(error)) => return Err(error),
-        };
-        let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
-        let rollup_key = vault_rollup_key(&event.owner, &event.vault_id);
+        let cost = price_event(&mut event)?;
         let (owner, vault_id) = (event.owner.clone(), event.vault_id.clone());
-        let (recorded, source, cost, unpriced) =
-            self.vault
-                .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
-                    if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
-                        let stored = decode_entry(&raw)?;
-                        // The first write's origin stands: a replay never
-                        // relabels it, and origin never makes one conflict.
-                        if stored.event != event || stored.source != source {
-                            return Err(UsageError::IdempotencyConflict);
-                        }
-                        return Ok((false, stored.source, stored.cost, stored.event.unpriced));
-                    }
-                    let unpriced = event.unpriced.clone();
-                    let stored = StoredUsageEvent {
-                        event,
-                        source,
-                        origin,
-                        cost: cost.clone(),
-                        recorded_at: now_secs(),
-                        source_rows,
-                    };
-                    // A source an erase reached since the call settled does
-                    // not come back (FIX 6933).
-                    let row = self
-                        .vault
-                        .usage_event_with_live_sources_in_write_txn(txn, &encode_entry(&stored)?)?;
-                    self.vault.sync_state_put_in_write_txn(txn, &key, &row)?;
-                    mark_rollup_behind_in_txn(&self.vault, txn, &rollup_key, &key)?;
-                    Ok((true, source, cost, unpriced))
-                })?;
-        let (vault_rollup, rollup_status) = self.rollup_after_write(&owner, &vault_id);
-        Ok(UsageRecordResult {
+        let written = self.vault.try_with_write_txn_grouped(|txn| {
+            self.record_stored_in_txn(
+                txn,
+                &StoredUsageEvent {
+                    event,
+                    source,
+                    origin,
+                    cost,
+                    recorded_at: now_secs(),
+                    source_rows,
+                },
+            )
+        })?;
+        Ok(self.record_result(&owner, &vault_id, written))
+    }
+
+    /// Freezes the automatic settlement once, before either durable write.
+    pub(crate) fn prepare_settlement(
+        mut event: UsageEvent,
+        source: UsageMode,
+        origin: UsageEventOrigin,
+        source_rows: Option<Vec<EntityId>>,
+    ) -> Result<Vec<u8>, UsageError> {
+        let cost = price_event(&mut event)?;
+        encode_entry(&StoredUsageEvent {
+            event,
+            source,
+            origin,
+            cost,
+            recorded_at: now_secs(),
+            source_rows,
+        })
+    }
+
+    pub(super) fn record_stored_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        stored: &StoredUsageEvent,
+    ) -> Result<EventWrite, UsageError> {
+        let event = &stored.event;
+        let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
+        if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
+            let first = decode_entry(&raw)?;
+            // Origin and source rows never relabel or conflict with the first write.
+            if first.event != *event || first.source != stored.source {
+                return Err(UsageError::IdempotencyConflict);
+            }
+            return Ok((false, first.source, first.cost, first.event.unpriced));
+        }
+        let row = self
+            .vault
+            .usage_event_with_live_sources_in_write_txn(txn, &encode_entry(stored)?)?;
+        self.vault.sync_state_put_in_write_txn(txn, &key, &row)?;
+        mark_rollup_behind_in_txn(
+            &self.vault,
+            txn,
+            &vault_rollup_key(&event.owner, &event.vault_id),
+            &key,
+        )?;
+        Ok((
+            true,
+            stored.source,
+            stored.cost.clone(),
+            event.unpriced.clone(),
+        ))
+    }
+
+    pub(super) fn record_result(
+        &self,
+        owner: &str,
+        vault_id: &str,
+        (recorded, source, cost, unpriced): EventWrite,
+    ) -> UsageRecordResult {
+        let (vault_rollup, rollup_status) = self.rollup_after_write(owner, vault_id);
+        UsageRecordResult {
             recorded,
             replayed: !recorded,
             source,
@@ -96,7 +123,7 @@ impl UsageLedger {
             unpriced,
             vault_rollup,
             rollup_status,
-        })
+        }
     }
     /// Settled physical calls of one run, from their stamped durable events.
     pub fn run_settlements(
@@ -196,6 +223,28 @@ impl UsageLedger {
         Ok(read)
     }
 }
+
+pub(super) type EventWrite = (bool, UsageMode, Option<Money>, Option<UnpricedReason>);
+
+fn price_event(event: &mut UsageEvent) -> Result<Option<Money>, UsageError> {
+    event.validate()?;
+    // Validation proves the overflow, including a raw service amount whose
+    // nano-currency conversion cannot be stored in service_amount.
+    if event.unpriced == Some(UnpricedReason::PriceOverflow) {
+        return Ok(None);
+    }
+    // An overflowing price keeps the call's counts and frozen rates (FIX 6407).
+    match event.cost_input().map(|input| input.calculate()) {
+        None => Ok(None),
+        Some(Ok(cost)) => Ok(Some(cost)),
+        Some(Err(UsageError::Overflow)) => {
+            event.unpriced = Some(UnpricedReason::PriceOverflow);
+            Ok(None)
+        }
+        Some(Err(error)) => Err(error),
+    }
+}
+
 /// One free-time cycle's settled calls, as [`UsageLedger::cycle_settlements`]
 /// read them.
 #[derive(Clone, Debug)]

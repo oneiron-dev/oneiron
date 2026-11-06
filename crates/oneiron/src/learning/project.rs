@@ -27,8 +27,9 @@ use super::estimate::{
     fold_value,
 };
 use super::evidence::{Anchor, CELL, CellRow, EvidenceRow, Observation, evidence_in_txn};
+use super::frozen::{FrozenFold, accumulate};
 use super::judge::{JudgeConversion, conversions_in_txn};
-use super::prior::cell_prior_in_txn;
+use super::prior::stored_prior_for_cell_in_txn;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
@@ -48,7 +49,8 @@ pub struct SettingFit {
     pub at: u64,
 }
 
-/// The claim value: the estimate, its cell and the derived UNTESTED mark.
+/// The claim value: the estimate, its cell, the derived UNTESTED mark and
+/// the as-projected donor tally a borrower lends.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StoredEstimateClaim {
     pub(crate) kind: String,
@@ -56,18 +58,31 @@ pub(crate) struct StoredEstimateClaim {
     pub(crate) cell: LearningCell,
     pub(crate) estimate: Estimate,
     pub(crate) untested: bool,
+    pub(crate) donor_tally: Option<(f64, f64)>,
+    pub(crate) frozen: Option<FrozenFold>,
 }
 
 const VALUE_KIND: &str = "estimate";
 
 impl StoredEstimateClaim {
-    fn new(cell: &LearningCell, estimate: &Estimate) -> Self {
+    fn new(
+        cell: &LearningCell,
+        estimate: &Estimate,
+        tally: &OwnTally,
+        frozen: Option<FrozenFold>,
+    ) -> Self {
+        let donor_tally = match tally {
+            OwnTally::Beta { wins, losses } => Some((*wins, *losses)),
+            OwnTally::Mean { .. } | OwnTally::Counts { .. } => None,
+        };
         Self {
             kind: VALUE_KIND.to_owned(),
             form: estimate.form(),
             cell: cell.clone(),
             estimate: estimate.clone(),
             untested: estimate.untested(),
+            donor_tally,
+            frozen,
         }
     }
 
@@ -108,6 +123,9 @@ pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> 
     }
     stored.cell.validate()?;
     stored.estimate.validate()?;
+    if let Some(frozen) = &stored.frozen {
+        frozen.validate_for(stored.form)?;
+    }
     if stored.form != stored.estimate.form() || !stored.cell.predicate.admits_form(stored.form) {
         return Err(Error::InvalidClaimBody(
             "a learning claim's form is its estimate's and its member's",
@@ -137,10 +155,40 @@ pub(crate) fn fold_cell_in_txn(
     row: &CellRow,
     digest: &[u8; 32],
     now: u64,
-) -> Result<(Estimate, Vec<String>)> {
-    let prior = cell_prior_in_txn(vault, txn, row, digest)?;
+) -> Result<(Estimate, OwnTally, Vec<String>)> {
+    let (estimate, tally, cited, _) = fold_cell_with_snapshot_in_txn(vault, txn, row, digest, now)?;
+    Ok((estimate, tally, cited))
+}
+
+fn fold_cell_with_snapshot_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    digest: &[u8; 32],
+    now: u64,
+) -> Result<(Estimate, OwnTally, Vec<String>, Option<FrozenFold>)> {
+    let (stored_prior, _) =
+        stored_prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)?;
+    let conversions = conversions_in_txn(vault, txn)?;
+    let prior = stored_prior.project(&conversions);
+    let mut frozen = (row.form != EstimateForm::Counts).then(|| {
+        FrozenFold::new(
+            stored_prior,
+            row.form,
+            row.cell.predicate == LearningPredicate::Reliability || row.form != EstimateForm::Beta,
+        )
+    });
     let window = window_in_txn(vault, txn)?;
-    let folded = fold_evidence_in_txn(vault, txn, row, digest, window, now)?;
+    let folded = fold_evidence_in_txn(
+        vault,
+        txn,
+        row,
+        digest,
+        window,
+        now,
+        &conversions,
+        &mut frozen,
+    )?;
     let value: EstimateValue = fold_value(&prior, &folded.tally);
     Ok((
         Estimate {
@@ -152,22 +200,10 @@ pub(crate) fn fold_cell_in_txn(
             window,
             ver: ESTIMATOR_VERSION,
         },
+        folded.tally,
         folded.cited,
+        frozen,
     ))
-}
-
-/// The windowed own tally a cell's evidence folds to under `window` at
-/// `now`, the measured mass alone, with no prior: what the projector adds
-/// to the prior when it writes a head at `now`. Nothing is written.
-pub(super) fn measured_tally_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    row: &CellRow,
-    digest: &[u8; 32],
-    window: Window,
-    now: u64,
-) -> Result<OwnTally> {
-    Ok(fold_evidence_in_txn(vault, txn, row, digest, window, now)?.tally)
 }
 
 /// One cell's evidence, folded: the own tally, its effective runs, the
@@ -186,8 +222,9 @@ fn fold_evidence_in_txn(
     digest: &[u8; 32],
     window: Window,
     now: u64,
+    conversions: &BTreeMap<String, JudgeConversion>,
+    frozen: &mut Option<FrozenFold>,
 ) -> Result<FoldedEvidence> {
-    let conversions = conversions_in_txn(vault, txn)?;
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
     // Newest first, so the citations run newest to oldest.
     evidence.sort_by(|a, b| b.1.at.cmp(&a.1.at).then_with(|| a.0.cmp(&b.0)));
@@ -219,57 +256,32 @@ fn fold_evidence_in_txn(
         {
             w /= rate;
         }
+        if let Some(frozen) = frozen {
+            frozen.observe(&ev.observation, ev.judge.as_deref(), w);
+        }
         // Cyclic lineage folds as unknown.
         let Some((observation, converted)) = (if row.cell.predicate
             == LearningPredicate::Reliability
             || ev.observation.form() != EstimateForm::Beta
         {
-            convert(&ev.observation, ev.judge.as_deref(), &conversions)
+            convert(&ev.observation, ev.judge.as_deref(), conversions)
         } else {
             Some((ev.observation.clone(), false))
         }) else {
             continue;
         };
-        match (&mut tally, &observation) {
-            (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
-                if *ok {
-                    *wins += w;
-                } else {
-                    *losses += w;
-                }
+        // Count-only outcomes have citations but no numerical mass.
+        if matches!(&tally, OwnTally::Mean { .. })
+            && let Observation::CountOnly(name) = &observation
+        {
+            *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
+            if seen.insert(receipt.as_str()) {
+                cited.push(receipt.clone());
             }
-            // A converted binary score is fractional success mass, not a
-            // newly observed run. The original receipt still holds its bool.
-            (OwnTally::Beta { wins, losses }, Observation::Magnitude(score)) => {
-                let score = score.clamp(0.0, 1.0);
-                *wins += w * score;
-                *losses += w * (1.0 - score);
-            }
-            (
-                OwnTally::Mean {
-                    sum_w,
-                    sum_wx,
-                    sum_wxx,
-                },
-                Observation::Magnitude(x),
-            ) => {
-                *sum_w += w;
-                *sum_wx += w * x;
-                *sum_wxx += w * x * x;
-            }
-            (OwnTally::Counts { counts }, Observation::Category(name)) => {
-                *counts.entry(name.clone()).or_insert(0.0) += w;
-            }
-            // A count-only outcome joins the counts beside the mean, cited,
-            // and adds no mass, no run and no judge label.
-            (OwnTally::Mean { .. }, Observation::CountOnly(name)) => {
-                *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
-                if seen.insert(receipt.as_str()) {
-                    cited.push(receipt.clone());
-                }
-                continue;
-            }
-            _ => continue,
+            continue;
+        }
+        if !accumulate(&mut tally, &observation, w) {
+            continue;
         }
         runs += w;
         if converted {
@@ -326,7 +338,7 @@ fn measurement_version(evidence: &[(String, EvidenceRow)]) -> Option<String> {
 /// Follows a score through the whole accepted conversion chain; a cyclic
 /// lineage yields `None`. Converted binary scores become fractional Beta
 /// mass while retaining their original run weight.
-fn convert(
+pub(super) fn convert(
     observation: &Observation,
     judge: Option<&str>,
     conversions: &BTreeMap<String, JudgeConversion>,
@@ -356,7 +368,8 @@ fn convert(
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
 /// estimate moved, nothing when one head already says it, and a retraction of
-/// every head when the window has left no own runs.
+/// every head when the window has left no own runs. A hard-deleted subject is
+/// passed over without projecting a new head.
 pub(crate) fn project_cell_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -366,7 +379,15 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
-    let (estimate, cited) = fold_cell_in_txn(vault, wtxn, &row, digest, now)?;
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &row.cell.subject)? {
+        tracing::warn!(
+            subject = %row.cell.subject.to_hex(),
+            "a learning cell was not projected: its subject was hard-deleted"
+        );
+        return Ok(None);
+    }
+    let (estimate, tally, cited, frozen) =
+        fold_cell_with_snapshot_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
 
     if estimate.runs <= 0.0 {
@@ -375,7 +396,7 @@ pub(crate) fn project_cell_in_txn(
         return Ok(None);
     }
 
-    let stored = StoredEstimateClaim::new(&row.cell, &estimate);
+    let stored = StoredEstimateClaim::new(&row.cell, &estimate, &tally, frozen);
     let value = stored.to_value()?;
     let evidence = rmpv::Value::Array(
         cited
@@ -425,7 +446,10 @@ pub(crate) fn project_cell_in_txn(
 }
 
 /// Re-projects every registered cell, so the window keeps fading runs with no
-/// new evidence arriving. An off-hot-path sweep; returns the cells it visited.
+/// new evidence arriving. An off-hot-path sweep; returns the initial
+/// registration snapshot length, not the successful projections. A registered
+/// cell or its subject erased between the snapshot and its write is passed
+/// over without stopping the sweep.
 ///
 /// # Errors
 ///
@@ -438,6 +462,21 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
     };
     for digest in &digests {
         vault.with_write_txn_grouped(|wtxn| {
+            let Some(row) = CELL.get(&vault.store, wtxn, digest)? else {
+                tracing::warn!("a learning cell was not reprojected: its registered cell is gone");
+                return Ok(());
+            };
+            if vault
+                .store
+                .port_entity_record(wtxn, &row.cell.subject)?
+                .is_none()
+            {
+                tracing::warn!(
+                    subject = %row.cell.subject.to_hex(),
+                    "a learning cell was not reprojected: its subject is gone"
+                );
+                return Ok(());
+            }
             project_cell_in_txn(vault, wtxn, digest, now).map(|_| ())
         })?;
     }
@@ -445,22 +484,32 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
 }
 
 /// Re-projects every cell fitting the setting `key`, after its seed moved.
+/// A cell whose subject is gone passes over, and the write that carries it
+/// goes on: re-ensuring would resurrect what the owner erased.
 pub(crate) fn reproject_setting_cells_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     now: u64,
 ) -> Result<()> {
-    let digests: Vec<[u8; 32]> = CELL
+    let cells: Vec<([u8; 32], EntityId)> = CELL
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, row)| {
             row.cell.predicate == LearningPredicate::Setting
                 && row.cell.setting_key.as_deref() == Some(key)
         })
-        .map(|(digest, _)| digest)
+        .map(|(digest, row)| (digest, row.cell.subject))
         .collect();
-    for digest in &digests {
+    for (digest, subject) in &cells {
+        if vault.store.port_entity_record(wtxn, subject)?.is_none() {
+            tracing::warn!(
+                key,
+                subject = %subject.to_hex(),
+                "a setting cell was not reprojected: its subject is gone"
+            );
+            continue;
+        }
         project_cell_in_txn(vault, wtxn, digest, now)?;
     }
     Ok(())

@@ -1,3 +1,6 @@
+//! Entity-delta graduation door: novelty-guarded artifact routing.
+//! Entry [`Memory::route_entity_delta`]; dispatched from the `verbs` agent-verb surface.
+//! Owned by `task_verb`; graduation verdicts come from the `consult_ladder`, not this file.
 use rmpv::Value;
 
 use crate::Vault;

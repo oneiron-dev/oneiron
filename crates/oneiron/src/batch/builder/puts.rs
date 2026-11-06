@@ -130,6 +130,31 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
+    /// content of a carrier its writer already scanned whole and holds marked
+    /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a
+    /// scan's detection on these bytes is that mark. A batch of nothing but
+    /// such puts stores them without the batch door's scan; any other op in
+    /// the batch keeps the door for every op, and bytes other than these
+    /// never take the exemption. Every other check runs as for any put.
+    pub(crate) fn put_marked_carrier(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.marked_carriers
+            .insert(*id, *blake3::hash(data).as_bytes());
+        self.put(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            occurred,
+            learned_at,
+            data,
+        )
+    }
+
     /// FIX 3677: [`Self::put`] of ASSET `id` whose body is the body file
     /// `file` names, published before this batch: the row keeps `manifest` in
     /// its place, and the put binds the file to the row in its transaction.
@@ -162,6 +187,7 @@ impl BatchBuilder<'_> {
         id: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         manifest: &[u8],
         file: crate::store::AssetBodyFacts,
     ) -> Self {
@@ -171,6 +197,7 @@ impl BatchBuilder<'_> {
             crate::registry::ENTITY_TYPE_ASSET,
             occurred,
             learned_at,
+            row_version,
             manifest,
         )
     }
@@ -202,6 +229,30 @@ impl BatchBuilder<'_> {
             learned_at,
             body,
             RawPutDoor::WitnessMessage,
+        )
+    }
+
+    /// The archive MESSAGE put (FIX 7777): stages the bytes an
+    /// [`ArchivedMessageAdmission`] carries, and only those, as the witness
+    /// put stages its authorization's. Its only constructor, in the witness
+    /// archive owner, proves them a canonical envelope an import marked, so
+    /// a restored MESSAGE is imported evidence and never a local witness.
+    ///
+    /// [`ArchivedMessageAdmission`]: crate::memory::ArchivedMessageAdmission
+    pub(crate) fn put_archived_message(
+        self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::memory::ArchivedMessageAdmission,
+    ) -> Self {
+        self.put_through(
+            id,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            occurred,
+            learned_at,
+            admission.body(),
+            RawPutDoor::ArchivedMessage,
         )
     }
 
@@ -433,6 +484,7 @@ impl BatchBuilder<'_> {
         entity_type: u8,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: Option<u64>,
         data: &[u8],
     ) -> Self {
         #[cfg(feature = "sync")]
@@ -453,6 +505,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
         ));
         self
@@ -481,6 +534,7 @@ impl BatchBuilder<'_> {
             entity_type,
             occurred,
             learned_at,
+            None,
             data,
         ));
         self
@@ -500,6 +554,7 @@ fn plain_put_op(
         entity_type,
         occurred,
         learned_at,
+        row_version: None,
         data: data.to_vec(),
         allow_maintenance: false,
         allow_reserved_predicate: false,

@@ -37,6 +37,16 @@ pub enum AuthorityOp {
     SlipGrantRevoke {
         grant_ref: EntityId,
     },
+    /// The removal-archive door's spend of the one-shot transferred slip
+    /// `slip_id`, served from the archives an export-first removal kept for
+    /// `member`, the person the slip's logged mint names as its holder (FIX
+    /// 11862). It burns that logged slip whatever its standing since: the
+    /// door takes a revoked or expired origin, so this is not a
+    /// `SlipConsume`, which needs live ancestry.
+    RemovalArchiveConsume {
+        slip_id: [u8; 32],
+        member: EntityId,
+    },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
@@ -196,6 +206,21 @@ pub enum AuthorityOp {
     /// install key of the act it leads to, or by the host's slip issuer for a
     /// host-issued op (FIX 7908). A main-log entry with no semantic payload.
     FrontierJoin(FrontierJoin),
+    /// One owner cut of a repository's origin authority: the epoch it opens
+    /// and the one machine that writes the repository's refs at it, signed
+    /// by the install key of a live machine of the vault, in any role (FIX
+    /// 15740). A main-log entry, so every machine the owner admits folds it.
+    OriginCut(OriginCut),
+    /// The owner names a device key's successor (FIX 11135): the install
+    /// that completes the erase receipts that key attested. A main-log
+    /// entry, so every machine the owner admits folds it.
+    DeviceSuccession(DeviceSuccession),
+    /// One shared-vault membership change its writer executed with no host
+    /// issuer to sign it, signed after it committed by the install key of a
+    /// live machine of the vault, in any role (FIX 12335). It withdraws the
+    /// slips of each Grant it names and carries an Owner act's handover. A
+    /// main-log entry, so every machine the owner admits folds it.
+    MembershipExecution(MembershipExecution),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -262,6 +287,8 @@ impl AuthorityLogEntry {
             AuthorityOp::ConversationTrainingVaultSet(set) => set.validate_entry(self)?,
             AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate_entry(self)?,
             AuthorityOp::FrontierJoin(join) => join.validate_entry(self)?,
+            AuthorityOp::OriginCut(cut) => cut.validate_entry(self)?,
+            AuthorityOp::DeviceSuccession(succession) => succession.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -387,6 +414,12 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => {
+            if *slip_id == [0; 32] || *member.as_bytes() == [0; 16] {
+                return Err(invalid_authority());
+            }
+            Ok(())
+        }
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
@@ -499,6 +532,9 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
+        AuthorityOp::OriginCut(cut) => cut.validate(),
+        AuthorityOp::DeviceSuccession(succession) => succession.validate(),
+        AuthorityOp::MembershipExecution(record) => record.validate(),
     }
 }
 

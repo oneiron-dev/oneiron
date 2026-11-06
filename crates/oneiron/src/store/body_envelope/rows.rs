@@ -33,8 +33,9 @@ pub(crate) const BODY_KEYS: SideTable<[u8; 32], BodyKeyRow, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_KEY);
 
 /// Every instance a digest was bound under that its row no longer names, or
-/// may stop naming: one an inline/file switch displaced, its successor, and
-/// one the collector released (FIX 6023). Ids only.
+/// may stop naming: one an inline/file switch displaced, its successor, one
+/// the collector released (FIX 6023), or one a restore left unlanded (FIX
+/// 11417). Ids only.
 pub(crate) const BODY_INSTANCES: SideTable<([u8; 32], [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_INSTANCE);
 
@@ -299,6 +300,20 @@ pub(crate) fn remember_body_instances_in_txn<D: ManifestDbs + SideTableDbs>(
     digest: &[u8; 32],
     instances: &[[u8; 16]],
 ) -> Result<()> {
+    let journaled = remembered_body_instance_rows_in_txn(dbs, wtxn, digest, instances)?;
+    dbs.key_custody().journal_body_history(journaled)
+}
+
+/// Collects the instance rows [`remember_body_instances_in_txn`] would
+/// journal, without journaling them, so a writer that journals once per
+/// commit (FIX 6229) can carry them in its own frame instead of one frame
+/// per bind.
+pub(crate) fn remembered_body_instance_rows_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    instances: &[[u8; 16]],
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let mut journaled = Vec::new();
     for instance in instances {
         let key = (*digest, *instance);
@@ -307,7 +322,35 @@ pub(crate) fn remember_body_instances_in_txn<D: ManifestDbs + SideTableDbs>(
             journaled.push((BODY_INSTANCES.key_bytes(&key), Vec::new()));
         }
     }
-    dbs.key_custody().journal_body_history(journaled)
+    Ok(journaled)
+}
+
+/// Journals the restored vault key's actual instance even when its history
+/// row arrived in the image. Returns `false` without changing rows for an
+/// off-record key or a destination whose custody cannot journal yet.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn journal_restored_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    row: &BodyKeyRow,
+) -> Result<bool> {
+    let custody = dbs.key_custody();
+    if !row.is_vault() || custody.archived_at_open() || custody.local().is_none() {
+        return Ok(false);
+    }
+    let mut journaled = remembered_body_instance_rows_in_txn(dbs, wtxn, digest, &[row.instance])?;
+    if journaled.is_empty() {
+        journaled.push((
+            BODY_INSTANCES.key_bytes(&(*digest, row.instance)),
+            Vec::new(),
+        ));
+    }
+    custody.journal_body_history(journaled)?;
+    Ok(true)
 }
 
 /// Every instance [`remember_body_instances_in_txn`] holds for the body
@@ -328,9 +371,9 @@ pub(crate) fn remembered_body_instances_in_txn(
         .collect())
 }
 
-/// Deletes the instance row of the body `digest`, in the collector or erase
-/// transaction that releases its final holder: the instance it named, so
-/// its file goes after the commit; `None` for a body with no row.
+/// Deletes the instance row of the body `digest` once its final holder is
+/// released, in a collector, erase or restore transaction: the instance it
+/// named, so its file goes after the commit; `None` for a body with no row.
 ///
 /// # Errors
 ///

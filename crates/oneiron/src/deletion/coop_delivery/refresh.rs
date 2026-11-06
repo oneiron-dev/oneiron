@@ -19,6 +19,7 @@ use super::super::coop_request::{
 };
 use super::*;
 use crate::authority::{AuthorityFold, HostSlipIssuer};
+use crate::store::attempt_record_read;
 use oneiron_authority::authority::AuthorityKey;
 
 /// What starting one claimed try found, in its writer.
@@ -43,7 +44,8 @@ pub(super) fn start_try_in_txn(
     issuer: Option<&HostSlipIssuer>,
     now: u64,
 ) -> Result<TryStart> {
-    if !AttemptQueue::new(vault).holds_lease_in_txn(
+    if !attempt_record_read::holds_lease_in_txn(
+        &vault.store,
         txn,
         attempt.id,
         lease_owner,

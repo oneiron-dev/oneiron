@@ -47,7 +47,7 @@ use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
 use crate::task_verb::recall_door::RecallDoor;
-use oneiron_model::llm::BudgetLease;
+use oneiron_model::llm::{BudgetLease, WorkCancel};
 
 mod lineage;
 
@@ -92,7 +92,8 @@ pub trait RecallRerankHost: Sync {
 
     /// One score per document, in order, higher meaning more relevant to
     /// `query`. `answer_at` is when the recall's door answers, if it has a
-    /// deadline. Before each request it sends, a fallback's too, the host
+    /// deadline. `cancel` shares that attempt's cancellation flag and wake
+    /// when the recall has a deadline. Before each request it sends, a fallback's too, the host
     /// asks `egress` whether the texts may still leave
     /// ([`RerankEgress::holds`]), and sends nothing more once it says no. A
     /// refusal is the recall's: nothing stands in for the model.
@@ -102,12 +103,18 @@ pub trait RecallRerankHost: Sync {
         documents: &[RerankDocument<'_>],
         egress: &RerankEgress<'_>,
         answer_at: Option<Instant>,
+        cancel: Option<WorkCancel>,
     ) -> MemoryResult<RerankScores>;
 
-    /// Whether every model `score` can reach runs on this device, in this
-    /// process. Only then is it sent the words of a row a device-only world
-    /// keeps; any other host is sent such a row empty. A host that cannot
-    /// say runs elsewhere.
+    /// Whether every model `score` can reach, through every request, batch
+    /// and fallback of this block, runs on this physical device: in this
+    /// process, or in a model runtime this host supervises and reaches only
+    /// over a channel it authenticates against that child, so that no
+    /// transport it may use leaves the device (I2-LOCAL). Only then is it
+    /// sent the words of a row a device-only world keeps; any other host is
+    /// sent such a row empty. A host that cannot say runs elsewhere, and so
+    /// does one whose scoring plan could reach an endpoint over HTTP, even
+    /// on this machine.
     fn runs_on_device(&self) -> bool {
         false
     }
@@ -476,6 +483,7 @@ impl Memory<'_> {
                 &documents,
                 &egress,
                 deadline.as_ref().map(RetrievalDeadline::answer_at),
+                deadline.as_ref().map(RetrievalDeadline::work_cancel),
             ) {
                 Ok(scored) => RerankScores {
                     served_model: scored.served_model.filter(|name| reported_model(name)),

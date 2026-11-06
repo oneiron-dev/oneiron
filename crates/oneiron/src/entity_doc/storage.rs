@@ -237,7 +237,7 @@ pub(super) fn persist_scanned(
         txn,
         &std::collections::BTreeSet::from([*entity]),
     )?;
-    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+    if crate::store::decision_question_watches::unit_watched_in_txn(store, txn, entity)? {
         crate::batch::queue_proactivity_change(vault, txn);
     }
     Ok(())
@@ -366,10 +366,10 @@ impl Vault {
                 if *field != TextField::MapField("content".to_owned()) {
                     return Err(invalid("MESSAGE document edits only content"));
                 }
-                crate::gate::validate_canonical_witness_message_body(body)?;
+                crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                let original = crate::note::decode_note_body(body)?;
+                let original = crate::store::note_body::decode_note_body(body)?;
                 // Only a live author that is the migrating writer matches: an
                 // erased one is no one, never another verified writer.
                 if !original.author_ref.is(birth_actor.entity_ref())
@@ -390,7 +390,7 @@ impl Vault {
             )?;
             // A row its writing door already stamped keeps that birth on its
             // document's birth commit (FIX 10929).
-            let born = crate::provenance::birth::row_birth_in_txn(&self.store, txn, entity)?;
+            let born = crate::store::birth_record::row_birth_in_txn(&self.store, txn, entity)?;
             // The birth commit names the birth actor's stamp token (FIX 10930).
             let stamp = crate::provenance::actor_stamp_in_txn(self, txn, birth_actor)?;
             let doc = EntityDoc::open_with_metadata(
@@ -402,10 +402,17 @@ impl Vault {
                 born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
+            if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                crate::vault::entity_revision::ensure_document(self, txn, entity)?;
+            }
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
-            self.store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            self.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(self),
+                txn,
+                entity,
+                &pointer,
+            )?;
             self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
@@ -467,7 +474,7 @@ pub(super) fn stamp_document_birth(
     let class = MadeByClass::of_writer(actor.actor_class());
     match RowBirth::written(actor, class, door, &[], &[], at) {
         Some(birth) => {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
+            crate::store::birth_record::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
         }
         None => Ok(()),
     }
@@ -600,11 +607,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
 }
 
 pub(super) fn move_pointer(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     document: &str,
 ) -> Result<()> {
+    let store = write.store;
     let raw = store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
@@ -632,7 +640,7 @@ pub(super) fn move_pointer(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         &body,
     )?;
-    store.port_entity_document_pointer_put(txn, entity, &body)
+    store.port_entity_document_pointer_put(write, txn, entity, &body)
 }
 
 /// Removes a document's snapshot, state vectors and pending updates.
@@ -739,7 +747,7 @@ pub(crate) fn record_body_at(
 }
 
 /// A typed read projection of the body and metadata at one document version.
-pub(super) fn body_with_document(
+pub(crate) fn body_with_document(
     field: &TextField,
     body: &[u8],
     doc: &EntityDoc,

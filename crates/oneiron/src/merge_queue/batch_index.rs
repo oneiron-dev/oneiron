@@ -3,6 +3,12 @@
 //! declaration through one index row each, never every batch the queue
 //! ever kept. The rows are written in the writer that saves the batch; a
 //! reader reads each named batch whole and judges what it holds.
+//!
+//! These writers add index rows and retain them with their batch.
+//! Survivor requeues create a new batch rather than removing the old one.
+//! Readers re-judge the stored batch; a missing batch is index corruption.
+//! A writer that later removes a batch or changes its indexed membership
+//! must remove the old index rows in that same transaction.
 use super::storage::BATCHES;
 use super::{MergeBatch, MergeQueue};
 use crate::error::{Error, Result};

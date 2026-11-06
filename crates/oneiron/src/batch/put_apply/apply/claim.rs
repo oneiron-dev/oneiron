@@ -26,10 +26,7 @@ pub(super) fn reconcile_replicated_critical_confirm(
         // rematerialization; recreating that row is an overwrite of the
         // ceremony-bound state, not an authority restoration.
         .unwrap_or(true);
-    crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
-        store,
-        wtxn,
-        id,
-        body_changed,
-    )
+    store
+        .gate_hooks
+        .reconcile_critical_write_confirm_on_replicated_overwrite(store, wtxn, id, body_changed)
 }

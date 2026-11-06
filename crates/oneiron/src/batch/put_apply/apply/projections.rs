@@ -6,7 +6,7 @@ use super::authority::observe_authority_put;
 /// claim indexes, authority observation, entity indexes, short ids, and
 /// embeddings — and report the applied put.
 pub(super) fn stage_put_projections(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -22,7 +22,8 @@ pub(super) fn stage_put_projections(
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
 ) -> Result<AppliedPut> {
-    crate::skill_hub::stage_refinement_origin(
+    let store = write.store;
+    crate::store::skill_refinement_origin::stage_refinement_origin(
         store,
         wtxn,
         &fixed.id,
@@ -72,6 +73,7 @@ pub(super) fn stage_put_projections(
         let first_stored = observe_authority_put(
             store,
             wtxn,
+            &fixed.id,
             &key,
             dispatch.authority_entry_observation.as_ref(),
             dispatch.authority_entry_hash_pin.as_ref(),
@@ -112,14 +114,9 @@ pub(super) fn stage_put_projections(
     } else {
         crate::batch::row_put::RowPut::Birth
     };
-    crate::federation::record_scope::stamp_put(
-        store,
-        wtxn,
-        fixed.id,
-        fixed.entity_type,
-        data,
-        row_put,
-    )?;
+    store
+        .scope_stamps
+        .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(
             store,
@@ -129,8 +126,8 @@ pub(super) fn stage_put_projections(
             fixed.learned_at,
         )?;
     }
-    crate::agent_def::stage_birth_custody_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
@@ -150,7 +147,7 @@ pub(super) fn stage_put_projections(
     // A workflow's `[limits]` rows ask only once every fallible step of its
     // put is staged (Rule 5).
     if let Some(definition) = dispatch.new_workflow.as_ref() {
-        crate::agent_def::workflow::measure_workflow_limits(&store.limit_watch, definition);
+        crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
         portable_agent_source,

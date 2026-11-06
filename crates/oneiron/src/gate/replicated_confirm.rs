@@ -36,7 +36,9 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
 ) -> Result<()> {
     if body.lifecycle != ClaimLifecycleStatus::Active
         || body.approval != ClaimApprovalStatus::Auto
-        || crate::comm::is_restrictive_comm_predicate(store, wtxn, &body.predicate)?
+        || store
+            .record_hooks
+            .is_restrictive_comm_predicate(store, wtxn, &body.predicate)?
         || crate::claim::is_reserved_predicate(&body.predicate)
         || store
             .owner_answer_obligation_in_txn(wtxn, claim_id)?

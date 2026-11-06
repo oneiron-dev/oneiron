@@ -1,5 +1,5 @@
-//! A hard-erased requester's standing, out of the agent dispatch payloads
-//! that keep it (FIX 11689).
+//! A hard-erased requester's standing, out of the agent dispatch and TASK
+//! realization payloads that keep it (FIX 11689, FIX 11687).
 //!
 //! A dispatch a credential caller's request queued keeps its requester: the
 //! caller and the instrument the request stood on (FIX 11592), the slip with
@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
-    RequesterStanding, decode_agent_dispatch_input, record_dispatch_input,
+    QueuedRequester, RequesterStanding, decode_agent_dispatch_input, record_dispatch_input,
 };
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
@@ -24,6 +24,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::dreamer_attempt_payload::{decode_value, encode_value};
 
 use super::super::types::AttemptRecord;
 use super::unrewritable;
@@ -32,8 +33,8 @@ use super::unrewritable;
 const KEY_REQUESTER: &str = AGENT_DISPATCH_INPUT_KEYS[23];
 
 /// Leaves `record`'s requester as the erased marker when that requester is
-/// among `actors`. `false` when the row is no agent dispatch, keeps no
-/// requester, keeps another's, or already keeps the marker, so an erased row
+/// among `actors`. `false` when the row is no dispatch or realization, keeps
+/// no requester, keeps another's, or already keeps the marker, so an erased row
 /// is not written again. `record` changes only on success.
 pub(super) fn erase_dispatch_requester(
     record: &mut AttemptRecord,
@@ -53,7 +54,7 @@ pub(super) fn scrub_erased_requester_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
-    let Some(requester) = record_dispatch_input(record).and_then(|input| input.requester) else {
+    let Some(requester) = record_requester(record) else {
         return;
     };
     if requester.standing == RequesterStanding::Erased {
@@ -83,17 +84,25 @@ fn erase_requester_if(
     record: &mut AttemptRecord,
     erased: impl Fn(&EntityId) -> bool,
 ) -> Result<bool> {
-    let Some(mut requester) = record_dispatch_input(record).and_then(|input| input.requester)
-    else {
+    let Some(mut requester) = record_requester(record) else {
         return Ok(false);
     };
     let actor = requester.actor;
     if !erased(&actor) || !requester.erase_standing_of(&actor) {
         return Ok(false);
     }
-    let mut payload = decode_dreamer_attempt_payload(&record.payload)?;
+    let realize = record.kind == crate::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND;
+    let mut envelope = if realize {
+        None
+    } else {
+        Some(decode_dreamer_attempt_payload(&record.payload)?)
+    };
+    let mut input = match envelope.as_mut() {
+        Some(payload) => std::mem::replace(&mut payload.input, Value::Nil),
+        None => decode_value(&record.payload)?,
+    };
     let marker = serde_json::to_string(&requester).map_err(|_| unrewritable())?;
-    let Value::Map(entries) = &mut payload.input else {
+    let Value::Map(entries) = &mut input else {
         return Err(unrewritable());
     };
     let slot = entries
@@ -102,10 +111,35 @@ fn erase_requester_if(
         .ok_or_else(unrewritable)?;
     slot.1 = Value::from(marker);
     // The strict decoder every reader uses reads the marker.
-    let reread = decode_agent_dispatch_input(&payload.input)?;
-    if reread.requester.map(|requester| requester.standing) != Some(RequesterStanding::Erased) {
+    let reread = if realize {
+        crate::task_verb::decode_task_realization_input(&input)?.1
+    } else {
+        decode_agent_dispatch_input(&input)?.requester
+    };
+    if reread.map(|requester| requester.standing) != Some(RequesterStanding::Erased) {
         return Err(unrewritable());
     }
-    record.payload = encode_dreamer_attempt_payload(&payload)?;
+    record.payload = match envelope {
+        Some(mut payload) => {
+            payload.input = input;
+            encode_dreamer_attempt_payload(&payload)?
+        }
+        None => encode_value(
+            &input,
+            "task realization requester MessagePack encode failed",
+        )?,
+    };
     Ok(true)
+}
+
+/// The requester from either carrier's strict native reader.
+fn record_requester(record: &AttemptRecord) -> Option<QueuedRequester> {
+    if record.kind == crate::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND {
+        let input = decode_value(&record.payload).ok()?;
+        crate::task_verb::decode_task_realization_input(&input)
+            .ok()?
+            .1
+    } else {
+        record_dispatch_input(record).and_then(|input| input.requester)
+    }
 }

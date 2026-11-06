@@ -15,9 +15,9 @@ use super::super::session::{WsSink, WsSource};
 impl SyncConnection {
     /// A home acknowledgment is sent only after persistence. A missing ACK
     /// leaves every unconfirmed queue row intact for the next reconnect. The
-    /// wait ends once every row of `sent` is acknowledged or cleared; a row
-    /// never sent is never acknowledged, and one queued before them keeps
-    /// them queued for a later clear.
+    /// wait ends once every row of `sent` is answered or cleared. A Held
+    /// reply answers without retiring its row or later rows of that window;
+    /// other windows still finish. A row never sent is never acknowledged.
     pub(super) async fn wait_residence_acks(
         &self,
         write: &mut WsSink,

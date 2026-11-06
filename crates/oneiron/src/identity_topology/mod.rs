@@ -59,6 +59,16 @@
 //! zero effect until ruled, the ruling is an ordinary op with its own ledger
 //! event, and one pair keeps exactly one claim across both writes.
 //!
+//! Large decisions (FIX 10188): the body, participant and mask bounds are
+//! limits of ONE stored record, never of a decision. A merge, split or facet
+//! past them is stored as an operation manifest under its own id plus bounded
+//! operation parts, written in the door's one transaction and replicated as
+//! ordinary records of this family. Every reader of a decision's participants,
+//! heads, masks or map reads it whole through [`operation_parts`]; a manifest
+//! still waiting on a part folds, receipts and undoes as nothing, so no
+//! replica ever applies a prefix as a smaller decision. Seals, attribution and
+//! core digests bind the stored manifest, whose digest binds the parts.
+//!
 //! Zero-head split (r2 "gone", ONE-1744): `split(entity, heads: [])` is a
 //! legal deliberate retire-without-successor. It shells the original like
 //! any split but writes NO `split_into` edge, so it is the one topology arm
@@ -80,7 +90,9 @@ mod lifecycle_state;
 mod op_apply;
 mod op_undo;
 mod op_vocabulary;
+mod operation_parts;
 mod proposal_resolution;
+mod proposer_scope;
 mod reassignment_map;
 mod replicated_event_validation;
 mod seal_standing;
@@ -96,13 +108,14 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};
 pub(crate) use attribution::{
-    admitted_author_in_txn, drop_unheld_author_marks_in_txn, effective_author_in_txn,
-    record_author_attribution_in_txn, redact_actor_in_txn, redact_author_attribution_in_txn,
+    admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
+    effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
+    redact_author_attribution_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use attribution::{
@@ -144,6 +157,11 @@ pub(crate) use lifecycle_state::{
     zero_head_split_shells_for_store_in_txn,
 };
 pub(crate) use op_vocabulary::is_identity_topology_op_kind;
+pub(crate) use operation_parts::logical_identity_topology_event_for_store_in_txn;
+// Reached only from the sync bridge, so a plain re-export would read as unused
+// in a non-sync build of the library.
+#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
+pub(crate) use operation_parts::validate_operation_part_id;
 pub(crate) use reassignment_map::forget_claim_reassignments_in_txn;
 use reassignment_map::{
     REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX, ReassignmentContext,
@@ -152,7 +170,7 @@ use reassignment_map::{
 pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
-pub(crate) use seal_standing::carried_seal_tokens_in_txn;
+pub(crate) use seal_standing::{acknowledged_grant_seals_in_txn, carried_seal_tokens_in_txn};
 pub(crate) use shell_edge_reconcile::{
     identity_topology_shell_sources_for_store_in_txn,
     reconcile_identity_topology_for_deleted_entities_in_txn,

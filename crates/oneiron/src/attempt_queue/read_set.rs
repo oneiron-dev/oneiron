@@ -9,97 +9,14 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{AttemptId, AttemptQueue, AttemptRecord, decode_record};
 use crate::Vault;
 use crate::attempt_queue::source_rows::union_source_rows;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-/// One host producer that reads some of an attempt's inputs and reports
-/// their rows (FIX 7073), kept on the record as its key. Each producer is
-/// one constant here, so no two share a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReadSetProducer(&'static str);
-
-impl ReadSetProducer {
-    /// The Coach's training-offer draft: its brief, the offer skill's body
-    /// and the pilots its draft grounds on.
-    pub const COACH_OFFER_DRAFT: Self = Self("coach.offer_draft");
-
-    /// The skill pack load door: the SKILL whose instructions loaded and the
-    /// replicated carrier its package was recovered from (FIX 7017).
-    pub const SKILL_PACK: Self = Self("skill.pack_load");
-
-    /// The actor claim load door: each actor CLAIM a run loaded (FIX 7017).
-    pub const ACTOR_CLAIM: Self = Self("actor.claim_load");
-
-    /// A resident run's tool answers: the rows each verb answer listed as
-    /// served (FIX 7017).
-    pub const TOOL_ANSWERS: Self = Self("resident.tool_answers");
-
-    /// The skill bodies a resident run's host exposed in its task (FIX 7020).
-    pub const CODE_RUN_TASK_EXPOSURE: Self = Self("resident.task_exposure");
-
-    /// A resident run's model-step inputs (FIX 7020); unknown until FIX 7104
-    /// keeps their complete row set.
-    pub const CODE_RUN_STEP_INPUT: Self = Self("resident.step_input");
-
-    /// The host-built resident task itself (FIX 7020): not source-free, so
-    /// its producer reports None without a witnessed row source (Engine
-    /// 03:58, CALLS `FIX 7020 host-built task source`).
-    pub const CODE_RUN_HOST_TASK: Self = Self("resident.host_task");
-
-    /// A Dreamer weave recipe's evidence: the one row its draft reads
-    /// (FIX 7019).
-    pub const DREAMER_RECIPE_EVIDENCE: Self = Self("dreamer.recipe_evidence");
-
-    /// A Dreamer weave lens render's period: the rows its stored report's
-    /// items were read from (FIX 7019).
-    pub const DREAMER_WEAVE_REPORT: Self = Self("dreamer.weave_report");
-
-    /// A Dreamer consolidation branch's extraction: each slice's TURNs,
-    /// conversations, projected MESSAGEs and the listed rows its page
-    /// shows, and every row its branch pinned (FIX 7019).
-    pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
-
-    /// The Coach's eval-authoring pass: the inventory it read and the
-    /// authoring skill's body (FIX 7019).
-    pub const COACH_EVAL_AUTHORING: Self = Self("coach.eval_authoring");
-
-    /// A workflow model step's input: its agent definition row, the memory
-    /// and chat rows its context render read and its planner craft (FIX 6934).
-    pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
-
-    /// A Coach attribution pass's complete trace inputs (FIX 7020).
-    pub const ATTRIBUTION_TRACE: Self = Self("coach.attribution_trace");
-
-    /// A review explainer's proposal, fork and live-entity inputs (FIX 7020).
-    pub const REVIEW_BUNDLE: Self = Self("entity_doc.review_bundle");
-
-    /// The key the record keeps.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-/// What an attempt's producers recorded of the rows its inputs were read
-/// from. `rows` is the union of their reports, sorted and deduplicated;
-/// `Some([])` when they read no vault row; `None`, unknown, once any
-/// producer reported an unknown set or a producer reported undeclared.
-/// `expected` holds the producers the owner declared, `reported` the ones
-/// that reported (FIX 7073). An attempt no producer declared or recorded
-/// keeps no read set at all, which its receipt keeps as unknown too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AttemptReadSet {
-    pub rows: Option<Vec<EntityId>>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub expected: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub reported: BTreeSet<String>,
-}
+pub use crate::store::attempt_read_producer::ReadSetProducer;
+pub use crate::store::attempt_record::AttemptReadSet;
 
 impl AttemptReadSet {
     /// Nothing declared or read yet: a known, empty set.

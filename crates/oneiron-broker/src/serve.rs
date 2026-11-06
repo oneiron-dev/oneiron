@@ -22,7 +22,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
-use crate::frame::{read_call, skip_call, write_reply};
+use crate::frame::{ReadFrame, read_frame, skip_call, write_reply};
 use crate::send::{SendPolicy, Sender, answer};
 use crate::{Failure, Outcome, PROTOCOL_VERSION, ReplyHeader};
 
@@ -257,12 +257,29 @@ fn hung_up(stream: &UnixStream) -> bool {
     )
 }
 
+/// Resolves once the daemon closes its end of the call's socket, or writes
+/// past its one call: either way it reads no more of the reply.
+async fn daemon_closed(reading: &mut tokio::net::unix::ReadHalf<'_>) {
+    use tokio::io::AsyncReadExt as _;
+    let mut byte = [0_u8; 1];
+    let _ = reading.read(&mut byte).await;
+}
+
 /// Serves one call within its `deadline`. A frame that cannot be read gets
-/// no reply: the daemon counts the call as lost.
+/// no reply: the daemon counts the call as lost. A git exchange runs on its
+/// own terms from its header on: no call deadline, an idle bound and the
+/// daemon's hang-up (`git_http`).
 async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
-    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), read_call(&mut stream)).await
+    let Ok(Ok(frame)) = tokio::time::timeout_at(deadline.frame_by(), read_frame(&mut stream)).await
     else {
         return;
+    };
+    let call = match frame {
+        ReadFrame::Model(call) => call,
+        ReadFrame::Git(header) => {
+            crate::git_http::serve_git(stream, header, sender).await;
+            return;
+        }
     };
     // A daemon that hung up while the call waited has stopped waiting for
     // it, so it is never sent (FIX 8559).
@@ -272,12 +289,38 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
     if call.header.shape.streams() {
         // The reply is checked as it streams, so the key is wiped only after
         // its last chunk.
-        let checked = call.header.check(&call.body);
+        let checked = if call.header.shape == crate::Shape::OpenAiResponses {
+            match call.whole.as_ref() {
+                Some(whole) => call.header.check_responses(&call.body, whole),
+                None => Err(crate::Refusal::Frame),
+            }
+        } else {
+            call.header.check(&call.body)
+        };
+        if call.header.shape.relays_events() {
+            // A relayed event stream ends when the daemon stops reading it,
+            // even while the provider is quiet: its send is dropped, and the
+            // provider's connection with it (FIX 15702).
+            let (mut reading, mut writing) = stream.split();
+            let send = std::pin::pin!(sender.stream(
+                &call.header,
+                checked,
+                call.body,
+                call.whole,
+                &call.secret,
+                &mut writing,
+                deadline,
+            ));
+            let closed = std::pin::pin!(daemon_closed(&mut reading));
+            let _ = futures_util::future::select(send, closed).await;
+            return;
+        }
         sender
             .stream(
                 &call.header,
                 checked,
                 call.body,
+                call.whole,
                 &call.secret,
                 &mut stream,
                 deadline,

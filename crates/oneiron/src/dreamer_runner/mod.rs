@@ -46,7 +46,9 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
-pub(crate) use self::deferral::{SELECTION_DEFERRED_REASON, selection_deferred};
+pub(crate) use self::deferral::{
+    BACKLOG_DEFERRED_REASON, SELECTION_DEFERRED_REASON, selection_deferred,
+};
 pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
 pub(crate) use self::lease_fence::DreamerTryLease;
@@ -124,7 +126,9 @@ pub mod maintenance;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::free_time::dreamer_free_time_cycle_accepts_masked;
 pub(crate) use self::maintenance::call_receipt_accepts_masked;
+pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_masked;
 pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accepts_masked;
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;

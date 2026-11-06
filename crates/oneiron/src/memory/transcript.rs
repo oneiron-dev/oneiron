@@ -22,8 +22,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::ReadMode;
 
-/// The most turns one transcript page returns.
-pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;
+pub use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 
 /// How many times a page is listed and read before a conversation whose turns
 /// keep moving in time is refused.

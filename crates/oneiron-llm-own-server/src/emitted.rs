@@ -93,6 +93,14 @@ impl Emitted {
                     shown.push_str(text);
                 }
             }
+            Event::ReasoningEnd { part_id, signature } => {
+                if let Some(Shown::Reasoning {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id)
+                {
+                    shown.clone_from(signature);
+                }
+            }
             Event::ToolCallStart {
                 part_id,
                 call_id,

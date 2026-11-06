@@ -27,6 +27,8 @@ pub(crate) struct StartedWorkers {
 /// The workers [`start_desktop_workers`] started, stopped together by
 /// [`Self::shutdown`].
 pub(crate) struct DesktopWorkers {
+    server: Arc<SyncServer>,
+    model_setup: Arc<crate::server::ModelSetupRuntime>,
     #[cfg(unix)]
     voice: Option<crate::voice_host::VoiceBoot>,
     ai: crate::ai_host::AiHost,
@@ -44,8 +46,6 @@ pub(crate) struct DesktopWorkers {
     /// before the stop returns (FIX 6732). Embedded serve keeps none: its
     /// vault and runtime stay up, so a pass in flight finishes there.
     owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
-    /// The tagger slot's close, run once every worker has ended (FIX 7383).
-    tagger: Option<crate::oneironer::SlotClose>,
 }
 
 /// Starts every worker the unmanaged serve path runs on `sync_server`, in
@@ -115,11 +115,20 @@ pub(crate) async fn start_desktop_workers(
     )
     .await;
     let sync_server = Arc::new(sync_server);
+    let model_setup = Arc::new(crate::server::ModelSetupRuntime::new(
+        tokio::runtime::Handle::current(),
+        admitted(),
+        drain_tagging,
+    ));
+    anyhow::ensure!(
+        sync_server.install_model_setup_runtime(Arc::clone(&model_setup)),
+        "model setup runtime was installed twice"
+    );
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
-    crate::builtin_host::install_served_transports(&sync_server);
+    crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -175,6 +184,7 @@ pub(crate) async fn start_desktop_workers(
     };
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
+    workers.push(sync_server.spawn_cloud_erase_watch());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
@@ -246,8 +256,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
-    // Installed ICS feeds poll on their own cadence (FIX 7846).
-    workers.push(crate::calendar_host::spawn_ics_feed_polls(
+    // Installed ICS feeds and queued CalDAV syncs poll on their own cadence.
+    workers.push(crate::calendar_host::spawn_calendar_polls(
         Arc::clone(&sync_server),
         admitted(),
     ));
@@ -324,13 +334,9 @@ pub(crate) async fn start_desktop_workers(
     if plain_serve {
         sync_server.live_voice.admit_with(admitted());
     }
-    let tagger = sync_server
-        .tagger
-        .as_ref()
-        .map(crate::oneironer::TaggerSlot::closer);
     let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
     Ok(StartedWorkers {
-        server: sync_server,
+        server: Arc::clone(&sync_server),
         artifact_app,
         questions,
         #[cfg(unix)]
@@ -338,6 +344,8 @@ pub(crate) async fn start_desktop_workers(
         stopping,
         stopped,
         workers: DesktopWorkers {
+            server: Arc::clone(&sync_server),
+            model_setup,
             #[cfg(unix)]
             voice,
             ai,
@@ -347,7 +355,6 @@ pub(crate) async fn start_desktop_workers(
             tagging,
             workers,
             owner_host,
-            tagger,
         },
     })
 }
@@ -378,6 +385,7 @@ impl DesktopWorkers {
             let _ = stopping.send_replace(true);
             let _ = tagging.await;
         }
+        self.model_setup.shutdown().await;
         // A pass or step in flight reaches its own boundary before this returns.
         self.ai.shutdown().await;
         // A receipt write already admitted ends before the process does.
@@ -398,8 +406,8 @@ impl DesktopWorkers {
         }
         // Tagging has ended on both paths (joined above, or aborted and
         // awaited in the loop): each platform child is shut down and reaped.
-        if let Some(tagger) = self.tagger {
-            tagger.close().await;
+        if let Some(tagger) = self.server.tagger_slot() {
+            tagger.closer().close().await;
         }
         Ok(())
     }

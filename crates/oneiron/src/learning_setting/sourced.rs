@@ -11,9 +11,9 @@ use crate::learning::{LearningPredicate, TypeRef};
 
 /// [`super::setting_value_in_scope_in_txn`] beside the rows its value stands
 /// on, from the same walk: the heads of the deciding fit's cells when a fit
-/// decides, none when the catalog seed does. `None`, unknown, when an owner
-/// pin or seed decides, as an owner row keeps no witness row, and when the
-/// fit's cells hold no head.
+/// decides, the deciding owner's native PUT act for a seed or pin, and none
+/// when the catalog seed does. `None`, unknown, when that owner act is gone
+/// or closed, or when the fit's cells hold no head.
 ///
 /// # Errors
 ///
@@ -28,7 +28,7 @@ pub(crate) fn setting_value_in_scope_sourced_in_txn(
     let scopes = read_scopes_in_txn(vault, txn, project, type_ref)?;
     let (value, decided) = resolve_in_txn(&vault.store, txn, spec, &scopes, type_ref)?;
     let rows = match decided {
-        Decided::Owner => None,
+        Decided::Owner { witness } => super::witness::source_in_txn(vault, txn, witness)?,
         Decided::Catalog => Some(Vec::new()),
         Decided::Fit {
             project,

@@ -5618,13 +5618,31 @@ fn validate_expect_on_block(
     semantic_hash: Option<&str>,
     step_index: usize,
 ) -> Result<(), EditError> {
+    validate_expect_on_block_with(
+        doc,
+        block_id,
+        expect,
+        semantic_hash,
+        step_index,
+        validate_block_is_editable,
+    )
+}
+
+fn validate_expect_on_block_with(
+    doc: &CanonDoc,
+    block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    step_index: usize,
+    validate: fn(&TrackedBlock, usize) -> Result<(), EditError>,
+) -> Result<(), EditError> {
     let block_idx =
         find_block_index(&doc.blocks, block_id).ok_or_else(|| EditError::BlockNotFound {
             block_id: block_id.clone(),
             step_index,
         })?;
     let tracked_block = &doc.blocks[block_idx];
-    validate_block_is_editable(tracked_block, step_index)?;
+    validate(tracked_block, step_index)?;
 
     let para = match &tracked_block.block {
         BlockNode::Paragraph(p) => p,
@@ -5732,6 +5750,51 @@ fn validate_delete_step(
     let (start, end) = normalize_block_range_indices(doc, from_block_id, to_block_id, step_index)?;
     for tracked_block in &doc.blocks[start..=end] {
         validate_block_is_editable(tracked_block, step_index)?;
+    }
+    Ok((start, end))
+}
+
+fn validate_block_for_tracked_delete(
+    block: &TrackedBlock,
+    step_index: usize,
+) -> Result<(), EditError> {
+    if crate::tracked_model::can_preserve_paragraph_delete(block) {
+        return Ok(());
+    }
+    validate_block_is_editable(block, step_index)
+}
+
+fn validate_tracked_delete_step(
+    doc: &CanonDoc,
+    from_block_id: &NodeId,
+    to_block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    step_index: usize,
+) -> Result<(usize, usize), EditError> {
+    let (start, end) = normalize_block_range_indices(doc, from_block_id, to_block_id, step_index)?;
+    if crate::tracked_model::document_final_paragraph_index(&doc.blocks)
+        .is_some_and(|last| start <= last && last <= end)
+    {
+        return validate_delete_step(
+            doc,
+            from_block_id,
+            to_block_id,
+            expect,
+            semantic_hash,
+            step_index,
+        );
+    }
+    validate_expect_on_block_with(
+        doc,
+        from_block_id,
+        expect,
+        semantic_hash,
+        step_index,
+        validate_block_for_tracked_delete,
+    )?;
+    for block in &doc.blocks[start..=end] {
+        validate_block_for_tracked_delete(block, step_index)?;
     }
     Ok((start, end))
 }
@@ -6942,8 +7005,9 @@ fn validate_range_brackets(
 }
 
 /// Apply a `ReplaceParagraphText` step using "whole-paragraph segment
-/// replace": wrap the original inlines in a single Deleted segment and
-/// the freshly-built inlines in a single Inserted segment. Used for
+/// replace": wrap original text in Deleted segments and the freshly-built
+/// inlines in one Inserted segment. Structural markers keep their original
+/// statuses and positions, with no duplicated identities. Used for
 /// content fragments the inline-diff path can't handle today —
 /// `StyledText` (marks on new text) and `NewHyperlink` (creating an
 /// `<link>` opaque from markup).
@@ -6963,22 +7027,11 @@ fn apply_segment_replace_paragraph(
     let fmt = first_text_formatting(para);
     let stamped = stamp_revision(revision, rev_counter);
 
-    // Collect old inlines: every inline from every Normal segment becomes
-    // the body of the single Deleted segment. (The caller has already
-    // validated that all existing segments are Normal — that's a
-    // precondition of ReplaceParagraphText.)
-    let mut old_inlines: Vec<InlineNode> = Vec::new();
-    for seg in &para.segments {
-        for inline in &seg.inlines {
-            old_inlines.push(inline.clone());
-        }
-    }
-
     // Build a lookup of preserved inlines so `PreservedInlineRef` can
     // resolve to a clone of the original.
     let mut preserved_lookup: std::collections::HashMap<NodeId, InlineNode> =
         std::collections::HashMap::new();
-    for inline in &old_inlines {
+    for inline in para.all_inlines() {
         match inline {
             InlineNode::OpaqueInline(o) => {
                 preserved_lookup.insert(o.id.clone(), inline.clone());
@@ -7037,32 +7090,47 @@ fn apply_segment_replace_paragraph(
     // un-proposes it (own author) or stacks it (cross author), never a plain
     // `Deleted` (which reject-all would restore, leaking text that never existed).
     let mut new_segments: Vec<TrackedSegment> = Vec::new();
-    if !old_inlines.is_empty() {
-        let own = enclosing_insertion.is_some_and(|ins| {
-            matches!(
-                (revision.author.as_deref(), ins.author.as_deref()),
-                (Some(editing), Some(owner)) if editing == owner
-            )
-        });
-        match enclosing_insertion {
-            // Own pending block insertion → un-propose the old content: emit no
-            // tombstone at all (the block insertion still carries the paragraph).
-            Some(_) if own => {}
-            // Cross-author pending block insertion → the stacked state.
-            Some(block_ins) => new_segments.push(TrackedSegment {
-                status: TrackingStatus::InsertedThenDeleted(Box::new(
-                    crate::domain::StackedRevision {
-                        inserted: block_ins.clone(),
-                        deleted: stamped.clone(),
-                    },
-                )),
-                inlines: old_inlines,
-            }),
-            // Genuine base content → a deletion reject restores.
-            None => new_segments.push(TrackedSegment {
-                status: TrackingStatus::Deleted(stamped.clone()),
-                inlines: old_inlines,
-            }),
+    let own = enclosing_insertion.is_some_and(|ins| {
+        matches!(
+            (revision.author.as_deref(), ins.author.as_deref()),
+            (Some(editing), Some(owner)) if editing == owner
+        )
+    });
+    let old_status = match enclosing_insertion {
+        // The pending block still carries this paragraph. Its author
+        // un-proposes replaced text instead of creating a tombstone.
+        Some(_) if own => None,
+        Some(block_ins) => Some(TrackingStatus::InsertedThenDeleted(Box::new(
+            crate::domain::StackedRevision {
+                inserted: block_ins.clone(),
+                deleted: stamped.clone(),
+            },
+        ))),
+        None => Some(TrackingStatus::Deleted(stamped.clone())),
+    };
+    for segment in &para.segments {
+        for inline in &segment.inlines {
+            // Keep each structural marker once at its original position and
+            // status, outside the replacement text's tombstone. Normal
+            // markers survive both resolutions; prior revisions stay prior.
+            let status = if is_structural_marker(inline) {
+                Some(&segment.status)
+            } else {
+                old_status.as_ref()
+            };
+            let Some(status) = status else {
+                continue;
+            };
+            if let Some(last) = new_segments.last_mut()
+                && last.status == *status
+            {
+                last.inlines.push(inline.clone());
+            } else {
+                new_segments.push(TrackedSegment {
+                    status: status.clone(),
+                    inlines: vec![inline.clone()],
+                });
+            }
         }
     }
     if !new_inlines.is_empty() {
@@ -7440,19 +7508,21 @@ fn apply_formatting_only_replace(
     para.rendered_text = None;
 }
 
+fn is_structural_marker(inline: &InlineNode) -> bool {
+    matches!(
+        inline,
+        InlineNode::Decoration(_)
+            | InlineNode::CommentRangeStart { .. }
+            | InlineNode::CommentRangeEnd { .. }
+            | InlineNode::CommentReference { .. }
+    )
+}
+
 /// True if any segment carries a comment-range / decoration marker.
 fn has_structural_markers(segments: &[TrackedSegment]) -> bool {
-    segments.iter().any(|seg| {
-        seg.inlines.iter().any(|i| {
-            matches!(
-                i,
-                InlineNode::Decoration(_)
-                    | InlineNode::CommentRangeStart { .. }
-                    | InlineNode::CommentRangeEnd { .. }
-                    | InlineNode::CommentReference { .. }
-            )
-        })
-    })
+    segments
+        .iter()
+        .any(|seg| seg.inlines.iter().any(is_structural_marker))
 }
 
 /// Remove comment-range / decoration markers from each segment's inline list
@@ -7460,15 +7530,7 @@ fn has_structural_markers(segments: &[TrackedSegment]) -> bool {
 /// `inject_structural_markers_at_offsets`).
 fn strip_structural_markers(segments: &mut [TrackedSegment]) {
     for seg in segments.iter_mut() {
-        seg.inlines.retain(|i| {
-            !matches!(
-                i,
-                InlineNode::Decoration(_)
-                    | InlineNode::CommentRangeStart { .. }
-                    | InlineNode::CommentRangeEnd { .. }
-                    | InlineNode::CommentReference { .. }
-            )
-        });
+        seg.inlines.retain(|inline| !is_structural_marker(inline));
     }
 }
 
@@ -9833,6 +9895,26 @@ fn apply_delete_block_range(
     }
 }
 
+fn apply_delete_block_range_preserving_revisions(
+    doc: &mut CanonDoc,
+    start: usize,
+    end: usize,
+    revision: &RevisionInfo,
+    rev_counter: &mut u32,
+) {
+    for block in &mut doc.blocks[start..=end] {
+        if crate::tracked_model::can_preserve_paragraph_delete(block) {
+            crate::tracked_model::mark_paragraph_deleted_preserving_revisions(
+                block,
+                revision,
+                rev_counter,
+            );
+        } else {
+            crate::tracked_model::mark_whole_block_deleted(block, revision, rev_counter);
+        }
+    }
+}
+
 fn apply_delete_block_range_direct(doc: &mut CanonDoc, start: usize, end: usize) {
     doc.blocks.drain(start..=end);
 }
@@ -11232,16 +11314,28 @@ pub(crate) fn apply_transaction_with_notes(
                         step_index,
                     )?;
                 }
-                let (start, end) = validate_delete_step(
-                    &doc,
-                    from_block_id,
-                    to_block_id,
-                    expect,
-                    semantic_hash.as_deref(),
-                    step_index,
-                )?;
+                let (start, end) =
+                    if transaction.materialization_mode == MaterializationMode::TrackedChange {
+                        validate_tracked_delete_step(
+                            &doc,
+                            from_block_id,
+                            to_block_id,
+                            expect,
+                            semantic_hash.as_deref(),
+                            step_index,
+                        )
+                    } else {
+                        validate_delete_step(
+                            &doc,
+                            from_block_id,
+                            to_block_id,
+                            expect,
+                            semantic_hash.as_deref(),
+                            step_index,
+                        )
+                    }?;
                 if transaction.materialization_mode == MaterializationMode::TrackedChange {
-                    apply_delete_block_range(
+                    apply_delete_block_range_preserving_revisions(
                         &mut doc,
                         start,
                         end,

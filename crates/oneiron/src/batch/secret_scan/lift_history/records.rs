@@ -15,6 +15,8 @@ use heed::{RoTxn, RwTxn};
 use super::super::mask::REASON_KNOWN_VALUE;
 use super::super::mask::known_marks::{holds_unmarked_known, remark_known_file_in_txn};
 use super::super::write_payload_hit;
+#[cfg(feature = "sync")]
+use super::super::{CarrierText, carrier_texts_hit_in_txn, mark_carrier_text_in_txn};
 use super::{Done, LiftCause, LiftFamily, Page, proposals, record_text};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
@@ -51,6 +53,7 @@ pub(super) fn census(
     };
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };
@@ -62,6 +65,8 @@ pub(super) fn census(
     {
         let (key, raw) = row?;
         read += 1;
+        page.known_reads
+            .extend(record_id(&key).map(super::accounting::Source::Entity));
         if let Some(id) = record_id(&key)
             && census_hit(vault, txn, &id, &raw, known, known_only)?
         {
@@ -182,6 +187,37 @@ fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) 
 /// Reads record `key` again in the writer's transaction and writes it again
 /// through its door when it still holds a hit.
 pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
+    let done = lift_record(vault, txn, key)?;
+    #[cfg(feature = "sync")]
+    if matches!(
+        done,
+        Done::Clean | Done::Masked { .. } | Done::Propose(LiftCause::File, _)
+    ) && let Some(id) = record_id(key)
+        && exists(vault, txn, key)?
+        && vault.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_NOTE)
+        && !crate::entity_doc::has_record_head(&vault.store, txn, &id)?
+        && let Some(read) = crate::entity_doc::sync_text_in(vault, txn, &id)?
+    {
+        let text = read.doc.get_text("body").to_string();
+        if let Some(reason) =
+            carrier_texts_hit_in_txn(&vault.store, txn, std::slice::from_ref(&text))?
+        {
+            if crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
+                return Ok(done.with_proposal(Done::Propose(LiftCause::Held, reason)));
+            }
+            return Ok(
+                match mark_carrier_text_in_txn(vault, txn, id, "document", text.as_bytes())? {
+                    CarrierText::Clean | CarrierText::Marked => done,
+                    marked => done.with_proposal(super::retained::text_done(marked)),
+                },
+            );
+        }
+    }
+    Ok(done)
+}
+
+/// The record's existing body, index and staged-text lift.
+fn lift_record(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
     let Some(id) = record_id(key) else {
         return Ok(Done::Clean);
     };

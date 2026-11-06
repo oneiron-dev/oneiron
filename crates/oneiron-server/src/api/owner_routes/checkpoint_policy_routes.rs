@@ -1,8 +1,9 @@
 //! `/v1/owner/checkpoint-policy`: the owner selects which roots attest his
 //! authority checkpoint images, and how many of them must (mesh PR2c, §A 06,
-//! K06), from any surface where he is authenticated, on any host, the hosted
-//! console included (the owner's ruling, 10-19: "it doesn't matter where you
-//! said yes, if you said so"). This server's install carries his choice under
+//! K06), from any surface where he is authenticated. Hosted selection is
+//! enterprise/advanced operator capability only (QUORUM-HOST-ROOT=C); normal
+//! hosted checkpoints use the host key automatically. This install carries
+//! an enabled owner's choice under
 //! its own live profile; a hosted operator's root acts as nobody (FIX 2222),
 //! and `owner()` refuses it before anything is written.
 //!
@@ -63,7 +64,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/checkpoint-policy",
-                summary: "The owner selects the roots that attest his checkpoint images and their quorum, on any host; a stale seen is a conflict.",
+                summary: "The owner selects checkpoint roots and quorum; hosted selection requires the operator's enterprise/advanced capability. A stale seen is a conflict.",
                 row: None,
                 shape: Some(RestShape::json(
                     select_policy_body_schema,
@@ -184,6 +185,8 @@ struct HeadReply {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PolicyViewReply {
+    /// False on a normal hosted vault: do not offer signing configuration.
+    selection_available: bool,
     /// Present back as `seen`.
     revision: String,
     /// The policy in force; null when the roster cannot fix it.
@@ -397,6 +400,7 @@ fn head_reply(head: &CheckpointPolicyHead) -> HeadReply {
 
 fn view_reply(view: &CheckpointPolicyView) -> PolicyViewReply {
     PolicyViewReply {
+        selection_available: view.selection_available,
         revision: revision_hex(&view.revision),
         policy: view.policy.as_ref().map(policy_reply),
         refusal: view.refusal.clone(),
@@ -442,8 +446,9 @@ async fn view(
 }
 
 /// `POST /v1/owner/checkpoint-policy`: the owner selects the roots and quorum
-/// on any host. Eligibility, the multi-root quorum, the configured floor and
-/// hardware-when-eligible stay; only the host-voter rule goes.
+/// where selection is available. The native setter enforces the hosted
+/// operator capability; the owner body cannot enable it. Eligibility, the
+/// multi-root quorum, the configured floor and hardware rule stay.
 async fn select(
     auth: CoreAuth,
     headers: HeaderMap,

@@ -349,6 +349,11 @@ pub(super) fn finish_preparations(
                     .map(|(id, version)| (id, version.clone())),
             )
             .chain(
+                plan.neighbourhood
+                    .membership_versions()
+                    .map(|(id, version)| (id, version.clone())),
+            )
+            .chain(
                 plan.turn_ids
                     .iter()
                     .filter_map(|id| texts.get(id))
