@@ -1,16 +1,25 @@
 //! HTML5 DOM merge and safe, deterministic document typography.
+use super::budget::{Budget, ScratchIter, ScratchVec};
 use super::layout::{Flow, Style};
 use super::*;
 use dom_query::{Document, NodeRef};
 
 /// Parses and merges a template of any size, with merge values of any number
 /// and length (Rule 5). DOM validation and rendering use explicit worklists.
-pub(super) fn parse(html: &str, values: &BTreeMap<String, String>) -> Result<Document> {
+pub(super) fn parse(
+    html: &str,
+    values: &BTreeMap<String, String>,
+    budget: &Budget,
+) -> Result<Document> {
+    budget.checkpoint()?;
     let document = Document::from(html);
-    let mut stack = vec![document.root()];
+    budget.checkpoint()?;
+    let mut stack = ScratchVec::new(budget);
+    stack.push(document.root())?;
     while let Some(node) = stack.pop() {
+        budget.checkpoint()?;
         if node.is_text() {
-            let text = merge(&node.text(), values)?;
+            let text = merge(&node.text(), values, budget)?;
             node.set_text(text);
         } else if node.is_element() {
             let name = node
@@ -63,6 +72,7 @@ pub(super) fn parse(html: &str, values: &BTreeMap<String, String>) -> Result<Doc
                 return Err(ContentTemplateError::UnsupportedHtml);
             }
             for attr in node.attrs() {
+                budget.checkpoint()?;
                 let key = attr.name.local.as_ref();
                 let value = attr.value.as_ref();
                 if value.contains("{{")
@@ -91,14 +101,15 @@ pub(super) fn parse(html: &str, values: &BTreeMap<String, String>) -> Result<Doc
                 return Err(ContentTemplateError::MergeField);
             }
         }
-        stack.extend(node.children_it(false));
+        stack.extend(node.children_it(false))?;
     }
     Ok(document)
 }
-fn merge(text: &str, values: &BTreeMap<String, String>) -> Result<String> {
+fn merge(text: &str, values: &BTreeMap<String, String>, budget: &Budget) -> Result<String> {
     let mut out = String::new();
     let mut rest = text;
     while let Some(start) = rest.find("{{") {
+        budget.checkpoint()?;
         out.push_str(&rest[..start]);
         rest = &rest[start + 2..];
         let end = rest.find("}}").ok_or(ContentTemplateError::MergeField)?;
@@ -126,11 +137,15 @@ struct Rule {
     declarations: String,
 }
 pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
-    let mut rules = Vec::new();
+    let budget = flow.budget.clone();
+    budget.checkpoint()?;
+    let mut rules = ScratchVec::new(&budget);
     for node in document.select("style").nodes() {
+        budget.checkpoint()?;
         let text = node.text();
         let mut rest = text.as_ref();
         while !rest.trim().is_empty() {
+            budget.checkpoint()?;
             let (selectors, body) = rest
                 .split_once('{')
                 .ok_or(ContentTemplateError::UnsupportedHtml)?;
@@ -140,6 +155,7 @@ pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
             // Only static simple selectors. No @import, URLs, pseudo state, or
             // renderer-dependent cascade features are silently ignored.
             for selector in selectors.split(',') {
+                budget.checkpoint()?;
                 let selector = selector.trim();
                 if selector.is_empty()
                     || !selector
@@ -148,14 +164,14 @@ pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
                 {
                     return Err(ContentTemplateError::UnsupportedHtml);
                 }
-                declarations_apply(declarations, Style::default())?;
+                declarations_apply(declarations, Style::default(), &budget)?;
                 let matcher = dom_query::Matcher::new(selector)
                     .map_err(|_| ContentTemplateError::UnsupportedHtml)?;
                 rules.push(Rule {
                     selector: selector.into(),
                     matcher,
                     declarations: declarations.into(),
-                });
+                })?;
             }
             rest = remaining;
         }
@@ -170,9 +186,10 @@ struct BoxStyle {
     top: f64,
     bottom: f64,
 }
-fn declarations_apply(css: &str, mut style: Style) -> Result<(Style, BoxStyle)> {
+fn declarations_apply(css: &str, mut style: Style, budget: &Budget) -> Result<(Style, BoxStyle)> {
     let mut block = BoxStyle::default();
     for declaration in css.split(';').filter(|s| !s.trim().is_empty()) {
+        budget.checkpoint()?;
         let (key, value) = declaration
             .split_once(':')
             .ok_or(ContentTemplateError::UnsupportedHtml)?;
@@ -293,9 +310,9 @@ enum WalkTask<'tree> {
         default_gap: f64,
         block: BoxStyle,
     },
-    Rows(std::vec::IntoIter<NodeRef<'tree>>, Style),
+    Rows(ScratchIter<NodeRef<'tree>>, Style),
     Bands {
-        cells: std::vec::IntoIter<NodeRef<'tree>>,
+        cells: ScratchIter<NodeRef<'tree>>,
         band_size: usize,
         style: Style,
     },
@@ -303,15 +320,18 @@ enum WalkTask<'tree> {
     CellDone(CellBand<'tree>),
 }
 struct CellBand<'tree> {
-    cells: std::vec::IntoIter<NodeRef<'tree>>,
-    rendered: Vec<Flow>,
+    cells: ScratchIter<NodeRef<'tree>>,
+    rendered: ScratchVec<Flow>,
     width: f64,
     style: Style,
 }
 fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Result<()> {
-    let mut tasks = vec![WalkTask::Enter(node, style)];
-    let mut cell_flows = Vec::<Flow>::new();
+    let budget = root.budget.clone();
+    let mut tasks = ScratchVec::new(&budget);
+    tasks.push(WalkTask::Enter(node, style))?;
+    let mut cell_flows = ScratchVec::<Flow>::new(&budget);
     while let Some(task) = tasks.pop() {
+        budget.checkpoint()?;
         let flow = cell_flows.last_mut().unwrap_or(&mut *root);
         match task {
             WalkTask::Enter(node, mut style) => {
@@ -346,11 +366,13 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                     _ => {}
                 }
                 // Simple selectors use normal CSS specificity and source-order precedence.
-                let mut matched: Vec<_> = rules
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, r)| node.is_match(&r.matcher))
-                    .collect();
+                let mut matched = ScratchVec::new(&budget);
+                for (i, rule) in rules.iter().enumerate() {
+                    budget.checkpoint()?;
+                    if node.is_match(&rule.matcher) {
+                        matched.push((i, rule))?;
+                    }
+                }
                 matched.sort_by_key(|(i, r)| {
                     (
                         r.selector.bytes().filter(|b| *b == b'#').count(),
@@ -366,7 +388,7 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                 if let Some(inline) = node.attr("style") {
                     css.push_str(&inline);
                 }
-                let (style, block) = declarations_apply(&css, style)?;
+                let (style, block) = declarations_apply(&css, style, &budget)?;
                 if block.before {
                     flow.page_break()?;
                 }
@@ -421,25 +443,28 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                     is_block,
                     default_gap,
                     block,
-                });
+                })?;
                 match name.as_str() {
                     "br" => flow.flush()?,
                     "hr" => flow.rule()?,
                     "table" => {
-                        let mut rows = Vec::new();
-                        for child in node.element_children() {
+                        let mut rows = ScratchVec::new(&budget);
+                        for child in node.children_it(false).filter(|child| child.is_element()) {
+                            budget.checkpoint()?;
                             if child.has_name("tr") {
-                                rows.push(child);
+                                rows.push(child)?;
                             } else if matches!(
                                 child.node_name().as_deref(),
                                 Some("thead" | "tbody" | "tfoot")
                             ) {
-                                rows.extend(child.element_children());
+                                rows.extend(
+                                    child.children_it(false).filter(|child| child.is_element()),
+                                )?;
                             } else {
                                 return Err(ContentTemplateError::UnsupportedHtml);
                             }
                         }
-                        tasks.push(WalkTask::Rows(rows.into_iter(), style));
+                        tasks.push(WalkTask::Rows(rows.into_iter(), style))?;
                     }
                     _ => {
                         if name == "li" {
@@ -462,7 +487,7 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                         tasks.extend(
                             node.children_it(true)
                                 .map(|child| WalkTask::Enter(child, style)),
-                        );
+                        )?;
                     }
                 }
             }
@@ -488,8 +513,9 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                 if !row.has_name("tr") {
                     return Err(ContentTemplateError::UnsupportedHtml);
                 }
-                let cells = row.element_children();
-                tasks.push(WalkTask::Rows(rows, style));
+                let mut cells = ScratchVec::new(&budget);
+                cells.extend(row.children_it(false).filter(|child| child.is_element()))?;
+                tasks.push(WalkTask::Rows(rows, style))?;
                 if cells.is_empty() {
                     continue;
                 }
@@ -501,14 +527,15 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                     cells: cells.into_iter(),
                     band_size,
                     style,
-                });
+                })?;
             }
             WalkTask::Bands {
                 mut cells,
                 band_size,
                 style,
             } => {
-                let band: Vec<_> = cells.by_ref().take(band_size).collect();
+                let mut band = ScratchVec::new(&budget);
+                band.extend(cells.by_ref().take(band_size))?;
                 if band.is_empty() {
                     continue;
                 }
@@ -520,24 +547,24 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                     cells,
                     band_size,
                     style,
-                });
+                })?;
                 tasks.push(WalkTask::Cell(CellBand {
                     cells: band.into_iter(),
-                    rendered: Vec::new(),
+                    rendered: ScratchVec::new(&budget),
                     width,
                     style,
-                }));
+                }))?;
             }
             WalkTask::Cell(mut band) => {
                 if let Some(cell) = band.cells.next() {
                     if !cell.has_name("td") && !cell.has_name("th") {
                         return Err(ContentTemplateError::UnsupportedHtml);
                     }
-                    let output = Flow::new(flow.cell_page(band.width));
+                    let output = Flow::with_budget(flow.cell_page(band.width), budget.clone())?;
                     let style = band.style;
-                    cell_flows.push(output);
-                    tasks.push(WalkTask::CellDone(band));
-                    tasks.push(WalkTask::Enter(cell, style));
+                    cell_flows.push(output)?;
+                    tasks.push(WalkTask::CellDone(band))?;
+                    tasks.push(WalkTask::Enter(cell, style))?;
                 } else {
                     flow.table_row(band.rendered)?;
                 }
@@ -545,8 +572,8 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
             WalkTask::CellDone(mut band) => {
                 let mut output = cell_flows.pop().expect("active table cell");
                 output.flush()?;
-                band.rendered.push(output);
-                tasks.push(WalkTask::Cell(band));
+                band.rendered.push(output)?;
+                tasks.push(WalkTask::Cell(band))?;
             }
         }
     }

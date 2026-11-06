@@ -2,6 +2,7 @@
 //! The flow pages as far as its content runs (Rule 5): no page, operation or
 //! byte count refuses it, and a table row taller than a page splits across
 //! pages.
+use super::budget::{Budget, ScratchVec};
 use super::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
@@ -33,38 +34,45 @@ struct Run {
     x: f64,
 }
 pub(super) struct Flow {
+    pub(super) budget: Budget,
     pub(super) page: TemplatePage,
-    pub(super) pages: Vec<Vec<Operation>>,
+    pub(super) pages: ScratchVec<ScratchVec<Operation>>,
     pub(super) y: f64,
-    line: Vec<Run>,
+    line: ScratchVec<Run>,
     x: f64,
     line_height: f64,
     space: bool,
 }
 impl Flow {
-    pub(super) fn new(page: TemplatePage) -> Self {
-        Self {
+    pub(super) fn with_budget(page: TemplatePage, budget: Budget) -> Result<Self> {
+        let mut pages = ScratchVec::new(&budget);
+        pages.push(ScratchVec::new(&budget))?;
+        let line = ScratchVec::new(&budget);
+        Ok(Self {
+            budget,
             page,
-            pages: vec![Vec::new()],
+            pages,
             y: page.margin,
-            line: Vec::new(),
+            line,
             x: 0.,
             line_height: 0.,
             space: false,
-        }
+        })
     }
     pub(super) fn width(&self) -> f64 {
         self.page.width - 2. * self.page.margin
     }
     pub(super) fn page_break(&mut self) -> Result<()> {
+        self.budget.checkpoint()?;
         self.flush()?;
         if self.y > self.page.margin {
-            self.pages.push(Vec::new());
+            self.pages.push(ScratchVec::new(&self.budget))?;
             self.y = self.page.margin;
         }
         Ok(())
     }
     pub(super) fn gap(&mut self, amount: f64) -> Result<()> {
+        self.budget.checkpoint()?;
         self.flush()?;
         if amount < 0. || amount > self.page.height {
             return Err(ContentTemplateError::Geometry);
@@ -76,6 +84,7 @@ impl Flow {
         Ok(())
     }
     pub(super) fn text(&mut self, text: &str, style: Style) -> Result<()> {
+        self.budget.checkpoint()?;
         if style.pre {
             self.space = false;
             let normalized = text
@@ -84,6 +93,7 @@ impl Flow {
                 .replace('\t', "    ");
             let mut lines = normalized.split('\n').peekable();
             while let Some(line) = lines.next() {
+                self.budget.checkpoint()?;
                 self.word(line, style)?;
                 if lines.peek().is_some() {
                     if self.line.is_empty() {
@@ -97,6 +107,7 @@ impl Flow {
         }
         let mut word = String::new();
         for ch in text.chars() {
+            self.budget.checkpoint()?;
             if ch.is_whitespace() && ch != '\u{a0}' {
                 self.word(&word, style)?;
                 word.clear();
@@ -108,6 +119,7 @@ impl Flow {
         self.word(&word, style)
     }
     fn word(&mut self, text: &str, style: Style) -> Result<()> {
+        self.budget.checkpoint()?;
         if text.is_empty() {
             return Ok(());
         }
@@ -117,6 +129,7 @@ impl Flow {
         }
         let cell = style.size * 0.6;
         for chunk in bytes.chunks(((self.width() / cell).floor() as usize).max(1)) {
+            self.budget.checkpoint()?;
             let width = chunk.len() as f64 * cell;
             let space = if self.space && self.x > 0. { cell } else { 0. };
             if self.x + space + width > self.width() + 0.001 {
@@ -134,7 +147,7 @@ impl Flow {
                 text,
                 style,
                 x: self.x,
-            });
+            })?;
             self.x += advance;
             self.line_height = self.line_height.max(style.size * 1.3);
             self.space = false;
@@ -142,12 +155,13 @@ impl Flow {
         Ok(())
     }
     pub(super) fn flush(&mut self) -> Result<()> {
+        self.budget.checkpoint()?;
         if self.line.is_empty() {
             self.space = false;
             return Ok(());
         }
         if self.y + self.line_height > self.page.height - self.page.margin {
-            self.pages.push(Vec::new());
+            self.pages.push(ScratchVec::new(&self.budget))?;
             self.y = self.page.margin;
         }
         if self.line_height > self.page.height - 2. * self.page.margin {
@@ -163,8 +177,9 @@ impl Flow {
             .pages
             .last_mut()
             .ok_or(ContentTemplateError::Overflow)?;
-        op(ops, "BT", &[]);
+        op(ops, "BT", &[])?;
         for run in self.line.drain(..) {
+            self.budget.checkpoint()?;
             let style = run.style;
             let name = match (style.bold, style.italic) {
                 (false, false) => "F0",
@@ -172,14 +187,14 @@ impl Flow {
                 (false, true) => "F2",
                 (true, true) => "F3",
             };
-            op(ops, "rg", &style.color);
+            op(ops, "rg", &style.color)?;
             ops.push(Operation::new(
                 "Tf",
                 vec![
                     Object::Name(name.as_bytes().to_vec()),
                     Object::Real(style.size as f32),
                 ],
-            ));
+            ))?;
             op(
                 ops,
                 "Tm",
@@ -191,13 +206,13 @@ impl Flow {
                     self.page.margin + run.x + shift,
                     self.page.height - self.y - style.size,
                 ],
-            );
+            )?;
             ops.push(Operation::new(
                 "Tj",
                 vec![Object::String(run.text, lopdf::StringFormat::Literal)],
-            ));
+            ))?;
         }
-        op(ops, "ET", &[]);
+        op(ops, "ET", &[])?;
         self.y += self.line_height;
         self.x = 0.;
         self.line_height = 0.;
@@ -205,6 +220,7 @@ impl Flow {
         Ok(())
     }
     pub(super) fn rule(&mut self) -> Result<()> {
+        self.budget.checkpoint()?;
         self.gap(6.)?;
         let width = self.width();
         let y = self.page.height - self.y;
@@ -212,11 +228,11 @@ impl Flow {
             .pages
             .last_mut()
             .ok_or(ContentTemplateError::Overflow)?;
-        op(ops, "g", &[0.]);
-        op(ops, "w", &[0.5]);
-        op(ops, "m", &[self.page.margin, y]);
-        op(ops, "l", &[self.page.margin + width, y]);
-        op(ops, "S", &[]);
+        op(ops, "g", &[0.])?;
+        op(ops, "w", &[0.5])?;
+        op(ops, "m", &[self.page.margin, y])?;
+        op(ops, "l", &[self.page.margin + width, y])?;
+        op(ops, "S", &[])?;
         self.gap(6.)
     }
     /// The page a table cell of this flow lays its content out on: as wide as
@@ -232,21 +248,22 @@ impl Flow {
     /// Draws one table row of `cells`, each laid out on [`Flow::cell_page`].
     /// A row whose cells run past one page splits across pages: each slice
     /// carries the page of every cell that falls on it, boxed to the tallest.
-    pub(super) fn table_row(&mut self, cells: Vec<Flow>) -> Result<()> {
+    pub(super) fn table_row(&mut self, cells: ScratchVec<Flow>) -> Result<()> {
+        self.budget.checkpoint()?;
         self.flush()?;
         if cells.is_empty() {
             return Ok(());
         }
         let slices = cells.iter().map(|c| c.pages.len()).max().unwrap_or(1);
         let width = self.width() / cells.len() as f64;
-        let mut cells: Vec<_> = cells
-            .into_iter()
-            .map(|cell| {
-                let pages = cell.pages.len();
-                (cell.page.height, cell.y, pages, cell.pages.into_iter())
-            })
-            .collect();
+        let mut row_cells = ScratchVec::new(&self.budget);
+        for cell in cells {
+            let pages = cell.pages.len();
+            row_cells.push((cell.page.height, cell.y, pages, cell.pages.into_iter()))?;
+        }
+        let mut cells = row_cells;
         for slice in 0..slices {
+            self.budget.checkpoint()?;
             // A cell's full pages reach its page height; its last reaches
             // where its flow ended; one already ended adds nothing.
             let height = cells
@@ -269,9 +286,10 @@ impl Flow {
                 .last_mut()
                 .ok_or(ContentTemplateError::Overflow)?;
             for (i, (full, _, _, pages)) in cells.iter_mut().enumerate() {
+                self.budget.checkpoint()?;
                 let x = self.page.margin + i as f64 * width;
                 if let Some(content) = pages.next() {
-                    op(ops, "q", &[]);
+                    op(ops, "q", &[])?;
                     op(
                         ops,
                         "cm",
@@ -283,24 +301,25 @@ impl Flow {
                             x + 3.,
                             self.page.height - self.y - 3. - *full,
                         ],
-                    );
-                    ops.extend(content);
-                    op(ops, "Q", &[]);
+                    )?;
+                    ops.extend(content)?;
+                    op(ops, "Q", &[])?;
                 }
-                op(ops, "g", &[0.]);
-                op(ops, "w", &[0.5]);
+                op(ops, "g", &[0.])?;
+                op(ops, "w", &[0.5])?;
                 op(
                     ops,
                     "re",
                     &[x, self.page.height - self.y - height, width, height],
-                );
-                op(ops, "S", &[]);
+                )?;
+                op(ops, "S", &[])?;
             }
             self.y += height;
         }
         Ok(())
     }
     pub(super) fn finish(mut self) -> Result<Vec<u8>> {
+        self.budget.checkpoint()?;
         self.flush()?;
         let mut doc = Document::with_version("1.7");
         doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
@@ -320,6 +339,7 @@ impl Flow {
         }
         let mut kids = Vec::new();
         for ops in self.pages {
+            self.budget.checkpoint()?;
             let bytes = Content { operations: ops }
                 .encode()
                 .map_err(|_| ContentTemplateError::Overflow)?;
@@ -333,19 +353,21 @@ impl Flow {
         let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>parent});
         doc.trailer.set("Root", root);
         let mut bytes = Vec::new();
+        self.budget.checkpoint()?;
         doc.save_to(&mut bytes)
             .map_err(|_| ContentTemplateError::Overflow)?;
         // lopdf's writer records each object's offset as a `u32`: past 4 GiB
         // the offsets it wrote are wrong (the codec's bound).
+        self.budget.checkpoint()?;
         if bytes.len() > u32::MAX as usize {
             return Err(ContentTemplateError::Limit);
         }
         Ok(bytes)
     }
 }
-fn op(ops: &mut Vec<Operation>, name: &str, values: &[f64]) {
+fn op(ops: &mut ScratchVec<Operation>, name: &str, values: &[f64]) -> Result<()> {
     ops.push(Operation::new(
         name,
         values.iter().map(|n| Object::Real(*n as f32)).collect(),
-    ));
+    ))
 }
