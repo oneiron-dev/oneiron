@@ -411,14 +411,16 @@ impl Vault {
     ) -> Result<()> {
         let pinned = thread.anchor.version;
         let snapshot = if matches!(thread.anchor.locator, Locator::Code { .. }) {
-            // A code span's words read from the file its hash names, as the
-            // owner reads them, as the blob read below does (FIX 7905).
+            // A code span's words read from the file its hash names, through
+            // the masked projection (FIX 7905): the stored snapshot reaches
+            // every reader of the Unattached list, so it never holds a
+            // repo-marked secret. An owner reads the exact bytes by the hash.
             code_span_words_in_txn(
                 self,
                 wtxn,
                 artifact_id,
                 &thread.anchor.locator,
-                SecretSight::Owner,
+                SecretSight::Masked,
             )?
         } else {
             match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, pinned)? {
