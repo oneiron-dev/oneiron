@@ -172,6 +172,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
@@ -595,6 +596,8 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
+        @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs": ...
@@ -646,6 +649,8 @@ class Oneiron:
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
+        @property
+        def drafters(self) -> "Oneiron._VaultDraftersVerbs": ...
         @property
         def roots(self) -> "Oneiron._VaultRootsVerbs": ...
         @property
@@ -729,7 +734,7 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs": ...
         def commit(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
-            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
+            """Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
         def forget(self, input: Facade.ForgetRequest) -> list[Facade.CommitReceipt]:
@@ -758,6 +763,8 @@ class Oneiron:
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
         @property
         def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
+        @property
+        def ingest(self) -> "Oneiron._VaultIngestVerbs": ...
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
@@ -1348,6 +1355,9 @@ class Oneiron:
             """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
         def resolve(self, spec: Facade.InboxGroupResolveRequest) -> Facade.InboxGroupResolution:
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
+    class _VaultProactivityVerbs:
+        def digest(self, spec: Facade.ProactivityDigestRequest) -> Facade.ProactivityDigestView | None:
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
     class _VaultSkillsVerbs:
         def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
             """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""
@@ -2123,6 +2133,22 @@ class Oneiron:
             """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
         def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+    class _VaultDraftersVerbs:
+        def list(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."""
+        def list_as(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."""
+        def status(self, spec: Facade.DrafterStatusRequest) -> Facade.DrafterStatus:
+            """The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."""
+        @property
+        def policy(self) -> "Oneiron._VaultDraftersPolicyVerbs": ...
+        def revert(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."""
+        def revert_as(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."""
+    class _VaultDraftersPolicyVerbs:
+        def set(self, spec: Facade.DrafterPolicySetRequest) -> Facade.DrafterPolicy:
+            """The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."""
     class _VaultRootsVerbs:
         @property
         def requests(self) -> "Oneiron._VaultRootsRequestsVerbs": ...
@@ -3311,6 +3337,14 @@ class Oneiron:
             """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
         def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
             """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+    class _VaultIngestVerbs:
+        @property
+        def ag_ui(self) -> "Oneiron._VaultIngestAgUiVerbs": ...
+    class _VaultIngestAgUiVerbs:
+        def import_(self, spec: Facade.AgUiFileImport) -> Facade.AgUiFileReceipt:
+            """The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."""
+        def read(self, input: Facade.AgUiFileReadInput) -> Facade.AgUiFileRead:
+            """Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
@@ -3645,6 +3679,8 @@ class Oneiron:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...
         @property
+        def board(self) -> "Oneiron._SelfBoardVerbs": ...
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
         def standing(self) -> "Oneiron._SelfStandingVerbs": ...
@@ -3689,7 +3725,7 @@ class Oneiron:
         @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
-            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles."""
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console."""
         def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
         def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:
@@ -3718,6 +3754,19 @@ class Oneiron:
             """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
         def seal(self, spec: Facade.ScratchpadSealRequest) -> Facade.ScratchpadWriteReply:
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+    class _SelfBoardVerbs:
+        def layout(self, spec: Facade.EmptyRequest) -> Facade.BoardLayoutState:
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+        def fold(self, spec: Facade.BoardFoldRequest) -> Facade.BoardLayoutState:
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+        def unfold(self, spec: Facade.BoardSectionRequest) -> Facade.BoardLayoutState:
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+        def size(self, spec: Facade.BoardSizeRequest) -> Facade.BoardLayoutState:
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+        def filter(self, spec: Facade.BoardFilterRequest) -> Facade.BoardLayoutState:
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+        def replace(self, spec: Facade.BoardReplaceRequest) -> Facade.BoardLayoutState:
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
