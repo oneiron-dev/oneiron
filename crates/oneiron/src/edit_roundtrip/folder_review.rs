@@ -150,6 +150,7 @@ impl Vault {
                     }),
                     unmasked,
                 },
+                ask.deadline,
             )?
         };
         if row.progress.is_none() {
@@ -168,7 +169,7 @@ impl Vault {
             let expected = row.clone();
             let Some(item) = request.items.get(progress.next) else {
                 row.progress = None;
-                row = self.advance_decided_sheet_answers(output, &expected, row)?;
+                row = self.advance_decided_sheet_answers(output, &expected, row, ask.deadline)?;
                 continue;
             };
             let before = before
@@ -289,7 +290,7 @@ impl Vault {
             if progress.decision.is_none() {
                 progress.next += 1;
             }
-            row = self.advance_decided_sheet_answers(output, &expected, row)?;
+            row = self.advance_decided_sheet_answers(output, &expected, row, ask.deadline)?;
         }
         self.stage_decided_sheet_answers(output, &row, ask.deadline)
     }

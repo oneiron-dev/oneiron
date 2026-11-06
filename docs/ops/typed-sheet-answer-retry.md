@@ -78,10 +78,22 @@ units. The check returns the existing typed document timeout even without a
 registered document-memory host. A later retry uses its new caller deadline
 and keeps the stored inputs, current-unit decision and completed prefix.
 
+The encoded CONTENT value buffer uses the same document-memory port and caller
+deadline. The engine first counts the exact Named MessagePack output without
+allocating that buffer, reserves its bytes, then encodes into a fixed-size
+buffer. It accounts for the allocator's reported capacity before filling it.
+Both serialization passes check the caller deadline at each output write, even
+without a registered document-memory host. Encoding and capacity waits finish
+before the grouped writer transaction starts. The original side-row admission
+wall still commits the encoded value; the operation stays alive until the staged
+bytes are gone. A refusal leaves the previously stored prefix and decision intact.
+
 These checks are cooperative, not preemption: source snapshots, parsers,
-hashing, clones, serialization and database waits can run between checkpoints.
-Progress writes and local prefix clones are not full-heap admission. No runtime,
-hard-time or full FIX 9815 completion claim is made here.
+hashing, clones, serializer work between output writes, individual copies and
+database waits can run between checkpoints. Local prefix clones, decoded rows,
+input representations, side-row wall copies and allocator transient surplus are
+not full-heap admission. No runtime, hard-time or full FIX 9815 completion claim
+is made here.
 
 Normal engine rebuild only. The same content side table and additive release
 verb cover both partial and complete rows. There is no migration, compatibility

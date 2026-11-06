@@ -373,6 +373,17 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         })
     }
 
+    /// Stages bytes encoded by the table's codec in a caller-owned allocation.
+    /// The normal side-row wall and masked-row decoder still run at `put`.
+    pub(crate) fn stage_encoded(&self, key: &K, value: Vec<u8>) -> StagedRow {
+        StagedRow {
+            decl: self.decl,
+            key: self.key_bytes(key),
+            value,
+            decodes: decodes::<V, C>,
+        }
+    }
+
     /// Writes bytes the codec would never produce, for fixtures that plant a damaged row.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn put_undecodable(
