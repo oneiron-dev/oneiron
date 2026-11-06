@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use oneiron::receipt::admission::AdmissionTracker;
 use oneiron::runtime_hooks::VerbHookStop;
-use oneiron::work_line::LineObserver;
 use serde_json::Value;
 
 use super::envelope::{McpCallContext, McpGatewayError};
@@ -41,7 +40,14 @@ impl McpIntent {
         let McpValidatedToolArgs::Verb(call) = args else {
             return None;
         };
-        if off_record || call.payload.page.is_some() {
+        // A page budget alone is a fresh call; a cursor restates a retained
+        // answer.
+        let continuation = call
+            .payload
+            .page
+            .as_ref()
+            .is_some_and(|page| page.cursor.is_some());
+        if off_record || continuation {
             return None;
         }
         let digest = crate::mcp::mcp_page_argument_digest(&call.payload);
@@ -178,7 +184,8 @@ pub(super) async fn observed<T>(
         tracker,
         settled: false,
     };
-    let observer: Arc<dyn LineObserver> = Arc::new(flight.tracker.clone());
+    let observer =
+        crate::api::facade::tracker_observer(&flight.tracker, crate::api::admission_observer());
     let result = crate::api::facade::with_admission_observer(Some(observer), call).await;
     let settle = match &result {
         Ok(output) => {

@@ -121,6 +121,9 @@ pub(crate) fn call_verb<'a>(
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
         let (server, call, verb) = (Arc::clone(server), call.owned(), verb.to_owned());
         let store_key = crate::invocation_claims::invocation_claim_key(invocation);
+        // The call this one runs inside, when it is nested (a skill's or an
+        // action step's verb): its waits are that call's waits too.
+        let outer = admission_observer();
         let worker = super::clock_ingress::scoped(restrictive, async move {
             // The receipt and worker start inside the same detached task:
             // hanging up during the durable write cannot orphan an intent.
@@ -144,7 +147,7 @@ pub(crate) fn call_verb<'a>(
                 tracker,
                 settled: false,
             };
-            let observer: Arc<dyn LineObserver> = Arc::new(flight.tracker.clone());
+            let observer = tracker_observer(&flight.tracker, outer);
             let result = OBSERVER
                 .scope(observer, async {
                     dispatch::call_verb(&server, &call.call(), &verb, Ok(value)).await
@@ -175,6 +178,42 @@ pub(crate) fn call_verb<'a>(
         .map_err(|_| super::host_doors::support::internal("admission"))?
     });
     Box::pin(super::secret_body::with_custody_secret(secret, admitted))
+}
+
+/// The observer a tracked call's waits report to: its own receipt, and,
+/// for a call nested in another tracked call (a skill's or an action step's
+/// verb), that outer call's observer too, since the outer call waits with
+/// it (FIX 4735).
+pub(crate) fn tracker_observer(
+    tracker: &AdmissionTracker,
+    outer: Option<Arc<dyn LineObserver>>,
+) -> Arc<dyn LineObserver> {
+    match outer {
+        Some(outer) => Arc::new(NestedObserver {
+            own: tracker.clone(),
+            outer,
+        }),
+        None => Arc::new(tracker.clone()),
+    }
+}
+
+/// A nested tracked call's observer: each transition goes to its own
+/// receipt and to the call it runs inside.
+struct NestedObserver {
+    own: AdmissionTracker,
+    outer: Arc<dyn LineObserver>,
+}
+
+impl LineObserver for NestedObserver {
+    fn queued(&self) {
+        self.own.queued();
+        self.outer.queued();
+    }
+
+    fn held(&self) {
+        self.own.held();
+        self.outer.held();
+    }
 }
 
 /// Whether a named call of `verb` keeps an admission receipt, on every
