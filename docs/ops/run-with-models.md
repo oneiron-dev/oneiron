@@ -211,6 +211,23 @@ so both recognize the new closed row. Direct calls need no broker.
 
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
+A provider row cannot say `on_device`: a server reached over HTTP is
+`own_server`, even on this machine, and that includes every endpoint you run
+and point a provider at yourself. On device is what the server derives for its
+own supervised runtime: a `managed` EXL3 worker this server launches, on Linux
+or macOS, reached over its native channel, which checks each connection
+against the child it supervises before any input goes. Such a worker's models
+get a second offer beside the provider's own: the on-device offer, which sends
+only over that channel and fails the call unsent when it cannot. A call takes
+it only when its route is on device (the vault's model manifest routes the
+role or model `on_device`); every other call keeps the provider's offer,
+native when the worker's socket is up and HTTP otherwise, as before, and stays
+`own_server`. An on-device call never falls back to HTTP, to another rung, or
+to an owner's fallback off the device, and an on-device extraction needs no
+`extraction_egress`. Only free work gets the on-device offer: a provider with
+a key or a payer other than `local` keeps its calls `own_server` and paid. The
+reranker and a raw `/v1/llm` call keep the provider's own offer.
+
 A `key_secret` names a vault secret instead of a variable: the key stays in
 the vault's custody (T0), and only the credential broker sends it. The broker is
 a separate process that runs as its own OS user, adds the key to one request,
@@ -1337,6 +1354,15 @@ kind marks alone lands at once. A folded output is never read into the
 request, so it no longer counts against the window. `self.unfold({fold})`
 appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
 fold may lie over a whole-step fold; that fold still hides its steps.
+
+`self.fold({kind: "program", ...})` folds the other half: each step keeps its
+console, and its exec frame shows comment lines in place of the program:
+`// ⟨f4 · program folded⟩ self.unfold({fold: "f4"}) brings it back`, then one
+line per speech call the step made (`// self.speak: "..."`, `self.think`,
+`self.express`, with the text it dispatched) and the ids the program names.
+Each step checkpoint keeps the range of bridge calls its step made
+(`bridge_calls`), which is how the stub finds them. Unfold appends the raw
+programs, labelled `unfolded program from tA–tB`.
 
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
@@ -3648,8 +3674,11 @@ What exists now:
   its own rules. It holds the request exactly as the answering rung sent it
   (the rung's prompt first, the board included when it rode) and the span the
   reply generated: its reasoning, tool calls and text, in the parts the
-  request uses. The request and the span are one body, sealed under an
-  erasable key of the example's own (purpose `DrafterArtifact`). No example
+  request uses. The request and the span are one body. The side-row wall
+  masks it first, as it masks an authored row: a secret the call carried is
+  kept as its custody handle, never its value, and dropping the example
+  revokes the custody it minted. The body is then sealed under an erasable
+  key of the example's own (purpose `DrafterArtifact`). No example
   is kept for a reply that failed or is not saved whole, a reused prefix that
   fell back to today's call, a turn that keeps no model-call record (it keeps
   no durable record or runs off the record), a call whose rows are not known
