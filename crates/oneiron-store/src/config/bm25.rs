@@ -128,6 +128,104 @@ impl Bm25Config {
     pub fn field(&self, channel: AnalyzerChannel) -> FieldConfig {
         self.fields[channel.field_id() as usize]
     }
+
+    /// The parameters the text field id `fid` scores under: its channel's,
+    /// the weight scaled by the NOTE field's own when it is one (FIX 7789);
+    /// `None` for an id no build writes.
+    pub fn field_for_id(&self, fid: u16) -> Option<FieldConfig> {
+        let (field, channel) = text_field_of_id(fid)?;
+        let mut config = self.field(channel);
+        if let Some(field) = field {
+            config.weight *= field.weight();
+        }
+        Some(config)
+    }
+}
+
+/// A NOTE's semantic text fields (ARCH-0032 #bm25f, FIX 7789). Each indexes
+/// beside the analyzer channels under ids of its own
+/// ([`text_field_id`]), with its own length statistics, and weighs its
+/// channels' term frequencies by its own weight before the one saturation.
+/// Every other text is pooled by channel, as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NoteTextField {
+    Title,
+    Tags,
+    TargetNames,
+    Body,
+}
+
+impl NoteTextField {
+    pub const ALL: [Self; 4] = [Self::Title, Self::Tags, Self::TargetNames, Self::Body];
+
+    /// The index-source field name a NOTE's text index publishes this
+    /// field under. No other writer names a field so.
+    pub const fn source_name(self) -> &'static str {
+        match self {
+            Self::Title => "note.title",
+            Self::Tags => "note.tags",
+            Self::TargetNames => "note.target_names",
+            Self::Body => "note.body",
+        }
+    }
+
+    /// The field an index-source field name publishes, when it is one.
+    pub fn from_source_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|field| field.source_name() == name)
+    }
+
+    /// The ruled weight (ARCH-0032 #bm25f): title 2.0, tags 1.6, target
+    /// names 1.4, body 1.0.
+    pub const fn weight(self) -> f64 {
+        match self {
+            Self::Title => 2.0,
+            Self::Tags => 1.6,
+            Self::TargetNames => 1.4,
+            Self::Body => 1.0,
+        }
+    }
+
+    const fn slot(self) -> u16 {
+        match self {
+            Self::Title => 1,
+            Self::Tags => 2,
+            Self::TargetNames => 3,
+            Self::Body => 4,
+        }
+    }
+
+    const fn from_slot(slot: u16) -> Option<Self> {
+        match slot {
+            1 => Some(Self::Title),
+            2 => Some(Self::Tags),
+            3 => Some(Self::TargetNames),
+            4 => Some(Self::Body),
+            _ => None,
+        }
+    }
+}
+
+/// The text field id a token of `channel` indexes under: the channel's own
+/// id for pooled text (`field` none), so every other kind's rows read as
+/// they always have, and `(slot << 8) | channel` in a NOTE field.
+pub const fn text_field_id(field: Option<NoteTextField>, channel: AnalyzerChannel) -> u16 {
+    match field {
+        None => channel.field_id(),
+        Some(field) => (field.slot() << 8) | channel.field_id(),
+    }
+}
+
+/// The NOTE field (none for pooled text) and the channel a text field id
+/// names; `None` for an id no build writes.
+pub fn text_field_of_id(fid: u16) -> Option<(Option<NoteTextField>, AnalyzerChannel)> {
+    let channel = AnalyzerChannel::from_field_id(fid & 0xff)?;
+    let field = match fid >> 8 {
+        0 => None,
+        slot => Some(NoteTextField::from_slot(slot)?),
+    };
+    Some((field, channel))
 }
 
 impl Default for Bm25Config {

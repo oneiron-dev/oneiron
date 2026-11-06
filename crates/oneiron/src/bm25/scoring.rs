@@ -96,11 +96,13 @@ pub(super) fn score_query_terms(
 
             let mut x_t_d = 0.0_f64;
 
+            // One sum over every field id before the one saturation: a NOTE
+            // field's channels weigh by the field's weight too (BM25F, FIX
+            // 7789), each normalized by its own length and average.
             for (fid, tf) in &entry.fields {
-                let Some(channel) = AnalyzerChannel::from_field_id(*fid) else {
+                let Some(cfg) = config.field_for_id(*fid) else {
                     return Err(corrupted("posting field_id not in current schema"));
                 };
-                let cfg = config.field(channel);
                 if cfg.weight == 0.0 {
                     continue;
                 }
