@@ -232,6 +232,42 @@ fn next_line<'bytes>(
     })
 }
 
+/// Copies a full internal path with the caller's reader, without rendering a page.
+pub(super) fn copy_path_parts(
+    parts: &[&str],
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<String> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let mut path = String::new();
+    for part in parts {
+        let mut rest = *part;
+        while !rest.is_empty() {
+            checkpoint(reader)?;
+            let mut end = quantum.min(rest.len());
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            path.push_str(&rest[..end]);
+            rest = &rest[end..];
+        }
+    }
+    Ok(path)
+}
+
+pub(super) fn join_graph_path_with_reader(
+    parent: &str,
+    name: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<String> {
+    if parent == "/" {
+        copy_path_parts(&["/", name], reader, scan_bytes)
+    } else {
+        copy_path_parts(&[parent, "/", name], reader, scan_bytes)
+    }
+}
+
 fn checkpoint(reader: &ContainerReader) -> Result<()> {
     reader
         .pacing
