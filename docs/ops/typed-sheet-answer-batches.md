@@ -14,14 +14,24 @@ report, recalculates once, verifies the resulting workbook and creates one
 proposal with the original run reference and answer bundle. The unit decider
 is not called during writing or Keep.
 
-The temporary chunk-plan vector uses the host's existing document-resource
-reservation and wait. This reservation covers that vector's representation,
-not its nested strings, the combined result or the whole workbook heap.
-Native reads and projections share the same resource operation. Authenticated
-sheet and folder preparation supplies the ask's existing deadline; a direct
-proposal or a carry without that deadline adds no new clock. A host without
-a registered document-memory port keeps the existing measuring-only behavior.
-No separate count queue, timer or default limit is introduced.
+The temporary chunk-plan vector and its validated cell text copies use the
+host's existing document-resource reservation and wait. The native writer
+reserves its returned operation vector and validated text copies before
+copying them. Batch aggregation reserves the combined operation and warning
+vectors before moving each batch into them. These reservations cover those
+vectors and the named native copies, not the whole workbook heap or every
+allocation a generic session makes.
+
+Native reads and projections share the same resource operation. The server
+hands allocated bytes to live-memory accounting when a local reservation
+drops. Where live memory cannot be read, it keeps the dropped reservation in
+the operation's allocated lease until that operation ends. This is not a
+claim that retained bytes remain leased after the last operation handle ends.
+Authenticated sheet and folder preparation supplies the ask's existing
+deadline; a direct proposal or a carry without that deadline adds no new
+clock. A host without a registered document-memory port keeps the existing
+measuring-only behavior. No separate count queue, timer or default limit is
+introduced.
 
 Keep does not reject an already-prepared proposal because its total answer
 count exceeds the current batch size. Existing authority, source-version,

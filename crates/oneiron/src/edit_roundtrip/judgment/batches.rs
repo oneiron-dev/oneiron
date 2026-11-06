@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use oneiron_docedit::resource::Resources;
+use oneiron_docedit::resource::{Hold, Resources};
 use oneiron_xlsx_formula::{DocumentLocation, RecalcClock};
 
 use crate::blob_artifact::CalcEngineStamp;
@@ -24,6 +24,7 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
         if plan.ops.len() <= self.batch_size.get() {
             return self.session.apply_edits(doc, plan);
         }
+        let mut result_backing = self.resources.hold();
         let mut current = None;
         let mut applied_ops = Vec::new();
         let mut warnings = Vec::new();
@@ -69,6 +70,12 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
             let applied = self
                 .session
                 .apply_edits(current.as_ref().unwrap_or(doc), &batch)?;
+            reserve_result(
+                &mut applied_ops,
+                applied.applied_ops.len(),
+                &mut result_backing,
+            )?;
+            reserve_result(&mut warnings, applied.warnings.len(), &mut result_backing)?;
             applied_ops.extend(applied.applied_ops);
             warnings.extend(applied.warnings);
             if chunks.peek().is_none() {
@@ -107,4 +114,22 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
     fn recalc_location(&self) -> Option<DocumentLocation> {
         self.session.recalc_location()
     }
+}
+
+fn reserve_result<T>(values: &mut Vec<T>, more: usize, backing: &mut Hold) -> Result<()> {
+    let length = values.len().saturating_add(more);
+    if length > values.capacity() {
+        backing
+            .take_len::<T>(length - values.capacity())
+            .map_err(crate::office_body::machine_memory_refused)?;
+        values.try_reserve_exact(more).map_err(|error| {
+            Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        if values.capacity() > length {
+            backing
+                .take_len::<T>(values.capacity() - length)
+                .map_err(crate::office_body::machine_memory_refused)?;
+        }
+    }
+    Ok(())
 }

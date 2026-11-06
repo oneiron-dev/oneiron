@@ -582,9 +582,26 @@ impl EditSession for NativeCellSession {
                 .take_len::<XlsxChange>(changes.capacity() - plan.ops.len())
                 .map_err(crate::office_body::machine_memory_refused)?;
         }
+        changes_backing
+            .take_len::<EditOp>(plan.ops.len())
+            .map_err(crate::office_body::machine_memory_refused)?;
+        let mut applied_ops = Vec::new();
+        applied_ops
+            .try_reserve_exact(plan.ops.len())
+            .map_err(|error| {
+                Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+            })?;
+        if applied_ops.capacity() > plan.ops.len() {
+            changes_backing
+                .take_len::<EditOp>(applied_ops.capacity() - plan.ops.len())
+                .map_err(crate::office_body::machine_memory_refused)?;
+        }
         for op in &plan.ops {
             let EditOp::SetCell {
-                sheet, cell, after, ..
+                sheet,
+                cell,
+                before,
+                after,
             } = op
             else {
                 return Err(failed());
@@ -620,6 +637,15 @@ impl EditSession for NativeCellSession {
                 formula: None,
                 style,
             });
+            applied_ops.push(EditOp::SetCell {
+                sheet: clone_plan_text(sheet, Some(&mut changes_backing))?,
+                cell: *cell,
+                before: before
+                    .as_ref()
+                    .map(|value| clone_plan_cell(value, Some(&mut changes_backing)))
+                    .transpose()?,
+                after: clone_plan_cell(after, Some(&mut changes_backing))?,
+            });
         }
         let bytes = project_xlsx(&doc.bytes, &changes, self.limits, &self.resources, None)
             .map_err(|error| {
@@ -633,7 +659,7 @@ impl EditSession for NativeCellSession {
             .bytes;
         Ok(AppliedEdit {
             bytes,
-            applied_ops: plan.ops.clone(),
+            applied_ops,
             warnings: Vec::new(),
         })
     }
