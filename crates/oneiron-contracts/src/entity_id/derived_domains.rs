@@ -393,5 +393,4 @@ pub(crate) const ALL: [&[u8]; 60] = [
     ASSET_BODY_HELD,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
-    STORAGE_SERVICE_PRINCIPAL,
 ];
