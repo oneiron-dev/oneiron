@@ -66,11 +66,19 @@ fn mirror_key(world: EntityId, window: &WindowKey) -> String {
 struct MirrorRead {
     held: Option<Vec<u8>>,
     erases: u64,
+    /// What a replacement of the mirror read would destroy: a legal hold
+    /// over any of it, placed since or before, refuses the write (OF-470).
+    destroys: Option<CarrierInventory>,
 }
 
 impl MirrorRead {
     /// Whether the mirror `key` and the erase count stand as read, in `txn`.
+    /// A replacement meets every legal hold over what it destroys here, in
+    /// the writer that would destroy it, and is refused under one.
     fn stands_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>, key: &str) -> Result<bool> {
+        if let Some(destroys) = &self.destroys {
+            destroys.reject_held_in_txn(&vault.store, txn, &HoldActor::TIMER)?;
+        }
         Ok(MIRROR.get(&vault.store, txn, &key.to_owned())? == self.held
             && mirror_erases_in(&vault.store, txn)? == self.erases)
     }
@@ -90,7 +98,14 @@ fn load_mirror_read(
         import_doc(&doc, snapshot)?;
     }
     let erases = mirror_erases_in(&vault.store, &txn)?;
-    Ok((doc, MirrorRead { held, erases }))
+    Ok((
+        doc,
+        MirrorRead {
+            held,
+            erases,
+            destroys: None,
+        },
+    ))
 }
 
 /// Stores `doc` as `window`'s mirror, as long as it stands as `read` found it.
@@ -347,14 +362,14 @@ impl WindowManager {
             // hold over what this mirror holds keeps it as it is (OF-470).
             let (old, reread) = load_mirror_read(vault, world, window)?;
             read = reread;
+            // Refused early under a hold that stands now, and again in the
+            // writer that would store the replacement, under one placed since.
+            let destroys = CarrierInventory::of_window(&old);
             {
                 let rtxn = vault.store.env.read_txn()?;
-                CarrierInventory::of_window(&old).reject_held_in_txn(
-                    &vault.store,
-                    &rtxn,
-                    &HoldActor::TIMER,
-                )?;
+                destroys.reject_held_in_txn(&vault.store, &rtxn, &HoldActor::TIMER)?;
             }
+            read.destroys = Some(destroys);
             let (candidate, lost) = replace_detached_mirror(vault, &old, snapshot)?;
             if lost > 0 {
                 tracing::warn!(
