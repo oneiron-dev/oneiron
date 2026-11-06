@@ -135,17 +135,26 @@ fn validate_document_metadata(
     body_field: Option<&str>,
 ) -> Result<()> {
     for (field, bytes) in fields {
-        if Some(field.as_str()) == body_field {
-            return Err(invalid("document body duplicated in metadata"));
-        }
-        let mut cursor = bytes.as_slice();
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| invalid("document metadata encoding"))?;
-        if !cursor.is_empty() {
-            return Err(invalid("trailing document metadata bytes"));
-        }
-        crate::ports::validate_metadata(field, &value)?;
+        validate_document_metadata_field(field, bytes, body_field)?;
     }
+    Ok(())
+}
+
+fn validate_document_metadata_field(
+    field: &str,
+    bytes: &[u8],
+    body_field: Option<&str>,
+) -> Result<()> {
+    if Some(field) == body_field {
+        return Err(invalid("document body duplicated in metadata"));
+    }
+    let mut cursor = bytes;
+    let value =
+        rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("document metadata encoding"))?;
+    if !cursor.is_empty() {
+        return Err(invalid("trailing document metadata bytes"));
+    }
+    crate::ports::validate_metadata(field, &value)?;
     Ok(())
 }
 
@@ -153,11 +162,16 @@ fn validate_document_metadata(
 /// each one whole value of its own type.
 fn validate_summary_meta(fields: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     for (field, bytes) in fields {
-        match field.as_str() {
-            "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
-            "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
-            _ => return Err(invalid("entity document summary meta field")),
-        }
+        validate_summary_meta_field(field, bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_summary_meta_field(field: &str, bytes: &[u8]) -> Result<()> {
+    match field {
+        "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
+        "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
+        _ => return Err(invalid("entity document summary meta field")),
     }
     Ok(())
 }
