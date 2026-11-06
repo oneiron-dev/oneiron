@@ -25,7 +25,7 @@ use super::proposals::{NOTE_FORK, NoteFork};
 use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_FORK_AUTHORITY, SYNC_DS_E, SYNC_QN_E};
 use crate::side_table::HexId;
-use crate::sync::transport::{document_sub_tags, encode_document};
+use crate::sync::transport::document_sub_tags;
 use crate::{EntityId, Result, Vault};
 
 /// The pending forks a NOTE's authority holds, as a set frame names them.
@@ -94,12 +94,13 @@ pub(crate) fn authority_fork_frames_in_txn(
             }
         }
         set.push(id.to_hex());
-        // A fork past the document frame stays named in the set, so a device
-        // keeps the copy it holds.
         match encode_fork_state(&fork, &document).and_then(|payload| {
-            encode_document(note, document_sub_tags::NOTE_FORK_STATE, &payload)
-                .into_result()
-                .map_err(|_| invalid("NOTE fork exceeds the document frame"))
+            crate::sync::transport::encode_unsplit_document(
+                note,
+                document_sub_tags::NOTE_FORK_STATE,
+                &payload,
+            )
+            .map_err(|_| invalid("NOTE fork frame encode"))
         }) {
             Ok(frame) => frames.push(frame),
             Err(error) => {
@@ -110,9 +111,12 @@ pub(crate) fn authority_fork_frames_in_txn(
     let set =
         serde_json::to_vec(&NoteForkSet { forks: set }).map_err(|_| invalid("NOTE fork set"))?;
     frames.push(
-        encode_document(note, document_sub_tags::NOTE_FORK_SET, &set)
-            .into_result()
-            .map_err(|_| invalid("NOTE fork set exceeds the document frame"))?,
+        crate::sync::transport::encode_unsplit_document(
+            note,
+            document_sub_tags::NOTE_FORK_SET,
+            &set,
+        )
+        .map_err(|_| invalid("NOTE fork set encode"))?,
     );
     Ok(frames)
 }

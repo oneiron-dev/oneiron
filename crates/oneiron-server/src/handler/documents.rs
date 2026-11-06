@@ -26,12 +26,20 @@ pub(super) fn handle_document(
                 max: server.config.max_update_payload,
             });
         }
-        if payload.first() != Some(&document_sub_tags::NOTE_OPS) {
-            return Err(ProtocolError::InvalidPayload(
-                "upload parts require NOTE operations",
-            ));
+        match payload.first().copied() {
+            Some(document_sub_tags::NOTE_OPS) => require_note_upload(server, state, entity)?,
+            Some(document_sub_tags::NOTE_FORK_UPLOAD) => {
+                if !state.owner_documents.contains_key(&entity) {
+                    return Err(ProtocolError::InvalidPayload("document not admitted"));
+                }
+                owner_auth(server, state, true)?;
+            }
+            _ => {
+                return Err(ProtocolError::InvalidPayload(
+                    "upload parts require NOTE operations or an owner fork",
+                ));
+            }
         }
-        require_note_upload(server, state, entity)?;
         let joined = state
             .document_parts
             .accept(transport::DocumentFrame {
@@ -473,10 +481,12 @@ fn owner_document(
                 .map_err(|error| ProtocolError::Persistence(error.to_string()))?;
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_FORK_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_FORK_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -488,7 +498,7 @@ fn owner_document(
 
 /// The owner lane's gate: v11, never selector-scoped, and a bound NOTE
 /// session whose principal is the vault owner.
-fn owner_auth<'a>(
+pub(super) fn owner_auth<'a>(
     server: &SyncServer,
     state: &'a ConnState,
     write: bool,
@@ -855,7 +865,12 @@ pub(super) fn retry_later(
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     match doc.kind {
-        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+        document_sub_tags::STATE
+        | document_sub_tags::UPDATE
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET
+        | document_sub_tags::NOTE_FORK_RECEIPT => {
             transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
         }
         _ => transport::encode_document(doc.entity, doc.kind, doc.payload)

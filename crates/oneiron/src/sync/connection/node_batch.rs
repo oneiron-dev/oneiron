@@ -128,8 +128,11 @@ impl SyncConnection {
         if let Some(frame) = documents.first() {
             let doc = transport::decode_unsplit_document(&frame[1..])
                 .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
-            if doc.kind == transport::document_sub_tags::NOTE_OPS
-                && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
+            if matches!(
+                doc.kind,
+                transport::document_sub_tags::NOTE_OPS
+                    | transport::document_sub_tags::NOTE_FORK_UPLOAD
+            ) && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
             {
                 let frame = documents.remove(0);
                 self.send_document_response(write, client, frame).await?;
@@ -320,8 +323,10 @@ fn take_document(
             documents.remove(0);
             continue;
         }
-        if doc.kind == transport::document_sub_tags::NOTE_OPS
-            && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
+        if matches!(
+            doc.kind,
+            transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::NOTE_FORK_UPLOAD
+        ) && frame.len().saturating_add(5) > transport::MAX_DECODED_PAYLOAD_BYTES
         {
             return Ok(false);
         }

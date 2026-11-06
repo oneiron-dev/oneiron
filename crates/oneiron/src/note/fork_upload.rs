@@ -166,8 +166,8 @@ pub(crate) fn uploadable_fork_in_txn(
 ///
 /// # Errors
 ///
-/// Storage errors, a fork document that does not read, and a frame past the
-/// document frame bound.
+/// Storage errors, a fork document that does not read, and a payload that
+/// cannot be encoded.
 pub(crate) fn fork_upload_frame_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -188,10 +188,13 @@ pub(crate) fn fork_upload_frame_in_txn(
         .export(loro::ExportMode::updates(&since))
         .map_err(|_| invalid("NOTE fork export"))?;
     let payload = upload.encode_payload(&operations)?;
-    crate::sync::transport::encode_document(note, document_sub_tags::NOTE_FORK_UPLOAD, &payload)
-        .into_result()
-        .map(Some)
-        .map_err(|_| invalid("NOTE fork exceeds the document frame"))
+    crate::sync::transport::encode_unsplit_document(
+        note,
+        document_sub_tags::NOTE_FORK_UPLOAD,
+        &payload,
+    )
+    .map(Some)
+    .map_err(|_| invalid("NOTE fork frame encode"))
 }
 
 impl Memory<'_> {

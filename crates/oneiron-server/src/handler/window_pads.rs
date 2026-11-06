@@ -169,25 +169,82 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
 }
 
 /// Sends `frame` as it leaves this socket ([`release`]); false once a send
-/// fails. The frames are made before the send, so the send holds neither
-/// the server nor the socket's state.
+/// fails. A large document rechecks its original logical payload before
+/// each part; a changed release after a prefix closes its incomplete run.
 pub(super) fn send_released<'t>(
     server: &SyncServer,
     conn_state: &ConnState,
     transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
 ) -> impl Future<Output = bool> + use<'t> {
-    let frames = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
+    let (document, frames) = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
         && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
     {
-        oneiron::sync::transport::DocumentPartFrames::new(&frame).map(Iterator::collect)
+        let owner = oneiron::sync::transport::decode_unsplit_document(&frame[1..])
+            .map_err(|_| ())
+            .and_then(|document| {
+                use oneiron::sync::transport::document_sub_tags;
+                if matches!(
+                    document.kind,
+                    document_sub_tags::NOTE_FORK_STATE
+                        | document_sub_tags::NOTE_FORK_SET
+                        | document_sub_tags::NOTE_FORK_RECEIPT
+                ) {
+                    super::documents::owner_auth(server, conn_state, false)
+                        .cloned()
+                        .map(Some)
+                        .map_err(|_| ())
+                } else {
+                    Ok(None)
+                }
+            });
+        (
+            Some((
+                frame,
+                std::sync::Arc::clone(server.vault()),
+                conn_state.peer_machine(server.vault()),
+                owner,
+            )),
+            Vec::new(),
+        )
     } else {
-        Ok(release(server, conn_state, frame))
+        (None, release(server, conn_state, frame))
     };
     async move {
-        let Ok(frames) = frames else {
-            return false;
-        };
+        if let Some((frame, vault, peer, owner)) = document {
+            let Ok(owner) = owner else {
+                return false;
+            };
+            let Ok(parts) = oneiron::sync::transport::DocumentPartFrames::new(&frame) else {
+                return false;
+            };
+            let mut sent = false;
+            for part in parts {
+                let owner_live = owner.as_ref().is_none_or(|auth| {
+                    auth.credential_is_live(&vault)
+                        && auth
+                            .require_registered_principal()
+                            .ok()
+                            .and_then(|actor| oneiron::EntityId::from_hex(actor).ok())
+                            .is_some_and(|actor| {
+                                vault
+                                    .memory(actor, oneiron::EdgeActorClass::Human)
+                                    .verify_owner()
+                                    .is_ok()
+                            })
+                });
+                if !owner_live
+                    || oneiron::sync::documents::document_frame_withheld_for(&vault, peer, &frame)
+                {
+                    return !sent;
+                }
+                if !transport.send_binary(part).await {
+                    return false;
+                }
+                sent = true;
+            }
+            return true;
+        }
         for frame in frames {
             if !transport.send_binary(frame).await {
                 return false;
