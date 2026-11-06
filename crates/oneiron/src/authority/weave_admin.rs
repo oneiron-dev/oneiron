@@ -69,10 +69,6 @@ impl AdminStepUp {
     /// `stepped_up_at`. Only the ingress that verified the step-up itself
     /// may call this; it never takes a caller's word that a step-up
     /// happened.
-    #[allow(
-        dead_code,
-        reason = "L13's MFA step-up ingress is its first caller; none mints a witness yet"
-    )]
     pub(crate) fn after_step_up(
         holder: EntityId,
         request: &VerifiedSlip,
@@ -179,7 +175,8 @@ impl AuthenticatedWeaveAdmin {
     }
 
     /// Whether this proof still holds in `txn`: the same vault open, the
-    /// step-up witness this holder's over this request, the request still a
+    /// step-up witness this holder's over this request and still its slip's
+    /// standing step-up with its passkey enrolled, the request still a
     /// live capability of this vault held by its own holder, the person a
     /// live PERSON, the vault shared and not deleted, the grant exactly a
     /// live Admin membership of that person over this vault (unexpired, its
@@ -220,6 +217,20 @@ impl AuthenticatedWeaveAdmin {
             .capability_slip_is_live_in_txn(txn, request)
             .map_err(&checked)?
             || !crate::consent::person_is_live_in_txn(vault, txn, &self.actor).map_err(&checked)?
+        {
+            return Err(not_current());
+        }
+        // The witness stands only while its step-up does: an owner reset, a
+        // removed passkey or a newer step-up on the slip ends it here, in
+        // every read's own transaction.
+        if !vault
+            .step_up_record_stands_in_txn(
+                txn,
+                self.mfa.holder,
+                &self.mfa.slip_id,
+                self.mfa.stepped_up_at,
+            )
+            .map_err(&checked)?
         {
             return Err(not_current());
         }
