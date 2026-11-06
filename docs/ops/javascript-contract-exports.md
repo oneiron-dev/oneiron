@@ -135,6 +135,14 @@ keeps that value unchanged. A prefix `exports` read still requires the original
 alias and must occur before the first fresh replacement. Reading that old wrapper
 after a replacement keeps the ordinary fallback; its old keys are not restored.
 
+For a whole-slot outer assignment, the final element may itself be another
+plain native whole-slot assignment. For example,
+`module.exports = (module.exports = {a: 1}, module.exports = {b: 2})` keeps `b`.
+That final store uses the same prefix checks and ordered fresh-value handling;
+the outer store writes the value that was just stored. A current-valued final
+store preserves that current value. Detached-wrapper, named-property, rebinding,
+compound and unknown-value final stores keep the ordinary fallback.
+
 A direct assignment to the wrapper `exports` binding can use that same flat
 prefix when the final element reads the native `module.exports` slot. For example,
 `exports = (module.exports = {a: 1}, module.exports)` contributes `a` and reconnects
