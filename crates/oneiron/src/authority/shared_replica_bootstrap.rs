@@ -46,6 +46,18 @@ impl PreparedSharedReplicaAuthority {
         })
     }
 
+    /// Original signed bodies, keyed exactly as the native import stores them.
+    /// Keep these outside staging so the final same-writer read check binds
+    /// every carried byte, not only the import-time metadata header.
+    pub(crate) fn original_history_rows(
+        &self,
+    ) -> Result<std::collections::BTreeMap<EntityId, Vec<u8>>> {
+        self.history
+            .iter()
+            .map(|(_, bytes, entry)| Ok((authority_log_entity_id(entry)?, bytes.clone())))
+            .collect()
+    }
+
     /// Checks the log's mint and the original holder proof before content
     /// staging. It does not claim that the member GRANT has landed yet.
     pub(crate) fn stage_history_in_txn(
