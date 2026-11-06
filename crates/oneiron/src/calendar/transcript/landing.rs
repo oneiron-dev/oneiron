@@ -76,6 +76,33 @@ pub(crate) fn ingest_meeting_transcript_in_txn(
     .map(|landed| landed.outcome)
 }
 
+pub(crate) fn ingest_prepared_meeting_transcript_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    request: TranscriptFileDropRequest<'_>,
+    parsed: &ParsedTranscript,
+    hint: &crate::session_lifecycle::SessionImportHint,
+    pre: &crate::session_lifecycle::SessionImportPre,
+    source_version: &crate::blob_artifact::BlobArtifactVersion,
+    source: &crate::ingest::meeting_audio::MeetingImportProvenance,
+) -> crate::Result<(
+    TranscriptIngestOutcome,
+    Option<crate::session_lifecycle::EndedSession>,
+)> {
+    land(
+        vault,
+        wtxn,
+        request,
+        parsed,
+        hint.key(),
+        false,
+        Some(source_version),
+        Some((hint, pre)),
+        Some(source),
+    )
+    .map(|landed| (landed.outcome, landed.ended))
+}
+
 pub(super) fn land(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
