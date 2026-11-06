@@ -222,6 +222,7 @@ pub enum AgentVerb {
     VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
+    VaultProactivityDigest,
     VaultInboxLens,
     VaultInboxGroups,
     VaultInboxGroupsResolve,
@@ -1510,6 +1511,7 @@ impl AgentVerb {
         Self::VaultWeaveDigestFeedbackPut,
         Self::VaultWeaveOwnerDigestRender,
         Self::VaultInboxConcernsReview,
+        Self::VaultProactivityDigest,
         Self::VaultInboxLens,
         Self::VaultInboxGroups,
         Self::VaultInboxGroupsResolve,
@@ -2801,6 +2803,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => "vault.weave.digest_feedback.put",
             Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
+            Self::VaultProactivityDigest => "vault.proactivity.digest",
             Self::VaultInboxLens => "vault.inbox.lens",
             Self::VaultInboxGroups => "vault.inbox.groups",
             Self::VaultInboxGroupsResolve => "vault.inbox.groups.resolve",
@@ -4125,6 +4128,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -5442,6 +5446,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -6910,6 +6915,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -8927,6 +8933,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -10216,6 +10223,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -11935,6 +11943,9 @@ impl AgentVerb {
             }
             Self::VaultInboxConcernsReview => {
                 "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."
+            }
+            Self::VaultProactivityDigest => {
+                "Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."
             }
             Self::VaultInboxLens => {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
