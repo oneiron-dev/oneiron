@@ -203,11 +203,24 @@ impl Channel {
         fd: BorrowedFd<'_>,
         release: Option<(DispatchRelease<'_>, &BudgetLease)>,
     ) -> io::Result<()> {
+        self.send_with_release(op, request_id, epoch, body, Some(fd), release)
+            .await
+    }
+
+    async fn send_with_release(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: Option<BorrowedFd<'_>>,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> io::Result<()> {
         let bytes = Self::frame(op, request_id, epoch, body)?;
-        let fds = [fd];
+        let fds = fd.as_slice();
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
         let mut control = SendAncillaryBuffer::new(&mut space);
-        if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
+        if !fds.is_empty() && !control.push(SendAncillaryMessage::ScmRights(fds)) {
             return Err(io::Error::other(
                 "the descriptor does not fit its control message",
             ));
@@ -495,7 +508,13 @@ impl Channel {
                     }
                 }
             }
-            None => self.send(op, request_id, epoch, body).await?,
+            None => match release {
+                Some(release) => {
+                    self.send_with_release(op, request_id, epoch, body, None, Some(release))
+                        .await?;
+                }
+                None => self.send(op, request_id, epoch, body).await?,
+            },
         }
         Ok(request_id)
     }
