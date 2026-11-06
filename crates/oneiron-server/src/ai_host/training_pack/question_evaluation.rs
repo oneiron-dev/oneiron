@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::oneironer::QuestionHead;
 
-mod calibration;
+pub(super) mod calibration;
 
 const LOG_FORMAT: &str = "oneiron.question-held-out/1";
 const ROW_FORMAT: &str = "oneiron.detector-target-row/1";
