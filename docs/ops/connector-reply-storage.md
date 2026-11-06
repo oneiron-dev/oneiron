@@ -44,9 +44,10 @@ delivered send or inventing a digest.
 
 ## Delivered code-mode replies
 
-A direct `connector.call` answer with outcome `delivered` crosses the
-existing 512 KiB result representation threshold before the write receipt
-serializes its answer. The recording host lends a call-scoped publisher.
+A direct `connector.call` answer with outcome `delivered`, or an answered
+`self.use` whose native receipt names `connector.call` and whose result is
+delivered, crosses the existing 512 KiB result representation threshold
+before the write receipt serializes its answer. The recording host lends a call-scoped publisher.
 It uses the normal reply spool, admission wall and run-owned occurrence,
 with the host's result-memory share when one was lent. No answer is refused
 or truncated for its size. An unplaceable secret still gives typed
@@ -68,9 +69,12 @@ after commit. The receipt does not acquire a second occurrence.
 Actor response erasure releases the original run's occurrence using the
 native response-owner row, even before the step adopts it.
 
-`self.use` keeps its existing whole-envelope spill path. Held and pending
-calls still park as before. Question-bearing answers keep their existing
-path; they are not selected by this early publisher.
+`self.use` keeps its existing whole-envelope representation: status and
+receipt stay inside the same stored bytes as its result. The publisher
+does not replace just the inner result. Selection reads only the native
+headers without cloning the whole answer. Held and pending calls still
+park as before. Question-bearing answers keep their existing path; they
+are not selected by this early publisher.
 
 ## Remaining whole-body adapters
 
@@ -80,7 +84,7 @@ hold whole Values. SSE events, control replies and later retry responses
 still use their native in-memory readers. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing, and spool-aware stored replay admission remain separate
-work. This transaction repair selects only direct delivered connector
-answers on the canonical recording-host path. It does not change session
-or scoped-call publication. The existing 512 KiB result representation
+work. This transaction repair selects only delivered connector answers,
+direct or in the answered native `self.use` envelope, on the canonical
+recording-host path. It does not change session or scoped-call publication. The existing 512 KiB result representation
 threshold is unchanged.

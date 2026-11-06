@@ -260,13 +260,11 @@ impl HostSelfDispatcher<'_> {
             }
             Err(error) => return Err(error),
         };
-        // Only a delivered connector reply spills here. Holds already parked;
-        // questions and self.use's outer envelope keep their existing paths.
+        // Delivered direct and self.use connector replies spill here. Holds
+        // already parked; questions keep their existing path.
         let published = match (&mut outcome, site.reply_publisher) {
             (SelfDispatchOutcome::AgentVerb(answer), Some(publisher))
-                if call.verb == AgentVerb::ConnectorCall
-                    && answer.output.get("outcome").and_then(Value::as_str)
-                        == Some("delivered") =>
+                if delivered_connector_reply(call.verb, &answer.output) =>
             {
                 let (rows, observations, hooks) =
                     (&answer.rows, &answer.observations, &answer.hooks);
@@ -808,6 +806,29 @@ fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
     serde_json::from_value::<ConnectorCallReply>(reply)
         .ok()?
         .wait_ref()
+}
+
+/// Whether the native answer holds a delivered connector reply. A `self.use`
+/// answer keeps its whole outer envelope when the publisher cards it.
+fn delivered_connector_reply(verb: AgentVerb, output: &Value) -> bool {
+    let reply = match verb {
+        AgentVerb::ConnectorCall => Some(output),
+        AgentVerb::SelfUse
+            if output.get("status").and_then(Value::as_str) == Some("answered")
+                && output
+                    .get("receipt")
+                    .and_then(|receipt| receipt.get("operation"))
+                    .and_then(Value::as_str)
+                    == Some(SECRET_USE_CONNECTOR_CALL) =>
+        {
+            output.get("result")
+        }
+        _ => None,
+    };
+    reply
+        .and_then(|reply| reply.get("outcome"))
+        .and_then(Value::as_str)
+        == Some("delivered")
 }
 
 /// The identity of the verb call a receipt row recorded, if the row is one.
