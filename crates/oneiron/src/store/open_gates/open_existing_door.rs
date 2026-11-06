@@ -182,6 +182,7 @@ impl Store {
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             privacy_posture: config.privacy.posture,
+            queued_room_hints: Default::default(),
             open_nonce: {
                 let mut nonce = [0u8; 16];
                 rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);

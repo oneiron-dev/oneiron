@@ -62,8 +62,11 @@ impl Memory<'_> {
 }
 
 impl QueuedIdentityHintReader {
-    pub(crate) fn hold_room_turn(&self, vault: &Vault) -> Option<crate::claim::TurnTerms> {
-        self.room.as_ref()?.hold_turn(vault)
+    pub(crate) fn hold_room_turn(
+        &self,
+        store: &crate::store::Store,
+    ) -> Option<crate::claim::TurnTerms> {
+        self.room.as_ref()?.hold_turn(store)
     }
 
     pub(crate) fn valid(&self) -> bool {

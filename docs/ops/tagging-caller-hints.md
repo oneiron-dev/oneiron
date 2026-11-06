@@ -20,15 +20,30 @@ and personal/held position travel as private data, beside an opaque reference
 to the original shared monotonic turn terms in this vault open. No room roster,
 peer read key or authority is serialized.
 
-The stored reference is weak while a marker waits in the queue. A claim pins
-its still-live captured room terms in the reconciler's existing held entry,
-before its lease commits. That entry keeps the SAME terms through preparation,
-inference and settlement, even if the original request ends meanwhile. A failed
-lease commit removes the newly inserted hold. A dropped or failed preparation
-keeps the entry for the existing hand-back path; successful settlement or
-hand-back removes it. A recovered lease does not recreate an original turn.
-These pins do not follow a queued retry or checkpoint successor: this is
-claimed-job custody, not complete queued or durable room context.
+The stored reference names a weak entry, but a supported marker's actual
+write transaction owns the SAME original room terms before its row commits.
+A successful nested write transfers that owner to its parent transaction;
+an abort or failed commit drops it. The successful root commit publishes the
+owner for that attempt. Queue updates stage their current readers, so absorb,
+retry and checkpoint rehome keep the original terms alive before releasing
+the old attempt. A failed-attempt successor can keep only original terms that
+still exist; it never reconstructs a turn from a stored room id.
+
+Every staged owner has an exact provisional node. A later committed update,
+terminal transition, prune or payload retirement retires the nodes it saw in
+its own writer. An older commit callback cannot publish a retired node, even
+when callbacks run out of order. Only outstanding transaction owners keep
+retired weak nodes alive; their drop removes the dead entries. There is no
+permanent attempt tombstone or retention cap. Store-only queue handles share
+the same runtime as the vault handles.
+
+A claim also pins its still-live captured room terms in the reconciler's
+existing held entry before its lease commits. That entry keeps the SAME terms
+through preparation, inference and settlement, even if the original request
+ends meanwhile. A failed lease commit removes the newly inserted hold. A
+dropped or failed preparation keeps the entry for the existing hand-back
+path; successful settlement or hand-back removes it. A recovered lease does
+not recreate an original turn.
 
 If the original position is already gone at claim, or the vault has reopened,
 the worker keeps the full candidate set. While the terms exist, the worker uses
@@ -37,7 +52,8 @@ keys. It meets the current terms into the SAME original shared terms, never a
 snapshot or a fork. Later narrowing observed by the original turn therefore
 still binds the queued reader. The saving reader holds those shared terms
 through its native per-row checks. Weak entries are pruned on capture and open;
-no idle queued strong owner, new retention cap or writer refusal is added.
+no new retention cap or writer refusal is added. Queue ownership lasts only
+in this vault open and is not durable room context.
 
 The destination keeps its original on/off-device flag and every carried machine
 and proof key, including unknown destinations and proof facts not yet used on

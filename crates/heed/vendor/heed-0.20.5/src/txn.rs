@@ -199,7 +199,11 @@ fn abort_txn(txn: *mut ffi::MDB_txn) {
 /// You may increase the limit by editing it **at your own risk**: `/Library/LaunchDaemons/sysctl.plist`
 pub struct RwTxn<'p> {
     pub(crate) txn: RoTxn<'p>,
+    commit_hooks: Vec<CommitHook>,
+    parent_commit_hooks: Option<&'p mut Vec<CommitHook>>,
 }
+
+type CommitHook = Box<dyn FnOnce() + Send + 'static>;
 
 impl<'p> RwTxn<'p> {
     pub(crate) fn new(env: &'p Env) -> Result<RwTxn<'p>> {
@@ -220,6 +224,8 @@ impl<'p> RwTxn<'p> {
                 stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
+            commit_hooks: Vec::new(),
+            parent_commit_hooks: None,
         })
     }
 
@@ -242,6 +248,8 @@ impl<'p> RwTxn<'p> {
                 stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
+            commit_hooks: Vec::new(),
+            parent_commit_hooks: Some(&mut parent.commit_hooks),
         })
     }
 
@@ -249,12 +257,28 @@ impl<'p> RwTxn<'p> {
         self.txn.env.env_mut_ptr()
     }
 
+    /// Retain `hook` until this transaction's changes become durable. A
+    /// successful nested commit moves it to the parent; any abort or failed
+    /// commit drops it without calling it. Hooks must not open a writer.
+    /// Another writer may start before a root commit's hooks run.
+    pub fn on_commit(&mut self, hook: impl FnOnce() + Send + 'static) {
+        self.commit_hooks.push(Box::new(hook));
+    }
+
     /// Commit all the operations of a transaction into the database.
     /// The transaction is reset.
     pub fn commit(mut self) -> Result<()> {
         let result = unsafe { mdb_result(ffi::mdb_txn_commit(self.txn.txn)) };
         self.txn.txn = ptr::null_mut();
-        result.map_err(Into::into)
+        result?;
+        if let Some(parent) = self.parent_commit_hooks.as_mut() {
+            parent.append(&mut self.commit_hooks);
+        } else {
+            for hook in std::mem::take(&mut self.commit_hooks) {
+                hook();
+            }
+        }
+        Ok(())
     }
 
     /// Abandon all the operations of the transaction instead of saving them.

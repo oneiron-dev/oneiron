@@ -168,7 +168,9 @@ pub(crate) fn encode_admitted_signal_record(
         .store
         .attempt_operations
         .scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
-    encode_admitted_record(vault, wtxn, record)
+    let encoded = encode_admitted_record(vault, wtxn, record)?;
+    crate::tagging::stage_marker_room_turns_in_txn(&vault.store, wtxn, record);
+    Ok(encoded)
 }
 
 pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<AttemptRecord> {

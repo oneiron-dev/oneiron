@@ -624,7 +624,6 @@ impl Vault {
             confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
-            queued_room_hints: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
             task_work: crate::work_line::WorkLine::new(
