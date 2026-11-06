@@ -72,6 +72,13 @@ pub trait MachineFloor: Send + Sync {
     /// The machine's floor if the named peak cannot fit with no other leases.
     fn check_irreducible_peak(&self, pinned: u64, bytes: u64) -> Result<(), FloorRefusal>;
 
+    /// Attempts to reserve now without a capacity wait or bypassing queued
+    /// waiters. `None` records no reservation: caller-held inputs may unwind.
+    ///
+    /// # Errors
+    /// The physical floor when `bytes` cannot fit on an idle machine.
+    fn try_lease(&self, bytes: u64) -> Result<Option<Box<dyn FloorLease>>, FloorRefusal>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.

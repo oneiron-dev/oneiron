@@ -33,12 +33,16 @@ impl HostedSealer<'_> {
                     .0
                     .check_irreducible_peak(request.pinned_buffer_bytes, capacity)
                     .map_err(memory_refused)?;
-                Some(
-                    floor
-                        .0
-                        .lease_untimed(capacity, &|| false)
-                        .map_err(memory_refused)?,
-                )
+                let lease = floor
+                    .0
+                    .try_lease(capacity)
+                    .map_err(memory_refused)?
+                    .ok_or_else(|| EsignSealerError::Retryable {
+                        stage: "prepare".to_owned(),
+                        code: "memory_unavailable".to_owned(),
+                        retry_after_ms: None,
+                    })?;
+                Some(lease)
             };
             let memory = Arc::new(PrepareMemory {
                 state: Mutex::new(MemoryState {
