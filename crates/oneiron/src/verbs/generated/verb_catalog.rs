@@ -591,6 +591,7 @@ pub enum AgentVerb {
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
     VaultSecretsCodeRunLifts,
+    VaultSecretsCodeRunRoomLifts,
     VaultSecretsLiftHistory,
     VaultSecretsRegister,
     VaultSecretsRotate,
@@ -1881,6 +1882,7 @@ impl AgentVerb {
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
         Self::VaultSecretsCodeRunLifts,
+        Self::VaultSecretsCodeRunRoomLifts,
         Self::VaultSecretsLiftHistory,
         Self::VaultSecretsRegister,
         Self::VaultSecretsRotate,
@@ -3192,6 +3194,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
             Self::VaultSecretsCodeRunLifts => "vault.secrets.code_run_lifts",
+            Self::VaultSecretsCodeRunRoomLifts => "vault.secrets.code_run_room_lifts",
             Self::VaultSecretsLiftHistory => "vault.secrets.lift_history",
             Self::VaultSecretsRegister => "vault.secrets.register",
             Self::VaultSecretsRotate => "vault.secrets.rotate",
@@ -4500,6 +4503,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -5819,6 +5823,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -6576,6 +6581,7 @@ impl AgentVerb {
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultDisclosureReveals
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
@@ -7288,6 +7294,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -9310,6 +9317,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsCodeRunLifts => &["spec"],
+            Self::VaultSecretsCodeRunRoomLifts => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
@@ -10601,6 +10609,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsCodeRunLifts => &["spec"],
+            Self::VaultSecretsCodeRunRoomLifts => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
@@ -13040,6 +13049,9 @@ impl AgentVerb {
             }
             Self::VaultSecretsCodeRunLifts => {
                 "The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."
+            }
+            Self::VaultSecretsCodeRunRoomLifts => {
+                "The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."
             }
             Self::VaultSecretsLiftHistory => {
                 "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."
