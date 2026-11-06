@@ -16,6 +16,9 @@ use crate::session_overlay::RouteTarget;
 use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
+mod step_digests;
+pub(super) use self::step_digests::{StepEnd, StepResultDigests};
+
 pub(super) struct LoadedReplayRecord {
     pub(super) record: CodeRunReplayRecord,
     pub(super) generation: Option<CodeRunReplayGeneration>,
@@ -672,40 +675,6 @@ pub(super) fn durable_wait_reason_from_str(
         "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
         "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
         _ => Err(Error::CorruptedIndex("executor replay durable wait reason").into()),
-    }
-}
-
-/// Where a step's calls end and what its guest read beside them, which its
-/// checkpoint binds (FIX 6354, FIX 6351): the run-global bridge position
-/// the step's calls end at, exclusive, and the BLAKE3 of the step's replay
-/// context as captured.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct StepEnd {
-    pub(super) bridge_end: u64,
-    pub(super) context: [u8; 32],
-}
-
-/// What a step's checkpoint hashes of its result: each body's BLAKE3
-/// digest, which its stored manifest already carries, never the body.
-pub(super) struct StepResultDigests {
-    pub(super) observation: [u8; 32],
-    pub(super) done: bool,
-    /// Each file the step wrote, by the guest path it named.
-    pub(super) outputs: Vec<(String, [u8; 32])>,
-    /// Each result name the step bound, with the handle it names, in the
-    /// order the step bound them.
-    pub(super) bindings: Vec<(String, String)>,
-}
-
-impl StepResultDigests {
-    /// The digests of a result held whole in memory.
-    pub(super) fn of(observation: &str, done: bool) -> Self {
-        Self {
-            observation: *blake3::hash(observation.as_bytes()).as_bytes(),
-            done,
-            outputs: Vec::new(),
-            bindings: Vec::new(),
-        }
     }
 }
 
