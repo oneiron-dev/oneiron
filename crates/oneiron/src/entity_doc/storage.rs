@@ -33,20 +33,29 @@ pub enum TextField {
 
 /// The kind of owner a document head belongs to (FIX 11535). The head is
 /// keyed by its owner's id either way; only a stored entity has a ledger row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// An entity's head names no kind: only an artifact's head writes one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum DocumentOwnerKind {
     /// A stored entity: a record whose text lives on this plane.
+    #[default]
     Entity,
     /// A finalized proposal-text artifact (ED-00), which has no ledger row:
     /// its artifact record names this head.
     ProposalArtifact,
 }
 
+impl DocumentOwnerKind {
+    fn is_entity(&self) -> bool {
+        *self == Self::Entity
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Head {
     pub entity: String,
+    #[serde(default, skip_serializing_if = "DocumentOwnerKind::is_entity")]
     pub owner_kind: DocumentOwnerKind,
     pub incarnation: String,
     pub document: String,
