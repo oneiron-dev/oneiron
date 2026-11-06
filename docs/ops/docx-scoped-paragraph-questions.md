@@ -52,3 +52,13 @@ handling of those file-authored ranges has not been proved. No Word run,
 compiler result, whole-story fidelity result or full FIX 14487 completion is
 claimed by this source change. Existing BODY behavior and numeric policies are
 unchanged.
+
+
+## Native nested-cell comment lookup
+
+Native named-story `CommentCreate` also accepts an imported paragraph id inside
+nested table cells. It keeps existing top-level and direct-cell lookup priority,
+uses the same ancestor-status and quoted-range guards, and does not address
+vertical-merge continuation cells. Body lookup is unchanged. This native lookup
+extension does not add nested paragraphs to ParagraphAsk or live-pin inventories;
+those consumers still require their own source-qualified integration (FIX 14487).
