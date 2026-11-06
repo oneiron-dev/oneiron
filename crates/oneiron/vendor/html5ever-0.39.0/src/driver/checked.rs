@@ -269,6 +269,38 @@ where
         self
     }
 
+    /// Reserve the actual doctype name and identifiers before each character.
+    /// Their allocation headers retain admission through token and DOM moves.
+    /// A refusal uses the same first-error channel as the other checkpoints.
+    pub fn with_doctype_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut StrTendril, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .set_doctype_reservation(Box::new(move |text, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(text, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Parse borrowed UTF-8 without copying the whole input into a heap tendril.
     /// Each input tendril contains one Unicode scalar and fits in tendril's
     /// inline storage. Tokenizer and sink allocations remain separate.

@@ -176,6 +176,9 @@ pub struct Tokenizer<Sink> {
     /// Current doctype token.
     current_doctype: RefCell<Doctype>,
 
+    /// Preflight the actual doctype payload tendrils before growth.
+    doctype_reservation: Option<Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>>,
+
     /// Last start tag name, for use in checking "appropriate end tag".
     last_start_tag_name: RefCell<Option<LocalName>>,
 
@@ -223,6 +226,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             current_comment: RefCell::new(StrTendril::new()),
             comment_reservation: None,
             current_doctype: RefCell::new(Doctype::default()),
+            doctype_reservation: None,
             last_start_tag_name: RefCell::new(start_tag_name),
             temp_buf: RefCell::new(TextBuffer::new()),
             state_profile: RefCell::new(BTreeMap::new()),
@@ -739,6 +743,27 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
         }
     }
 
+    pub(crate) fn set_doctype_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>,
+    ) {
+        self.doctype_reservation = Some(reservation);
+    }
+
+    fn push_doctype(&self, text: &mut Option<StrTendril>, character: char) -> bool {
+        if let Some(reservation) = &self.doctype_reservation {
+            let value = text.get_or_insert_with(StrTendril::new);
+            if !reservation(value, character.len_utf8()) {
+                self.stopped.set(true);
+                return false;
+            }
+            value.push_char(character);
+        } else {
+            option_push(text, character);
+        }
+        true
+    }
+
     fn emit_current_doctype(&self) {
         let doctype = self.current_doctype.take();
         self.process_token_and_continue(DoctypeToken(doctype));
@@ -854,8 +879,16 @@ macro_rules! shorthand (
     ( $me:ident : emit_comment                     ) => ( $me.emit_current_comment()                          );
     ( $me:ident : clear_comment                    ) => ( $me.current_comment.borrow_mut().clear()            );
     ( $me:ident : create_doctype                   ) => ( *$me.current_doctype.borrow_mut() = Doctype::default() );
-    ( $me:ident : push_doctype_name $c:expr        ) => ( option_push(&mut $me.current_doctype.borrow_mut().name, $c) );
-    ( $me:ident : push_doctype_id $k:ident $c:expr ) => ( option_push(&mut $me.doctype_id($k), $c)            );
+    ( $me:ident : push_doctype_name $c:expr        ) => ({
+        if !$me.push_doctype(&mut $me.current_doctype.borrow_mut().name, $c) {
+            return ProcessResult::Suspend;
+        }
+    });
+    ( $me:ident : push_doctype_id $k:ident $c:expr ) => ({
+        if !$me.push_doctype(&mut $me.doctype_id($k), $c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : clear_doctype_id $k:ident        ) => ( $me.clear_doctype_id($k)                            );
     ( $me:ident : force_quirks                     ) => ( $me.current_doctype.borrow_mut().force_quirks = true);
     ( $me:ident : emit_doctype                     ) => ( $me.emit_current_doctype()                          );
