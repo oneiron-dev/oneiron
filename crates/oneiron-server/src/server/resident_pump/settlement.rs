@@ -20,6 +20,15 @@ use super::{
 /// Settles the run's attempt: complete, parked on its wait or on a provider
 /// outage, or failed; a run whose model call failed for a reason that passes
 /// is tried again.
+///
+/// FIX 4747: a fenced run whose run TASK moved to another machine, or no
+/// longer reads, stands down: its try ends unrun with its typed cause, with
+/// no result, no report on the TASK it realizes and no change to its run
+/// TASK. The guard is the fence each settling write meets in its own write:
+/// the result, the report on the TASK it realizes, and the completion,
+/// failure or retry of the try each abort with
+/// [`oneiron::Error::AgentRunExecutorMoved`]. The read before them is a
+/// fast path.
 pub(super) fn settle(
     vault: &Vault,
     decisions: &DecisionHost,
@@ -27,13 +36,10 @@ pub(super) fn settle(
     ran: Result<BoundRun, EngineRunError>,
     healer_slot: HealerSlot,
 ) -> oneiron::Result<()> {
-    let status = &claimed.status;
-    let attempt = &status.attempt;
+    let attempt = &claimed.status.attempt;
     let now = unix_now();
-    // FIX 4747: a run whose run TASK moved to another machine while it ran
-    // stands down here: its try ends with its typed cause, and neither its
-    // run TASK nor the TASK it realizes changes. A media trap already parked
-    // the try; its wake's claim judges the run TASK again.
+    // A media trap already parked the try; its wake's claim judges the run
+    // TASK again.
     if !matches!(ran, Ok(BoundRun::Trapped))
         && let Some(fence) = &claimed.fence
         && AgentDispatcher::new(vault).stand_down_moved_agent_run(
@@ -46,6 +52,40 @@ pub(super) fn settle(
         tracing::warn!(attempt = ?attempt.id, "an agent run stood down: another machine runs it");
         return Ok(());
     }
+    match (
+        &claimed.fence,
+        settle_held(vault, decisions, claimed, ran, healer_slot, now),
+    ) {
+        // A settling write met the fence and aborted: the try ends unrun, as
+        // the claim's stand-down ends one. A fence that holds again at this
+        // read leaves the try leased for its lease's recovery.
+        (Some(fence), Err(oneiron::Error::AgentRunExecutorMoved)) => {
+            if !AgentDispatcher::new(vault).stand_down_moved_agent_run(
+                fence,
+                attempt,
+                LEASE_OWNER,
+                now,
+            )? {
+                return Err(oneiron::Error::AgentRunExecutorMoved);
+            }
+            tracing::warn!(attempt = ?attempt.id, "an agent run stood down at its settlement: another machine runs it");
+            Ok(())
+        }
+        (_, settled) => settled,
+    }
+}
+
+/// [`settle`] past its fast-path read of the run fence.
+fn settle_held(
+    vault: &Vault,
+    decisions: &DecisionHost,
+    claimed: &Claimed,
+    ran: Result<BoundRun, EngineRunError>,
+    healer_slot: HealerSlot,
+    now: u64,
+) -> oneiron::Result<()> {
+    let status = &claimed.status;
+    let attempt = &status.attempt;
     // OF-540: the run's execution context, bound while its lease holds; one
     // that cannot bind leaves the run to close unattributed.
     if let Err(error) =

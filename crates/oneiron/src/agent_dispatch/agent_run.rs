@@ -5,8 +5,9 @@
 //! pump's, which take no executor lease yet (FIX 4747 slice 6).
 //!
 //! The claim takes the run's executor lease on its run TASK in its write
-//! (FIX 4747, `super::run_task`): a run another machine holds or settled
-//! ends here unrun, and a closing process claims nothing.
+//! (FIX 4747, `super::run_task`): a run another machine holds or settled,
+//! or whose run TASK stands but does not read, ends here unrun, and a
+//! closing process claims nothing.
 
 use super::resident::{resident_run_id, resident_run_input};
 use super::run_task::{
@@ -120,14 +121,16 @@ impl AgentDispatcher<'_> {
         }
         let qa_thread_ref = self.run_thread_in(&queue, &txn, &row)?;
         // FIX 4747: the run's executor lease, taken in this write. A run
-        // another machine holds or settled ends unrun, with no change to its
-        // run TASK; a closing process claims nothing and the row stays
-        // queued.
+        // another machine holds or settled, or whose run TASK does not read,
+        // ends unrun, with no fence and no change to its run TASK; a closing
+        // process claims nothing and the row stays queued.
         let fence = match take_agent_run_lease_in_txn(self.vault, &mut txn, &row, now)? {
             AgentRunLeaseTake::NoRunTask => None,
             AgentRunLeaseTake::Taken(fence) => Some(fence),
             AgentRunLeaseTake::Closing => return Ok(None),
-            AgentRunLeaseTake::HeldElsewhere | AgentRunLeaseTake::Settled => {
+            AgentRunLeaseTake::HeldElsewhere
+            | AgentRunLeaseTake::Settled
+            | AgentRunLeaseTake::Unreadable => {
                 drop(txn);
                 self.end_unrun_agent_run(id, lease_owner, now)?;
                 return Ok(None);
@@ -167,13 +170,13 @@ impl AgentDispatcher<'_> {
     }
 
     /// Ends the queued try `id`, whose run another machine holds or
-    /// settled, unrun, as `lease_owner` (FIX 4747): in a writer of its own
-    /// the run TASK is judged again, then the try is claimed and fails for
-    /// good with the typed cause, its step receipts go and its spend lease
-    /// settles, as [`Self::end_withdrawn`] ends a try. Neither its run TASK
-    /// nor the TASK it realizes changes: the run is the other machine's. A
-    /// try another worker took first, or whose run is this machine's again,
-    /// is left as it is.
+    /// settled, or whose run TASK does not read, unrun, as `lease_owner`
+    /// (FIX 4747): in a writer of its own the run TASK is judged again, then
+    /// the try is claimed and fails for good with the typed cause, its step
+    /// receipts go and its spend lease settles, as [`Self::end_withdrawn`]
+    /// ends a try. Neither its run TASK nor the TASK it realizes changes:
+    /// the run is not this machine's to run. A try another worker took
+    /// first, or whose run is this machine's again, is left as it is.
     fn end_unrun_agent_run(&self, id: AttemptId, lease_owner: &str, now: u64) -> Result<()> {
         let ended = self.vault.with_write_txn_grouped(|txn| {
             let Some(row) = AttemptQueue::new(self.vault).get_in_write_txn(&*txn, id)? else {
@@ -204,7 +207,7 @@ impl AgentDispatcher<'_> {
             tracing::info!(
                 attempt = %crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes()),
                 cause,
-                "an agent run's queued try ended unrun: its run is another machine's"
+                "an agent run's queued try ended unrun: its run is not this machine's to run"
             );
             self.notify_ended(&attempt);
         }
