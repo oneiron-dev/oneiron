@@ -232,6 +232,7 @@ pub(crate) use host_doors::{
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
+pub(crate) use live_voice_doors::phone_voice_tool;
 pub(crate) use invocations::*;
 use invoke::*;
 pub(crate) use model_stream_doors::ModelStreams;

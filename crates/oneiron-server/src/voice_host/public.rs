@@ -180,7 +180,7 @@ impl PublicSession {
         Ok(())
     }
 
-    pub(crate) fn require_phone_tool_context(&self) -> MemoryResult<()> {
+    pub(crate) fn require_phone_tool_context(&self) -> MemoryResult<oneiron::EntityId> {
         let journal = self.journal.lock().map_err(|_| unavailable())?;
         if self.phone.is_none()
             || journal.ended
@@ -188,7 +188,7 @@ impl PublicSession {
         {
             return Err(invalid("tool context needs an idle phone session"));
         }
-        Ok(())
+        Ok(self.phone.as_ref().ok_or_else(unavailable)?.agent())
     }
 
     /// Conjoins the original phone key on the connector's already collected handle.

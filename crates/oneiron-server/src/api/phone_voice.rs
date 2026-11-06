@@ -8,9 +8,9 @@ use axum::http::{HeaderName, header};
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::task_verb::sdk::{
-    LiveVoiceAckRequest, LiveVoiceAudioRequest, LiveVoiceEvents, LiveVoiceEventsRequest,
+    ActAnswer, LiveVoiceAckRequest, LiveVoiceAudioRequest, LiveVoiceEvents, LiveVoiceEventsRequest,
     LiveVoiceProcessed, LiveVoiceSession, LiveVoiceSessionRequest, LiveVoiceStartRequest,
-    LiveVoiceUsage, LiveVoiceUsageRequest,
+    LiveVoiceToolReply, LiveVoiceToolRequest, LiveVoiceUsage, LiveVoiceUsageRequest,
 };
 
 use super::body_spool::OwnerJsonBody;
@@ -31,6 +31,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/phone-voice/events", post(events))
         .route("/phone-voice/ack", post(ack))
         .route("/phone-voice/usage", post(usage))
+        .route("/phone-voice/tool", post(tool))
         .route("/phone-voice/end", post(end))
         .route("/phone-voice/close", post(close))
 }
@@ -175,6 +176,30 @@ pub(crate) async fn usage(
     let input = payload.read(&server).await?;
     let session = server.live_voice.get_phone(&auth, &input.session_ref)?;
     Ok(private_json(session.usage(input.generation).await?))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/tool",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceToolRequest JSON: session_ref and call. The receiving agent uses its own connector grant; caller metadata supplies no authority."),
+    responses(
+        (status = 200, description = "Destination-narrowed connector answer and session processing state; delivered tool context enters the phone brain before its next utterance.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed tool request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope or connector grant"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn tool(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<LiveVoiceToolRequest>,
+) -> PhoneVoiceReply<ActAnswer<LiveVoiceToolReply>> {
+    credential(&auth)?;
+    let input = payload.read(&server).await?;
+    let (answer, _) = super::facade::phone_voice_tool(&server, &auth, None, input).await;
+    Ok(private_json(answer?))
 }
 
 #[utoipa::path(
