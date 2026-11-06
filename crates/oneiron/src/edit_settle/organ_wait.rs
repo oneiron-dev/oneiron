@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::MadeByReader;
+use super::{MadeByReader, SettleConsent};
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, validate_pending_ref};
 use super::receipts::already_settled;
@@ -300,6 +300,26 @@ impl Vault {
     pub fn release_organ_wait(&self, artifact_id: &EntityId, run_ref: &str) -> Result<bool> {
         let key = settlement_key_parts(artifact_id, run_ref);
         self.with_write_txn_grouped(|wtxn| WAITS.delete(&self.store, wtxn, &key))
+    }
+
+    /// [`Self::release_organ_wait`] at `actor`'s request, under the settle
+    /// consent a Discard needs (FIX 9621): the owner's own, or a standing
+    /// actor x artifact.settle x brief Grant judged again inside the writer
+    /// that drops the wait, so a Grant revoked first refuses it. A refused
+    /// release leaves the call waiting.
+    pub fn release_organ_wait_as(
+        &self,
+        artifact_id: &EntityId,
+        run_ref: &str,
+        consent: &SettleConsent,
+        actor: WriteActor,
+    ) -> Result<bool> {
+        self.authorize_settle(consent, actor)?;
+        let key = settlement_key_parts(artifact_id, run_ref);
+        self.with_write_txn_grouped(|wtxn| {
+            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            WAITS.delete(&self.store, wtxn, &key)
+        })
     }
 
     fn update_organ_wait(
