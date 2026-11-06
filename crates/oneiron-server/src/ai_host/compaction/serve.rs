@@ -303,14 +303,16 @@ impl ServedCompactionBackend {
                     _ => CompactionSuppression::TurnScoped { check: None },
                 };
                 // A call that went out keeps what it was sent as beside the
-                // refusal, for its writer's receipt (FIX 7745); one its
-                // meter refused never left.
-                let dispatched =
-                    (!matches!(error, LlmError::BudgetDenied(_))).then_some(Dispatched {
-                        model,
-                        step_hash,
-                        worn,
-                    });
+                // refusal, for its writer's receipt (FIX 7745). Whether one
+                // did is the run's own dispatch record: an attempt stopped
+                // before its send (a worker or device stop, a meter denial,
+                // a transport fault proved unsent) records none.
+                let went_out = !run.teacher_report().called.is_empty();
+                let dispatched = went_out.then_some(Dispatched {
+                    model,
+                    step_hash,
+                    worn,
+                });
                 Err(Unserved {
                     refusal: refused(suppression, error.to_string()),
                     dispatched,
