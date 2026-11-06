@@ -38,6 +38,8 @@ use markup5ever::{expanded_name, local_name, namespace_prefix, ns};
 #[macro_use]
 mod tag_sets;
 
+mod active_formatting;
+use self::active_formatting::ActiveFormatting;
 mod control;
 mod pending_table_text;
 use self::pending_table_text::PendingTableText;
@@ -128,7 +130,7 @@ pub struct TreeBuilder<Handle, Sink> {
     open_elems: RefCell<Vec<Handle>>,
 
     /// List of active formatting elements.
-    active_formatting: RefCell<Vec<FormatEntry<Handle>>>,
+    active_formatting: RefCell<ActiveFormatting<Handle>>,
 
     //§ the-element-pointers
     /// Head element pointer.
@@ -161,6 +163,7 @@ pub struct TreeBuilder<Handle, Sink> {
     pending_table_text_reservation: Option<control::PendingTableTextReservation>,
     pending_table_storage_reservation: Option<control::PendingTableStorageReservation>,
     tag_attributes_hooks: Option<control::TagAttributesHooks<Handle, Sink>>,
+    active_formatting_reservation: Option<control::ActiveFormattingReservation<Handle>>,
 
     // Keep last: stack storage must be freed before the captured reservation.
     open_elements_reservation: Option<control::OpenElementsReservation<Handle>>,
@@ -199,6 +202,7 @@ where
             pending_table_text_reservation: None,
             pending_table_storage_reservation: None,
             tag_attributes_hooks: None,
+            active_formatting_reservation: None,
             open_elements_reservation: None,
         }
     }
@@ -245,6 +249,7 @@ where
             pending_table_text_reservation: None,
             pending_table_storage_reservation: None,
             tag_attributes_hooks: None,
+            active_formatting_reservation: None,
             open_elements_reservation: None,
         };
 
@@ -309,7 +314,7 @@ where
             tracer.trace_handle(e);
         }
 
-        for e in &*self.active_formatting.borrow() {
+        for e in self.active_formatting.borrow().iter() {
             if let FormatEntry::Element(handle, _) = e {
                 tracer.trace_handle(handle);
             }
@@ -714,7 +719,7 @@ where
     /// to the last marker, or the beginning if there are no markers.
     fn active_formatting_end_to_marker(&self) -> ActiveFormattingView<'_, Handle> {
         ActiveFormattingView {
-            data: self.active_formatting.borrow(),
+            data: Ref::map(self.active_formatting.borrow(), |entries| &**entries),
         }
     }
 
@@ -967,6 +972,7 @@ where
                         .position_in_active_formatting(&previous)
                         .expect("bookmark not found in active formatting elements")
                         + 1;
+                    self.reserve_active_formatting(1)?;
                     self.active_formatting.borrow_mut().insert(index, new_entry);
                     let old_index = self
                         .position_in_active_formatting(&fmt_elem)
@@ -1660,6 +1666,7 @@ where
             self.clone_tag_attributes(&tag.attrs)?,
             tag.had_duplicate_attributes,
         )?;
+        self.reserve_active_formatting(1)?;
         self.active_formatting
             .borrow_mut()
             .push(FormatEntry::Element(elem.clone(), tag));
