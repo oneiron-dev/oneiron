@@ -52,7 +52,6 @@ mod team_submit;
 mod type_diagnostics;
 mod types;
 mod wait_rows;
-
 #[cfg(test)]
 mod tests;
 
@@ -140,13 +139,13 @@ pub(crate) use self::replay_context::{
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
-pub(crate) use self::result_read::unmarked_secret;
+pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::ReadWorldUnknown;
-pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::retire_replay_bodies_in_rows;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;

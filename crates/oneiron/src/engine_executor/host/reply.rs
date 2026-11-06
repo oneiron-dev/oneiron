@@ -3,8 +3,7 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::code_run::storage::ReplyBody;
-use crate::code_run::{ExecutorReply, ExecutorReplyPublisher};
+use crate::code_run::{ExecutorReply, ExecutorReplyPublisher, ReplyBody, unplaced_answer};
 
 pub(super) struct CallReplyPublisher<'a, 's> {
     storage: &'s ExecutorStorage<'a>,
@@ -85,7 +84,7 @@ impl ExecutorReplyPublisher for CallReplyPublisher<'_, '_> {
                 text,
                 reason,
             } => {
-                *value = crate::code_run::result_read::unplaced_answer(bytes, text, reason);
+                *value = unplaced_answer(bytes, text, reason);
                 return Ok(None);
             }
         };
