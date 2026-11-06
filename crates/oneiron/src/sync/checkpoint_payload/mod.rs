@@ -47,6 +47,7 @@ mod joined_turns;
 mod operations;
 mod owners;
 mod parts;
+pub(crate) mod record_documents;
 mod restore;
 mod rows;
 
