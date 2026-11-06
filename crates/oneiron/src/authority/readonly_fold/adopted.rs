@@ -98,6 +98,7 @@ pub(super) fn fold_adopted_in_txn(
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
+                    scope_commitment_mismatches: Arc::default(),
                 },
                 next_deadline_secs,
                 continuation: None,
