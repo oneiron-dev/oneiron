@@ -720,9 +720,8 @@ fn check_answer(
     match tokio::runtime::Handle::try_current() {
         Ok(runtime) => drop(runtime.spawn_blocking(raise)),
         Err(_) => {
-            if let Err(error) = std::thread::Builder::new()
-                .name("connector-answer-check".to_owned())
-                .spawn(raise)
+            if let Err(error) =
+                crate::engine_thread("connector-answer-check".to_owned()).spawn(raise)
             {
                 tracing::warn!(%error, "connector answer check not started");
             }
