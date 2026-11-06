@@ -18718,10 +18718,17 @@ class TranscriptIngestOutcomeSession(TypedDict):
 class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
     outcome: Literal["retry_open_session"]
     open_session_ref: EntityId
+class TranscriptIngestOutcomeHookPending(TypedDict):
+    outcome: Literal["hook_pending"]
+    session_ref: EntityId
+    ask: EntityId
+class TranscriptIngestOutcomeQueued(TypedDict):
+    outcome: Literal["queued"]
+    attempt_ref: str
 class TranscriptIngestOutcomeNoteFallback(TypedDict):
     outcome: Literal["note_fallback"]
     note_ref: EntityId
-TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeHookPending | TranscriptIngestOutcomeQueued | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
