@@ -147,7 +147,9 @@ pub(crate) fn matched_contribution_facts_in_txn(
 
 /// The capsule of the step `candidate`'s target check regenerates
 /// ([`super::ancestor`]), as it stands in `txn`: for a callable's load or a
-/// delivered body (FIX 3608), the step after its call's.
+/// delivered body (FIX 3608), the step after its call's. A step's replay
+/// context is read to find that call only under the Coach's own admission
+/// to the step (FIX 20607); with none, no capsule is proved.
 fn target_capsule(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -157,7 +159,8 @@ fn target_capsule(
         return Ok(None);
     };
     let capsules = step_replay_capsules_in_txn(vault, txn, attempt)?;
-    let target = select_target(vault, txn, &capsules, candidate.target)?;
+    let coach = crate::store::base_agent::coach_actor_id()?;
+    let target = select_target(vault, txn, &capsules, candidate.target, coach)?;
     Ok(target.regenerated().cloned())
 }
 

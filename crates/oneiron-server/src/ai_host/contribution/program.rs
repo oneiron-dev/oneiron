@@ -13,12 +13,15 @@
 //! clear: its pairs wait for one retry, then fall back to the `Text` mode.
 //! A callable's pair runs its caller step's two branches the same way, each
 //! on a fresh runtime and in a scratch store of its own (FIX 3608).
+//! Each body a run leaves is read back under the engine's witness of the
+//! Coach's admission to the step (FIX 20607): released through the model
+//! release on this vault, never read raw.
 
 use std::sync::{Arc, OnceLock};
 
 use oneiron::code_run::shadow_runner::{
-    PreparedShadowStep, ShadowArmLease, ShadowBodyStore, ShadowUnavailable,
-    ShadowUnavailableReason as Reason,
+    PreparedShadowStep, ShadowArmLease, ShadowBodyStore, ShadowSourceWitness, ShadowUnavailable,
+    ShadowUnavailableReason as Reason, WitnessedRelease,
 };
 use oneiron::code_run::{
     CallableBranch, ContributionForkProgram, ExecutedFork, ExecutedForkView,
@@ -68,9 +71,11 @@ impl ContributionForkProgram for LentProgram<'_> {
         &self,
         step: &PreparedShadowStep,
         response: &LlmResponse,
+        witness: &ShadowSourceWitness,
     ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
+        let release = WitnessedRelease::new(self.vault, witness);
         self.in_arm(step, |runtime, runtime_pin, store, cancel| {
-            execute_contribution_fork(step, response, runtime, runtime_pin, store, cancel)
+            execute_contribution_fork(step, response, release, runtime, runtime_pin, store, cancel)
         })
     }
 
@@ -78,9 +83,11 @@ impl ContributionForkProgram for LentProgram<'_> {
         &self,
         step: &PreparedShadowStep,
         branch: &CallableBranch,
+        witness: &ShadowSourceWitness,
     ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
+        let release = WitnessedRelease::new(self.vault, witness);
         self.in_arm(step, |runtime, runtime_pin, store, cancel| {
-            execute_callable_branch(step, branch, runtime, runtime_pin, store, cancel)
+            execute_callable_branch(step, branch, release, runtime, runtime_pin, store, cancel)
         })
     }
 }

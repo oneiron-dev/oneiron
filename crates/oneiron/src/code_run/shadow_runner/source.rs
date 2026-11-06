@@ -17,17 +17,19 @@
 //! it: the request, the start, the record of its end and its replay
 //! context, each record a read context names, and each body frozen. A
 //! host's worker that prepares an arm's source again holds that admission
-//! as an owned witness (FIX 9446).
+//! as an owned witness (FIX 9446), and releases the arm's bodies to a model
+//! under it (FIX 20607).
 
 mod admitted;
 mod context;
 mod reads;
 
 pub(super) use self::admitted::lapsed;
-pub(crate) use self::admitted::prepare_admitted_shadow_step_source;
 pub use self::admitted::{
-    ShadowSourceAdmission, ShadowSourceWitness, prepare_witnessed_shadow_step_source,
+    ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease,
+    prepare_witnessed_shadow_step_source,
 };
+pub(crate) use self::admitted::{admission_lapsed, prepare_admitted_shadow_step_source};
 use self::context::ArmContext;
 use self::reads::ForeignBody;
 use super::types::{

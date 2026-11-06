@@ -116,8 +116,9 @@ pub(crate) fn store_fork_execution(
 }
 
 /// The observation, files and stored results `execution` names, each read
-/// whole as run `run` holds it; `None` once any is released (its capsule's
-/// actor was erased), gone or withheld.
+/// whole as run `run` holds it, while `admits` holds in that read's own
+/// snapshot (FIX 20607); `None` once any is released (its capsule's actor
+/// was erased), gone or withheld, or `admits` does not hold.
 ///
 /// # Errors
 ///
@@ -126,11 +127,12 @@ pub(crate) fn fork_execution_outputs(
     vault: &Vault,
     run: EntityId,
     execution: &ContributionForkExecution,
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Option<Vec<ExecutedOutput>>> {
     let mut outputs = Vec::with_capacity(execution.outputs.len());
     for output in &execution.outputs {
         let path = output.stored_path.as_str();
-        let Some(bytes) = held_body(vault, run, path, output.body, |_| Ok(true))? else {
+        let Some(bytes) = held_body(vault, run, path, output.body, admits)? else {
             return Ok(None);
         };
         outputs.push(ExecutedOutput {

@@ -436,18 +436,20 @@ pub(crate) fn put_unavailable(
     })
 }
 
-/// A fork's stored answer; `None` when its body is released (its capsule's
-/// actor was erased), gone or withheld.
+/// A fork's stored answer, read while `admits` holds in the read's own
+/// snapshot (FIX 20607); `None` when its body is released (its capsule's
+/// actor was erased), gone or withheld, or `admits` does not hold.
 pub(crate) fn fork_response(
     vault: &Vault,
     run: EntityId,
     receipt: &ContributionForkReceipt,
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Option<LlmResponse>> {
     if receipt.response_erased {
         return Ok(None);
     }
     let path = receipt.response_path.as_str();
-    let Some(bytes) = held_body(vault, run, path, receipt.response, |_| Ok(true))? else {
+    let Some(bytes) = held_body(vault, run, path, receipt.response, admits)? else {
         return Ok(None);
     };
     Ok(serde_json::from_slice(&bytes).ok())

@@ -68,6 +68,22 @@ impl CaptureRefs {
         });
         Self { worlds, rows }
     }
+
+    /// The capture of `capsule`'s step (FIX 20607): every row its request
+    /// was read from (FIX 7104), unknown when the capsule keeps none. Each
+    /// row is judged at its own record position, which places its world, so
+    /// no other world is listed.
+    pub(crate) fn of_step(capsule: &StepReplayCapsule) -> Self {
+        Self {
+            worlds: Vec::new(),
+            rows: capsule.source_rows.clone(),
+        }
+    }
+
+    /// Every row the capture was taken from; `None`, unknown.
+    pub(crate) fn rows(&self) -> Option<&[EntityId]> {
+        self.rows.as_deref()
+    }
 }
 
 /// Where `source`'s capture sits, read in `txn`; `None` once its failure no
@@ -301,7 +317,8 @@ fn waiting_run_capsule_in(
 /// must hold every world of the run and every row's record position. With
 /// `capsule`, that same Grant must also admit every Scope the captured step
 /// was served (FIX 7027); `None` keeps the instruction-replay gate alone.
-fn admitting_grant_in(
+/// A contribution check's capture is judged by this same rule (FIX 20607).
+pub(crate) fn admitting_grant_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     coach: EntityId,

@@ -55,20 +55,29 @@
 //! that request shows elsewhere, a step that bound a result and a subtree
 //! that may change state are unavailable for the shadow runner's own
 //! reason ([`Unavailable::ProgramReplay`]), never a loss.
+//!
+//! Each step is read under the Coach's own admission to it (FIX 20607). A
+//! step's replay context is read to find the call only once the Coach is
+//! admitted to that step. The caller's step and the next step each hold
+//! their own admission: the caller's is its witness while its branches are
+//! prepared and run, and the next step's is taken before its request is
+//! read. A pair either step does not admit now waits as `Unfinished`.
 
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
+use super::super::source_admission::ContributionSourceAdmission;
 use super::super::{
     ContributionForkProgram, ContributionReplayUnavailable as Unavailable, ForkRows,
-    ForkScoringIdentity, Outcome, Prepared, Runner, anchor_hash, request_hash,
+    ForkScoringIdentity, Outcome, PairReader, PairSourceAdmission, Prepared, Runner, anchor_hash,
+    request_hash,
 };
 use super::{ExecutedFork, ExecutedStepStatus, Ran, executed_run};
 use crate::code_run::shadow_runner::{
     ArmCallableLoad, ArmCallables, ArmTreatedCall, PreparedShadowStep, ShadowBodyStore,
-    ShadowUnavailable, ShadowUnavailableReason as Reason, absent_delivery_outcome,
-    prepare_shadow_step_source,
+    ShadowSourceWitness, ShadowUnavailable, ShadowUnavailableReason as Reason, WitnessedRelease,
+    absent_delivery_outcome, admission_lapsed, prepare_witnessed_shadow_step_source,
 };
 use crate::code_run::{
     CapsuleHost, CapsuleRequest, CapturedCallable, CodeRunBridgeCall, CodeRunHistoryTurn,
@@ -95,9 +104,10 @@ pub struct CallableBranch {
 
 /// Runs `branch` for `step`'s captured caller step on `runtime`, a fresh
 /// runtime of the component pinned at `runtime_pin`, its bodies in `store`,
-/// a scratch store of its own, and reads back whole what it left, as
-/// [`super::execute_contribution_fork`] reads a fork's program back. Its
-/// program is not type-checked: no reader of a branch's feedback exists.
+/// a scratch store of its own, and reads back whole what it left under
+/// `release`, as [`super::execute_contribution_fork`] reads a fork's
+/// program back (FIX 20607). Its program is not type-checked: no reader of
+/// a branch's feedback exists.
 ///
 /// # Errors
 ///
@@ -105,6 +115,7 @@ pub struct CallableBranch {
 pub fn execute_callable_branch(
     step: &PreparedShadowStep,
     branch: &CallableBranch,
+    release: WitnessedRelease<'_>,
     runtime: &mut dyn JsCodeModeRuntime,
     runtime_pin: [u8; 32],
     store: &ShadowBodyStore,
@@ -118,22 +129,28 @@ pub fn execute_callable_branch(
     let (program, callables) = (&branch.program, &branch.callables);
     let run =
         run_shadow_callable_branch(step, program, callables, runtime, store, cancel, &feedback)?;
-    executed_run(step, run, runtime_pin, store)
+    executed_run(step, run, runtime_pin, store, release)
 }
 
 /// The steps a callable's or a delivery's check regenerates from (FIX
-/// 3608): the caller's step that made the call the pair treats, the bridge
-/// position of that call, what it is (a call of the target's load, or a call
-/// whose answer delivered the target's body), the revision it loaded or
-/// delivered, and the next step, whose request each branch rebuilds; `None`
-/// when that step was not captured.
+/// 3608): the caller's step that made the call the pair treats, the Coach's
+/// admission to that step, taken before its replay context was read (FIX
+/// 20607), the bridge position of that call, what it is (a call of the
+/// target's load, or a call whose answer delivered the target's body), the
+/// revision it loaded or delivered, and the next step, whose request each
+/// branch rebuilds; `None` when that step was not captured.
 pub(crate) struct CallerTarget {
     pub(crate) caller: StepReplayCapsule,
+    pub(crate) admission: Arc<ContributionSourceAdmission>,
     pub(crate) seq: u64,
     pub(crate) kind: ArmTreatedCall,
     pub(crate) revision: String,
     pub(crate) next: Option<StepReplayCapsule>,
 }
+
+/// A treated call of a step: its bridge position, its kind and the revision
+/// it loaded or delivered.
+type TreatedCall = (u64, ArmTreatedCall, String);
 
 /// The call `target`'s check regenerates from among `capsules`, one run's
 /// captured steps, read in `txn`: for a loaded skill, in the earliest step
@@ -141,7 +158,9 @@ pub(crate) struct CallerTarget {
 /// either called the skill's load, as its replay context froze it, or
 /// delivered the skill's body at its current revision to the step's
 /// program, as its replay context kept it. `None` for a used edge, and when
-/// no context holds either.
+/// no context holds either. Each step's context is read only once `coach`
+/// is admitted to that step (FIX 20607); a step it is not admitted to
+/// leaves the call unknown, and the pair `Unfinished`.
 ///
 /// # Errors
 ///
@@ -151,22 +170,31 @@ pub(crate) fn caller_target_in_txn(
     txn: &heed::RoTxn<'_>,
     capsules: &[StepReplayCapsule],
     target: ContributionTarget,
-) -> Result<Option<CallerTarget>> {
+    coach: EntityId,
+) -> Outcome<Option<CallerTarget>> {
     let ContributionTarget::LoadedSkill(skill) = target else {
-        return Ok(None);
+        return Ok(Ok(None));
     };
     // A delivery is of the skill's own version, the one its check judges.
     let current = vault
         .get_skill_record_in_txn(txn, &skill)?
         .map(|record| format!("{}@{}", record.skill_id, record.version));
-    let mut found: Option<(&StepReplayCapsule, (u64, ArmTreatedCall, String))> = None;
+    let mut found: Option<(
+        &StepReplayCapsule,
+        Arc<ContributionSourceAdmission>,
+        TreatedCall,
+    )> = None;
     for capsule in capsules {
         let preferred = found
             .as_ref()
-            .is_some_and(|(held, _)| capture_order(held) >= capture_order(capsule));
+            .is_some_and(|(held, ..)| capture_order(held) >= capture_order(capsule));
         if capsule.host != CapsuleHost::EngineStep || preferred {
             continue;
         }
+        let Some(admission) = ContributionSourceAdmission::take_in(vault, txn, coach, capsule)?
+        else {
+            return Ok(Err(Unavailable::Unfinished));
+        };
         let Some(bytes) = capsule_context_body(vault, txn, capsule)? else {
             continue;
         };
@@ -177,23 +205,26 @@ pub(crate) fn caller_target_in_txn(
             continue;
         }
         if let Some(first) = first_treated_call(context, skill, current.as_deref()) {
-            found = Some((capsule, first));
+            found = Some((capsule, admission, first));
         }
     }
-    Ok(found.map(|(caller, (seq, kind, revision))| CallerTarget {
-        next: capsules
-            .iter()
-            .find(|next| {
-                next.lease_generation == caller.lease_generation
-                    && next.run == caller.run
-                    && next.step == caller.step.saturating_add(1)
-            })
-            .cloned(),
-        caller: caller.clone(),
-        seq,
-        kind,
-        revision,
-    }))
+    Ok(Ok(found.map(
+        |(caller, admission, (seq, kind, revision))| CallerTarget {
+            next: capsules
+                .iter()
+                .find(|next| {
+                    next.lease_generation == caller.lease_generation
+                        && next.run == caller.run
+                        && next.step == caller.step.saturating_add(1)
+                })
+                .cloned(),
+            caller: caller.clone(),
+            admission,
+            seq,
+            kind,
+            revision,
+        },
+    )))
 }
 
 /// The first call of `context`'s step that called `skill`'s load, or that
@@ -239,7 +270,10 @@ impl Runner<'_> {
     /// either fork is paid for: the next step's capsule and rung, the two
     /// requests its caller's branches rebuilt, and the anchor. The target's
     /// current record must be at the revision the call loaded or delivered,
-    /// as an exposure's must be at the revision the step saw.
+    /// as an exposure's must be at the revision the step saw. The next step
+    /// is admitted before its request is read, and the caller's branches run
+    /// under the caller's own admission (FIX 20607). A lapse of either
+    /// stops the pair as `Unfinished`.
     pub(crate) fn prepare_caller(
         &self,
         rows: &ForkRows,
@@ -261,6 +295,14 @@ impl Runner<'_> {
             .map(|record| format!("{}@{}", record.skill_id, record.version));
         if current.as_deref() != Some(target.revision.as_str()) {
             return Ok(Err(Unavailable::SkillRevisionMoved));
+        }
+        let Some(next_admission) = self.reader.admit(self.vault, &next)? else {
+            return Ok(Err(Unavailable::Unfinished));
+        };
+        let caller_witness = ContributionSourceAdmission::witness(&target.admission);
+        let source = PairSourceAdmission::new(self.reader, vec![next_admission, target.admission]);
+        if !source.admits_now(self.vault, PairReader::Coach)? {
+            return Ok(Err(Unavailable::Unfinished));
         }
         let Some(captured) = capsule_request(self.vault, &next)? else {
             return Ok(Err(
@@ -289,11 +331,18 @@ impl Runner<'_> {
         if !self.clock.decision_may_start() {
             return Ok(Err(Unavailable::Unfinished));
         }
-        let observations =
-            match self.branch_observations(&target.caller, target.seq, target.kind)? {
-                Ok(observations) => observations,
-                Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
-            };
+        let observations = match self.branch_observations(
+            &target.caller,
+            target.seq,
+            target.kind,
+            &caller_witness,
+        )? {
+            Ok(observations) => observations,
+            Err(unavailable) if admission_lapsed(&unavailable) => {
+                return Ok(Err(Unavailable::Unfinished));
+            }
+            Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
+        };
         let [with_console, without_console] = observations.map(|observation| {
             let turn = CodeRunHistoryTurn {
                 code: String::new(),
@@ -340,6 +389,7 @@ impl Runner<'_> {
             anchor_scoring,
             anchor_hash,
             frozen_program: Some(Err(unrecorded)),
+            source,
         }))
     }
 
@@ -352,14 +402,17 @@ impl Runner<'_> {
     /// own ([`undeliverable`]) is left out. The branch without the load or
     /// body must leave out no recorded call whose answer the next request
     /// shows outside the console, and no call that may change state; the
-    /// step must bind no result (FIX 3608, [`removed_unrebuilt`]).
+    /// step must bind no result (FIX 3608, [`removed_unrebuilt`]). The step
+    /// is prepared, its program read and both branches run under `witness`,
+    /// the Coach's admission to the caller's step (FIX 20607).
     fn branch_observations(
         &self,
         caller: &StepReplayCapsule,
         seq: u64,
         kind: ArmTreatedCall,
+        witness: &ShadowSourceWitness,
     ) -> Ran<[String; 2]> {
-        let step = match prepare_shadow_step_source(self.vault, caller)? {
+        let step = match prepare_witnessed_shadow_step_source(self.vault, caller, witness)? {
             Ok(step) => step,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
@@ -390,6 +443,9 @@ impl Runner<'_> {
         if let Some(cause) = removed_unrebuilt(&step, seq, nested_end, kind) {
             let shown = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, cause);
             return Ok(Err(shown));
+        }
+        if let Err(lapsed) = witness.check(self.vault, *step.step())? {
+            return Ok(Err(lapsed));
         }
         let program = match caller_program(self.vault, &step)? {
             Ok(program) => program,
@@ -425,7 +481,7 @@ impl Runner<'_> {
                     programs: programs.clone(),
                 },
             };
-            match branch_observation(self.program, &step, &branch, runtime)? {
+            match branch_observation(self.program, &step, &branch, runtime, witness)? {
                 Ok((observed, consumed)) => {
                     *observation = observed;
                     *position = consumed;
@@ -570,16 +626,17 @@ fn shown_outside_console(step: &PreparedShadowStep, rows: Range<u64>) -> Option<
 }
 
 /// `branch`'s observation of `step`, run by `program` on the component
-/// pinned at `runtime`, and the bridge position it matched the step's
-/// recorded calls to: its step must end with its run going on, as the
-/// caller's live step did, for a next request to exist.
+/// pinned at `runtime` under `witness` (FIX 20607), and the bridge position
+/// it matched the step's recorded calls to: its step must end with its run
+/// going on, as the caller's live step did, for a next request to exist.
 fn branch_observation(
     program: &dyn ContributionForkProgram,
     step: &PreparedShadowStep,
     branch: &CallableBranch,
     runtime: [u8; 32],
+    witness: &ShadowSourceWitness,
 ) -> Ran<(String, u64)> {
-    let executed = match program.execute_branch(step, branch)? {
+    let executed = match program.execute_branch(step, branch, witness)? {
         Ok(executed) => executed,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
