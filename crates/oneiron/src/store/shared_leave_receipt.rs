@@ -56,6 +56,10 @@ pub struct SharedLeaveReceipt {
     /// The entities the purge kept: authority log and machine rows, rows a
     /// legal hold names, and the pinned pack map.
     pub kept_entities: u64,
+    /// Whether the purge ran to its final pass. Every pass persists its own
+    /// state, so a crash between passes leaves this false and the next
+    /// confirmation resumes.
+    pub purge_complete: bool,
 }
 
 /// This device's leave records, keyed by the notice's receipt id.
