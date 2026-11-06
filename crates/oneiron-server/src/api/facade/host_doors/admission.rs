@@ -539,6 +539,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultWeaveOwnerDigestRender
         | Row::VaultInboxConcernsReview
         | Row::VaultInboxLens
+        | Row::VaultProactivityDigest
         | Row::VaultInboxGroups
         | Row::VaultBudgetsLeaseOpen
         | Row::VaultBudgetsLease
