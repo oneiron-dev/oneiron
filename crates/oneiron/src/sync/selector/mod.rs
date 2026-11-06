@@ -72,7 +72,9 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
+pub(in crate::sync) use self::authorize::{
+    authorize_sync_selector_in_txn, check_bootstrap_sources,
+};
 pub(crate) use self::born_with::{
     CarriedText, carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
