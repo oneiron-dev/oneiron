@@ -124,7 +124,7 @@ pub(super) fn admit_put<'a>(
     super::super::super::person_substrate::validate_scope_identity(id)?;
     // Fix list row 16256: the source-audience key, as the caller's raw bytes
     // state it, before any normalization reads the body. Only the source
-    // landing's marked row or the verified own-device lane carries it, and
+    // landing's marked row or the owner's own import tier carries it, and
     // a stored stamp is never dropped or changed.
     crate::source_audience::admit_obligation_in_txn(
         store,
@@ -133,7 +133,6 @@ pub(super) fn admit_put<'a>(
         entity_type,
         data,
         replicated,
-        own_device.is_some(),
     )?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact

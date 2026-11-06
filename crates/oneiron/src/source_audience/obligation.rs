@@ -146,8 +146,12 @@ pub(crate) fn refuse_unbound_births_in(
 ///
 /// - a body that names the key in any shape is refused, unless it is a
 ///   valid stamp on a CONVERSATION, TURN or MESSAGE that a source landing
-///   marked born in this write, or a replicated put on the verified
-///   own-device lane;
+///   marked born in this write, or a replicated put of the owner's own
+///   import tier (`ImportTier::OwnDevice`, chosen by the authenticated
+///   import context: a federated tier's put meets
+///   [`refuse_written_obligation`] in its own admission before it reaches
+///   here, so every replicated put that does reach here is the owner's own,
+///   a forward replay and a pending retry included);
 /// - a stored row whose own bytes name the key refuses a put whose body
 ///   drops it or states it otherwise, except a bodiless erase shell.
 ///
@@ -165,13 +169,12 @@ pub(crate) fn admit_obligation_in_txn(
     entity_type: u8,
     incoming_body: &[u8],
     replicated: bool,
-    own_device_lane: bool,
 ) -> Result<()> {
     let incoming = decode_source_audience_obligation(incoming_body);
     if incoming.is_present()
         && !(incoming == SourceAudienceObligation::Required
             && bound_kind(entity_type)
-            && (BIRTHS.contains(dbs, txn, id)? || (replicated && own_device_lane)))
+            && (replicated || BIRTHS.contains(dbs, txn, id)?))
     {
         return Err(write_refusal(entity_type, UNBORN_STAMP));
     }
