@@ -262,14 +262,29 @@ fn send_pending_with_gate<T: OutboundTransport>(
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         // FIX 6424 part 2a: or the press a pinned family kept for this row.
-        let retry = record.admitted_approval.or_else(|| {
-            crate::outbound_intent_ledger::pinned_retry_approval(
-                vault,
-                &wtxn,
-                record.id,
-                &prepared.gate,
-            )
-        });
+        let family = prepared
+            .gate
+            .provenance
+            .approval_target
+            .as_ref()
+            .and_then(gate::ApprovalTarget::pinned_family);
+        let ordinary_target = family
+            == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate)
+            || (family
+                == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch)
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
+        let retry = if ordinary_target {
+            super::ordinary_slate::retry_approval_in_txn(vault, &wtxn, &record, &prepared.gate)?
+        } else {
+            record.admitted_approval.or_else(|| {
+                crate::outbound_intent_ledger::pinned_retry_approval(
+                    vault,
+                    &wtxn,
+                    record.id,
+                    &prepared.gate,
+                )
+            })
+        };
         let governance = gate::evaluate_external_effect_policy(
             &vault.store,
             &mut wtxn,
@@ -285,6 +300,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
                 gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+            if ordinary_target
+                && decision
+                    .receipt_reasons()
+                    .iter()
+                    .any(|reason| *reason == crate::outbound_consent::SLATE_ALWAYS_ASK_REASON)
+            {
+                super::ordinary_slate::queue_owner_ask_in_txn(vault, &mut wtxn, &record)?;
+            }
             wtxn.commit().map_err(Error::from)?;
             let mut result =
                 gate_rejection(record.id, decision_id, decision).held_by(&posting_gate);
@@ -577,8 +600,8 @@ pub(super) fn recovery_governance(
             return Ok(RecoveryGovernance::Block("charter_never_list"));
         }
     }
-    // Every keyed row meets its tool's never-allow setting, including an
-    // ordinary connector send. Approve-once remains scoped-call specific.
+    // Every keyed row meets never-allow. Always-ask also reaches ordinary
+    // dispatches whose native frozen target and owner release can be rebuilt.
     match connector_key::connector_tool_setting_in_txn(
         &vault.store,
         &txn,
@@ -588,6 +611,11 @@ pub(super) fn recovery_governance(
     )? {
         SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
         SlateDisposition::AlwaysAsk if record.capability_provenance().is_some() => {
+            return Ok(RecoveryGovernance::AlwaysAsk);
+        }
+        SlateDisposition::AlwaysAsk
+            if super::ordinary_slate::candidate_in_txn(vault, &txn, record)?.is_some() =>
+        {
             return Ok(RecoveryGovernance::AlwaysAsk);
         }
         SlateDisposition::Auto | SlateDisposition::AlwaysAllow | SlateDisposition::AlwaysAsk => {}
