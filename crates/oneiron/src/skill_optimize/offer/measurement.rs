@@ -54,3 +54,18 @@ pub(super) fn keep_source_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, offer: &m
         offer.evidence.paired_measurement = None;
     }
 }
+
+/// The native historical source after the original keeper has matched it.
+pub(super) fn matched_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &TrainingOffer,
+) -> Result<Option<crate::skill_optimize::EvalMeasurement>> {
+    let Some(digest) = offer.evidence.paired_measurement else {
+        return Ok(None);
+    };
+    if !matches_in_txn(vault, txn, offer, &digest)? {
+        return Ok(None);
+    }
+    vault.eval_measurement_in_txn(txn, &digest)
+}

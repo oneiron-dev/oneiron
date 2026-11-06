@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use oneiron::llm::LlmCatalogCost;
-use oneiron::llm::ModelRegistryRow;
+use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::llm::run_admission::Payer;
 use oneiron::{EntityId, ModelId};
 

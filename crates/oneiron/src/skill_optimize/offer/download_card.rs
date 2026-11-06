@@ -133,3 +133,15 @@ pub(in crate::skill_optimize) fn stock_download_card_seen_in_txn(
     }
     Ok(false)
 }
+
+impl Vault {
+    /// The native card receipt in a trusted host's already-open decision
+    /// snapshot. Only the inbox's own current-Owner Seen/Acked mark counts.
+    pub fn stock_download_card_seen_in_snapshot(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        card: &StockDownloadCard,
+    ) -> Result<bool> {
+        stock_download_card_seen_in_txn(self, txn, card)
+    }
+}

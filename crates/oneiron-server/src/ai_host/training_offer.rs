@@ -6,8 +6,9 @@
 //! Coach's model, running the offer skill it loads on its attempt, only says
 //! whether a case is worth raising, and which priced option it is. Each offer
 //! names the skill revision that drafted it, and the skill's record on the
-//! Coach's model goes into the next brief. Nothing applies by itself: the
-//! owner answers the offer.
+//! Coach's model goes into the next brief. The owner answers the offer;
+//! only a stock switch may qualify under the owner's saved setting. An
+//! unknown comparison stays manual, and training never applies itself.
 //!
 //! The check reads the same meter on the offer's check date. A promise is
 //! checked only after a yes, on the approved model's calls over a whole
@@ -44,6 +45,7 @@ use crate::config::models::role_key;
 use crate::server::SyncServer;
 use crate::usage::SeatUsage;
 
+mod automatic;
 mod check;
 mod choices;
 mod cost;
@@ -105,6 +107,7 @@ pub(super) fn draft(
     let Some(meter) = server.vault_usage() else {
         return Ok(());
     };
+    automatic::pending(server, now);
     let runtime = server.ai.model_runtime();
     let (owner, vault_id) = (meter.owner(), meter.vault_id());
     let from = now.saturating_sub(WINDOW_SECS);
@@ -255,6 +258,7 @@ pub(super) fn draft(
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
                 publish_download_card(vault, runtime, &offer, now);
+                automatic::apply(server, &offer, now);
                 tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
             }
             // A draft the offer door refuses is no offer; the other seats go on.
