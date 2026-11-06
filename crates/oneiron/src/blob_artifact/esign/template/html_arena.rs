@@ -127,6 +127,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let attribute_name = Mutex::new(Backing::new(budget.clone()));
         let attribute_storage_budget = budget.clone();
         let attribute_value_budget = budget.clone();
+        let attribute_atomic_budget = budget.clone();
         let comment_budget = budget.clone();
         let doctype_budget = budget.clone();
         let pending_table_budget = budget.clone();
@@ -160,7 +161,17 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                 move |bytes| reserve(&attribute_storage_budget, bytes),
                 Backing::resize,
                 tendril_error,
-                Document::create_element_with_tag_attributes,
+                move |document, name, attrs, flags| {
+                    document
+                        .create_element_with_tag_attributes(
+                            name,
+                            attrs,
+                            flags,
+                            |bytes| reserve(&attribute_atomic_budget, bytes),
+                            Backing::resize,
+                        )
+                        .map_err(arena_error)
+                },
                 Document::add_tag_attributes_if_missing,
             )
             .with_attribute_value_reservation(move |value, additional| {

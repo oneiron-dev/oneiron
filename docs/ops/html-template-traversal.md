@@ -290,7 +290,8 @@ Tag field storage is now the native TagAttributes carrier; mutable borrows expos
 only the attribute slice, and plain Vec extraction returns the carrier instead
 when it still has an owned guard. No markup5ever trait, package version, manifest,
 content cap, default, deadline or configuration setting changes. Atomic payload
-copies, ordinary unhooked merge-name scratch, public extraction/mutations/clones, other parser
+copies outside the checked element-construction path, ordinary unhooked merge-name
+scratch, public extraction/mutations/clones, other parser
 vectors, boxed callback/guard metadata, allocator-private work and opaque native
 intervals remain unadmitted; this does not complete FIX 9615.
 
@@ -302,3 +303,21 @@ original names into a temporary vector, including when the incoming carrier is
 empty. Its owning iterator still frees input storage before releasing admission.
 The ordinary unhooked TreeSink Vec entry keeps its original wrapping and copied
 names; that separate public path remains unadmitted.
+
+The native checked element-creation callback also admits attribute-value backing
+when conversion to an atomic DOM value must copy a shared input tendril. It uses
+the owned value, not a borrowed clone: inline and uniquely owned values transfer
+without allocation, while a shared value reserves header-rounded storage before
+copying and settles to its actual capacity. The new header retains that guard
+until its last owner frees the allocation, before returning admission. Old input
+and new destination storage are both charged while they overlap.
+
+Conversion fills the already prepared final attribute vector after the existing
+arena/vector preflight and before any element or template-fragment node is
+pushed. The one checked create callback returns a typed result. A refusal drops
+partial values and the remaining owning input, records the same first parser
+error, and stops without publishing a dummy handle or a partial element. The
+ordinary unhooked TreeSink Vec entry retains its original behavior. Atomic value
+copies during later attribute merge, public extraction/mutations/clones, interned
+names, other parser storage, boxed guard/callback metadata, allocator-private
+work and opaque native intervals remain unadmitted; FIX 9615 is still partial.
