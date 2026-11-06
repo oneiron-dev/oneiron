@@ -11638,6 +11638,32 @@ pub struct HolderExportRequest {
     pub state: HolderExportState,
 }
 
+/// `oneiron::share_travel::pack_notice::WorldRecipientNotice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldRecipientNotice {
+    #[serde(rename = "notice_type")]
+    pub notice_type: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "voice")]
+    pub voice: String,
+    #[serde(rename = "audience")]
+    pub audience: String,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
+    #[serde(
+        rename = "world_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub world_name: Option<String>,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "body")]
+    pub body: String,
+}
+
 /// `oneiron::memory::export::MemoryExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryExport {
@@ -11653,6 +11679,8 @@ pub struct MemoryExport {
         skip_serializing_if = "Option::is_none"
     )]
     pub holder_requests: Option<Vec<HolderExportRequest>>,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::memory::export::ExportTransfer`.
@@ -11672,6 +11700,8 @@ pub struct ExportTransfer {
         skip_serializing_if = "Option::is_none"
     )]
     pub holder_requests: Option<Vec<HolderExportRequest>>,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::memory::export::ExportAnswer`.
@@ -16992,32 +17022,6 @@ pub struct PackSection {
     pub authority_lane: String,
     #[serde(rename = "budget_policy")]
     pub budget_policy: String,
-}
-
-/// `oneiron::share_travel::pack_notice::WorldRecipientNotice`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WorldRecipientNotice {
-    #[serde(rename = "notice_type")]
-    pub notice_type: String,
-    #[serde(rename = "channel")]
-    pub channel: String,
-    #[serde(rename = "voice")]
-    pub voice: String,
-    #[serde(rename = "audience")]
-    pub audience: String,
-    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<String>,
-    #[serde(
-        rename = "world_name",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub world_name: Option<String>,
-    #[serde(rename = "reason")]
-    pub reason: String,
-    #[serde(rename = "body")]
-    pub body: String,
 }
 
 /// `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt`.

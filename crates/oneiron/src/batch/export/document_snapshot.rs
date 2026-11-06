@@ -109,6 +109,7 @@ impl Vault {
             CallerLocality::OnDevice,
             include_secrets,
             reader,
+            true,
             |_| Ok::<_, Error>(()),
             sink,
         )?;
@@ -142,6 +143,7 @@ impl Vault {
                     ExportCut::Archive,
                     false,
                     reader,
+                    false,
                     |rtxn| {
                         frozen = Some(freeze(rtxn)?);
                         Ok::<_, Error>(())
@@ -170,6 +172,7 @@ impl Vault {
         let (_, mut receipt) = self.export_okf_with_admission(
             CallerLocality::OnDevice,
             reader,
+            true,
             |_| Ok::<_, Error>(()),
             sink,
         )?;
@@ -178,10 +181,13 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// `owner_export` as [`Self::export_whole_vault_with_admission`] takes
+    /// it.
     pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
         reader: WriteActor,
+        owner_export: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -191,6 +197,7 @@ impl Vault {
             ExportCut::Okf,
             false,
             reader,
+            owner_export,
             admit,
             sink,
         )
@@ -199,17 +206,26 @@ impl Vault {
     /// The actor facade supplies an owner admission evaluated in the SAME
     /// snapshot as the rows. The host-level Vault export retains its existing
     /// direct door; transport callers must use the admitted memory facade.
-    /// For a caller off this device the snapshot holds no row a device-local
-    /// world keeps here (DEC-0005), so no edge, package or receipt of one
-    /// follows; one whose world cannot be read stays too. A caller whose
-    /// connection proved its machine is judged by that machine's own world
-    /// read settings (mesh PR2b).
+    /// The owner's own export is his will (owner ruling 1-EXPORT = B): for a
+    /// caller off this device it carries the rows of every world his
+    /// recipient choice withholds from where it goes, with their edges,
+    /// packages, receipts, epoch floors, run results and vault-wide rows,
+    /// and its receipt names each such world in a notice. A row whose world
+    /// cannot be placed still stays here. A caller whose connection proved
+    /// its machine is judged by that machine's own world read settings (mesh
+    /// PR2b), for the notices and the custody values that may not leave.
     /// `reader` is whose diary reads the export makes (OF-490).
+    /// `owner_export` false (an export a code run calls, FIX 9591) follows
+    /// the world settings as before the ruling: no row of a world they
+    /// withhold from `destination`, no run's results or vault-wide row off
+    /// this device, and no notice.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn export_whole_vault_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
         include_secrets: bool,
         reader: WriteActor,
+        owner_export: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -219,6 +235,7 @@ impl Vault {
             ExportCut::Archive,
             include_secrets,
             reader,
+            owner_export,
             admit,
             sink,
         )
@@ -239,9 +256,14 @@ impl Vault {
             bytes,
             manifest: receipt.manifest,
             diary_reads: receipt.diary_reads,
+            notices: receipt.notices,
         })
     }
 
+    /// `owner_export`: the owner's own whole-vault or OKF export (owner
+    /// ruling 1-EXPORT = B), whose rows his recipient choice keeps none of;
+    /// false for a removal's records archive and for an export a code run
+    /// calls, which the world settings judge as before.
     #[allow(clippy::too_many_arguments)]
     fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,
@@ -250,6 +272,7 @@ impl Vault {
         cut: ExportCut,
         include_secrets: bool,
         reader: WriteActor,
+        owner_export: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -298,13 +321,25 @@ impl Vault {
         // diary it carries or counts as held, and a receipt source, pack
         // source or skill source carrier another section is folded from.
         let mut sources = BTreeSet::new();
-        // A run names no world, so a caller off this device gets no run's
-        // results: none of a device-local world's may leave it (DEC-0005).
-        // Each run whose results go with it is a source, on this device only.
-        if locality == CallerLocality::OnDevice && only.is_none() && cut == ExportCut::Archive {
+        // A run names no world, so another caller off this device gets no
+        // run's results: none of a device-local world's may leave it
+        // (DEC-0005). The owner's own whole-vault archive carries every run's
+        // results wherever it goes (owner ruling 1-EXPORT = B); each
+        // occurrence still meets the egress door. Each run whose results go
+        // with it is a source.
+        if (owner_export || locality == CallerLocality::OnDevice)
+            && only.is_none()
+            && cut == ExportCut::Archive
+        {
             sources.extend(self.export_run_results_in_txn(&rtxn, &mut writer)?);
         }
+        // Every world the world settings withhold from this destination: the
+        // owner's recipient choice for each. A row of one stays here, except
+        // in the owner's own export, which carries it and names the world.
         let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
+        // The withheld worlds the owner's own export carries rows of, each
+        // named in a notice.
+        let mut barred_carried = BTreeSet::new();
         let mut included = BTreeSet::new();
         // The root of each thread a carried TURN is of (FIX 6427).
         let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
@@ -323,19 +358,17 @@ impl Vault {
             {
                 continue;
             }
-            if crate::settings::device_only_withholds_raw(
+            let Some(row_barred) = barred_worlds_carried(
                 &self.store,
                 &rtxn,
                 &device_only,
                 &id,
                 Some(&raw),
-            )
-            .or_else(|error| match error {
-                Error::CorruptedIndex(_) => Ok(true),
-                error => Err(error),
-            })? {
+                owner_export,
+            )?
+            else {
                 continue;
-            }
+            };
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("whole-vault entity header"))?;
             // Owner ruling 2026-10-17: the owner's own archive carries the
@@ -429,7 +462,14 @@ impl Vault {
                 // with the skill only when the carrier passes the filter every
                 // listed row passes, and the carrier is then a source.
                 let carrier = self.export_hub_package_carrier_in_txn(&rtxn, &id, &record)?;
-                if !carrier_withheld(&self.store, &rtxn, &device_only, carrier.as_ref())? {
+                if let Some(barred) = carrier_admitted(
+                    &self.store,
+                    &rtxn,
+                    &device_only,
+                    carrier.as_ref(),
+                    owner_export,
+                )? {
+                    barred_carried.extend(barred);
                     sources.extend(carrier);
                     skill_package = Some(package);
                 }
@@ -472,7 +512,22 @@ impl Vault {
                     &self.store,
                     &rtxn,
                     &id,
-                    |carrier| carrier_withheld(&self.store, &rtxn, &device_only, Some(carrier)),
+                    |carrier| {
+                        let admitted = carrier_admitted(
+                            &self.store,
+                            &rtxn,
+                            &device_only,
+                            Some(carrier),
+                            owner_export,
+                        )?;
+                        Ok(match admitted {
+                            Some(barred) => {
+                                barred_carried.extend(barred);
+                                false
+                            }
+                            None => true,
+                        })
+                    },
                 )?;
                 sources.extend(carriers);
                 archived_receipts = Some(receipts);
@@ -488,6 +543,7 @@ impl Vault {
                     }
                 }
             }
+            barred_carried.extend(row_barred);
             included.insert(id);
             let short_ref =
                 crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &rtxn, &id)?
@@ -550,22 +606,22 @@ impl Vault {
             None
         };
         // OF-013: the floors travel so an import never numbers an epoch under
-        // one a purge removed. A floor whose session a device-local world
-        // keeps stays here, as the session's own row does.
+        // one a purge removed. A floor whose session the archive leaves here
+        // stays here, as the session's own row does.
         if scope == ExportScope::WholeVault {
             for (session, epoch, turn_end) in
                 crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
             {
-                if crate::settings::device_only_withholds(
+                if barred_worlds_carried(
                     &self.store,
                     &rtxn,
                     &device_only,
                     &session,
-                )
-                .or_else(|error| match error {
-                    Error::CorruptedIndex(_) => Ok(true),
-                    error => Err(error),
-                })? {
+                    None,
+                    owner_export,
+                )?
+                .is_none()
+                {
                     continue;
                 }
                 sources.insert(session);
@@ -580,14 +636,16 @@ impl Vault {
         // records archive as in the whole-vault one, read in this snapshot
         // against the rows it carries and never past them: a removed owner's
         // archive holds no row its scope did not read. A vault-wide row goes
-        // only to a caller on this device. A carried record whose family names
-        // a carrier left out is named in the manifest instead.
+        // with the owner's own whole-vault archive wherever it goes (owner
+        // ruling 1-EXPORT = B), never with a records archive. A carried
+        // record whose family names a carrier left out is named in the
+        // manifest instead.
         if cut == ExportCut::Archive {
             let (rows, withheld) = super::archive_side_rows_in_txn(
                 &self.store,
                 &rtxn,
                 &included,
-                locality == CallerLocality::OnDevice,
+                only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
             )?;
             for row in rows {
                 writer.side_row(row)?;
@@ -607,6 +665,19 @@ impl Vault {
         // Each carried thread's binding, read in this snapshot, so its
         // members are told should its root go before the audit (FIX 6681).
         thread_roots.capture_in(&self.store.read(), &rtxn);
+        // Owner ruling 1-EXPORT = B: one notice for each world the owner's
+        // own export carries that his recipient choice would keep from where
+        // it goes, naming it and why, judged in this snapshot. None on this
+        // device.
+        let mut notices = Vec::new();
+        for (world, limit) in
+            crate::settings::recipient_limits_in(self, &rtxn, &barred_carried, &destination)?
+        {
+            let name = crate::share_travel::world_label_in_txn(self, &rtxn, &world)?;
+            notices.push(crate::share_travel::WorldRecipientNotice::export(
+                world, name, limit,
+            ));
+        }
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
@@ -632,6 +703,7 @@ impl Vault {
             .map(|(sink, mut receipt)| {
                 receipt.thread_roots = thread_roots;
                 receipt.holder_requests = holder_requests;
+                receipt.notices = notices;
                 (sink, receipt)
             })
             .map_err(E::from)
@@ -788,28 +860,64 @@ fn archive_custody_secret(
     )))
 }
 
-/// Whether the export's locality filter withholds `carrier`, a row another
-/// row's section is folded from (SCAN C022): the filter every listed row
-/// passes, judged on the carrier's own row, and an unreadable one withheld as
-/// an unreadable row is. No carrier is withheld when none was read.
-fn carrier_withheld(
+/// Whether the export's filter admits `carrier`, a row another row's section
+/// is folded from (SCAN C022): the filter every listed row passes, judged on
+/// the carrier's own row ([`barred_worlds_carried`]), and a carrier under a
+/// use limit withheld. `None` when it is withheld, else the barred worlds the
+/// owner's own export carries it in spite of. No carrier is withheld when
+/// none was read.
+fn carrier_admitted(
     store: &crate::store::Store,
     rtxn: &heed::RoTxn<'_>,
     device_only: &BTreeSet<EntityId>,
     carrier: Option<&EntityId>,
-) -> Result<bool> {
+    owner_export: bool,
+) -> Result<Option<BTreeSet<EntityId>>> {
     let Some(carrier) = carrier else {
-        return Ok(false);
+        return Ok(Some(BTreeSet::new()));
     };
     if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
-        return Ok(true);
+        return Ok(None);
     }
-    crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
-        match error {
-            Error::CorruptedIndex(_) => Ok(true),
-            error => Err(error),
+    barred_worlds_carried(store, rtxn, device_only, carrier, None, owner_export)
+}
+
+/// Whether the export's world filter admits `id` toward `barred`, every world
+/// the world settings withhold from where it goes: `None` when it leaves the
+/// row here, else the worlds of `barred` the archive carries it in spite of.
+/// Outside the owner's own export (`owner_export` false) a row any barred
+/// world keeps stays, and the set is empty. His own export carries a row his
+/// recipient choice alone keeps (owner ruling 1-EXPORT = B), and the set
+/// names those worlds; a row whose world cannot be placed stays, as its
+/// release holds it. A row that cannot be read stays either way. `raw` is
+/// the revision of `id` the snapshot serves; `None` judges the one stored.
+fn barred_worlds_carried(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    barred: &BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+    owner_export: bool,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    let judged = match (owner_export, raw) {
+        (true, Some(raw)) => {
+            crate::settings::device_only_recipient_worlds_raw(store, rtxn, barred, id, Some(raw))
         }
-    })
+        (true, None) => crate::settings::device_only_recipient_worlds(store, rtxn, barred, id),
+        (false, raw) => {
+            let withheld = match raw {
+                Some(raw) => {
+                    crate::settings::device_only_withholds_raw(store, rtxn, barred, id, Some(raw))
+                }
+                None => crate::settings::device_only_withholds(store, rtxn, barred, id),
+            };
+            withheld.map(|withheld| (!withheld).then(BTreeSet::new))
+        }
+    };
+    match judged {
+        Err(Error::CorruptedIndex(_)) => Ok(None),
+        judged => judged,
+    }
 }
 
 /// The vault owner as a diary reader: the embedded and OKF exports' reader.

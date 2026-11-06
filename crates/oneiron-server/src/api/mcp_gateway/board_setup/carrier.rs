@@ -190,7 +190,12 @@ pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
     };
     // A retained page derived from a row a device-local world keeps now
     // never leaves this device again: the caller starts over from page one.
-    if !mcp_snapshot_releases(server, actor, snapshot)? {
+    // A page of the owner's own whole-vault export, as the continued tool
+    // and his fresh proof name it, is released as his will (owner ruling
+    // 1-EXPORT = B).
+    let owner_whole_vault_export =
+        super::super::device_release::owner_whole_vault_export_call(server, actor, tool);
+    if !mcp_snapshot_releases(server, actor, snapshot, owner_whole_vault_export)? {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));

@@ -202,7 +202,14 @@ pub(crate) async fn execute_mcp_setup(
         carrier_policy,
     )
     .await;
-    let result = mcp_release_listed(server, actor, snapshot.rows.as_deref(), continued, result);
+    let result = mcp_release_listed(
+        server,
+        actor,
+        snapshot.rows.as_deref(),
+        continued,
+        result,
+        false,
+    );
     // Page one went out: each hook block it carried spends a delivery. A
     // continuation restates that keyframe and spends nothing again.
     if result.is_ok()
