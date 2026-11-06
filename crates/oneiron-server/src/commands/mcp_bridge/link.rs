@@ -688,9 +688,14 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                     sent: 0,
                     max_reply_bytes: request.max_reply_bytes,
                 });
-                let frame = request.request.encode();
+                let frame = socket.prepare_binary(
+                    oneiron::sync::transport::TAG_RPC,
+                    request.request.inner_len,
+                    |mut writer| request.request.write(&mut writer),
+                    || request.request.encode().into(),
+                );
                 drop(request.request);
-                if let Err(error) = socket.send(Message::Binary(frame.into())).await {
+                if let Err(error) = socket.send_prepared(frame).await {
                     break format!("the MCP socket broke: {error}");
                 }
                 let _ = waiting[&id].chunks.send(Inbound::Sent);
@@ -761,15 +766,20 @@ fn request_frame(
     binding: Option<String>,
     body: String,
 ) -> Result<PreparedRequest, Cut> {
-    let request = PreparedRequest {
+    let mut request = PreparedRequest {
         id,
         surface: surface.path(),
         binding,
         body,
+        inner_len: 0,
     };
+    let mut size = RequestSize(0);
+    std::io::Write::write_all(&mut size, &[oneiron::sync::transport::TAG_RPC])
+        .expect("counting request bytes is infallible");
     request
-        .write(&mut std::io::sink())
+        .write(&mut size)
         .map_err(|error| Cut::Failed(format!("could not frame the request: {error}")))?;
+    request.inner_len = size.0;
     Ok(request)
 }
 
@@ -779,6 +789,20 @@ struct PreparedRequest {
     surface: &'static str,
     binding: Option<String>,
     body: String,
+    inner_len: usize,
+}
+
+struct RequestSize(usize);
+
+impl std::io::Write for RequestSize {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl PreparedRequest {
