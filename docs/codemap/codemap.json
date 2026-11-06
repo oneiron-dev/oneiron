@@ -7367,6 +7367,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StagedImportBodyProgress"
+     ],
+     "path": "src/batch/export/foreign_stage/body_work.rs",
+     "purpose": "What a confirmed staged import still owes its rows (FIX 12408): the by-reference ASSET bodies its admitted…",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/batch/export/foreign_stage/content.rs",
      "purpose": "Admitted window bytes and their born-with text, retained together while a foreign import is Pending",
@@ -7404,8 +7417,8 @@
      "path": "src/batch/export/foreign_stage/mod.rs",
      "purpose": "Sync-gated foreign-import staging submodule",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 2
+      "crate-vis": 3,
+      "re-export": 3
      }
     },
     {
@@ -76552,7 +76565,7 @@
      "purpose": "One socket's by-reference body transfers (FIX 5489), both directions",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -77035,7 +77048,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7,
       "re-export": 1
      }
@@ -77108,7 +77121,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 8
      }
     },
@@ -77514,6 +77527,27 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/staged_bodies.rs",
+     "purpose": "Delivery of the bodies a confirmed staged import still owes (FIX 12408)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/staged_body_pull.rs",
+     "purpose": "The automatic producer of the bodies a confirmed staged import still owes (FIX 12408)",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/sync_frames.rs",
      "purpose": "Initial-connect and re-bootstrap sync frame builders",
      "surface": {
@@ -77536,6 +77570,7 @@
       "EphemeralChangeOrigin",
       "NoteSyncSession",
       "ResidenceHomeRoute",
+      "StagedImportBodySource",
       "SyncClientConfig",
       "SyncEvent",
       "SyncResidenceMode",
@@ -77548,7 +77583,7 @@
       "crate-vis": 6,
       "enum": 4,
       "fn": 7,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -79796,7 +79831,7 @@
      "path": "src/sync/selector/admission/state.rs",
      "purpose": "Admitted-update state for one federation import",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -91796,7 +91831,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93098,7 +93133,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 373,
+     "files": 375,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93310,7 +93345,7 @@
    },
    "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6582,
+   "source_files": 6585,
    "test_files": 895
   },
   "oneiron-android": {
