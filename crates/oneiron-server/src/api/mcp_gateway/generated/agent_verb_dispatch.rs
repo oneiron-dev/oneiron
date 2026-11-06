@@ -1511,6 +1511,7 @@ pub(crate) fn mcp_agent_verb_input(
         "self.browser.library.run" => a.spec.clone().ok_or_else(invalid),
         "self.browser.handover" => a.spec.clone().ok_or_else(invalid),
         "self.browser.switch_engine" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.put" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.supersede" => a.spec.clone().ok_or_else(invalid),
         "self.fold" => a.spec.clone().ok_or_else(invalid),
         "self.compact" => a.spec.clone().ok_or_else(invalid),
@@ -5372,6 +5373,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.switch_engine" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.put" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.supersede" => {
@@ -26799,6 +26803,33 @@ async fn execute_agent_verb_row_on(
                     input,
                 ))
                 .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.put" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.claims.put", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::code_run::MemoryClaimInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_put(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,

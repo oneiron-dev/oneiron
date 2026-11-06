@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1263 facade rows, 4594 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
+// UniFFI census: 1264 facade rows, 4597 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -74372,6 +74372,57 @@ pub struct BrowserAnswerSwitchEngineOutput {
     pub flattened: SwitchEngineOutput,
 }
 
+/// `oneiron::code_run::run_verbs::MemoryTimeRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryTimeRange {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::code_run::run_verbs::MemoryClaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryClaimInput {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "value")]
+    pub value: crate::WireJson,
+    #[serde(
+        rename = "confidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub confidence: Option<f64>,
+    #[serde(rename = "occurred", default, skip_serializing_if = "Option::is_none")]
+    pub occurred: Option<MemoryTimeRange>,
+    #[serde(rename = "learnedAt", default, skip_serializing_if = "Option::is_none")]
+    pub learned_at: Option<u64>,
+}
+
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `MemoryClaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestMemoryClaimInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: MemoryClaimInput,
+}
+
+/// `oneiron::code_run::run_verbs::MemoryWriteOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemoryWriteOutput {
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
 /// `oneiron::code_run::run_verbs::MemorySupersedeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -74392,13 +74443,6 @@ pub struct LiveRunRequestMemorySupersedeInput {
     pub live_run: String,
     #[serde(rename = "spec")]
     pub spec: MemorySupersedeInput,
-}
-
-/// `oneiron::code_run::run_verbs::MemoryWriteOutput`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct MemoryWriteOutput {
-    #[serde(rename = "id")]
-    pub id: String,
 }
 
 /// `oneiron::code_run::fold_api::FoldMarkRequest`.

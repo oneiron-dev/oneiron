@@ -1644,6 +1644,8 @@ class Oneiron:
             """Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."""
         def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
+        def put(self, spec: Facade.LiveRunRequest[Facade.MemoryClaimInput]) -> Facade.MemoryWriteOutput:
+            """Puts one claim through this credential's attached generated-writing run and its existing gates: Auto when the gates allow it, Proposed with its pending review for a declared-critical class or a pending gate; spec is {id,predicate,subject,value,confidence,occurred,learnedAt}, never an actor, source or approval override."""
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:

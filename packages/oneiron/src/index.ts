@@ -734,6 +734,8 @@ export class Oneiron {
       vetting: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsVetting(input) as Facade.ClaimProposalReview),
       /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
       seed: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
+      /** Puts one claim through this credential's attached generated-writing run and its existing gates: Auto when the gates allow it, Proposed with its pending review for a declared-critical class or a pending gate; spec is {id,predicate,subject,value,confidence,occurred,learnedAt}, never an actor, source or approval override. */
+      put: (input: Facade.LiveRunRequest<Facade.MemoryClaimInput>): Facade.MemoryWriteOutput => this.#call(() => this.#client.vaultClaimsPut(input) as Facade.MemoryWriteOutput),
       /** Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override. */
       supersede: (input: Facade.LiveRunRequest<Facade.MemorySupersedeInput>): Facade.MemoryWriteOutput => this.#call(() => this.#client.vaultClaimsSupersede(input) as Facade.MemoryWriteOutput),
     },

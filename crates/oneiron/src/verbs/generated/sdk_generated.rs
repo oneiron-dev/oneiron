@@ -7036,6 +7036,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.claims.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemoryClaimInput>,
+                >(),
+            ),
+            (
                 "vault.claims.supersede",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
@@ -7104,10 +7110,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
-            ),
-            (
-                "vault.claims.put",
-                crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
             ),
             (
                 "vault.edges.put",
@@ -19604,6 +19606,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.claims.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.supersede" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23950,6 +23959,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserSwitchEngineInput,
             > = decode(value.clone())?;
         }
+        "vault.claims.put" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemoryClaimInput> =
+                decode(value.clone())?;
+        }
         "vault.claims.supersede" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::code_run::MemorySupersedeInput,
@@ -26457,6 +26470,7 @@ pub fn invoke(
         "self.browser.library.run" => encode(self_browser_library_run(memory, decode(value)?)?),
         "self.browser.handover" => encode(self_browser_handover(memory, decode(value)?)?),
         "self.browser.switch_engine" => encode(self_browser_switch_engine(memory, decode(value)?)?),
+        "vault.claims.put" => encode(vault_claims_put(memory, decode(value)?)?),
         "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
@@ -37255,6 +37269,12 @@ pub fn self_browser_switch_engine(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserSwitchEngineOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.switch_engine", &input)
+}
+pub fn vault_claims_put(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemoryClaimInput>,
+) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.put", &input)
 }
 pub fn vault_claims_supersede(
     memory: &Memory<'_>,

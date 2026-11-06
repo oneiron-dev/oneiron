@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4595 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1264 facade rows, 4597 declarations.
+Inputs: 1193 of 1264 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -23698,12 +23698,23 @@ class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]
 BrowserSwitchEngineOutput = BrowserAnswer
+class MemoryTimeRange(TypedDict):
+    start: int
+    end: int
+class MemoryClaimInput(TypedDict):
+    id: str
+    predicate: str
+    subject: str
+    value: Any
+    confidence: NotRequired[float | None]
+    occurred: NotRequired[MemoryTimeRange | None]
+    learnedAt: NotRequired[int | None]
+class MemoryWriteOutput(TypedDict):
+    id: EntityId
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str
     now: int
-class MemoryWriteOutput(TypedDict):
-    id: EntityId
 FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool, "kind": NotRequired[FoldKind | None]})
 class FoldCompactRequest(TypedDict):

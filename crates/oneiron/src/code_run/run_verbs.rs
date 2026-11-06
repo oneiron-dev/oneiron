@@ -31,7 +31,7 @@ pub struct MemorySearchInput {
 }
 
 /// `vault.claims.put`: one claim candidate through the run's gate.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MemoryClaimInput {
     /// The claim's entity id, hex.
@@ -51,7 +51,7 @@ pub struct MemoryClaimInput {
 }
 
 /// A closed `[start, end]` span in unix seconds.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryTimeRange {
     #[schemars(range(max = "JS_SAFE_INTEGER"))]
