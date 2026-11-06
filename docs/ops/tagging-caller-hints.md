@@ -9,16 +9,18 @@ reader represents only a plain on-device `Memory` read: the actual actor and
 actor class, plus an explicit authority position. A credentialed position keeps
 every effective fact of the original bound verified read proof. An
 uncredentialed position uses the native grant-bound reader. If the same witness
-write already held a native Owner reader for its assertions or held tags, it
-records that Owner position instead. Capturing the position opens no new read.
+write already held a native Owner reader for its assertions or held tags, or
+already opened a native Owner key to admit a quote, it records that Owner
+position instead. Capturing the position opens no new read.
 A host-action lane, room-turn lane or non-on-device destination carries an
 explicit unknown, not the internal hint aggregate.
 
 An uncredentialed reader's fresh native Owner kind must match its captured
 position. A grant-bound position cannot become an Owner reader after a
 promotion. An Owner position cannot be replaced by a later grant-bound reader.
-Either mismatch supplies no optional hint. Without an already-held reader, an
-uncredentialed Owner remains unsupported and supplies no optional hint. Stored
+Either mismatch supplies no optional hint. Without an already-held reader or
+quote key, an uncredentialed Owner remains unsupported and supplies no optional
+hint. Stored
 positions never construct an Owner key: every supported reader goes through
 the ordinary native read-key builder again.
 

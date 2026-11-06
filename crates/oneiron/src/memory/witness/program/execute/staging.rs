@@ -39,7 +39,12 @@ impl Memory<'_> {
                 wtxn,
                 plan.turn_id,
                 work,
-                self.queued_identity_hint_reader(write.held_hint_lane),
+                self.queued_identity_hint_reader(
+                    write
+                        .held_hint_lane
+                        .map(ScopedRead::actor_key)
+                        .or(write.quote_key),
+                ),
             )?;
             crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
             crate::workspace_roster::stage_project_detection_in_txn(
