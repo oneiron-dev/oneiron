@@ -759,16 +759,20 @@ fn media_rung(
             backend: Arc::new(booked::BookedReplies(Arc::clone(backend), budgets.clone())),
             row,
             caps: caps.clone(),
-            external_worker: (operation == AiOperation::Transcribe)
-                .then(|| {
-                    super::worker_host::external_asr_worker(
-                        &model.provider,
-                        provider,
-                        workers,
-                        &model.model,
-                    )
-                })
-                .flatten(),
+            external_worker: match operation {
+                AiOperation::Transcribe => Some(oneiron::llm::WorkerKind::Asr),
+                AiOperation::Speech => Some(oneiron::llm::WorkerKind::VoxCpm2),
+                _ => None,
+            }
+            .and_then(|kind| {
+                super::worker_host::external_media_worker(
+                    &model.provider,
+                    provider,
+                    workers,
+                    &model.model,
+                    kind,
+                )
+            }),
         }),
     })
 }
