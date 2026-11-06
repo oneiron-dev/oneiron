@@ -499,7 +499,10 @@ impl LimitsConfig {
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
-            (EngineLimit::KeyedNamespaceSegments, keyed_namespace_segments),
+            (
+                EngineLimit::KeyedNamespaceSegments,
+                keyed_namespace_segments,
+            ),
             (EngineLimit::KeyedNamespaceBytes, keyed_namespace_bytes),
             (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
             (EngineLimit::BookingEmailBytes, booking_email_bytes),
