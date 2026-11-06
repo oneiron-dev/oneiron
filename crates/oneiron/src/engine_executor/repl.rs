@@ -25,8 +25,8 @@ use super::store::{
     fallback_speech_marker, implicit_speak_output_path, load_context_output,
     load_observation_window, load_utf8_output, message_result_attachment, observation_output_path,
     observation_ref, publish_output, record_prepared_source, record_reply_evidence,
-    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
-    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
+    record_script_output, recoverable_chunk_path, resumed_output_path, resumed_output_wait,
+    script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -541,11 +541,14 @@ impl EngineNativeExecutor<'_> {
                 // The exact side-effect payload is part of the replay append,
                 // not ephemeral provider state. It is content-addressed like
                 // every other executor output and hashed into the checkpoint.
-                record_text_output(
+                let mut sink = self.storage.code_run_output_sink()?;
+                sink.write(stored.as_bytes())?;
+                publish_output(
                     &self.storage,
                     &mut record,
                     implicit_speak_output_path(completed_steps),
-                    stored,
+                    sink,
+                    Some(bridge_start as u64),
                 )?;
             }
             if let Some(status) = &terminal_status {
