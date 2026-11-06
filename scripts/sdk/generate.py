@@ -2416,6 +2416,10 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_claim_settlement({name}, output)'
             elif row['output'] == 'Option<crate::memory::SignalExtractionResult>':
                 result = f'crate::codec::lift_signal_extraction_result({name}, output)'
+            elif row['output'] == 'crate::drafter::DrafterPolicy':
+                result = f'crate::codec::lift_drafter_policy({name}, output)'
+            elif row['output'] == 'crate::drafter::DrafterStatus':
+                result = f'crate::codec::lift_drafter_status({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

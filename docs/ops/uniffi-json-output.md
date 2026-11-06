@@ -446,3 +446,16 @@ Original mappings, repair links, source JSONL and read receipts are unchanged.
 Neither conversion changes native reads, validation, inputs, clients, hooks,
 authority or public records. Neither proves end-to-end depth, memory or runtime
 bounds.
+
+## Drafter policy and status output settings
+
+The drafter policy-set and status results consume each present recipe's required
+trainer settings through the existing owned `WireJson` conversion before
+converting the finite result. The converted settings are then restored to the
+same recipe. Required null settings remain present; an absent recipe stays absent.
+
+Policy revisions, actors, clocks, bindings, serving state, events and all other
+finite fields keep the original whole-result codec and per-verb diagnostics.
+Native policy persistence, validation, authority, inputs, typed clients, hooks
+and public records are unchanged. This selected output conversion does not prove
+end-to-end depth, memory or runtime bounds.

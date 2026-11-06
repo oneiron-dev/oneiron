@@ -2399,12 +2399,12 @@ export_facade! {
 "vault.drafters.status" => fn vault_drafters_status(&self, input: DrafterStatusRequest) -> DrafterStatus = |client| {
     let input: oneiron::drafter::DrafterStatusRequest = crate::codec::lower_record("vault.drafters.status", input)?;
     let output = client.vault_drafters_status(&input)?;
-    crate::codec::lift_record("vault.drafters.status", &output)
+    crate::codec::lift_drafter_status("vault.drafters.status", output)
 };
 "vault.drafters.policy.set" => fn vault_drafters_policy_set(&self, input: DrafterPolicySetRequest) -> DrafterPolicy = |client| {
     let input: oneiron::drafter::DrafterPolicySetRequest = crate::codec::lower_record("vault.drafters.policy.set", input)?;
     let output = client.vault_drafters_policy_set(&input)?;
-    crate::codec::lift_record("vault.drafters.policy.set", &output)
+    crate::codec::lift_drafter_policy("vault.drafters.policy.set", output)
 };
 "vault.drafters.revert" => fn vault_drafters_revert(&self, input: DrafterRevertRequest) -> DrafterRevertReceipt = |client| {
     let input: oneiron::drafter::DrafterRevertRequest = crate::codec::lower_record("vault.drafters.revert", input)?;
