@@ -29,7 +29,7 @@
 //! next call enters the run as before.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use oneiron::EntityId;
 use oneiron::authority::InvocationSlipBinding;
@@ -41,6 +41,10 @@ use super::McpCallContext;
 use crate::mcp::McpCodeExecutionError;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
+/// The host's background write gate, held weak (FIX 4606): the strong gate
+/// is the connector settler's own.
+type WeakAdmission = Weak<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
+
 /// The served MCP runs parked on a durable wait, each with the owned
 /// continuation that enters it again once the wait's reply is delivered
 /// (FIX 4606). In memory only.
@@ -51,8 +55,11 @@ pub(crate) struct McpCodeRunContinuations {
     /// settler passes through. Each re-entry holds one admission of it from
     /// before it is spawned until it returns, so a managed vault frozen for
     /// reap sees it in flight, and admits none while frozen. Unset until
-    /// the settler starts: no run is entered again before then.
-    admission: OnceLock<HousekeepingAdmission>,
+    /// the settler starts: no run is entered again before then. Held weak:
+    /// the settler's own task holds the gate, so the server never owns a
+    /// gate that owns the server, and no run is entered again once the
+    /// settler has stopped.
+    admission: OnceLock<WeakAdmission>,
 }
 
 /// One run's place in the registry.
@@ -83,14 +90,15 @@ impl McpCodeRunSlot {
 impl McpCodeRunContinuations {
     /// Binds re-entries to `admit`, the host's write gate for its connector
     /// settler's passes. The first binding stands.
-    pub(crate) fn admit_with(&self, admit: HousekeepingAdmission) {
-        let _ = self.admission.set(admit);
+    pub(crate) fn admit_with(&self, admit: &HousekeepingAdmission) {
+        let _ = self.admission.set(Arc::downgrade(admit));
     }
 
     /// One admission for a re-entry, held until it returns; `None` while
     /// the host admits no background write, or before the settler starts.
     fn admit(&self) -> Option<Box<dyn Send>> {
-        self.admission.get().and_then(|admit| admit())
+        let admit = self.admission.get().and_then(Weak::upgrade)?;
+        admit()
     }
 
     fn slots(&self) -> MutexGuard<'_, HashMap<EntityId, McpCodeRunSlot>> {
