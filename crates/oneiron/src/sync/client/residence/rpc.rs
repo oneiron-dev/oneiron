@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -270,6 +270,29 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
+        self.call_inner(method, params, None).await
+    }
+
+    /// A bearer leaves only for the exact issuing machine, rejudged after
+    /// the actual socket's ready and immediately before its start_send.
+    pub(super) async fn request_for_machine(
+        &mut self,
+        vault: &crate::Vault,
+        machine: crate::EntityId,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TransportError> {
+        self.call_inner(method, params, Some((vault, machine)))
+            .await?
+            .map_err(|_| TransportError::InvalidPayload("admitting machine refused bearer RPC"))
+    }
+
+    async fn call_inner(
+        &mut self,
+        method: &str,
+        params: Value,
+        machine: Option<(&crate::Vault, crate::EntityId)>,
+    ) -> Result<Result<Value, HomeRefused>, TransportError> {
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
         let request = RequestEnvelope {
@@ -286,10 +309,37 @@ impl ResidenceRpc {
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
         let deadline = tokio::time::Instant::now() + self.timeout;
-        tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
+        if let Some((vault, machine)) = machine {
+            tokio::time::timeout_at(
+                deadline,
+                futures_util::future::poll_fn(|cx| {
+                    std::pin::Pin::new(&mut self.socket).poll_ready(cx)
+                }),
+            )
             .await
             .map_err(|_| refused())?
             .map_err(|_| refused())?;
+            if !matches!(
+                vault.peer_machine_stands(self.home),
+                crate::authority::PeerMachine::Proven { machine: proven, .. } if proven == machine
+            ) {
+                return Err(TransportError::InvalidPayload(
+                    "the option link's admitting machine did not prove this socket",
+                ));
+            }
+            std::pin::Pin::new(&mut self.socket)
+                .start_send(Message::Binary(frame.into()))
+                .map_err(|_| refused())?;
+            tokio::time::timeout_at(deadline, self.socket.flush())
+                .await
+                .map_err(|_| refused())?
+                .map_err(|_| refused())?;
+        } else {
+            tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
+                .await
+                .map_err(|_| refused())?
+                .map_err(|_| refused())?;
+        }
         let mut chunks = Vec::new();
         let mut received = 0usize;
         for seq in 0..512u64 {
