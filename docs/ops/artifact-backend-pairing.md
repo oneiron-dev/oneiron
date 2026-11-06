@@ -118,6 +118,21 @@ delivered to this app through its own channel after the explicit owner act.
 No engine-owned private key, key storage or persistence across backend sessions
 is supplied by this door.
 
+For an app using the Rust client, `oneiron_remote::PreparedPairing::new(link)`
+prepares the existing signed redemption without sending HTTP. Keep the returned
+value inside the app. Its `binding_key()` is the nonsecret public key the owner
+can later name when issuing the explicit grant-bound slip. Serialize
+`request_body()` as JSON and send it through the native Fetch relay to
+`/v1/core/pairing/redeem`, without an Authorization bearer. Handle a non-success
+HTTP response before calling `finish(reply_body)`. That consumes the prepared
+value, checks the original checkpoint pin and returns the ordinary
+`(origin, credential, pin, comm)` tuple. The credential contains the app's private
+connection key and must stay one secret. This client neither logs it nor stores
+it on disk. The direct-HTTP `OneironClient::pair` and `pair_pinned` paths use the
+same preparation and reply validation; the prepared value is for callers that
+provide their own transport. It does not turn the facade client into the guest's
+action transport or supply persistence across backend sessions.
+
 This is the identity bootstrap and owner-grant join for FIX1116 / OF-356, not backend deployment.
 It starts no process, changes no publication pointer or audience, and exposes
 no private preview. An app can compute and serve without engine-action grants.
