@@ -270,17 +270,19 @@ impl WakeAttemptMeter {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The terminal steps a settlement of [`Self::charged_units`] pays
-    /// for, each once: those the tally spent before an error, then the
-    /// leading noted line steps whose units fit in the line's charge, so no
-    /// step is pinned paid beyond what the settlement charges (FIX 6100).
-    pub(crate) fn step_receipts(&self) -> Vec<StepEffectBinding> {
-        let mut paid = self.lock_spent_before_error().1.clone();
+    /// Captures one settlement's units and paid-step receipts together.
+    /// The same line reading bounds the paid prefix, and error spend stays
+    /// paired with the receipts recorded beside it.
+    pub(crate) fn settlement(&self) -> (u64, Vec<StepEffectBinding>) {
+        let spent = self.lock_spent_before_error();
         let steps = self
             .terminal_steps
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut left = self.line_units();
+        let line_units = self.line_units();
+        let charged = line_units.saturating_add(spent.0);
+        let mut paid = spent.1.clone();
+        let mut left = line_units;
         for &(binding, units) in &*steps {
             let Some(rest) = left.checked_sub(units) else {
                 break;
@@ -290,7 +292,7 @@ impl WakeAttemptMeter {
                 paid.push(binding);
             }
         }
-        paid
+        (charged, paid)
     }
 }
 
