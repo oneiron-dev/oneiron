@@ -1033,7 +1033,7 @@ export interface FacadeInputs {
   "vault.claims.demote": Facade.ClaimDemoteRequest;
   "vault.claims.list_filtered": Facade.ClaimFilteredListRequest;
   "vault.claims.read_filtered": Facade.ClaimFilteredReadRequest;
-  "vault.claims.history": Facade.ClaimRefRequest;
+  "vault.claims.history": Facade.ClaimHistoryRequest;
   "vault.delete": Facade.SafeDeleteRequest;
   "vault.writes.critical_confirm.pending": Facade.CriticalWriteConfirmPendingRequest;
   "vault.writes.critical_confirm.clear": Facade.CriticalWriteConfirmRequest;
@@ -4145,7 +4145,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
         read_filtered: (input: Facade.ClaimFilteredReadRequest, options?: O): FacadeReturns<"vault.claims.read_filtered">[K] => invoke("vault.claims.read_filtered", input, options, newInvocation()),
         /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-        history: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.history">[K] => invoke("vault.claims.history", input, options, newInvocation()),
+        history: (input: Facade.ClaimHistoryRequest, options?: O): FacadeReturns<"vault.claims.history">[K] => invoke("vault.claims.history", input, options, newInvocation()),
         /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
         admit: (input: Facade.AdmitImportedClaimInput, options?: O): FacadeReturns<"vault.claims.admit">[K] => invoke("vault.claims.admit", input, options, newInvocation()),
         /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */

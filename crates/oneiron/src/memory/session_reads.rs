@@ -164,6 +164,7 @@ impl<'s> SessionReadContext<'s> {
             }
             SessionRead::RefsResolve => {
                 let input: ResolveRecordRefRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.resolve_record_ref(&memory, &input)?;
                 let rows = EntityId::from_hex(&read.value.record.id)
                     .ok()
@@ -207,8 +208,9 @@ impl<'s> SessionReadContext<'s> {
         query: &str,
         limit: usize,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> crate::Result<Vec<ScoredEntity>> {
-        let lane = self.lane(claims, None);
+        let lane = self.lane(claims, filter);
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;

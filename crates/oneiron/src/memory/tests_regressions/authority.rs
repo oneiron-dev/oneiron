@@ -293,6 +293,7 @@ fn generated_supersession_is_proposed_and_cannot_close_user_truth() {
             predicate: Some("profile.name".to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: 10,
+            filter: None,
         })
         .expect("list");
     assert_eq!(

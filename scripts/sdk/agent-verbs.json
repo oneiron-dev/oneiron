@@ -16855,9 +16855,9 @@
         },
         "output": "ClaimViews"
       },
-      "input": "ClaimRefRequest",
+      "input": "ClaimHistoryRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
-      "call": "memory.claim_history(&input.claim_ref)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).claim_history(&input.claim_ref)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true

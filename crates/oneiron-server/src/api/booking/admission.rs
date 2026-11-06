@@ -383,6 +383,7 @@ fn booking_is_active_future_for(
         vault,
         &CalendarReadRequest {
             event_ref: event_ref.to_hex(),
+            filter: None,
         },
     )
     .map_err(engine_read_error)?;

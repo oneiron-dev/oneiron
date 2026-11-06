@@ -595,6 +595,15 @@ impl Lower<sdk::ClaimRefRequest> for String {
     }
 }
 
+impl Lower<sdk::ClaimHistoryRequest> for String {
+    fn lower(self) -> Result<sdk::ClaimHistoryRequest, OneironError> {
+        Ok(sdk::ClaimHistoryRequest {
+            claim_ref: self,
+            filter: None,
+        })
+    }
+}
+
 impl Lower<sdk::ForgetRequest> for ForgetSelector {
     fn lower(self) -> Result<sdk::ForgetRequest, OneironError> {
         match (self.short_ref, self.subject_ref, self.predicate) {
@@ -622,6 +631,7 @@ impl Lower<engine::ClaimListFilter> for ClaimListFilter {
             predicate: self.predicate,
             lifecycle: self.lifecycle,
             limit: self.limit.lower()?,
+            filter: None,
         })
     }
 }

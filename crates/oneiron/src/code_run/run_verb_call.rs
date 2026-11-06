@@ -58,10 +58,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
     Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.map_or(20, |limit| limit as usize),
-            ))
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(
+                    args.query,
+                    args.limit.map_or(20, |limit| limit as usize),
+                )
+                .with_read_filter(args.filter),
+            )
         }
         RunVerb::VaultClaimsPut => {
             let args: MemoryClaimInput = decode(input)?;

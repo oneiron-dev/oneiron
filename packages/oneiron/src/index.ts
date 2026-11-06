@@ -725,7 +725,7 @@ export class Oneiron {
       /** Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
       read_filtered: (input: Facade.ClaimFilteredReadRequest): Facade.ScopedReadResult<Facade.ClaimView | null> => this.#call(() => this.#client.vaultClaimsReadFiltered(input) as Facade.ScopedReadResult<Facade.ClaimView | null>),
       /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-      history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
+      history: (input: Facade.ClaimHistoryRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
       /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */

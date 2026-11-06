@@ -1634,7 +1634,7 @@ class Oneiron:
             """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
         def read_filtered(self, input: Facade.ClaimFilteredReadRequest) -> Facade.ScopedReadResult[Facade.ClaimView | None]:
             """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
-        def history(self, input: Facade.ClaimRefRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
+        def history(self, input: Facade.ClaimHistoryRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""

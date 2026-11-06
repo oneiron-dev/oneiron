@@ -28,14 +28,16 @@ pub(crate) enum HomeText {
     },
 }
 
-/// Asks `vault`'s home `query` for `caller`, before `due`. A device whose
-/// own sync connection dropped still syncs only what it opened, so its page
-/// stays local-only rather than reading whole.
+/// Asks `vault`'s home `query` for `caller`, before `due`, under the
+/// caller's own retrieval `filter` (FIX 3977). A device whose own sync
+/// connection dropped still syncs only what it opened, so its page stays
+/// local-only rather than reading whole.
 pub(crate) async fn ask_home_text(
     vault: &Vault,
     caller: &HomeRecallCaller,
     query: &str,
     limit: usize,
+    filter: Option<&oneiron::memory::ReadFilterInput>,
     due: Option<Instant>,
 ) -> HomeText {
     let DeviceResidence::Opened { search } = vault.device_residence() else {
@@ -56,8 +58,11 @@ pub(crate) async fn ask_home_text(
         .is_some_and(|budgets| limit > budgets.search_limit);
     let asked = async {
         match forwarded {
-            Some(proof) => home.search_for(query, limit, proof, caller.locality).await,
-            None => home.search(query, limit).await,
+            Some(proof) => {
+                home.search_for(query, limit, proof, caller.locality, filter)
+                    .await
+            }
+            None => home.search(query, limit, filter).await,
         }
     };
     let answer = match due {
@@ -87,6 +92,7 @@ pub(crate) async fn complete_bm25_with_home(
     mut page: Bm25Search,
     query: &str,
     limit: usize,
+    filter: Option<&oneiron::memory::ReadFilterInput>,
     home: &HomeRecallCaller,
 ) -> (Bm25Search, Vec<EntityId>) {
     if page.residence.is_none() {
@@ -98,7 +104,7 @@ pub(crate) async fn complete_bm25_with_home(
         .filter_map(|hit| hit.record.as_ref())
         .map(|record| record.id.clone())
         .collect();
-    let residence = match ask_home_text(vault, home, query, limit, None).await {
+    let residence = match ask_home_text(vault, home, query, limit, filter, None).await {
         HomeText::Answered { search, capped } if search.source == SearchSource::Home => {
             home_residence(search, capped, &held)
         }

@@ -25507,6 +25507,8 @@ pub struct OffRecordRecallRequest {
     pub query: String,
     #[serde(rename = "limit")]
     pub limit: u64,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::memory::session_reads::CreateNoteRequest`.
@@ -58825,6 +58827,8 @@ pub struct CalendarInstanceMoveRequest {
 pub struct CalendarReadRequest {
     #[serde(rename = "event_ref")]
     pub event_ref: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::calendar::query::requests::CalendarEventView`.
@@ -58875,6 +58879,8 @@ pub struct CalendarSearchRequest {
     pub text: Option<String>,
     #[serde(rename = "limit")]
     pub limit: u32,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarEventViewList`.
@@ -59343,6 +59349,8 @@ pub struct CriticalWriteConfirmReceiptRequest {
 pub struct ResolveRecordRefRequest {
     #[serde(rename = "reference")]
     pub reference: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::lens::record_ref::RecordRefPreview`.
@@ -59379,6 +59387,8 @@ pub struct RecordLinksRequest {
     pub after: Option<String>,
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::lens::record_ref::ProseSpan`.

@@ -92,6 +92,7 @@ pub(super) fn search_pages(
             input.scope.as_ref(),
             as_of,
             input.as_of,
+            input.filter.as_ref(),
         )
         .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
         let mut hits = Vec::new();
@@ -126,6 +127,7 @@ pub(super) fn search_pages(
         &selector_wire,
         input.scope.as_ref(),
         as_of,
+        input.filter.as_ref(),
         &listed,
     );
     let offset = match &input.page {

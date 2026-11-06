@@ -153,6 +153,13 @@ pub(crate) async fn run_context_pack(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
+    // The caller's own filter binds the pack's reader once its audience is
+    // set, before any candidate is read (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit)
         .map_err(|error| {

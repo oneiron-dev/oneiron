@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4596 declarations.
+Census: 1264 facade rows, 4597 declarations.
 Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -8229,6 +8229,7 @@ class OffRecordRecallRequest(TypedDict):
     session_ref: str
     query: str
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class CreateNoteRequest(TypedDict):
     kind: str
     markdown: str
@@ -18719,6 +18720,7 @@ class CalendarInstanceMoveRequest(TypedDict):
     end_utc: int
 class CalendarReadRequest(TypedDict):
     event_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 class CalendarEventView(TypedDict):
     origin: str
     event_ref: str
@@ -18734,6 +18736,7 @@ class CalendarSearchRequest(TypedDict):
     range: NotRequired[CalendarRangeDto | None]
     text: NotRequired[str | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class CalendarFreebusyRequest(TypedDict):
     calendars: list[CalendarSel]
     range: CalendarRangeDto
@@ -18814,6 +18817,7 @@ class ClaimListFilter(TypedDict):
     predicate: NotRequired[str | None]
     lifecycle: NotRequired[str | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class ClaimDemoteActionInputDecay(TypedDict):
     kind: Literal["decay"]
     new_claim_of_weight: float
@@ -18839,6 +18843,9 @@ class ClaimFilteredListRequest(TypedDict):
     limit: int
     filter: NotRequired[ReadFilterInput | None]
 class ClaimFilteredReadRequest(TypedDict):
+    claim_ref: str
+    filter: NotRequired[ReadFilterInput | None]
+class ClaimHistoryRequest(TypedDict):
     claim_ref: str
     filter: NotRequired[ReadFilterInput | None]
 SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "policy_delete"]
@@ -18893,6 +18900,7 @@ class EntityRequest(TypedDict):
     filter: NotRequired[ReadFilterInput | None]
 class ResolveRecordRefRequest(TypedDict):
     reference: str
+    filter: NotRequired[ReadFilterInput | None]
 class RecordRefPreview(TypedDict):
     record: RecordRef
     revision: NotRequired[str | None]
@@ -18903,6 +18911,7 @@ class RecordLinksRequest(TypedDict):
     turn_ref: NotRequired[str | None]
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
+    filter: NotRequired[ReadFilterInput | None]
 class ProseSpanPlain(TypedDict):
     kind: Literal["plain"]
     start: int

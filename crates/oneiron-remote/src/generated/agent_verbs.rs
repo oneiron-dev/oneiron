@@ -16545,7 +16545,7 @@ impl OneironClient {
     }
     pub fn vault_claims_history(
         &self,
-        input: &oneiron::task_verb::sdk::ClaimRefRequest,
+        input: &oneiron::task_verb::sdk::ClaimHistoryRequest,
     ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>, MemoryError>
     {
         let value = serde_json::to_value(input).map_err(|_| {

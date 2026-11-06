@@ -98,10 +98,25 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         )]),
         // The run repo row and its closed input; the binding is the host's.
         SelfCall::Repo(call) => repo_request_value(call)?,
-        SelfCall::MemorySearch(call) => request_map(vec![
-            ("query", Value::from(call.query.as_str())),
-            ("limit", Value::from(call.limit as u64)),
-        ]),
+        SelfCall::MemorySearch(call) => {
+            let mut entries = vec![
+                ("query", Value::from(call.query.as_str())),
+                ("limit", Value::from(call.limit as u64)),
+            ];
+            // An unfiltered search keeps the request bytes it always had; a
+            // filtered one names its filter (FIX 3977).
+            if let Some(filter) = &call.filter {
+                entries.push((
+                    "filter",
+                    Value::from(
+                        serde_json::to_string(filter).map_err(|_| {
+                            invalid_code_run_replay("search filter does not encode")
+                        })?,
+                    ),
+                ));
+            }
+            request_map(entries)
+        }
         SelfCall::MemoryWriteFixture(call) => request_map(vec![
             ("id", entity_id_value(call.id)),
             ("candidate", claim_candidate_request_value(&call.candidate)?),

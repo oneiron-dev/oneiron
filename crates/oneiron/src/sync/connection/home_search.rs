@@ -71,13 +71,16 @@ impl HomeSearch {
 
     /// The home's hits when it is reachable, else this device's opened items
     /// alone, marked local-only and incomplete. More hits than the home
-    /// answers at once come a page at a time (FIX 8865).
+    /// answers at once come a page at a time (FIX 8865). `filter`, the
+    /// caller's own retrieval filter, rides the request to the home's reader
+    /// (FIX 3977); a filtered search takes no offline fallback.
     pub async fn search(
         &self,
         query: &str,
         limit: usize,
+        filter: Option<&crate::memory::ReadFilterInput>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, None, None).await
+        self.ask(query, limit, None, None, filter, None).await
     }
 
     /// [`Self::search`] for a caller narrower than this device's owner
@@ -92,8 +95,9 @@ impl HomeSearch {
         limit: usize,
         caller: &crate::authority::ForwardedCallerProof,
         locality: crate::claim::CallerLocality,
+        filter: Option<&crate::memory::ReadFilterInput>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, None, Some((caller, locality)))
+        self.ask(query, limit, None, None, filter, Some((caller, locality)))
             .await
     }
 
@@ -110,12 +114,14 @@ impl HomeSearch {
         limit: usize,
         scope: &crate::sync::residence::ResolvedRecallSelection,
         as_of: Option<u64>,
+        filter: Option<&crate::memory::ReadFilterInput>,
         caller: Option<(
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
         )>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, Some(scope), as_of, caller).await
+        self.ask(query, limit, Some(scope), as_of, filter, caller)
+            .await
     }
 
     pub(crate) async fn media_vectors_for(
@@ -134,6 +140,7 @@ impl HomeSearch {
         limit: usize,
         scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
         as_of: Option<u64>,
+        filter: Option<&crate::memory::ReadFilterInput>,
         caller: Option<(
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
@@ -148,6 +155,7 @@ impl HomeSearch {
             limit,
             scope,
             as_of,
+            filter,
             caller,
         )
         .await

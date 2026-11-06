@@ -5779,7 +5779,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.history",
-                crate::code_run::vault_read::request_schema::<ClaimRefRequest>(),
+                crate::code_run::vault_read::request_schema::<ClaimHistoryRequest>(),
             ),
             (
                 "vault.delete",
@@ -23187,7 +23187,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::ClaimFilteredReadRequest = decode(value.clone())?;
         }
         "vault.claims.history" => {
-            let _input: ClaimRefRequest = decode(value.clone())?;
+            let _input: ClaimHistoryRequest = decode(value.clone())?;
         }
         "vault.delete" => {
             let _input: SafeDeleteRequest = decode(value.clone())?;
@@ -35378,9 +35378,11 @@ pub fn vault_claims_read_filtered(
 }
 pub fn vault_claims_history(
     memory: &Memory<'_>,
-    input: ClaimRefRequest,
+    input: ClaimHistoryRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
-    memory.claim_history(&input.claim_ref)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .claim_history(&input.claim_ref)
 }
 pub fn vault_delete(
     memory: &Memory<'_>,
