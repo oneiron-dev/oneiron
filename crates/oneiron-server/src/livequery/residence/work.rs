@@ -78,7 +78,7 @@ impl ResidenceWorkState {
         &mut self,
         call: ResidenceWorkCall,
         server: Arc<SyncServer>,
-        direct: UnboundedSender<Vec<u8>>,
+        direct: crate::handler::DirectSender,
     ) {
         self.running.spawn(call.answer(server, direct));
     }
@@ -146,7 +146,7 @@ impl ResidenceWorkCall {
     pub(crate) async fn answer(
         self,
         server: Arc<SyncServer>,
-        direct: UnboundedSender<Vec<u8>>,
+        direct: crate::handler::DirectSender,
     ) -> Result<(), ProtocolError> {
         let Self {
             auth,

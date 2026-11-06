@@ -19,6 +19,8 @@ mod pad_custody;
 mod pad_objects;
 mod pad_refill;
 mod pages;
+mod promotion_to;
+pub(crate) use promotion_to::send as residence_promote_to;
 mod search;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};

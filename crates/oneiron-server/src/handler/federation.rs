@@ -24,7 +24,7 @@ pub(super) async fn handle_selector_fetch(
     key: &WindowKey,
     sub_tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {
@@ -130,7 +130,7 @@ pub(super) async fn handle_selector_fetch(
 }
 
 fn send(
-    tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    tx: &crate::handler::DirectSender,
     key: &WindowKey,
     tag: u8,
     payload: &[u8],

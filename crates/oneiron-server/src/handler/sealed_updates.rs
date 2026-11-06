@@ -13,7 +13,6 @@ use oneiron::sync::residence::{sealed_update_queue, sealed_updates_since, store_
 use oneiron::sync::transport::{
     SealedUpdateFrame, decode_sealed_update_frame, encode_sealed_update_frame,
 };
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::conn_state::ConnState;
 use crate::protocol::{self, ProtocolError};
@@ -57,7 +56,7 @@ pub(super) fn handle(
     conn_id: u32,
     state: &mut ConnState,
     payload: &[u8],
-    direct_tx: &UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     let frame = decode_sealed_update_frame(payload)
         .map_err(|error| ProtocolError::InvalidPayload(protocol::transport_err_msg(error)))?;

@@ -29,6 +29,7 @@ mod forward;
 mod history_free;
 mod pad_custody;
 mod project_history;
+mod promotion_copies;
 mod rebootstrap;
 mod replacement;
 mod repo_manifest_conflict;
@@ -79,6 +80,7 @@ pub use self::pad_custody::{
     WindowPadReceiptWitness, admit_window_pads, carrier_window_pads, persisted_window_pads,
     prepare_window_pads, promotion_window_pads,
 };
+pub use self::promotion_copies::PreparedPromotionClaimCopies;
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{

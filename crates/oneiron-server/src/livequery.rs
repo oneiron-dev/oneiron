@@ -24,6 +24,7 @@ mod residence;
 mod reply;
 pub(crate) use residence::{
     ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+    residence_promote_to,
 };
 mod routing;
 mod rpc;
@@ -443,7 +444,7 @@ pub(crate) fn residence_rpc_to(
     append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
     touch_stage: &mut Option<ResidenceTouchStage>,
     conn: u32,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     let reply = residence::run(
         server,
@@ -542,7 +543,7 @@ pub(crate) async fn rpc_reply_to(
     request: RpcRequest,
     context: SocketCallContext,
     conn: u32,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     crate::api::answer_hold::until_encoded(async move {
         let (call, request_id, result) = rpc_answer(server, auth, request, &context).await;

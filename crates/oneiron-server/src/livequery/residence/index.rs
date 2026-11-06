@@ -572,6 +572,21 @@ pub(super) fn promote(
     peer: PeerMachine,
     params: Value,
 ) -> Result<Answer, AppError> {
+    promote_prepared(server, auth, peer, params).map(|(answer, _)| answer)
+}
+
+pub(super) fn promote_prepared(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<
+    (
+        Answer,
+        Option<oneiron::sync::window::PreparedPromotionClaimCopies>,
+    ),
+    AppError,
+> {
     let input: PromotionRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
@@ -625,17 +640,26 @@ pub(super) fn promote(
     let snapshot =
         oneiron::sync::window::promotion_window_pads(&server.vault, peer, &window, &snapshot)
             .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
+    let copies = oneiron::sync::window::PreparedPromotionClaimCopies::prepare(
+        &server.vault,
+        peer,
+        window.as_str(),
+        &snapshot,
+    );
     Ok((
-        json!({
-            "window": window.as_str(),
-            "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
-            "pads": pads.iter().map(|pad| json!({
-                "id": pad.id.to_hex(),
-                "window": pad.window,
-                "raw": base64::engine::general_purpose::STANDARD.encode(&pad.row[..]),
-            })).collect::<Vec<_>>(),
-        }),
-        Some(rows),
+        (
+            json!({
+                "window": window.as_str(),
+                "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
+                "pads": pads.iter().map(|pad| json!({
+                    "id": pad.id.to_hex(),
+                    "window": pad.window,
+                    "raw": base64::engine::general_purpose::STANDARD.encode(&pad.row[..]),
+                })).collect::<Vec<_>>(),
+            }),
+            Some(rows),
+        ),
+        copies,
     ))
 }
 

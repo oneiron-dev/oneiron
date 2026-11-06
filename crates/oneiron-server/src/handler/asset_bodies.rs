@@ -43,7 +43,7 @@ pub(super) async fn handle(
     state: &mut ConnState,
     tag: u8,
     payload: Vec<u8>,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     let followed = followed_windows(server, state);
     // The session goes to the blocking thread and comes back with its frames.
@@ -93,7 +93,7 @@ pub(super) async fn handle(
 pub(super) fn poll(
     server: &SyncServer,
     state: &mut ConnState,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) {
     let followed = followed_windows(server, state);
     let bodies = state
@@ -326,7 +326,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
 /// Queues `frames` on this socket's direct lane, whose sends take the guarded
 /// door every reply takes.
 fn queue(
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     frames: Vec<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
     for frame in frames {
