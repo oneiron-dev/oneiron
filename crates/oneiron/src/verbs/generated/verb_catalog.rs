@@ -13839,7 +13839,7 @@ impl AgentVerb {
                 "One party's answer to a join that waits on it, after which the join is decided again."
             }
             Self::VaultRoomsLeave => {
-                "Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership."
+                "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."
             }
             Self::VaultRoomsOffer => {
                 "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."

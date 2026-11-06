@@ -7319,7 +7319,7 @@ declare const vault: Sdk.VaultHost & {
     invite(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** Files and decides a request to take part in a room or one of its threads. */
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
-    /** Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
+    /** Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
     leave(input: Sdk.RoomLeaveRequest): Promise<Sdk.RoomLeaveOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */
     list(input: Sdk.EmptyRequest): Promise<Sdk.RoomEntry[] | StoredResult>;

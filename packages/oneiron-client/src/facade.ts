@@ -3419,7 +3419,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.rooms.join": { description: "Files and decides a request to take part in a room or one of its threads.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.rooms.invite": { description: "The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.rooms.consent": { description: "One party's answer to a join that waits on it, after which the join is decided again.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.rooms.leave": { description: "Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.rooms.leave": { description: "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.rooms.offer": { description: "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.rooms.offer.answer": { description: "The room's host answers an offer card: join, or not now.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.rooms.offer.vote": { description: "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -6108,7 +6108,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         invite: (input: Facade.JoinRequest, options?: O): FacadeReturns<"vault.rooms.invite">[K] => invoke("vault.rooms.invite", input, options, newInvocation()),
         /** One party's answer to a join that waits on it, after which the join is decided again. */
         consent: (input: Facade.ConsentAnswer, options?: O): FacadeReturns<"vault.rooms.consent">[K] => invoke("vault.rooms.consent", input, options, newInvocation()),
-        /** Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
+        /** Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
         leave: (input: Facade.RoomLeaveRequest, options?: O): FacadeReturns<"vault.rooms.leave">[K] => invoke("vault.rooms.leave", input, options, newInvocation()),
         /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
         offer: Object.assign((input: Facade.OfferDraft, options?: O): FacadeReturns<"vault.rooms.offer">[K] => invoke("vault.rooms.offer", input, options, newInvocation()), {

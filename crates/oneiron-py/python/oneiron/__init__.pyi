@@ -3050,7 +3050,7 @@ class Oneiron:
         def consent(self, spec: Facade.ConsentAnswer) -> Facade.JoinOutcome:
             """One party's answer to a join that waits on it, after which the join is decided again."""
         def leave(self, spec: Facade.RoomLeaveRequest) -> Facade.RoomLeaveOutcome:
-            """Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership."""
+            """Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."""
         @property
         def offer(self) -> "Oneiron._VaultRoomsOfferVerbs": ...
         def offers(self, spec: Facade.OffersRequest) -> Facade.OffersPage:
