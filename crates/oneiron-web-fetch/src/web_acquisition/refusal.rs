@@ -121,7 +121,8 @@ impl RendererErrorKind {
             Self::Transport
             | Self::Extraction
             | Self::InvalidResponse
-            | Self::CrossSiteRedirect => None,
+            | Self::CrossSiteRedirect
+            | Self::UnsafeRedirect => None,
         }
     }
 }
@@ -152,6 +153,17 @@ impl RendererError {
     pub fn cross_site_redirect(message: impl Into<String>) -> Self {
         Self {
             kind: RendererErrorKind::CrossSiteRedirect,
+            message: message.into(),
+        }
+    }
+
+    /// A rung refused a redirect hop that is not credential-free absolute
+    /// http(s) before sending it (FIX 4734). The ladder stops on it and
+    /// reports [`WebFetchError::UnsafeRedirect`]; no lower rung runs.
+    #[must_use]
+    pub fn unsafe_redirect(message: impl Into<String>) -> Self {
+        Self {
+            kind: RendererErrorKind::UnsafeRedirect,
             message: message.into(),
         }
     }

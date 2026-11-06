@@ -110,6 +110,11 @@ pub enum RendererErrorKind {
     /// redirect hop, a navigation) before contacting it (FIX 4734). The
     /// ladder ends on it typed.
     CrossSiteRedirect,
+    /// The rung refused a redirect hop that is not credential-free absolute
+    /// http(s) (credentials in it, another scheme, a `Location` that does
+    /// not resolve) before sending it (FIX 4734). The ladder ends on it
+    /// typed, so no other rung is sent after the same target.
+    UnsafeRedirect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -269,6 +274,16 @@ pub enum WebFetchError {
         "web fetch refused (cross_site_redirect): {url} leads outside the same-site crawl's pinned origin"
     )]
     CrossSiteRedirect { url: String },
+
+    /// A page whose redirect hop a rung refused unsent because it is not
+    /// credential-free absolute http(s): credentials in it, another scheme,
+    /// or a `Location` that does not resolve (FIX 4734). The page's ladder
+    /// ends, so no other rung, a remote service above all, is sent after the
+    /// same target. `url` is the requested page, credential-redacted.
+    #[error(
+        "web fetch refused (unsafe_redirect): {url} redirects to a URL that is not credential-free absolute http(s)"
+    )]
+    UnsafeRedirect { url: String },
 }
 
 pub type WebFetchResult<T> = std::result::Result<T, WebFetchError>;

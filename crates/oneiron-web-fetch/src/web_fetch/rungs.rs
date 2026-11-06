@@ -32,8 +32,8 @@ use reqwest::blocking::Response;
 
 use super::render::{
     FirecrawlScrapeEnvelope, FirecrawlScrapeRequest, decode_response_body, extract_readable_page,
-    read_capped_body, redact_url_credentials, redirect_target, renderer_final_url,
-    renderer_request_target, renderer_request_url, transport_failure,
+    read_capped_body, redact_url_credentials, redirect_destination, redirect_target,
+    renderer_final_url, renderer_request_target, renderer_request_url, transport_failure,
 };
 use super::{
     FirecrawlRenderer, NativeHeadlessRenderer, NativeReadabilityRenderer, RenderContext,
@@ -122,12 +122,14 @@ fn is_followed_redirect(status: StatusCode) -> bool {
 }
 
 /// The next hop of a redirect `response`, admitted before anything resolves
-/// or sends it (FIX 4734): its `Location` resolved and checked credential-free
-/// http(s), held to the context's pinned origin, within
-/// [`MAX_REDIRECT_HOPS`] of the requested page and new to `chain`, the URLs
-/// requested so far, which it joins; and on a managed node, refused by the
-/// guard's address-literal and operator-origin rules (FIX 7657). The
-/// client's resolver checks a named hop's addresses as it connects.
+/// or sends it (FIX 4734). Its `Location` is resolved; on a managed node the
+/// guard's address-literal and operator-origin rules judge where it goes
+/// first, whatever credentials or scheme it carries, and a refusal ends the
+/// ladder typed (FIX 6101, FIX 7657). Then it must be credential-free
+/// http(s), a refusal that ends the page's ladder too; inside the context's
+/// pinned origin; within [`MAX_REDIRECT_HOPS`] of the requested page; and
+/// new to `chain`, the URLs requested so far, which it joins. The client's
+/// resolver checks a named hop's addresses as it connects.
 fn next_hop(
     response: &Response,
     chain: &mut BTreeSet<String>,
@@ -137,7 +139,13 @@ fn next_hop(
         .headers()
         .get(reqwest::header::LOCATION)
         .map(reqwest::header::HeaderValue::as_bytes);
-    let next = redirect_target(response.url(), location)?;
+    let destination = redirect_destination(response.url(), location)?;
+    if let Some(guard) = context.hosted_guard()
+        && let Some(refused) = guard.refuses_hop(&destination)
+    {
+        return Err(refused.request_error(destination.as_str()));
+    }
+    let next = redirect_target(&destination)?;
     context.admit_hop(&next)?;
     let shown = redact_url_credentials(next.as_str());
     if chain.len() > MAX_REDIRECT_HOPS {
@@ -149,11 +157,6 @@ fn next_hop(
         return Err(RendererError::transport(format!(
             "web fetch GET was redirected in a loop (back to {shown})"
         )));
-    }
-    if let Some(guard) = context.hosted_guard()
-        && let Some(refused) = guard.refuses_hop(&next)
-    {
-        return Err(refused.request_error(next.as_str()));
     }
     Ok(next)
 }
