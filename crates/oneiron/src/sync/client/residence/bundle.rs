@@ -543,7 +543,7 @@ impl SlotRelay<'_> {
             let terminal: Option<bool> = if !staged {
                 None
             } else {
-                let attempt = attempt::BundleAttempt {
+                let mut attempt = attempt::BundleAttempt {
                     home,
                     executor,
                     generation,
@@ -561,7 +561,7 @@ impl SlotRelay<'_> {
                 };
                 // The exact attempt persists before the first commit send, so
                 // an ack lost on the way resumes, never reuploads.
-                attempt::persist(vault, attempt::AttemptKey::Auto(address), &attempt)
+                attempt::persist(vault, attempt::AttemptKey::Auto(address), &mut attempt)
                     .map_err(storage)?;
                 match work::begin_work(rpc, &attempt).await? {
                     work::WorkOutcome::Accepted(status) => match status.state {

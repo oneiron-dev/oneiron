@@ -91,9 +91,11 @@ pub(crate) struct BundleAttempt {
     /// finds, after a lost acknowledgement or a restart, still shows it to
     /// the owner. A row written without it carries none.
     pub(super) unmerged_sections: Vec<UnmergedSection>,
-    /// When this install assembled the upload, in recorded-clock seconds
-    /// (FIX 19525): the order in which reconciled attempts' sections are
-    /// shown, newest last. `None` for a row written before it was kept.
+    /// When this install assembled the upload (FIX 19525): its recorded
+    /// clock seconds, raised at persist above every attempt still stored, so
+    /// no two coexisting attempts share one and a later assembly is always
+    /// greater. The order in which reconciled attempts' sections are shown,
+    /// newest last. `None` for a row written before it was kept.
     pub(super) assembled_at: Option<u64>,
 }
 
@@ -373,19 +375,34 @@ fn decode_unmerged(raw: &[u8], at: &mut usize) -> Result<Vec<UnmergedSection>> {
 /// different still-unresolved attempt under the key is never overwritten:
 /// the write fails and the caller keeps the old attempt. Identical bytes
 /// persist idempotently.
-pub(super) fn persist(vault: &Vault, key: AttemptKey, attempt: &BundleAttempt) -> Result<()> {
-    let encoded = attempt.encode()?;
+///
+/// A fresh attempt's assembly time is raised, in the same writer, above
+/// every attempt still stored (FIX 19525), and `attempt` takes the value
+/// stored, so its later compares meet the stored bytes.
+pub(super) fn persist(vault: &Vault, key: AttemptKey, attempt: &mut BundleAttempt) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         let current = ATTEMPTS.get_bytes(&vault.store, wtxn, &key.encode())?;
-        if current
-            .as_deref()
-            .is_some_and(|current| current != encoded.as_slice())
-        {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::DocumentPendingUpdate,
-            ));
+        if let Some(current) = current {
+            if current != attempt.encode()? {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentPendingUpdate,
+                ));
+            }
+            return Ok(());
         }
-        ATTEMPTS.put(&vault.store, wtxn, &key.encode(), &encoded)
+        if let Some(assembled_at) = attempt.assembled_at {
+            let mut order = assembled_at;
+            for row in ATTEMPTS.iter_raw_from(&vault.store, wtxn, &[])? {
+                let (_, raw) = row?;
+                if let Ok(stored) = BundleAttempt::decode(&raw)
+                    && let Some(stored_at) = stored.assembled_at
+                {
+                    order = order.max(stored_at.saturating_add(1));
+                }
+            }
+            attempt.assembled_at = Some(order);
+        }
+        ATTEMPTS.put(&vault.store, wtxn, &key.encode(), &attempt.encode()?)
     })
 }
 
