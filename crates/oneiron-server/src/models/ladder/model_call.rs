@@ -58,6 +58,17 @@ impl ModelCallBinding {
             }),
         }
     }
+
+    /// The binding read back from a saved answer: its rung and route pin as
+    /// they answered, and no answering rung, since no rung sent it now
+    /// (FIX 4933).
+    pub(crate) fn saved(rung: CapsuleRungBinding, route: Option<ReplayRoutePin>) -> Self {
+        Self {
+            rung,
+            route,
+            answering: None,
+        }
+    }
 }
 
 impl OfferLadder {
