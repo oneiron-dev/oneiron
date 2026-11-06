@@ -2,7 +2,11 @@
 //! of its named results, and one read of one of them through the MCP door.
 //! Each is read over the storage the run's rows are in: the vault's for a
 //! canonical run, its session's for one bound to an off-record session
-//! (FIX 4284), which never reads a room's run through the vault.
+//! (FIX 4284), which never reads a room's run through the vault. A read of
+//! a step's stored diagnostics body can also give that step's feedback
+//! beside its reply (FIX 10614, in `diagnostics`).
+
+mod diagnostics;
 
 use super::{
     CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, EntityId, ExecutorStorage,
@@ -101,11 +105,30 @@ pub(crate) fn read_result_in(
     input: Value,
     withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
 ) -> Result<Value> {
+    read_selected_in(
+        storage, record, feedback, reference, facet, input, withholds,
+    )
+    .map(|(reply, _)| reply)
+}
+
+/// [`read_result_in`], with the output the reference selected among the
+/// run's results and `feedback` (FIX 10614): `None` when the rows the run's
+/// answers were served from withhold the read, or the reference names no
+/// result of the run.
+fn read_selected_in(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    feedback: &[CodeRunRawOutput],
+    reference: &str,
+    facet: Option<ResultFacet>,
+    input: Value,
+    withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
+) -> Result<(Value, Option<CodeRunRawOutput>)> {
     let run_id = record.run_id;
     let live: Vec<&CodeRunResultBinding> = record.bindings.iter().collect();
     let target = JsResultTarget::parse(reference);
     if withholds(record.agent_verb_rows().as_deref())? {
-        return Ok(refusal("result_withheld"));
+        return Ok((refusal("result_withheld"), None));
     }
     let outputs = record
         .outputs
@@ -133,7 +156,16 @@ pub(crate) fn read_result_in(
         _ => resolve(run_id, outputs, &live, &target.reference),
     };
     let Some((output, name)) = selected else {
-        return Ok(unknown_handle(&live));
+        return Ok((unknown_handle(&live), None));
     };
-    ResultRead::outside_run(storage, run_id, output, name, target.range, facet, input)
+    let reply = ResultRead::outside_run(
+        storage,
+        run_id,
+        output.clone(),
+        name,
+        target.range,
+        facet,
+        input,
+    )?;
+    Ok((reply, Some(output)))
 }

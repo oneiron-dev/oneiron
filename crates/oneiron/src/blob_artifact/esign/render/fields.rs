@@ -41,9 +41,7 @@ fn raster(doc: &mut Document, image: &SignatureRaster) -> Result<ObjectId> {
     let pixels = u64::from(image.width) * u64::from(image.height);
     if image.width == 0
         || image.height == 0
-        || image.width > 2048
-        || image.height > 2048
-        || pixels * 4 != image.rgba.len() as u64
+        || pixels.checked_mul(4) != Some(image.rgba.len() as u64)
         || image.rgba.chunks_exact(4).all(|p| p[3] == 0)
     {
         return Err(PdfPreparationError::InvalidSignatureImage);

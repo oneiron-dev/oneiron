@@ -258,8 +258,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
     // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
     crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
-    // Installed ICS feeds poll on their own cadence (FIX 7846).
-    workers.push(crate::calendar_host::spawn_ics_feed_polls(
+    // Installed ICS feeds and queued CalDAV syncs poll on their own cadence.
+    workers.push(crate::calendar_host::spawn_calendar_polls(
         Arc::clone(&sync_server),
         admitted(),
     ));
