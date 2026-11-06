@@ -88,7 +88,7 @@ impl HeldGrants {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// A for the row `raw` of `id`, tried only once B refused it: whether one
     /// of the reader's own live Grants admits it alone. `filter` is the one B
     /// judged it under, `asked` what the read asked beyond its key's floor.
@@ -103,7 +103,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> bool {
         let Some(reader) = self.grant_reader() else {
@@ -166,7 +166,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         request: Option<&RetrievalFilter>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: &Scope,
     ) -> Result<bool> {
         if !self.grant_admits_position_in(rtxn, id, raw, grant)? {

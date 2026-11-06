@@ -346,7 +346,7 @@ ARGUMENTS = {
     'effort': {'rust': 'oneiron::memory::RecallEffort', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str', 'stub': 'Effort', 'native_py': 'Option<&str>',
         'napi_convert': 'let {name} = oneiron_remote::parse_effort({name}.as_deref().unwrap_or({default})).map_err(facade_error)?;', 'py_convert': 'let {name} = oneiron_remote::parse_effort({name}.unwrap_or({default})).map_err(raise)?;', 'field': 'Some({name})'},
     'scope': {'rust': '&oneiron::memory::RecallScope', 'napi': 'Option<NapiRecallScope>', 'native_ts': 'RecallScope | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallScope | None', 'native_py': 'Option<&str>', 'json': True,
-        'napi_convert': 'let {name} = recall_scope_to_engine({name});', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
+        'napi_convert': 'let {name} = recall_scope_to_engine({name}).map_err(facade_error)?;', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
     'limit': {'rust': 'usize', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int', 'stub': 'int', 'native_py': 'Option<usize>',
         'napi_convert': 'let {name} = {name}.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({default});', 'py_convert': 'let {name} = {name}.unwrap_or({default});', 'field': 'Some({name})'},
     'format': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'PackFormat | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
@@ -906,6 +906,12 @@ def mcp_input_dispatch(row):
                  'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
+        if name in ('vault.artifacts.view', 'vault.artifacts.export'):
+            body += ('let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());\n'
+                     'let memory = match owner {\n'
+                     '    Some(owner) => memory.with_owner_authorship(&owner),\n'
+                     '    None => memory,\n'
+                     '};\n')
         if name == 'describe':
             # describe(card key) expands a board card, under the board's own
             # scope and frame-epoch checks.
@@ -995,7 +1001,7 @@ pub(super) async fn execute_mcp_agent_verb(
         actor: &McpCallContext,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
         execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
@@ -1029,7 +1035,7 @@ pub(crate) async fn execute_agent_verb_input(
         run: Option<McpCodeRun>,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).
@@ -1056,7 +1062,7 @@ async fn execute_agent_verb_listing(
         producers: &oneiron::memory::ProducerRows,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
@@ -1118,10 +1124,12 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
-    let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
+    let output = crate::api::facade::row_hooks_post(server, hooks, output).await
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
     }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
@@ -2162,6 +2170,33 @@ UNIFFI_RESULTS = {
     'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
     'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
 }
+# Generated records with an owned codec for a nested opaque JSON result.
+# `types.root()` still emits their public records before this codec is selected.
+UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
+    'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
+    'crate::memory::KeyValueItem': 'KeyValueItem',
+    'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
+    'crate::skill::helper::CallableCardView': 'CallableCardView',
+    'crate::task_verb::sdk::AiOptions': 'AiOptions',
+    'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
+    'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
+    'crate::policy_setting_doors::PolicyActionOutcome': 'PolicyActionOutcome',
+    'crate::lens::LensResultSetActionResult': 'LensResultSetActionResult',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>': 'ScopedReadResultDiagnosticEventViewList',
+    'crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>': 'ScopedReadResultOptionalDiagnosticEventView',
+    'crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>': 'ScopedReadResultCoachInspectionView',
+    'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
+    'crate::office_body::DeckExportView': 'DeckExportView',
+    'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
+    'crate::task_verb::sdk::ConnectorCallStatus': 'ConnectorCallStatus',
+    'crate::task_verb::sdk::ConnectorSchemaReply': 'ConnectorSchemaReply',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
+}
+
 # A typed binding argument the client takes as is: its foreign type and how it
 # is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
 UNIFFI_ARGUMENTS = {
@@ -2269,10 +2304,51 @@ def uniffi_export(row, types, census):
             output, result = record, 'Lift::lift(output)'
             sides.append('typed')
         elif mirror := types.root(row['output']):
-            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            owned = uniffi_record(row['output'], UNIFFI_GENERATED_RESULT_LIFTS)
+            if owned and owned != mirror:
+                raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
+            output = mirror
+            if owned:
+                result = 'Lift::lift(output)'
+            elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                nested_voice = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    nested_voice = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
+                    )
+                owned_done = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(reply) => '
+                        f'Ok({mirror}::Done(crate::ConnectorCallReply::lift(reply)?)), '
+                    )
+                elif row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), '
+                    )
+                # Other variants keep the existing whole-record conversion.
+                result = (
+                    f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
+                    f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'{nested_voice}{owned_done}'
+                    f'other => crate::codec::lift_record({name}, &other) }}'
+                )
+            else:
+                result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
-            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            output = 'WireJson'
+            result = 'Lift::lift(output)' if row['output'] == 'serde_json::Value' else f'crate::codec::encode({name}, &output)'
             sides.append('wire')
         census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())

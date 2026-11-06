@@ -145,6 +145,7 @@ pub(crate) enum CoreHydrateDeletionReason {
     User,
     #[serde(rename = "user_hard_delete")]
     UserHard,
+    OwnerErase,
     #[serde(rename = "gdpr_delete")]
     Gdpr,
     #[serde(rename = "policy_delete")]
@@ -816,6 +817,9 @@ pub(crate) fn core_hydrate_deletion_metadata(
             oneiron::HydratedShortIdDeletionReason::UserDelete => CoreHydrateDeletionReason::User,
             oneiron::HydratedShortIdDeletionReason::UserHardDelete => {
                 CoreHydrateDeletionReason::UserHard
+            }
+            oneiron::HydratedShortIdDeletionReason::OwnerErase => {
+                CoreHydrateDeletionReason::OwnerErase
             }
             oneiron::HydratedShortIdDeletionReason::GdprDelete => CoreHydrateDeletionReason::Gdpr,
             oneiron::HydratedShortIdDeletionReason::PolicyDelete => {

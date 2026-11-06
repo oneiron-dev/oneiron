@@ -382,6 +382,27 @@ impl OfferLadder {
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
     }
 
+    /// One engine model across this ladder and every owner-selectable
+    /// fallback that keeps its wire and on-device rule. A quote cannot use
+    /// today's health or selected fallback to exclude a possible model.
+    pub(crate) fn single_reachable_model(&self) -> Option<ModelId> {
+        let model = &self.rungs.first()?.model;
+        let fallbacks = self.rests.fallback_ladders();
+        let eligible = fallbacks.iter().filter(|target| {
+            target.scope.wire == self.scope.wire
+                && !(self.scope.stays_on_device
+                    && target
+                        .rungs
+                        .iter()
+                        .any(|rung| leaves_device(&rung.offer.binding)))
+        });
+        self.rungs
+            .iter()
+            .chain(eligible.flat_map(|target| target.rungs.iter()))
+            .all(|rung| &rung.model == model)
+            .then(|| model.clone())
+    }
+
     /// The rung models and prompts of each live fallback the owner named for
     /// this seat's offers, limited to targets that are not resting and keep
     /// the seat's wire and on-device rule (FIX 10916).
@@ -1597,8 +1618,16 @@ impl OfferLadder {
         release: MediaDispatchRelease<'_>,
         admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by_released(run, request, selector, voices, self.host_wait(), release, admitted)
-            .await
+        self.media_by_released(
+            run,
+            request,
+            selector,
+            voices,
+            self.host_wait(),
+            release,
+            admitted,
+        )
+        .await
     }
 
     /// [`Self::media`], on `deadline` across every rung, wait and fallback

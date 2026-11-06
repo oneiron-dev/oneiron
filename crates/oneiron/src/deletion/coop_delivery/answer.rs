@@ -209,7 +209,7 @@ impl Vault {
                 CooperativeDeleteRecordState::Removed
             } else {
                 let hard = SafeDeleteReason::UserHardDelete;
-                match memory.safe_delete_as_owner(owner, &record.to_hex(), hard) {
+                match memory.safe_delete_as_owner(owner, &record.to_hex(), hard.delete_reason()) {
                     Ok(receipt) if receipt.existed => CooperativeDeleteRecordState::Removed,
                     Ok(_) => CooperativeDeleteRecordState::Missing,
                     Err(error) => {

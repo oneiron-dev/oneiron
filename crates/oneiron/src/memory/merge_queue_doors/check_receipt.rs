@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::*;
 use crate::contract_oracle::ContractOracle;
 use crate::merge_queue::{
-    CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckHoldReason, QueueCheckReceipt,
+    CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckHoldReason, StoredQueueCheckReceipt,
 };
 
 /// One inputs reference of one checker work row to read.
@@ -142,7 +142,7 @@ impl Memory<'_> {
 
 /// One receipt as the wire carries it: recorded results and hashes, never
 /// argv, environment or command exhaust.
-fn attempt_view(receipt: &QueueCheckReceipt, passes: Option<bool>) -> CodeCheckAttemptView {
+fn attempt_view(receipt: &StoredQueueCheckReceipt, passes: Option<bool>) -> CodeCheckAttemptView {
     let target = &receipt.inputs.target;
     let commands = receipt
         .run
@@ -155,8 +155,12 @@ fn attempt_view(receipt: &QueueCheckReceipt, passes: Option<bool>) -> CodeCheckA
                     index: u32::try_from(index).unwrap_or(u32::MAX),
                     exit_code: command.status,
                     signal: command.signal,
-                    stdout_blake3: blake3::hash(&command.stdout).to_hex().to_string(),
-                    stderr_blake3: blake3::hash(&command.stderr).to_hex().to_string(),
+                    stdout_blake3: crate::entity_id::bytes_to_hex_lower(
+                        &command.stdout.content_hash,
+                    ),
+                    stderr_blake3: crate::entity_id::bytes_to_hex_lower(
+                        &command.stderr.content_hash,
+                    ),
                 })
                 .collect()
         })

@@ -278,9 +278,7 @@ fn authority_history_selection_in_txn(
     }
     let bytes = super::checkpoint::checkpoint_image_bytes_in_txn(&vault.store, txn, checkpoint)?
         .ok_or_else(|| refused("no kept checkpoint image has this id"))?;
-    if bytes.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES
-        || super::checkpoint_image::checkpoint_image_id(&bytes) != *checkpoint
-    {
+    if super::checkpoint_image::checkpoint_image_id(&bytes) != *checkpoint {
         return Err(refused("checkpoint image id"));
     }
     let image: SelectableOnly = bytes

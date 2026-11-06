@@ -124,7 +124,7 @@ impl OwnerHost {
             return Ok(None);
         }
         self.enter(PassStage::Producing);
-        let produced = finalize::produce(vault, plan, None).map_err(|unproduced| {
+        let produced = finalize::produce_automatic(vault, plan).map_err(|unproduced| {
             let (error, landing) = match unproduced {
                 Unproduced::Snapshot(error) => (error, false),
                 Unproduced::Landing(error) => (error, true),
@@ -179,8 +179,8 @@ impl OwnerHost {
         })?;
         if let Some(last) = finalize::accepted_marker(&plan)
             && vault
-                .backup_watermark()
-                .is_ok_and(|now| now == last.covered())
+                .automatic_backup_watermark()
+                .is_ok_and(|now| last.covered().covers(&now))
             && last.held(&plan.dir)
         {
             attempt.settle(&PreIdleBackup {
@@ -191,7 +191,7 @@ impl OwnerHost {
             return Ok(());
         }
         let produced =
-            finalize::produce(vault, &plan, None).map_err(|unproduced| match unproduced {
+            finalize::produce_automatic(vault, &plan).map_err(|unproduced| match unproduced {
                 Unproduced::Snapshot(error) => failure(&error, false),
                 Unproduced::Landing(error) => failure(&error, true),
             })?;
@@ -310,8 +310,8 @@ fn hourly(
     let guard_ms = finalize::attempt_guard_ms(plan);
     if let Some(last) = &last {
         if vault
-            .backup_watermark()
-            .is_ok_and(|now| now == last.covered())
+            .automatic_backup_watermark()
+            .is_ok_and(|now| last.covered().covers(&now))
         {
             return Decision::Unchanged;
         }

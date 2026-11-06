@@ -11,6 +11,8 @@ use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 pub enum DeleteReason {
     UserDelete,
     UserHardDelete,
+    /// An explicit owner's erase: active bytes and checkpoint payloads retire together.
+    OwnerErase,
     GdprDelete,
     PolicyDelete,
     /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931). The SOFT-reversible
@@ -35,7 +37,7 @@ pub enum DeleteReason {
 //   [reason:1][deleted_at:8 LE][request_id:16]            (25 bytes)
 //
 // reason ∈ {user_delete=1, user_hard_delete=2, gdpr_delete=3,
-// policy_delete=4, archived_by_cleanup=5}; byte 0 is RESERVED and decodes as
+// policy_delete=4, archived_by_cleanup=5, owner_erase=6}; byte 0 is RESERVED and decodes as
 // hard. Decode rule: a legacy 8-byte value (bare `deleted_at` u64 LE) or an
 // unknown reason byte decodes as HARD — over-purge, never under-delete.
 // `request_id` is the deletion request UUID (16 raw bytes) used for receipt
@@ -43,8 +45,8 @@ pub enum DeleteReason {
 //
 // ONE-1931 (ARCH-0073) took byte 5 for `archived_by_cleanup`. It joins the
 // KNOWN set — the layout is unchanged at 25 bytes, and the fail-closed law is
-// intact: byte 0, byte 6 and every byte above still decode to `reason: None`
-// and therefore HARD.
+// intact: byte 0 and every byte above the known table decode to `reason: None`
+// and therefore HARD. Explicit owner erase uses byte 6 without changing the layout.
 
 /// Total length of a v2 tombstone wire value.
 pub const TOMBSTONE_VALUE_V2_LEN: usize = 25;
@@ -65,6 +67,8 @@ pub enum TombstoneReason {
     /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931) — SOFT, like
     /// `user_delete`. Wire byte 5.
     ArchivedByCleanup = 5,
+    /// An explicit owner's erase, including checkpoint payloads. Wire byte 6.
+    OwnerErase = 6,
 }
 
 impl TombstoneReason {
@@ -84,6 +88,7 @@ impl TombstoneReason {
             3 => Some(Self::GdprDelete),
             4 => Some(Self::PolicyDelete),
             5 => Some(Self::ArchivedByCleanup),
+            6 => Some(Self::OwnerErase),
             // UNCHANGED fail-closed arm: byte 0 (RESERVED) and every byte
             // above the table stay unknown, and an unknown byte is HARD.
             _ => None,
@@ -100,11 +105,11 @@ impl TombstoneReason {
 
     /// KS-7 (FIX 5688): whether a delete under this reason erases its
     /// owner's checkpoint payload compartments, so that no old checkpoint
-    /// opens the owner's bytes again. The privacy erase does. An ordinary
+    /// opens the owner's bytes again. Privacy and explicit owner erases do. An ordinary
     /// hard delete and a policy delete keep them for the restore window, as
     /// a soft delete and an archive do (Engine 10-20 08:4x, ruling 1).
     pub(crate) const fn erases_checkpoint_payloads(self) -> bool {
-        matches!(self, Self::GdprDelete)
+        matches!(self, Self::GdprDelete | Self::OwnerErase)
     }
 }
 
@@ -113,6 +118,7 @@ impl From<DeleteReason> for TombstoneReason {
         match reason {
             DeleteReason::UserDelete => Self::UserDelete,
             DeleteReason::UserHardDelete => Self::UserHardDelete,
+            DeleteReason::OwnerErase => Self::OwnerErase,
             DeleteReason::GdprDelete => Self::GdprDelete,
             DeleteReason::PolicyDelete => Self::PolicyDelete,
             DeleteReason::ArchivedByCleanup => Self::ArchivedByCleanup,
@@ -191,6 +197,7 @@ impl DecodedTombstoneValue {
     pub(super) fn receipt_hard_reason(&self) -> DeleteReason {
         match self.reason {
             Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
+            Some(TombstoneReason::OwnerErase) => DeleteReason::OwnerErase,
             Some(TombstoneReason::PolicyDelete) => DeleteReason::PolicyDelete,
             Some(
                 TombstoneReason::UserHardDelete
@@ -484,6 +491,7 @@ impl DeleteReason {
         match self {
             Self::UserDelete => "user_delete",
             Self::UserHardDelete => "user_hard_delete",
+            Self::OwnerErase => "owner_erase",
             Self::GdprDelete => "gdpr_delete",
             Self::PolicyDelete => "policy_delete",
             Self::ArchivedByCleanup => "archived_by_cleanup",
@@ -493,21 +501,21 @@ impl DeleteReason {
     pub(crate) const fn writes_receipt(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(super) const fn active_store_hard_purge_v1(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(super) const fn queues_historical_sweep(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
@@ -531,7 +539,11 @@ impl DeleteReason {
     pub(crate) const fn publishes_crdt_tombstone(self) -> bool {
         match self {
             Self::ArchivedByCleanup => false,
-            Self::UserDelete | Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserDelete
+            | Self::UserHardDelete
+            | Self::OwnerErase
+            | Self::GdprDelete
+            | Self::PolicyDelete => true,
         }
     }
 }

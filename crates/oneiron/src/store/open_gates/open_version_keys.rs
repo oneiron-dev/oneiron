@@ -15,6 +15,10 @@ pub const MAX_DBS: u32 = 32;
 /// hook invocation is retained on the pause; only that hold can auto-resume.
 /// No old-format reader or migration is provided.
 ///
+/// v26 (FIX 10898): attempt record v4 requires each requeue-history entry
+/// to carry its failure count and latest instant. No old-format reader or
+/// migration is provided.
+///
 /// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
 /// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
 /// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is
@@ -219,7 +223,14 @@ pub(super) static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) static VAULT_ROOT_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
-pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentity>>>> =
+/// One open store's place in [`OPEN_STORE_PATHS`]: the root identity it
+/// holds, and the vault handles its leader holds (FIX 12316).
+pub(super) struct OpenStorePath {
+    pub(super) identity: Option<VaultRootIdentity>,
+    pub(super) holds: crate::store::LeaderHolds,
+}
+
+pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, OpenStorePath>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] =

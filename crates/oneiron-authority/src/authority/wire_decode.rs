@@ -249,6 +249,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_OWNER_KEY_ENROLL => super::owner_key_enrollment::decode_owner_key_enroll(entries),
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
         OP_KIND_ORIGIN_CUT => super::origin_cut::decode_origin_cut(entries),
+        OP_KIND_DEVICE_SUCCESSION => super::device_succession::decode_device_succession(entries),
         _ => Err(invalid_authority()),
     }
 }
@@ -481,7 +482,7 @@ pub fn decode_hash(value: &Value) -> Result<[u8; 32]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
-fn decode_16(value: &Value) -> Result<[u8; 16]> {
+pub fn decode_16(value: &Value) -> Result<[u8; 16]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
