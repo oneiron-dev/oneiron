@@ -540,6 +540,8 @@ impl<'a> Census<'a> {
             || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
         {
             KeepReason::Guarded
+        } else if let Some(reason) = self.held_carrier(txn, id, raw)? {
+            reason
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id)
@@ -578,6 +580,37 @@ impl<'a> Census<'a> {
             return Ok(None);
         };
         Ok(Some(reason))
+    }
+
+    /// Why the owner's discard keeps the content-addressed byte carrier
+    /// `id`: an artifact or ASSET that reads its bytes is held, and the hold
+    /// keeps them with it (FIX 14534, Engine 11-06 08:34 call 2 = A). The
+    /// carrier's own id carries no hold. Demotion keeps no carrier for this:
+    /// the home gives the bytes back.
+    fn held_carrier(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<Option<KeepReason>> {
+        if !self.keep.release_local_members {
+            return Ok(None);
+        }
+        let Some(hash) = crate::blob_artifact::carrier_content_hash(self.store, txn, id, raw)?
+        else {
+            return Ok(None);
+        };
+        let mut reason = None;
+        for holder in crate::blob_artifact::content_holders_in_txn(self.store, txn, &hash)? {
+            if crate::store::legal_hold::legal_hold_held_in_txn(self.store, txn, holder.as_bytes())?
+            {
+                return Ok(Some(KeepReason::LegalHold));
+            }
+            if crate::store::legal_hold::held_in_txn(self.store, txn, holder.as_bytes())? {
+                reason = Some(KeepReason::Guarded);
+            }
+        }
+        Ok(reason)
     }
 
     /// A delete of `id` this window's document does not hold yet: a pending
