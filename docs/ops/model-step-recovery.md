@@ -90,6 +90,20 @@ empty range may still qualify for existing GROSS inclusion; a missing observatio
 is not Open, Aborted, unpaid or zero. The existing `included_calls` reader is
 unchanged, and no per-aggregate exclusion record is created by this reader.
 
+Both successful GROSS settlement writers also append raw retained-token
+observations to each original native call row. A separate optional child runs
+after the existing Included evidence child and uses the consumed reservation
+returned by that same settlement, including its original birth (or genuine
+unknown), reserved and owed units. It keeps the snapshot bounds, aggregate and
+settled units, and each token's raw state and first-settlement range. It never
+replaces Included or the original call meter; later inclusion remains possible.
+Each successful consumed reservation appends separately, even when its raw data
+equals an earlier observation. Replay without a reservation adds nothing. These
+records do not provide a global aggregate or guard id, establish exclusion from
+all past charges, or authorize paying an invoice. The private call row requires
+the new observation list; no old-format reader is added. Failure of this child
+leaves the existing inclusion, charge, receipts, park and NET evidence intact.
+
 ### Retained native NET invoices
 
 A separate private financial row retains each original admitted call by its full
