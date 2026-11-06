@@ -19,7 +19,7 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use base64::Engine;
 use oneiron::EntityId;
-use oneiron::context_board::{BoardHistoryError, BoardTurnHistory};
+use oneiron::context_board::{BoardHistoryError, BoardLayoutCandidate, BoardTurnHistory};
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -307,24 +307,29 @@ fn current_board_authority<'a>(
 /// resolved, recorded as the selection's world tiers. `check` judges the
 /// response with its record in it, inside the recording transaction: a
 /// response it refuses records nothing, and its error returns.
-pub(super) fn record_board_turn(
+/// `candidate` is the exact board layout batch this TURN projected
+/// (BOARD-LAYOUT): the SAME accepted commit activates it.
+/// `None` writes no layout.
+pub(super) fn record_board_turn_with_layout(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
     (turn, owner): (EntityId, EntityId),
     worlds: &oneiron::pipeline::ResolvedWorldAuthority,
     response: &mut ContextBoardResponse,
+    candidate: Option<BoardLayoutCandidate>,
     check: impl FnOnce(&ContextBoardResponse) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
     let memories = response.memories.clone();
     let mut refused = None;
     let recorded = server
         .vault
-        .record_board_turn_now(
+        .record_board_turn_with_layout_now(
             turn,
             owner,
             memories.as_ref(),
             Some(worlds),
             read,
+            candidate,
             |receipt| {
                 response.board_turn = Some(ContextBoardTurnRecord {
                     turn: receipt.turn.to_hex(),
