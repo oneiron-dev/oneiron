@@ -73,7 +73,7 @@ pub(super) fn check_residence(
 /// `InWorld` edges its carrier gives it, any other row by its stamp
 /// (`record_world_in` over the arriving body), and a row no longer the
 /// world's alone, or a world this install holds again, comes back, its mark
-/// forgotten. A NOTE no carrier comes with waits for one.
+/// forgotten. A NOTE no document comes with waits for one.
 pub(super) fn check_discarded(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -93,7 +93,9 @@ pub(super) fn check_discarded(
         None => false,
     };
     let alone = if header.entity_type == ENTITY_TYPE_NOTE {
-        match ctx.carrier_doc() {
+        // The window's carrier, or the document an edge's endpoint hydration
+        // reads its body from.
+        match ctx.carrier_doc().or(ctx.body_refs) {
             Some(doc) => carried_worlds(doc, id) == [world],
             None => placed,
         }
