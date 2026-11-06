@@ -6811,7 +6811,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -17732,7 +17732,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 8,
       "struct": 2
      }
@@ -17764,6 +17764,16 @@
      "notable": [],
      "path": "src/code_run/storage/records/bodies/context.rs",
      "purpose": "One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/records/bodies/context_output.rs",
+     "purpose": "Context outputs published with the replay record that holds them",
      "surface": {
       "crate-vis": 1
      }
@@ -17870,13 +17880,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/response_erase.rs",
      "purpose": "An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19512,7 +19522,7 @@
      "path": "src/comm/descriptor.rs",
      "purpose": "ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 9
      }
@@ -19555,7 +19565,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 6
      }
     },
@@ -20334,7 +20344,7 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 17,
+      "fn": 19,
       "re-export": 1,
       "struct": 4
      }
@@ -23972,7 +23982,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -24020,9 +24030,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/migration.rs",
-     "purpose": "Idempotent lazy and maintenance migration of legacy conversation turns",
+     "purpose": "Idempotent local initialization of received conversation DAGs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -24261,7 +24271,7 @@
      "path": "src/conversation_dag/writes.rs",
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -29296,7 +29306,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CoachHealAuthor",
@@ -29310,7 +29320,7 @@
       "crate-vis": 9,
       "enum": 1,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2,
       "trait": 1
      }
@@ -29325,6 +29335,19 @@
       "const": 2,
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoachPromptDraft"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_prompt_repair.rs",
+     "purpose": "A case-backed prompt draft is data for owner review, never permission to inject it or resume the failed run",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
      }
     },
     {
@@ -54681,6 +54704,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/connector_slate.rs",
+     "purpose": "The ordinary dispatch target frozen for its connector slate's one-send approval",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/degrade.rs",
      "purpose": "The ambient alternative of a degraded interrupt (FIX 7962): when the delivery window degrades an interrupt…",
      "surface": {
@@ -54724,7 +54757,7 @@
      "path": "src/outbound/dispatch_pipeline/govern.rs",
      "purpose": "Gate input assembled from the canonical outbound request",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -54735,7 +54768,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 3
      }
     },
@@ -54958,7 +54991,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "mod": 1,
       "re-export": 16
@@ -55290,7 +55323,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_chokepoint/admission.rs",
@@ -55314,9 +55347,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_chokepoint/connector_slate.rs",
-     "purpose": "FIX 990: the tool's capability setting (DEC-0006) at the last boundary before a Pending scoped call's send…",
+     "purpose": "FIX 990: the tool's capability setting (DEC-0006) at the last boundary before a Pending connector call's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -55367,6 +55400,17 @@
      "surface": {
       "crate-vis": 6,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/ordinary_slate.rs",
+     "purpose": "The ordinary frozen dispatch held by its owner's connector tool setting",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -55552,15 +55596,16 @@
      "kind": "src",
      "notable": [
       "ConnectorResumeProtocol",
+      "ConnectorResumeState",
       "OpenedConnectorResume"
      ],
      "path": "src/outbound_consent/connector_call_input_resume.rs",
      "purpose": "A live connector exchange's resume state, kept on its call's row beside the round it waits on (FIX 9157…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -55987,7 +56032,7 @@
      "path": "src/outbound_intent_ledger/payload.rs",
      "purpose": "A ledger row's payload at rest (FIX 9283, 9372, 2328, 2331)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -66104,7 +66149,7 @@
      "path": "src/side_table/erased.rs",
      "purpose": "The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70379,7 +70424,7 @@
      "path": "src/store/centroid_evidence/erase.rs",
      "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -73827,7 +73872,7 @@
      "path": "src/store/text_index/index.rs",
      "purpose": "Index/deindex mutation paths plus the missing-posting repair proof",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -89585,7 +89630,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89844,7 +89889,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90271,15 +90316,15 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
@@ -90908,9 +90953,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 155,
+   "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6384,
+   "source_files": 6388,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109476,7 +109521,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 18
      }
     },
@@ -118755,7 +118800,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -119282,7 +119327,7 @@
      "path": "src/connector_call_host/resume.rs",
      "purpose": "A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
