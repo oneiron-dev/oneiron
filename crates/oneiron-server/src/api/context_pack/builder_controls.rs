@@ -37,91 +37,138 @@ pub(crate) fn default_context_neighbors() -> usize {
     50
 }
 
-pub(crate) fn apply_context_pack_policy<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    policy: Option<&ContextPackPolicyControls>,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
-    let Some(policy) = policy else {
-        return Ok(builder);
-    };
-    if let Some(half_life_days) = policy.boost_recency_days {
-        if !half_life_days.is_finite() || half_life_days <= 0.0 {
+/// The ranking boosts a request's policy names, checked before any hook
+/// runs (FIX 1435) and applied to the pack's builder after.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ContextPackRanking {
+    recency_half_life_days: Option<f32>,
+    salience: bool,
+    confidence: bool,
+    contiguity: bool,
+}
+
+impl ContextPackRanking {
+    /// The boosts `policy` names. A recency half-life that is not finite
+    /// and positive is refused.
+    pub(crate) fn checked(policy: Option<&ContextPackPolicyControls>) -> Result<Self, ApiError> {
+        let Some(policy) = policy else {
+            return Ok(Self::default());
+        };
+        if let Some(half_life_days) = policy.boost_recency_days
+            && (!half_life_days.is_finite() || half_life_days <= 0.0)
+        {
             return Err(ApiError::bad_request(
                 "boost_recency_days must be finite and positive",
                 Some("policy.boost_recency_days"),
             ));
         }
-        builder = builder.boost_recency(half_life_days);
+        Ok(Self {
+            recency_half_life_days: policy.boost_recency_days,
+            salience: policy.boost_salience.unwrap_or(false),
+            confidence: policy.boost_confidence.unwrap_or(false),
+            contiguity: policy.boost_contiguity.unwrap_or(false),
+        })
     }
-    if policy.boost_salience.unwrap_or(false) {
-        builder = builder.boost_salience();
+
+    pub(crate) fn applied<'a>(
+        self,
+        mut builder: oneiron::ContextPackBuilder<'a>,
+    ) -> oneiron::ContextPackBuilder<'a> {
+        if let Some(half_life_days) = self.recency_half_life_days {
+            builder = builder.boost_recency(half_life_days);
+        }
+        if self.salience {
+            builder = builder.boost_salience();
+        }
+        if self.confidence {
+            builder = builder.boost_confidence();
+        }
+        if self.contiguity {
+            builder = builder.boost_contiguity();
+        }
+        builder
     }
-    if policy.boost_confidence.unwrap_or(false) {
-        builder = builder.boost_confidence();
-    }
-    if policy.boost_contiguity.unwrap_or(false) {
-        builder = builder.boost_contiguity();
-    }
-    Ok(builder)
 }
 
-pub(crate) fn apply_context_pack_time<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    time: Option<&ContextPackTimeControls>,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
-    let Some(time) = time else {
-        return Ok(builder);
-    };
-    let occurred_range = match (time.occurred_start, time.occurred_end) {
-        (Some(start), Some(end)) if start <= end => Some((start, end)),
-        (Some(_), Some(_)) => {
+/// The time window a request's time controls name, checked before any hook
+/// runs (FIX 1435) and applied to the pack's builder after.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ContextPackTimeWindow {
+    since: Option<u64>,
+    occurred: Option<(u64, u64)>,
+    learned: Option<(u64, u64)>,
+}
+
+impl ContextPackTimeWindow {
+    /// The window `time` names. A range given by one end only, or whose
+    /// start is after its end, and a `since` after `learned_end`, are
+    /// refused.
+    pub(crate) fn checked(time: Option<&ContextPackTimeControls>) -> Result<Self, ApiError> {
+        let Some(time) = time else {
+            return Ok(Self::default());
+        };
+        let occurred_range = match (time.occurred_start, time.occurred_end) {
+            (Some(start), Some(end)) if start <= end => Some((start, end)),
+            (Some(_), Some(_)) => {
+                return Err(ApiError::bad_request(
+                    "occurred_start must be less than or equal to occurred_end",
+                    Some("time.occurred_start"),
+                ));
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(ApiError::bad_request(
+                    "occurred_start and occurred_end must be supplied together",
+                    Some("time"),
+                ));
+            }
+            (None, None) => None,
+        };
+        let learned_range = match (time.learned_start, time.learned_end) {
+            (Some(start), Some(end)) if start <= end => Some((start, end)),
+            (Some(_), Some(_)) => {
+                return Err(ApiError::bad_request(
+                    "learned_start must be less than or equal to learned_end",
+                    Some("time.learned_start"),
+                ));
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(ApiError::bad_request(
+                    "learned_start and learned_end must be supplied together",
+                    Some("time"),
+                ));
+            }
+            (None, None) => None,
+        };
+        if let (Some(since), Some((_, learned_end))) = (time.since, learned_range)
+            && since > learned_end
+        {
             return Err(ApiError::bad_request(
-                "occurred_start must be less than or equal to occurred_end",
-                Some("time.occurred_start"),
+                "since must be less than or equal to learned_end",
+                Some("time.since"),
             ));
         }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "occurred_start and occurred_end must be supplied together",
-                Some("time"),
-            ));
+        Ok(Self {
+            since: time.since,
+            occurred: occurred_range,
+            learned: learned_range,
+        })
+    }
+
+    pub(crate) fn applied<'a>(
+        self,
+        mut builder: oneiron::ContextPackBuilder<'a>,
+    ) -> oneiron::ContextPackBuilder<'a> {
+        if let Some(since) = self.since {
+            builder = builder.filter_since(since);
         }
-        (None, None) => None,
-    };
-    let learned_range = match (time.learned_start, time.learned_end) {
-        (Some(start), Some(end)) if start <= end => Some((start, end)),
-        (Some(_), Some(_)) => {
-            return Err(ApiError::bad_request(
-                "learned_start must be less than or equal to learned_end",
-                Some("time.learned_start"),
-            ));
+        if let Some((start, end)) = self.occurred {
+            builder = builder.filter_occurred_range(start, end);
         }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "learned_start and learned_end must be supplied together",
-                Some("time"),
-            ));
+        if let Some((start, end)) = self.learned {
+            builder = builder.filter_learned_range(start, end);
         }
-        (None, None) => None,
-    };
-    if let (Some(since), Some((_, learned_end))) = (time.since, learned_range)
-        && since > learned_end
-    {
-        return Err(ApiError::bad_request(
-            "since must be less than or equal to learned_end",
-            Some("time.since"),
-        ));
+        builder
     }
-    if let Some(since) = time.since {
-        builder = builder.filter_since(since);
-    }
-    if let Some((start, end)) = occurred_range {
-        builder = builder.filter_occurred_range(start, end);
-    }
-    if let Some((start, end)) = learned_range {
-        builder = builder.filter_learned_range(start, end);
-    }
-    Ok(builder)
 }
 
 pub(crate) fn apply_context_pack_budget<'a>(

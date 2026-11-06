@@ -10,7 +10,7 @@
 //! `released_completed` releases the result it saved for the retry.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::response::{IntoResponse, Response};
 use oneiron::EntityId;
@@ -165,10 +165,14 @@ impl NativeReadBody {
 /// media is embedded, image picked, pack assembled or row read. A rewrite
 /// meets `VaultReadRequest::validate_body`, then `admit`: the route's own
 /// decoder and request checks, on the rewrite beside the caller's own
-/// controls, under the caller's own credential. The read runs on the request
-/// the chain left. The post chain runs over the JSON the route answers,
-/// after its projection and observations, and its view is what the caller
-/// reads.
+/// controls, under the caller's own credential, on the chain's blocking
+/// thread. The read runs on the request the chain left, as `admit` admitted
+/// it there (FIX 1435): the last rewrite it accepted is kept for the read,
+/// so a route whose checks read the vault runs them once per rewrite and
+/// never on the async runtime. A final request other than the kept rewrite
+/// meets `admit` again, on a blocking thread. The post chain runs over the
+/// JSON the route answers, after its projection and observations, and its
+/// view is what the caller reads.
 ///
 /// A read that fails after the pre chain keeps a session-only call's pre
 /// hook records and runs no post chain (FIX 5527). A hook's stop is the
@@ -188,6 +192,7 @@ pub(crate) async fn native_read_hooked<T, A, F, Fut>(
     read: F,
 ) -> Result<NativeReadAnswer, NativeReadError>
 where
+    T: Send + 'static,
     A: Fn(&Value) -> Result<T, ApiError> + Send + Sync + 'static,
     F: FnOnce(T) -> Fut,
     Fut: Future<Output = Result<NativeReadAnswer, NativeReadError>>,
@@ -195,13 +200,18 @@ where
     let NativeReadBody { args, controls } = body;
     let durable = controls.is_empty();
     let admit = Arc::new(admit);
+    // The last rewrite `admit` accepted, beside the request it admitted.
+    let accepted: Arc<Mutex<Option<(Value, T)>>> = Arc::new(Mutex::new(None));
     let check: RewriteAdmit = {
-        let (admit, controls) = (Arc::clone(&admit), controls.clone());
-        Arc::new(move |_: &str, rewritten: &Value| {
-            joined(rewritten, &controls)
+        let (admit, controls, accepted) =
+            (Arc::clone(&admit), controls.clone(), Arc::clone(&accepted));
+        Arc::new(move |_: &str, rewritten: &Value| -> Result<(), String> {
+            let request = joined(rewritten, &controls)
                 .and_then(|body| admit(&body))
-                .map(drop)
-                .map_err(|refused| refused.message().to_owned())
+                .map_err(|refused| refused.message().to_owned())?;
+            *accepted.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some((rewritten.clone(), request));
+            Ok(())
         })
     };
     let sent = args.clone();
@@ -209,10 +219,17 @@ where
         facade_hooks_pre_admitting(server, call, method.tool_name(), args, check, durable)
             .await
             .map_err(|stopped| released_stop(server, call.auth(), method, stopped))?;
+    let accepted = accepted
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
     let request = if hooks.args == sent {
         Ok(admitted)
     } else {
-        joined(&hooks.args, &controls).and_then(|body| admit(&body))
+        match accepted {
+            Some((rewritten, request)) if rewritten == hooks.args => Ok(request),
+            _ => readmitted(admit, &hooks.args, controls).await,
+        }
     };
     let ran = match request {
         Ok(request) => read(request).await,
@@ -284,6 +301,24 @@ fn released_completed(
         rows: producers,
     };
     replayed_value(&server.vault, auth, method.tool_name(), release)
+}
+
+/// The rewrite `args` the pre chain left, admitted by the route's own
+/// `admit` beside the caller's own `controls`, on a blocking thread, as the
+/// chain's own checks run (FIX 1435).
+async fn readmitted<T, A>(
+    admit: Arc<A>,
+    args: &Value,
+    controls: Map<String, Value>,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    A: Fn(&Value) -> Result<T, ApiError> + Send + Sync + 'static,
+{
+    let args = args.clone();
+    tokio::task::spawn_blocking(move || joined(&args, &controls).and_then(|body| admit(&body)))
+        .await
+        .map_err(|_| ApiError::internal_server_error("native read admission did not finish"))?
 }
 
 /// The route body a rewrite is admitted and read from: the rewritten native

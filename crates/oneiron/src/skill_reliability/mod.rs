@@ -60,10 +60,10 @@ pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
     skill_reliability_posterior_for_executor, skill_selection_score,
-    skill_selection_score_for_executor,
+    skill_selection_score_for_executor, validate_executor,
 };
 pub(crate) use self::read::{
-    selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
+    selection_posterior_for_query_in_txn, skill_selection_score_from_posterior,
 };
 pub use self::resident::rank_resident_skill_versions;
 pub(crate) use self::row_ids::attributed_outcome_row_ids;

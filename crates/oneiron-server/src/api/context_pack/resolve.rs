@@ -1,9 +1,6 @@
 //! Route handler and shared pipeline for context-pack assembly.
 
-use super::super::{
-    MemoriesRequest, core_engine_error, json_payload, non_empty_query, scoped_read_for_core_auth,
-    validate_core_query_seeds,
-};
+use super::super::{MemoriesRequest, core_engine_error, json_payload, non_empty_query};
 pub(crate) use super::builder_controls::*;
 use super::controls::CoreContextPackRequest;
 use super::media_query::embed_media_seeds;
@@ -12,10 +9,11 @@ use super::response::{
     run_context_pack_builder,
 };
 use super::response_limits::ContextPackResponseLimits;
-use super::{
-    narrow_to_core_audience, narrow_to_reader, resolve_core_disclosure_with_once,
-    spend_core_once_disclosures,
+use super::validate::{
+    ContextPackSignalRequest, ValidatedContextPack, validate_context_pack,
+    validate_rewritten_context_pack,
 };
+use super::{narrow_to_reader, resolve_core_disclosure_with_once, spend_core_once_disclosures};
 use crate::api::FacadeCall;
 use crate::api::native_read_hooks::{
     NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
@@ -93,41 +91,40 @@ const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
 ];
 
 /// `POST /v1/core/context-pack` on `body`, for `call`'s caller, through its
-/// verb-hook boundary as `memory.context_pack` (FIX 1435). The request's
-/// query bytes and the caller's read admission are checked first. The pre
-/// chain then runs, before any pack work. The pack's other request checks
-/// and its ref admissions run in [`run_context_pack`] on the request the
-/// chain left, under the caller's own credential; that pipeline runs no
-/// hook itself.
+/// verb-hook boundary as `memory.context_pack` (FIX 1435). Every request
+/// check runs first, under the caller's own read, before the pre chain:
+/// `admit_context_pack`. A hook's rewrite meets the same checks on the
+/// chain's blocking thread, beside the caller's own route controls and
+/// under the caller's own credential. The pack runs on the request the
+/// chain left, as that request was validated; that pipeline runs no hook
+/// itself.
 pub(crate) async fn core_context_pack_hooked(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     body: Value,
 ) -> Result<NativeReadAnswer, NativeReadError> {
     let auth = call.auth();
+    let pack = admit_context_pack(server, auth, &body).await?;
     let admit = {
         let (server, auth) = (Arc::clone(server), auth.clone());
-        move |body: &Value| admit_context_pack(&server, &auth, body)
+        move |body: &Value| admit_rewritten_context_pack(&server, &auth, body)
     };
-    let req = admit(&body)?;
-    // The caller's read admission, before any hook runs.
-    scoped_read_for_core_auth(&server.vault, auth)?;
     let body = NativeReadBody::split(body, CONTEXT_PACK_ROUTE_CONTROLS);
     native_read_hooked(
         server,
         call,
         VaultReadMethod::ContextPack,
         body,
-        req,
+        pack,
         admit,
-        |req| read_context_pack(server, auth, req),
+        |pack| read_context_pack(server, auth, pack),
     )
     .await
 }
 
-/// The route's own admission of the context pack `body` for `auth`: decoded,
-/// and its query checked against `[limits].retrieval_query_bytes`.
-fn admit_context_pack(
+/// The context pack `body` decoded, and its query checked against
+/// `[limits].retrieval_query_bytes`.
+fn decoded_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
     body: &Value,
@@ -137,7 +134,31 @@ fn admit_context_pack(
     Ok(req)
 }
 
-/// An admitted context pack, assembled for `auth` through the shared
+/// The route's own admission of the context pack `body` for `auth`, before
+/// any hook runs (FIX 1435): decoded, its query bytes checked, then
+/// validated, its reader, room and contacts on the request's context-input
+/// worker.
+async fn admit_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<ValidatedContextPack, ApiError> {
+    let req = decoded_context_pack(server, auth, body)?;
+    validate_context_pack(server, auth, req).await
+}
+
+/// [`admit_context_pack`] of a hook's rewritten `body`, on the hook chain's
+/// blocking thread (FIX 1435).
+fn admit_rewritten_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<ValidatedContextPack, ApiError> {
+    let req = decoded_context_pack(server, auth, body)?;
+    validate_rewritten_context_pack(server, auth, req)
+}
+
+/// A validated context pack, assembled for `auth` through the shared
 /// pipeline, as the JSON the route answers. The answer goes beside the rows
 /// the final response lists it was derived from
 /// (`CoreContextPackResponse::producer_rows`, FIX 1435). A response whose
@@ -145,9 +166,9 @@ fn admit_context_pack(
 async fn read_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    req: CoreContextPackRequest,
+    pack: ValidatedContextPack,
 ) -> Result<NativeReadAnswer, NativeReadError> {
-    let (response, _, _) = run_context_pack(server, auth, req, None).await?;
+    let (response, _, _) = execute_context_pack(server, auth, pack, None).await?;
     let rows = response
         .producer_rows()
         .map_err(|error| core_engine_error("producer ids failed", error))?;
@@ -167,7 +188,7 @@ async fn read_context_pack(
 pub(crate) async fn run_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    mut req: CoreContextPackRequest,
+    req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
 ) -> Result<
     (
@@ -177,44 +198,46 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
-    oneiron::memory::caps::check_deadline_ms(req.signals_deadline_ms)
-        .map_err(|error| ApiError::bad_request(error.to_string(), Some("signals_deadline_ms")))?;
-    if req.signals_deadline_ms.is_some() && req.signals_since.is_none() {
-        return Err(ApiError::bad_request(
-            "signals_since is required for reaction signals",
-            Some("signals_since"),
-        ));
-    }
-    // Every ref the request names resolves under the caller's own read: a
-    // room or contact it cannot read is one that does not exist. A room's
-    // members read its roster by membership, as their room turns do.
-    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let super::input_worker::ResolvedContextInputs {
+    let pack = validate_context_pack(server, auth, req).await?;
+    execute_context_pack(server, auth, pack, memories).await
+}
+
+/// [`run_context_pack`] on `pack`, a request already validated (FIX 1435):
+/// scoped retrieval, projection and evidence. The paid embedding, the once
+/// answers, the retrieval, the observations, the signal read and the
+/// disclosure receipts all run here, in that order.
+pub(crate) async fn execute_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    pack: ValidatedContextPack,
+    memories: Option<MemoriesRequest>,
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
+    let ValidatedContextPack {
         read,
-        req: resolved_req,
+        mut req,
         optional_memory,
         room_id,
-        room_members,
         room,
         interlocutors,
-    } = super::input_worker::resolve_context_inputs(server, auth, scoped_read, req).await?;
-    req = resolved_req;
+        media,
+        skill_reliability,
+        candidate_limit,
+        query_affect,
+        ranking,
+        time,
+        signals,
+    } = pack;
     let scoped_read = read
         .into_borrowed(&server.vault)
         .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
-    // A media query seeds the pack on its own; a vector beside it is still
-    // checked.
-    validate_core_query_seeds(
-        query.or(req.media.as_ref().map(|_| "media")),
-        req.query_vector.as_deref(),
-    )?;
-    let media = req
-        .media
-        .as_ref()
-        .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
-        .transpose()?;
-    let skill_reliability = req.skill_reliability_query(&server.vault)?;
     let (edge_hop, _, max_neighbors, _) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     let hydrate = req
@@ -241,20 +264,6 @@ pub(crate) async fn run_context_pack(
     let skip_optional_recall =
         optional_memory.is_some_and(|choice| narrow_to_reader(&mut req.budget, &mut view, choice));
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = narrow_to_core_audience(
-        &server.vault,
-        auth,
-        scoped_read,
-        room_members.as_deref(),
-        room.as_ref(),
-        interlocutors.as_ref(),
-    )?;
-    let candidate_limit = scoped_read
-        .search_candidate_limit(req.limit)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
-            core_engine_error("core context-pack scoped read setup failed", error)
-        })?;
     // Embedded once everything free is checked: it is a paid call. On the
     // one-space preset the text query is embedded into the text slot's space.
     // A reader whose optional memory is `none` embeds nothing (FIX 8151);
@@ -320,11 +329,11 @@ pub(crate) async fn run_context_pack(
             candidate_limit,
         );
     }
-    if let Some(affect) = req.query_affect {
-        builder = builder.query_affect(affect.vad()?);
+    if let Some(vad) = query_affect {
+        builder = builder.query_affect(vad);
     }
-    builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
-    builder = apply_context_pack_time(builder, req.time.as_ref())?;
+    builder = ranking.applied(builder);
+    builder = time.applied(builder);
     let (mut builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
@@ -391,6 +400,7 @@ pub(crate) async fn run_context_pack(
         server,
         auth,
         &req,
+        signals,
         &scoped_read,
         signal_disclosure.as_ref(),
         &mut response,
@@ -432,45 +442,28 @@ pub(crate) async fn run_context_pack(
 
 /// The agent signal feed rides the context pack of the agent's next turn:
 /// reactions to the reader's own messages since `signals_since`, paged, each
-/// admitted by the same scoped read as the pack.
+/// admitted by the same scoped read as the pack. `signal_request` was
+/// checked with the request (FIX 1435); its deadline starts here.
 fn read_reaction_signals(
     server: &SyncServer,
     auth: &CoreAuth,
     req: &CoreContextPackRequest,
+    signal_request: Option<ContextPackSignalRequest>,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     disclosure: Option<&oneiron::disclosure::DisclosureContext>,
     response: &mut CoreContextPackResponse,
 ) -> Result<(), ApiError> {
-    let Some(since) = req.signals_since else {
-        if req.signals_after.is_some()
-            || req.signals_limit.is_some()
-            || req.signals_person.is_some()
-            || req.signals_deadline_ms.is_some()
-        {
-            return Err(ApiError::bad_request(
-                "signals_since is required for reaction signals",
-                Some("signals_since"),
-            ));
-        }
+    let Some(ContextPackSignalRequest {
+        person,
+        since,
+        room,
+        deadline_ms,
+        paging,
+    }) = signal_request
+    else {
         return Ok(());
     };
-    let person = req
-        .signals_person
-        .as_deref()
-        .or_else(|| auth.principal_ref())
-        .ok_or_else(|| {
-            ApiError::bad_request("signals_person is required", Some("signals_person"))
-        })?;
-    if !auth.is_owner_grade() && auth.principal_ref() != Some(person) {
-        return Err(ApiError::forbidden_scope("signals_person"));
-    }
-    let person = super::super::parse_entity_id_param(person, "signals_person")?;
-    let room = req
-        .conversation_id
-        .as_deref()
-        .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
-        .transpose()?;
-    let deadline = req.signals_deadline_ms.map(|ms| {
+    let deadline = deadline_ms.map(|ms| {
         oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
     });
     let signal_error = |error: oneiron::Error| match &error {
@@ -531,13 +524,7 @@ fn read_reaction_signals(
         kept.push(signal);
     }
     checkpoint()?;
-    let page = oneiron::reaction::page_reaction_signals(
-        kept,
-        req.signals_after.as_deref(),
-        req.signals_limit
-            .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
-    )
-    .map_err(|e| core_engine_error("reaction signal page failed", e))?;
+    let page = paging.page(kept);
     checkpoint()?;
     let signals = page
         .signals
