@@ -63,11 +63,44 @@ It does not union grants or use the human PERSON branch. This makes the
 native standing primitive available to work that already calls it; it does
 not enqueue an app callback or add the guest action transport.
 
-The empty-verb bootstrap slip stays empty. A grant row does not widen it: a
-caller also needs an owner-issued credential whose own scope admits the call.
-The normal credential and dispatcher checks still apply. This identity/grant
-join does not pass a holder key, slip or grant into a backend guest, and does
-not provide the guest's native action transport.
+The empty-verb bootstrap slip stays empty. A grant row does not widen it.
+The owner explicitly issues a separate credential through
+`POST /v1/owner/artifacts/backend-slip`:
+
+```json
+{
+  "grant_ref": "the-owner-agent-access-grant-id",
+  "holder_key": "the-apps-64-character-public-ed25519-key-hex",
+  "expires_at": 1794000000,
+  "comm": "parent"
+}
+```
+
+All fields are required. `expires_at` is an absolute Unix second chosen by the
+owner, later than the vault's current instant. The key is the app's public
+binding key; the app keeps its private key. This is a new explicit owner act,
+not an upgrade of the bootstrap or a requirement to find an earlier slip.
+The response has `token`, `principal_ref`, `grant_ref` and `expires_at`. Treat
+`token` as a credential and give it only to the app whose key it binds. Use
+it with the normal holder proof; possession of the token alone is not proof.
+
+The native `Vault::mint_artifact_backend_slip` checks the owner and host issuer,
+then selects exactly that existing live owner-agent Access grant and its native
+app principal in the same writer that signs and logs the slip. Its signed
+six-axis scope is the selected grant's exact scope, and its class is `agent`.
+It creates no grant, combines no grants and adds no verbs. The grant must still
+confer under the native clock, owner, withdrawal and pact rules. Personal-vault
+residence grants use the same native path as shared-vault grants.
+
+Each normal slip liveness check rechecks the exact grant. Current-scope checks
+reject a cached proof that exceeds a narrowed grant, and proof-backed read keys
+meet the current scope in their own snapshot. Expiry, withdrawal, an archived
+app or a lapsed native grant ends its standing even if the token's own expiry
+is later. No extra credential lifetime cap is added.
+
+The normal credential and dispatcher checks still apply. This issuer does not
+pass a holder key, slip or grant into a backend guest, and does not provide the
+guest's native action transport.
 
 This is the identity bootstrap and owner-grant join for FIX1116 / OF-356, not backend deployment.
 It starts no process, changes no publication pointer or audience, and exposes
