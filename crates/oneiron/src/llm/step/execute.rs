@@ -183,6 +183,7 @@ pub(super) enum StepRecovery {
     Payload {
         binding: StepEffectBinding,
         payload: Vec<u8>,
+        owners: StepStateOwners,
     },
 }
 
@@ -220,8 +221,11 @@ pub(super) fn recovery_in_txn(
             row.progression,
             StepProgression::ResponseReceived | StepProgression::Logged
         ) {
-            row.response_payload
-                .map(|payload| StepRecovery::Payload { binding, payload })
+            row.response_payload.map(|payload| StepRecovery::Payload {
+                binding,
+                payload,
+                owners: row.owners,
+            })
         } else {
             None
         }
@@ -242,7 +246,11 @@ pub(super) fn recover_step(
             let policy = failure_policy(ctx.vault, &response)?;
             (binding, response, policy)
         }
-        StepRecovery::Payload { binding, payload } => {
+        StepRecovery::Payload {
+            binding,
+            payload,
+            owners,
+        } => {
             let response: LlmResponse = serde_json::from_slice(&payload)?;
             // Resolve the same policy before any terminal write, as on
             // the original stored-payload recovery path.
@@ -250,6 +258,7 @@ pub(super) fn recover_step(
             if log_terminal_step(
                 ctx,
                 binding,
+                owners,
                 request,
                 &response,
                 &payload,
@@ -546,6 +555,7 @@ async fn durable_step(
             attempt_id: ctx.attempt_id,
             step_hash,
         },
+        StepStateOwners::of(ctx),
         &request,
         &response,
         &payload,
