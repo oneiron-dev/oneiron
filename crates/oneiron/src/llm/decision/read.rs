@@ -13,10 +13,11 @@ use super::ladder::{
 use super::questions::QuestionCriteria;
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::Result;
+use crate::{Error, Result};
 use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
-    BudgetGuard, BudgetLease, LabelReadDistribution, LabelReadGenerationOutcome, LabelReadGenerationReader,
+    BudgetGuard, BudgetLease, FatalLlmError, LabelReadDistribution, LabelReadFailure,
+    LabelReadGenerationOutcome, LabelReadGenerationReader,
     LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError,
     LlmResult, LlmUsage, joint_marginals,
 };
@@ -455,7 +456,13 @@ impl DecisionReadProvider<'_> {
                     DecisionReadOutcome::Failed(&error),
                     gate_run.as_ref(),
                 );
-                return Err(invalid(&format!("decision read failed: {error}")));
+                let message = format!("decision read failed: {error}");
+                return Err(match error {
+                    LlmError::Fatal(FatalLlmError::LabelRead(LabelReadFailure::TokenCap)) => {
+                        Error::DecisionTokenCap(message)
+                    }
+                    _ => invalid(&message),
+                });
             }
         };
         let unit = |p: &f64| p.is_finite() && (0.0..=1.0).contains(p);
