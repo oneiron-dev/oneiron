@@ -42,13 +42,34 @@ truthful digest and skeleton. If the digest cannot be read, the existing
 best-effort outer bridge logs the failure without failing or retrying the
 delivered send or inventing a digest.
 
+## Delivered code-mode replies
+
+A direct `connector.call` answer with outcome `delivered` crosses the
+existing 512 KiB result representation threshold before the write receipt
+serializes its answer. The recording host lends a call-scoped publisher.
+It uses the normal reply spool, admission wall and run-owned occurrence,
+with the host's result-memory share when one was lent. No answer is refused
+or truncated for its size. An unplaceable secret still gives typed
+unavailable content without storing the body.
+
+The same write receipt keeps the native output descriptor and binding name
+beside its result card. These are host metadata, not a descriptor recovered
+from a guest card. If the receipt commits but the step checkpoint does not,
+a replay admitted by the original door adopts that exact occurrence into
+the recording host. The receipt does not acquire a second occurrence.
+Actor response erasure releases the original run's occurrence using the
+native response-owner row, even before the step adopts it.
+
+`self.use` keeps its existing whole-envelope spill path. Held and pending
+calls still park as before. Question-bearing answers keep their existing
+path; they are not selected by this early publisher.
+
 ## Remaining whole-body adapters
 
 This is not a bounded-memory implementation of the full connector result
 path. The typed JSON response and credential-clearing comparison still
 hold whole Values. SSE events, control replies and later retry responses
 still use their native in-memory readers. The stored STEP body is still an
-admitted Vec. Early publication to `result_body` before hooks, receipts and
-wait serialization, streamed JSON clearing, and spool-aware stored replay
-admission remain separate work. The existing 512 KiB result representation
-threshold is unchanged.
+admitted Vec. Door-hook publication, settled-wait publication, streamed
+JSON clearing, and spool-aware stored replay admission remain separate
+work. The existing 512 KiB result representation threshold is unchanged.
