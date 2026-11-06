@@ -162,18 +162,7 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                // The native read fan-out, on the heap (FIX 12072).
-                let (output, capabilities, producers) =
-                    Box::pin(super::memory_response::execute(server, &args, actor)).await?;
-                served.extend(producers);
-                // One native response, with its own bounded query/batch
-                // semantics. Do not invent an MCP cursor over nested DTOs.
-                (
-                    output,
-                    crate::mcp::McpPageSource::complete(1),
-                    McpCarrierPolicy::DrainWithCapabilities(capabilities),
-                    None,
-                )
+                native_read::execute_mcp_native_read(server, &args, actor, &mut served).await?
             } else {
                 // Establish the board epoch before reading a continuable
                 // task set. The result itself is retained below, so a
@@ -861,9 +850,10 @@ fn mcp_direct_authorship<'a>(
     )
 }
 
-use super::{board_setup, skill_execution, verb_hooks};
+use super::{board_setup, memory_response, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
+mod native_read;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
