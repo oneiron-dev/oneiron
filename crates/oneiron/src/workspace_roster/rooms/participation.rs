@@ -676,6 +676,32 @@ fn held_thread_task_in_txn(
     Ok(None)
 }
 
+/// Every holder of an open TASK of `turn`'s thread now: each task's stored
+/// assignee, re-read here, as [`held_thread_task_in_txn`] reads it for one
+/// holder (FIX 15647). A task whose holder does not read is passed over.
+pub(super) fn thread_task_holders_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<BTreeSet<EntityId>> {
+    let mut holders = BTreeSet::new();
+    for task in thread_tasks_in_txn(vault, txn, turn)? {
+        match crate::task_verb::open_thread_task_holder_in(
+            vault,
+            txn,
+            task,
+            crate::gate::TaskHolderFallback::AssigneeOnly,
+        ) {
+            Ok(Some(holder)) => {
+                holders.insert(holder);
+            }
+            Ok(None) | Err(Error::EntityNotFound) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(holders)
+}
+
 /// The TASK ids bound along `turn`'s thread chain, from the turn up to its
 /// root, where a thread's task binds.
 fn thread_tasks_in_txn(
