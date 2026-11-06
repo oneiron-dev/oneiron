@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::origin::{RepoManifest, RepoPortableId};
-use crate::sync::SyncQueue;
+use crate::sync::{SyncQueue, WindowKey};
 use crate::sync::window::{
-    RepoManifestConflictDiscard, RepoManifestConflictReview, WindowKey,
+    RepoManifestConflictDiscard, RepoManifestConflictReview,
     discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
 };
 use crate::{EntityId, Vault};
