@@ -214,11 +214,22 @@ Discarded decoded score vectors and components removed by the existing retains
 are not charged. The current buffers remain unchanged until the decoded record
 drops before the caller's lease. An unbound finalizer adds no accounting walk.
 
-These finalization charges do not cover the decoded record's other backing,
-other mutation copies, other finalizer input storage, hash sets, config-map and
-number internals, serialization scratch, marker/index/retention keys and values,
-construction peaks or pre-growth admission. They do not establish a full
-working-set bound or a compiler/runtime result.
+After the existing empty-reason move and replay-pack metadata assignment, the
+same optional lease also records the current empty-reason string, replay query
+and corpus-reference strings, and the replay config's known backing. The config
+uses the same lower capacity calculation as the original and provisional
+owners, but measures this decoded record after its last mutation. Its actual
+string and array capacities and object-key strings include any moved pack
+metadata and newly inserted pack key. No extra input copy is made or charged.
+The old decoded empty-reason string and replaced pack metadata have already
+dropped and are not counted. Absent replay inputs add no replay backing, and
+an unbound finalizer performs no added walk.
+
+These finalization charges do not cover remaining backing, the finalizer's
+input storage before these moves, other mutation copies, hash sets, config-map
+storage, number internals, serialization scratch, marker/index/retention keys
+and values, construction peaks or pre-growth admission. They do not establish
+a full working-set bound or a compiler/runtime result.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
