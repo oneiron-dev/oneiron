@@ -67,6 +67,9 @@ pub(crate) struct VerbHookState {
     expired: Mutex<HashSet<[u8; 16]>>,
     /// The pack lines generative fact hooks' verdicts spend on (FIX 10075).
     pub(crate) pack_lines: crate::runtime_hooks::pack_line::HookPackLines,
+    /// How long a paced call waits for its turn, in seconds, as the host
+    /// set it; 0 keeps the default (FIX 8753).
+    pub(super) paced_wait: AtomicU64,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
