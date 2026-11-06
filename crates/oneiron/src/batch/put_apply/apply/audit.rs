@@ -164,7 +164,9 @@ pub(super) fn audit_and_stage_body(
             wtxn,
             &fixed.id,
             fixed.replicated,
-            fixed.own_device.and_then(|lane| lane.proof_for(&fixed.id, data)),
+            fixed
+                .own_device
+                .and_then(|lane| lane.proof_for(&fixed.id, data)),
         )?;
     }
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
