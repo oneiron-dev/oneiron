@@ -23,8 +23,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, DECISION_IMAGE_EDGE, DecisionAnswer, DecisionCall, DecisionImage,
-    DecisionModel, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
+    AnswerContract, CapturedDecision, CapturedDecisionPack, DECISION_IMAGE_EDGE, DecisionAnswer,
+    DecisionCall, DecisionCallContext, DecisionImage, DecisionModel, DecisionPack,
+    DecisionReadOutcome, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
     ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
@@ -35,6 +36,8 @@ use oneiron::{
     ResponseFormat, RetryableLlmError, TierPrecedence, Vault,
 };
 use serde_json::{Value, json};
+
+use crate::decision_verdict::model_call_context;
 
 use super::AiHandle;
 
@@ -102,7 +105,8 @@ impl LocalVisionModel {
         self.locality
     }
 
-    /// The last call's spend and finish, or its failure; none before one ran.
+    /// The last recorded call's spend and finish, or its failure; private
+    /// calls leave this observation unchanged.
     pub(crate) fn last_call(&self) -> Option<VisionCall> {
         self.last
             .lock()
@@ -121,7 +125,10 @@ impl LocalVisionModel {
             // names, as System One's state holds its asset's.
             let reference = format!("image:{}", image.name);
             state[image.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Text {
+                text: reference,
+                signature: None,
+            });
             content.push(ContentPart::Image {
                 media_type: fitted.media_type.clone(),
                 image: ImageContent::Base64 {
@@ -132,15 +139,19 @@ impl LocalVisionModel {
         // The question's criteria triple, as the rubric its contract is
         // judged by (FIX 2181).
         if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
-            content.push(ContentPart::Text { text: rubric });
+            content.push(ContentPart::Text {
+                text: rubric,
+                signature: None,
+            });
         }
         content.push(ContentPart::Text {
-            text: json!({"question": call.question.text, "state": state}).to_string(),
+            text: json!({"question": call.question_text(), "state": state}).to_string(),
+            signature: None,
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -160,7 +171,154 @@ impl LocalVisionModel {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
+    }
+
+    fn decide_with_context(
+        &self,
+        call: &DecisionCall<'_>,
+        context: Option<&DecisionCallContext<'_>>,
+    ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
+        let schema = match &call.question.contract {
+            _ if call.images.is_empty() => None,
+            AnswerContract::Box | AnswerContract::Point => Some(box_schema()),
+            AnswerContract::Choice { options } => Some(choice_schema(options)),
+            AnswerContract::Noul => Some(noul_schema()),
+            AnswerContract::Score { min, max } => Some(score_schema(*min, *max)),
+        };
+        let Some(schema) = schema else {
+            return Ok(DecisionReadOutcome::Answered(ProviderDecision {
+                answer: DecisionAnswer::Abstain,
+                probability: None,
+                paired: None,
+                person: None,
+                served: None,
+                cost_per_thousand: None,
+            }));
+        };
+        let mut request = self.request(call, schema)?;
+        if let Some(context) = context {
+            request.envelope.scope = context.scope.clone();
+            request.envelope.purpose = context.purpose.clone();
+            request.envelope.tier =
+                TierPrecedence::for_purpose(context.purpose, ModelTierRef("local-vision".into()));
+        }
+        let admitted = match context {
+            Some(context) => self.ai.model_runtime().admit_role_with_egress(
+                &self.vault,
+                ROLE,
+                request,
+                context.extraction_egress,
+            ),
+            None => self.ai.admit_role(&self.vault, ROLE, request),
+        }
+        .map_err(|refused| failed(&format!("local vision call refused: {refused}")))?;
+        // The pin names this seat's model; a route that binds another is not
+        // this rung's answer.
+        if admitted.request.model != self.model {
+            return Err(failed("the local vision route serves another model"));
+        }
+        if context.is_some_and(|context| !context.admit_generation()) {
+            return Ok(DecisionReadOutcome::NotStarted);
+        }
+        let time_left = call.deadline.decision_time_left();
+        // The call's input is its question over the state its producer built
+        // from the access-checked evidence: those rows, complete (FIX 6990).
+        // A call that carries its caller's run spends on it (FIX 10443).
+        let run = match call.run {
+            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            None => self.run.sourced(Some(call.evidence.to_vec())),
+        };
+        let run = if context.is_some() {
+            run.capturing_settlements()
+        } else {
+            run
+        };
+        let unrecorded = run.is_unrecorded();
+        let ladder = admitted.ladder.for_run(&run);
+        let caller = (!unrecorded).then(model_call_context).flatten();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
+        });
+        let record_request = admitted.request.clone();
+        // Cooling waits also keep the vault's limit; sends keep the full work time.
+        let wait_budget = ladder.cooling_wait_budget(time_left);
+        let response = crate::decision_host::run_native_read(&run, || {
+            self.runtime.block_on(async {
+                tokio::time::timeout(
+                    time_left,
+                    ladder.generate_recorded_by(
+                        &run,
+                        admitted.request,
+                        None,
+                        &|| run.may_send(),
+                        wait_budget,
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            })
+        });
+        let response = response.map(|(response, binding)| {
+            if let Some(caller) = caller {
+                let no_record = no_record_at_arrival
+                    || self.vault.model_call_keeps_no_record_for(
+                        caller.session.as_deref(),
+                        Some(caller.principal),
+                    );
+                let evidence = run.initiated_by(Some(caller.principal));
+                crate::api::record_raw_response(
+                    &self.vault,
+                    &ladder,
+                    &evidence,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+            }
+            response
+        });
+        if !unrecorded {
+            *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                response
+                    .as_ref()
+                    .map(|response| (response.usage.clone(), response.finish_reason.clone()))
+                    .map_err(Clone::clone),
+            );
+        }
+        let response =
+            response.map_err(|error| failed(&format!("local vision call failed: {error}")))?;
+        let text = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        match &call.question.contract {
+            AnswerContract::Box => box_answer(&text),
+            // No point wire: the seat answers a box, and its centre is the point.
+            AnswerContract::Point => box_answer(&text).map(|decision| ProviderDecision {
+                answer: match decision.answer {
+                    DecisionAnswer::Box(found) => DecisionAnswer::Point(found.map(ImageBox::point)),
+                    other => other,
+                },
+                ..decision
+            }),
+            AnswerContract::Choice { options } => choice_answer(&text, options),
+            AnswerContract::Noul => noul_answer(&text),
+            AnswerContract::Score { min, max } => score_answer(&text, *min, *max),
+        }
+        .ok_or_else(|| failed("malformed local vision answer"))
+        .map(DecisionReadOutcome::Answered)
     }
 }
 
@@ -181,89 +339,50 @@ impl DecisionModel for LocalVisionModel {
     /// Blocks on the server's runtime until the seat answers, so it runs on
     /// a blocking thread, never on one of that runtime's workers. The call
     /// waits no longer than the decision's work time.
-    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        let schema = match &call.question.contract {
-            _ if call.images.is_empty() => None,
-            AnswerContract::Box | AnswerContract::Point => Some(box_schema()),
-            AnswerContract::Choice { options } => Some(choice_schema(options)),
-            AnswerContract::Noul => Some(noul_schema()),
-            AnswerContract::Score { min, max } => Some(score_schema(*min, *max)),
-        };
-        let Some(schema) = schema else {
-            return Ok(ProviderDecision {
-                answer: DecisionAnswer::Abstain,
-                probability: None,
-                paired: None,
-                person: None,
-                served: None,
-            });
-        };
-        let request = self.request(call, schema)?;
-        let admitted = self
-            .ai
-            .admit_role(&self.vault, ROLE, request)
-            .map_err(|refused| failed(&format!("local vision call refused: {refused}")))?;
-        // The pin names this seat's model; a route that binds another is not
-        // this rung's answer.
-        if admitted.request.model != self.model {
-            return Err(failed("the local vision route serves another model"));
-        }
-        let time_left = call.deadline.decision_time_left();
-        // The call's input is its question over the state its producer built
-        // from the access-checked evidence: those rows, complete (FIX 6990).
-        // A call that carries its caller's run spends on it (FIX 10443).
-        let run = match call.run {
-            Some(run) => run.sourced(Some(call.evidence.to_vec())),
-            None => self.run.sourced(Some(call.evidence.to_vec())),
-        };
-        // Cooling waits also keep the vault's limit; sends keep the full work time.
-        let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
-        let response = self.runtime.block_on(async {
-            tokio::time::timeout(
-                time_left,
-                admitted.ladder.generate_within(
-                    &run,
-                    admitted.request,
-                    None,
-                    &|| true,
-                    wait_budget,
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_with_context(call, Some(context))
         });
-        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
-            response
-                .as_ref()
-                .map(|response| (response.usage.clone(), response.finish_reason.clone()))
-                .map_err(Clone::clone),
-        );
-        let response =
-            response.map_err(|error| failed(&format!("local vision call failed: {error}")))?;
-        let text = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
+        Some(CapturedDecision { result, receipts })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            let mut decisions = Vec::new();
+            let mut stopped = false;
+            for call in (0..pack.questions.len()).filter_map(|index| pack.call(index)) {
+                let outcome = if stopped {
+                    DecisionReadOutcome::NotStarted
+                } else {
+                    self.decide_with_context(&call, Some(context))?
+                };
+                stopped = matches!(
+                    &outcome,
+                    DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped
+                );
+                decisions.push(outcome);
+            }
+            Ok(decisions)
+        });
+        Some(CapturedDecisionPack { result, receipts })
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        self.decide_with_context(call, None)
+            .map(|outcome| match outcome {
+                DecisionReadOutcome::Answered(answer) => answer,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                    unreachable!("an ordinary decision has no generation gate")
+                }
             })
-            .collect::<String>();
-        match &call.question.contract {
-            AnswerContract::Box => box_answer(&text),
-            // No point wire: the seat answers a box, and its centre is the point.
-            AnswerContract::Point => box_answer(&text).map(|decision| ProviderDecision {
-                answer: match decision.answer {
-                    DecisionAnswer::Box(found) => DecisionAnswer::Point(found.map(ImageBox::point)),
-                    other => other,
-                },
-                ..decision
-            }),
-            AnswerContract::Choice { options } => choice_answer(&text, options),
-            AnswerContract::Noul => noul_answer(&text),
-            AnswerContract::Score { min, max } => score_answer(&text, *min, *max),
-        }
-        .ok_or_else(|| failed("malformed local vision answer"))
     }
 }
 
@@ -327,6 +446,7 @@ fn score_answer(text: &str, min: f64, max: f64) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -373,6 +493,7 @@ fn choice_answer(text: &str, options: &[String]) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -385,6 +506,7 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -448,6 +570,7 @@ fn box_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 

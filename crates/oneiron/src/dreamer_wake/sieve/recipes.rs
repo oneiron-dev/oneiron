@@ -6,6 +6,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
+use crate::model_step_context::StepReceipt;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -22,6 +23,10 @@ mod audit_erase;
 pub(crate) use audit_erase::forget_audit_candidate_in_txn;
 mod consumption;
 pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
+mod typing_batch;
+pub(crate) use typing_batch::{
+    TYPING_BATCH_ATTEMPT, TypingMember, typing_batch_turn, typing_member_key, typing_members,
+};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
@@ -73,7 +78,7 @@ pub struct SieveAudit {
     pub agrees: bool,
     pub at: u64,
     pub completed_units: u64,
-    pub step_hashes: Vec<[u8; 32]>,
+    pub step_bindings: Vec<StepReceipt>,
     /// Every owed rung's typed decisions, rung by rung in pack order
     /// (OF-498a): what the reading was read from.
     pub decisions: Vec<KeptDecision>,
@@ -129,10 +134,10 @@ impl SieveAuditRecord {
         }
     }
 
-    fn step_hashes(&self) -> &[[u8; 32]] {
+    fn step_bindings(&self) -> &[StepReceipt] {
         match self {
-            Self::Flagged(audit) => &audit.step_hashes,
-            Self::Window(audit) => &audit.step_hashes,
+            Self::Flagged(audit) => &audit.step_bindings,
+            Self::Window(audit) => &audit.step_bindings,
         }
     }
 }
@@ -287,6 +292,11 @@ pub(crate) fn enqueue_rungs_in_txn(
         && crate::dreamer_wake::follower::route_in_txn(store, txn, Some(parent), span, now)?
     {
         return Ok(());
+    }
+    // A span that owes only its typing rung is read with its TURN's other
+    // such spans, several to a call (FIX 14711).
+    if !audit && typing_batch::typing_only(span) {
+        return typing_batch::route_typing_in_txn(store, txn, parent, span, now);
     }
     per_span_in_txn(store, txn, parent, span, audit, policy, now)
 }
@@ -499,7 +509,7 @@ pub(crate) fn finish_rungs(
     confidence: u8,
     typing_owed: bool,
     completed_units: u64,
-    step_hashes: Vec<[u8; 32]>,
+    step_bindings: Vec<StepReceipt>,
     decisions: Vec<KeptDecision>,
     now: u64,
 ) -> Result<bool> {
@@ -533,7 +543,7 @@ pub(crate) fn finish_rungs(
                 agrees: kind == input.span.kind && entity == input.span.entity,
                 at: now,
                 completed_units,
-                step_hashes,
+                step_bindings,
                 decisions,
             }),
         )?;
@@ -681,7 +691,7 @@ pub(super) fn history_in_txn(
 pub(crate) fn rung_result_units(
     vault: &Vault,
     attempt: AttemptId,
-) -> Result<Option<(u64, Vec<[u8; 32]>)>> {
+) -> Result<Option<(u64, Vec<StepReceipt>)>> {
     let result = {
         let txn = vault.store.env.read_txn()?;
         AUDIT.get(&vault.store, &txn, &attempt)?
@@ -690,14 +700,14 @@ pub(crate) fn rung_result_units(
         return Ok(None);
     };
     let store = DreamerRunnerStore::new(vault);
-    let mut paid = !result.step_hashes().is_empty();
-    for hash in result.step_hashes() {
-        paid &= store.checkpoint_step_charged(attempt, hash)?;
+    let mut paid = !result.step_bindings().is_empty();
+    for binding in result.step_bindings() {
+        paid &= store.checkpoint_step_charged(*binding)?;
     }
     Ok(Some(if paid {
         (0, Vec::new())
     } else {
-        (result.completed_units(), result.step_hashes().to_vec())
+        (result.completed_units(), result.step_bindings().to_vec())
     }))
 }
 

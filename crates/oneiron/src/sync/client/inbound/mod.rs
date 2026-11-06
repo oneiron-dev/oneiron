@@ -38,6 +38,11 @@ impl SyncClient {
         let mut responses = Vec::new();
 
         match tag {
+            transport::TAG_PRIVATE_HUMAN => {
+                let ask = transport::decode_private_human_ask(payload)?;
+                let _ = self.event_tx.send(SyncEvent::PrivateHumanAsk(ask));
+                return Ok(responses);
+            }
             transport::TAG_LFS_CHUNK_SYNC => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
                     return Err(TransportError::FrameTooLarge {

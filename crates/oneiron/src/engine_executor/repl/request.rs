@@ -2,7 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
-use super::super::store::load_script_context;
+use super::super::store::{load_script_context, mask_known_text};
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -98,12 +98,14 @@ impl EngineNativeExecutor<'_> {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: executor_system_prompt(wire_prompt),
+                signature: None,
             }],
         });
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
+                signature: None,
             }],
         });
 
@@ -199,10 +201,15 @@ impl EngineNativeExecutor<'_> {
             let console = match folded {
                 // A fold by kind keeps the program and its say() messages;
                 // the console shows the fold's stub, which keeps the
-                // output's handles (ARCH-0067 §2.2, fold by kind).
-                Some(fold) => fold
-                    .output_stub(seq as u64, noted.insert(fold.fold))
-                    .unwrap_or_default(),
+                // output's handles (ARCH-0067 §2.2, fold by kind). Every
+                // literal it keeps is masked at each render, so a value
+                // custody learns after the fold lands is masked too.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .output_stub(seq as u64, noted.insert(fold.fold))
+                        .unwrap_or_default(),
+                )?,
                 None => match view.tier {
                     OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
                         .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
@@ -213,25 +220,48 @@ impl EngineNativeExecutor<'_> {
                     }))?,
                 },
             };
-            let turn = CodeRunHistoryTurn {
-                code: load_script_context(
+            // A program fold keeps the console and its stub stands in the
+            // exec frame, as comment lines that keep what the step said.
+            let code = match epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::Program, seq as u64)
+            {
+                // Each speech text is read from the run's record and
+                // masked before it is quoted, never kept in the fold; the
+                // whole stub (its ids and note too) is masked again at
+                // each render, so later custody values are masked as well.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .program_stub(seq as u64, noted.insert(fold.fold), |speech| {
+                            let call = record
+                                .bridge_calls
+                                .get(usize::try_from(speech.call).ok()?)?;
+                            let text = super::compaction::speech_call_text(call)?;
+                            mask_known_text(&self.storage, text).ok()
+                        })
+                        .unwrap_or_default(),
+                )?,
+                None => load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq as u64),
                     None,
                 )?,
-                console,
             };
+            let turn = CodeRunHistoryTurn { code, console };
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
                     text: turn.assistant_exec(),
+                    signature: None,
                 }],
             });
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: turn.user_console(seq as u64),
+                    signature: None,
                 }],
             });
             // The step's type feedback, the host's own words beside its
@@ -249,13 +279,13 @@ impl EngineNativeExecutor<'_> {
         if swapped && let Some(brief) = self.bindings_brief(record)? {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: brief }],
+                content: vec![ContentPart::Text { text: brief, signature: None }],
             });
         }
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: note }],
+                content: vec![ContentPart::Text { text: note, signature: None }],
             });
         }
         // An approved continuation's note, its own message (FIX 3694).
@@ -264,8 +294,27 @@ impl EngineNativeExecutor<'_> {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: executor_turn_instruction(completed_steps, wire_prompt),
+                signature: None,
             }],
         });
+        // FIX 15011: a run an event started opens with the wake opener after
+        // the turn instruction, on its opening request only, its clock read
+        // here at the request's final boundary. A later step and a resumed
+        // wait are no new birth, and the task text never holds the time.
+        if completed_steps == 0
+            && let Some(wake) = config.wake
+        {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: crate::context_board::turn_wake_line(
+                        self.storage.now_recorded_ms(),
+                        wake,
+                    ),
+                    signature: None,
+                }],
+            });
+        }
 
         let mut request = LlmRequest {
             model: config.model.clone(),
@@ -357,7 +406,7 @@ impl EngineNativeExecutor<'_> {
         };
         Ok(LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text { text, signature: None }],
         })
     }
 }

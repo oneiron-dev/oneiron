@@ -440,7 +440,7 @@ pub(in crate::server) fn launch_request(
     let descriptor = serde_json::json!({
         "response_format": {"type": "json_schema", "schema": schema},
     });
-    let part = |text: String| ContentPart::Text { text };
+    let part = |text: String| ContentPart::Text { text, signature: None };
     let purpose = CallPurpose::Other {
         name: LAUNCH_PURPOSE.to_owned(),
     };
@@ -501,7 +501,7 @@ pub(in crate::server) fn warn_launch_input(vault: &Vault, request: &LlmRequest) 
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => oneiron::count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .fold(0_u64, u64::saturating_add);
@@ -555,7 +555,7 @@ pub(in crate::server) fn decode_launch_spec(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

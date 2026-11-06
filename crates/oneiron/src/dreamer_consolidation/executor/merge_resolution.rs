@@ -361,16 +361,13 @@ impl ConsolidationExecutor<'_> {
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
-        let response = match outcome? {
-            StepOutcome::Finished { response, .. } => response,
+        let (response, binding) = match outcome? {
+            StepOutcome::Finished {
+                response, binding, ..
+            } => (response, binding),
             StepOutcome::Trapped { .. } => return Ok(None),
         };
-        charges.record_terminal(
-            step_ctx.vault,
-            step_ctx.attempt_id,
-            step_hash,
-            &response.usage,
-        )?;
+        charges.record_terminal(step_ctx.vault, binding, &response.usage)?;
         let rules = failure_rules::load(step_ctx.vault)?;
         if rules.is_some_and(|rules| !rules.accepts(Stage::Conflict, &response)) {
             return Ok(Some(MergeResolution::Escalate));
@@ -460,11 +457,12 @@ impl ConsolidationExecutor<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: system.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: lines }],
+                    content: vec![ContentPart::Text { text: lines, signature: None }],
                 },
             ],
             tools: Vec::new(),
@@ -510,7 +508,7 @@ fn decode_merged_value(response: &LlmResponse) -> Option<Value> {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

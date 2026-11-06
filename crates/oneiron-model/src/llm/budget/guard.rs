@@ -62,12 +62,9 @@ impl BudgetGuard {
     /// constructor performs no fallible row validation. Public so `oneiron`'s
     /// policy-manifest fold (its one caller outside this module) builds the guard
     /// across the crate line. A guard built from any table still issues every
-    /// lease itself; a caller that builds one governs only its own calls.
-    ///
-    /// # Panics
-    ///
-    /// When `policy` has more rows than a `u16` row index can address (65,536), which
-    /// `resolve_policy_manifest` already refuses.
+    /// lease itself; a caller that builds one governs only its own calls. A row
+    /// is addressed by its position in the table, so a table of any length is
+    /// metered whole (FIX 8781).
     #[must_use]
     pub fn with_policy_table(
         attempt_id: impl Into<String>,
@@ -77,12 +74,6 @@ impl BudgetGuard {
         actor: WriteActor,
         policy: &BudgetPolicyTable,
     ) -> Self {
-        // A hard check, not a debug one: this constructor is public now, and a row past the
-        // u16 index range would be dropped silently instead of enforced.
-        assert!(
-            policy.rows().len() <= usize::from(u16::MAX) + 1,
-            "resolved budget policy rows must stay addressable by a u16 row index"
-        );
         let state = BudgetState::new(
             attempt_id.into(),
             limit_units,
@@ -260,18 +251,7 @@ impl BudgetGuard {
     pub fn lease_observation(&self, lease_id: &str) -> Option<BudgetLeaseState> {
         let state = self.lock_state();
         let record = state.leases.get(lease_id)?;
-        Some(match record.state {
-            LeaseState::Open => BudgetLeaseState::Open {
-                reserve_units: record.reserve_units,
-                dispatched: record.dispatched,
-            },
-            LeaseState::Settled {
-                absolute_used_units,
-            } => BudgetLeaseState::Settled {
-                used_units: absolute_used_units,
-            },
-            LeaseState::Aborted => BudgetLeaseState::Aborted,
-        })
+        Some(super::accounting::lease_observation(record))
     }
 
     /// The engine-stamped actor a policy-aware guard is bound to, if any.

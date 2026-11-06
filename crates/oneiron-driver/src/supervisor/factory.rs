@@ -545,7 +545,8 @@ impl ConsolidationExecutorFactory {
                 },
                 self.summary_instruction.as_deref(),
             )
-            .with_window_tokens(self.model_windows.get(narrative.model).copied());
+            .with_window_tokens(self.model_windows.get(narrative.model).copied())
+            .with_arc_decisions(decisions.clone(), roles.clone());
             // PEOPLE `about` lines ride the same narrative role.
             let inner = PersonAboutExecutor::new(
                 inner,

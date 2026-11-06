@@ -2,11 +2,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use oneiron::BudgetLease;
 use oneiron::llm::{
-    CacheDigest, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
-    returned_model_wire_id,
+    CacheDigest, DispatchRelease, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher,
+    ModelId, returned_model_wire_id,
 };
 use oneiron_driver::InferenceWorker;
 use oneiron_llm_openai::{
@@ -19,7 +19,7 @@ use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::exl3_evidence::{Tie, external_tie};
-use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::http::{HttpFailure, HttpReleaseError, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
@@ -62,6 +62,16 @@ impl OpenAiHttp {
         lease: &'a BudgetLease,
         tie: Option<Tie>,
     ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_tie_release(request, lease, tie, None)
+    }
+
+    pub(super) fn execute_with_tie_release<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        tie: Option<Tie>,
+        release: Option<DispatchRelease<'a>>,
+    ) -> OpenAiCompatFuture<'a> {
         Box::pin(async move {
             let mut body = request.body;
             self.cap.apply(&mut body);
@@ -82,10 +92,18 @@ impl OpenAiHttp {
                     .and_then(|wire| self.engine_models.get(wire))
                     .cloned(),
             );
-            let mut reply = self
-                .http
-                .post_json(&request.path, &request.headers, &body)
-                .await?;
+            let mut reply = match release {
+                Some(release) => self
+                    .http
+                    .post_json_released(&request.path, &request.headers, &body, release, lease)
+                    .await
+                    .map_err(OpenAiCompatTransportError::from)?,
+                None => {
+                    self.http
+                        .post_json(&request.path, &request.headers, &body)
+                        .await?
+                }
+            };
             let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
                 Some(returned) if (200..300).contains(&reply.status) => {
                     self.answering(Some(returned), target.as_deref()).await
@@ -123,6 +141,16 @@ impl OpenAiHttp {
         lease: &'a BudgetLease,
         tie: Option<Tie>,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        self.stream_with_tie_release(request, lease, tie, None)
+    }
+
+    pub(super) fn stream_with_tie_release<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        tie: Option<Tie>,
+        release: Option<DispatchRelease<'a>>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let mut body = request.body;
         self.cap.apply(&mut body);
         send_format(self.response_format, &mut body);
@@ -142,6 +170,37 @@ impl OpenAiHttp {
                 .and_then(|wire| self.engine_models.get(wire))
                 .cloned(),
         );
+        if let Some(release) = release {
+            let sending = async move {
+                let events = self
+                    .http
+                    .post_sse_json_released(&request.path, &request.headers, &body, release, lease)
+                    .await
+                    .map_err(OpenAiCompatTransportError::from)?;
+                let frames = futures_util::stream::unfold(
+                    Frames {
+                        transport: self,
+                        target,
+                        execution,
+                        tie,
+                        worker: observed,
+                        answering: None,
+                        inference,
+                        observed_terminal: false,
+                        events: Box::pin(events),
+                        served: None,
+                        saw_usage: false,
+                        finished: false,
+                        closed: false,
+                    },
+                    Frames::next,
+                );
+                Ok::<_, OpenAiCompatTransportError>(
+                    Box::pin(frames) as OpenAiCompatProviderStream<'a>
+                )
+            };
+            return Ok(Box::pin(futures_util::stream::once(sending).try_flatten()));
+        }
         let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
@@ -183,6 +242,15 @@ impl From<HttpFailure> for OpenAiCompatTransportError {
     }
 }
 
+impl From<HttpReleaseError> for OpenAiCompatTransportError {
+    fn from(error: HttpReleaseError) -> Self {
+        match error {
+            HttpReleaseError::Transport(error) => error.into(),
+            HttpReleaseError::Release(error) => Self::Release(error),
+        }
+    }
+}
+
 impl OpenAiCompatTransport for OpenAiHttp {
     fn execute<'a>(
         &'a self,
@@ -198,6 +266,24 @@ impl OpenAiCompatTransport for OpenAiHttp {
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         self.stream_with_tie(request, lease, None)
+    }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_tie_release(request, lease, None, Some(release))
+    }
+
+    fn stream_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        self.stream_with_tie_release(request, lease, None, Some(release))
     }
 }
 

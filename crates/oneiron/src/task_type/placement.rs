@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::llm::decision::{DecisionCall, DecisionLadder, DecisionProvider};
+use crate::llm::decision::{
+    CapturedDecision, CapturedDecisionPack, DecisionCall, DecisionCallContext, DecisionLadder,
+    DecisionPack, DecisionProvider, DecisionReadOutcome,
+};
 use crate::model_decision::catalogue::QuestionFamily;
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionRung,
@@ -403,6 +406,7 @@ impl DecisionProvider for HeuristicRung<'_> {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             },
             None => ProviderDecision {
                 answer: DecisionAnswer::Abstain,
@@ -410,7 +414,35 @@ impl DecisionProvider for HeuristicRung<'_> {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             },
+        })
+    }
+
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        Some(CapturedDecision {
+            result: self.decide(call).map(DecisionReadOutcome::Answered),
+            receipts: Vec::new(),
+        })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        Some(CapturedDecisionPack {
+            result: self.decide_pack(pack).map(|answers| {
+                answers
+                    .into_iter()
+                    .map(DecisionReadOutcome::Answered)
+                    .collect()
+            }),
+            receipts: Vec::new(),
         })
     }
 }

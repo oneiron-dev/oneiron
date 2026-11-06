@@ -60,6 +60,7 @@ pub fn parse_openai_responses_output(response: &JsonValue) -> LlmResult<LlmRespo
                     {
                         content.push(ContentPart::Text {
                             text: text.to_owned(),
+                            signature: None,
                         });
                     }
                 }

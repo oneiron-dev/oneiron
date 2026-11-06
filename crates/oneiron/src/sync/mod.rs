@@ -67,6 +67,7 @@ pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;
 pub(crate) use crate::room_codec::room_parts;
+pub(crate) mod origin_positions;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
 pub mod schema;
@@ -109,6 +110,7 @@ pub use loro::awareness::{EphemeralEventTrigger, EphemeralStore, EphemeralStoreE
 pub use loro::{LoroValue, Subscription};
 pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
+pub use origin_positions::{OwnDevicePositionImport, prepare_own_device_push_positions};
 pub use quarantine::{
     MAX_QUARANTINE_ROWS, MAX_QUARANTINE_ROWS_PER_PASS, QUARANTINE_MAX_AGE_SECS,
     QuarantineContainer, QuarantineRecord, ReassertDrainReport, RematDrainReport,

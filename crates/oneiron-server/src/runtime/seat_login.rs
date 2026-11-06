@@ -87,6 +87,11 @@ pub struct OfficialCliSeatExecutor {
     /// Raised by the host when the run's claim is lost under it (FIX 9320):
     /// the run's process is to stop. `None` watches nothing.
     pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The credential-helper environment the host built for the run (FIX
+    /// 10624 step 2): the seat-child slip, its seed, the loopback origin and
+    /// the git configuration that calls the helper. `None` for a run with no
+    /// helper destination.
+    pub helper_env: Option<super::SeatHelperEnv>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -95,6 +100,7 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("workdir", &self.workdir)
             .field("secret_destinations", &self.secret_destinations)
             .field("floor", &self.floor.is_some())
+            .field("helper_env", &self.helper_env)
             .finish()
     }
 }
@@ -136,6 +142,9 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             .stderr(Stdio::piped());
         if let Some(destinations) = &self.secret_destinations {
             destinations.apply_env(&mut command);
+        }
+        if let Some(helper_env) = &self.helper_env {
+            helper_env.apply(&mut command);
         }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
@@ -687,7 +696,7 @@ where
         match routed {
             Ok(SeatRoute::Settled(_)) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             }),
             Ok(SeatRoute::Park { receipt, until, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: match until {

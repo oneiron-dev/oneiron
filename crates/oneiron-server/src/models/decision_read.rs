@@ -31,9 +31,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
+use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, WorkPhysical};
 use oneiron::llm::{
-    BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
+    BudgetLease, CacheDigest, DispatchRelease, FatalLlmError, LabelReadDistribution,
+    LabelReadFailure,
+    LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
     LlmUsage, RetryableLlmError,
 };
@@ -43,7 +45,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
-use super::http::{HttpFailure, KeyStyle, ProviderHttp};
+use super::http::{HttpFailure, HttpReleaseError, KeyStyle, ProviderHttp};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
@@ -51,13 +53,15 @@ use crate::config::models::{
 };
 
 mod host;
+mod prepared;
 use host::HostSlot;
+use prepared::PreparedDecisionRead;
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
 /// The fields each answer carries: as measured, the prompt it answers, and
 /// the model that answered it (its launch alias, FIX 7895).
-const RESPONSE_FIELDS: [&str; 9] = [
+const RESPONSE_FIELDS: [&str; 10] = [
     "index",
     "model",
     "content",
@@ -67,7 +71,9 @@ const RESPONSE_FIELDS: [&str; 9] = [
     "tokens_predicted",
     "stop_type",
     "stopped_eos",
+    "truncated",
 ];
+const EOS_READ_TOKENS: u64 = 1;
 /// The bias that forces the end token: generation stops at once, and the
 /// probabilities read are the pre-sampler ones, which no bias touches.
 const EOS_BIAS: f64 = 1e9;
@@ -79,6 +85,7 @@ const PROBABILITY_FLOOR: f64 = 1e-38;
 #[derive(Clone)]
 pub struct DecisionReadDoor {
     reader: Arc<dyn LabelReadModel>,
+    native: Option<Arc<DecisionReader>>,
     connector: PaidConnector,
     probe: Option<ProbeQuestions>,
     person_threshold: f64,
@@ -105,6 +112,7 @@ impl DecisionReadDoor {
     ) -> Self {
         Self {
             reader,
+            native: None,
             connector,
             probe,
             person_threshold,
@@ -166,6 +174,10 @@ impl DecisionReadDoor {
         Arc::clone(&self.reader)
     }
 
+    pub(crate) fn native_reader(&self) -> Option<Arc<DecisionReader>> {
+        self.native.clone()
+    }
+
     /// What each read is admitted as under a run.
     #[must_use]
     pub fn connector(&self) -> &PaidConnector {
@@ -223,7 +235,7 @@ pub(super) fn bind(
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
     let host = HostSlot::default();
-    let reader = DecisionReader::new(
+    let reader = Arc::new(DecisionReader::new(
         &model,
         &rung.model.model,
         &rung.model.provider,
@@ -232,13 +244,14 @@ pub(super) fn bind(
         runtime,
         Arc::clone(identities),
         Arc::clone(&host),
-    )?;
+    )?);
     let mut door = DecisionReadDoor::new(
-        Arc::new(reader),
+        reader.clone(),
         connector(provider, model.as_str())?,
         settings.recipe.probe().cloned(),
         settings.person_threshold,
     );
+    door.native = Some(reader);
     door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
     door.permitted = settings.permitted;
@@ -279,7 +292,7 @@ struct TokenIds {
     eos: u64,
 }
 
-struct DecisionReader {
+pub(crate) struct DecisionReader {
     model: String,
     /// The engine id, as the vault's model registry keys it.
     engine: ModelId,
@@ -308,6 +321,9 @@ struct DecisionReader {
     /// role does not permit refuses every read before any render or I/O.
     permitted: bool,
 }
+
+/// Present only for a call whose handle carries a credential check.
+type ReadRelease<'a> = (DispatchRelease<'a>, &'a BudgetLease);
 
 impl DecisionReader {
     fn new(
@@ -351,7 +367,7 @@ impl DecisionReader {
             .await
     }
 
-    async fn ids(&self) -> LlmResult<Arc<TokenIds>> {
+    async fn ids(&self, release: Option<ReadRelease<'_>>) -> LlmResult<Arc<TokenIds>> {
         if let Some(ids) = self
             .ids
             .lock()
@@ -362,9 +378,9 @@ impl DecisionReader {
         }
         let mut labels = Vec::with_capacity(self.recipe.tokens().len());
         for token in self.recipe.tokens() {
-            labels.push(self.token_id(token, false).await?);
+            labels.push(self.token_id(token, false, release).await?);
         }
-        let eos = self.token_id(self.recipe.eos(), true).await?;
+        let eos = self.token_id(self.recipe.eos(), true, release).await?;
         let distinct: BTreeSet<u64> = labels.iter().copied().collect();
         // Two labels on one token, or a label on the end token, cannot be read apart.
         if distinct.len() != labels.len() || distinct.contains(&eos) {
@@ -377,16 +393,33 @@ impl DecisionReader {
 
     /// The one token `text` is; a verbalizer of more tokens cannot be read at
     /// one position.
-    async fn token_id(&self, text: &str, special: bool) -> LlmResult<u64> {
-        let body = json!({"content": text, "add_special": false, "parse_special": special});
+    async fn token_id(
+        &self,
+        text: &str,
+        special: bool,
+        release: Option<ReadRelease<'_>>,
+    ) -> LlmResult<u64> {
+        let body = tokenize_body(text, special);
         let headers = BTreeMap::new();
-        let sent = self.http.post_json(TOKENIZE_PATH, &headers, &body);
+        let sent = async {
+            match release {
+                Some((release, lease)) => self
+                    .http
+                    .post_json_released(TOKENIZE_PATH, &headers, &body, release, lease)
+                    .await
+                    .map_err(released),
+                None => self
+                    .http
+                    .post_json(TOKENIZE_PATH, &headers, &body)
+                    .await
+                    .map_err(transport),
+            }
+        };
         // Read whole on the served vault's chat-reply line (FIX 11412).
         let reply = match self.host.get() {
             Some(host) => super::http::holding_chat_replies(&host.budgets, sent).await,
             None => sent.await,
-        }
-        .map_err(transport)?;
+        }?;
         status(reply.status)?;
         match reply
             .body
@@ -412,30 +445,35 @@ impl DecisionReader {
         prompt: JsonValue,
         eos: u64,
         n_probs: u64,
+        release: Option<ReadRelease<'_>>,
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
-        let body = json!({
-            "prompt": prompt,
-            "n_predict": 1,
-            "temperature": 0.0,
-            "cache_prompt": true,
-            "id_slot": -1,
-            "stop": [],
-            "response_fields": RESPONSE_FIELDS,
-            "n_probs": n_probs,
-            "post_sampling_probs": false,
-            "logit_bias": [[eos, EOS_BIAS]],
-        });
+        let mut body = completion_fields(prompt, n_probs);
+        body["logit_bias"] = json!([[eos, EOS_BIAS]]);
         let execution = execution_mode(&body);
-        let reply = self
-            .http
-            .post_json_within(
-                COMPLETION_PATH,
-                &BTreeMap::new(),
-                &body,
-                self.max_response_bytes,
-            )
-            .await
-            .map_err(transport)?;
+        let reply = match release {
+            Some((release, lease)) => self
+                .http
+                .post_json_within_released(
+                    COMPLETION_PATH,
+                    &BTreeMap::new(),
+                    &body,
+                    self.max_response_bytes,
+                    release,
+                    lease,
+                )
+                .await
+                .map_err(released)?,
+            None => self
+                .http
+                .post_json_within(
+                    COMPLETION_PATH,
+                    &BTreeMap::new(),
+                    &body,
+                    self.max_response_bytes,
+                )
+                .await
+                .map_err(transport)?,
+        };
         status(reply.status)?;
         Ok((reply.body, execution))
     }
@@ -448,16 +486,28 @@ impl DecisionReader {
         &self,
         prompts: &[String],
         questions: &[LabelReadout<'_>],
-    ) -> LlmResult<LabelReadResponse> {
-        let ids = self.ids().await?;
+        physical: Option<WorkPhysical>,
+        release: Option<ReadRelease<'_>>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        let ids = self.ids(release).await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
         let (first, first_mode) = self
-            .complete(prompt_array, ids.eos, self.recipe.n_probs())
+            .complete(prompt_array, ids.eos, self.recipe.n_probs(), release)
             .await?;
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
         let mut reads = Vec::with_capacity(prompts.len());
-        for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
+        if admit_next.is_some() {
+            // The first batch answered every prompt, including questions not processed yet.
+            for reply in &replies {
+                let answering = self.answering(reply).await;
+                reads.push(usage(reply, answering.as_ref(), first_mode.as_ref(), physical)?);
+            }
+        }
+        for (index, ((prompt, question), mut reply)) in
+            prompts.iter().zip(questions).zip(replies).enumerate()
+        {
             let mut mode = first_mode.clone();
             let count = question.width();
             let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
@@ -466,9 +516,21 @@ impl DecisionReader {
             if let Some(full) = self.recipe.n_probs_full()
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
-                let answering = self.answering(&reply).await;
-                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
-                (reply, mode) = self.complete(json!(prompt), ids.eos, full).await?;
+                spent = Some(match admit_next {
+                    Some(_) => reads[index].clone(),
+                    None => {
+                        let answering = self.answering(&reply).await;
+                        usage(&reply, answering.as_ref(), mode.as_ref(), physical)?
+                    }
+                });
+                if let Some(admit_next) = admit_next
+                    && !admit_next()
+                {
+                    return Ok(LabelReadGenerationOutcome::StoppedPaidPrefix {
+                        usage: pack_usage(reads.into_iter().map(|read| read.usage).collect()),
+                    });
+                }
+                (reply, mode) = self.complete(json!(prompt), ids.eos, full, release).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
@@ -480,18 +542,64 @@ impl DecisionReader {
             {
                 readout.reverse();
             }
-            readouts.push(readout);
-            let answering = self.answering(&reply).await;
-            let usage = usage(&reply, answering.as_ref(), mode.as_ref())?;
-            reads.push(match spent {
-                Some(first) => retried(first, usage),
-                None => usage,
+            let usage = if admit_next.is_some() && spent.is_none() {
+                reads[index].clone()
+            } else {
+                let answering = self.answering(&reply).await;
+                usage(&reply, answering.as_ref(), mode.as_ref(), physical)?
+            };
+            let measured = usage.measured && spent.as_ref().is_none_or(|first| first.measured);
+            let usage = match spent {
+                Some(first) => retried(first.usage, usage.usage),
+                None => usage.usage,
+            };
+            let cost_per_thousand = if self.leaves && measured {
+                self.host
+                    .get()
+                    .and_then(|host| host.cost_per_thousand(&self.engine, &usage))
+            } else {
+                None
+            };
+            readouts.push(LabelReadDistribution {
+                probabilities: readout,
+                cost_per_thousand,
             });
+            let usage = ReadUsage { usage, measured };
+            if admit_next.is_some() {
+                reads[index] = usage;
+            } else {
+                reads.push(usage);
+            }
         }
-        Ok(LabelReadResponse {
+        Ok(LabelReadGenerationOutcome::Complete(LabelReadResponse {
             readouts,
-            usage: pack_usage(reads),
-        })
+            usage: pack_usage(reads.into_iter().map(|read| read.usage).collect()),
+        }))
+    }
+
+    fn read_with_release(
+        &self,
+        request: &LabelReadRequest<'_>,
+        physical: Option<WorkPhysical>,
+        release: Option<ReadRelease<'_>>,
+    ) -> LlmResult<LabelReadResponse> {
+        self.read_with_generations(request, physical, release, None)
+            .map(|outcome| match outcome {
+                LabelReadGenerationOutcome::Complete(read) => read,
+                LabelReadGenerationOutcome::StoppedPaidPrefix { .. } => {
+                    unreachable!("an ordinary label read has no generation gate")
+                }
+            })
+    }
+
+    fn read_with_generations(
+        &self,
+        request: &LabelReadRequest<'_>,
+        physical: Option<WorkPhysical>,
+        release: Option<ReadRelease<'_>>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        PreparedDecisionRead::new(self, request)?.read(physical, release, admit_next)
     }
 
     /// Waits for the rung's managed worker to be ready and holds it for the
@@ -516,7 +624,36 @@ impl DecisionReader {
     }
 }
 
+impl LabelReadGenerationReader for DecisionReader {
+    fn read_admitted(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        let physical = lease.work_context().map(|context| context.physical);
+        match may_send {
+            Some(may_send) => {
+                let release = || {
+                    if may_send() {
+                        Ok(())
+                    } else {
+                        Err(FatalLlmError::Auth.into())
+                    }
+                };
+                self.read_with_generations(request, physical, Some((&release, lease)), Some(admit_next))
+            }
+            None => self.read_with_generations(request, physical, None, Some(admit_next)),
+        }
+    }
+}
+
 impl LabelReadModel for DecisionReader {
+    fn generation_reader(&self) -> Option<&dyn LabelReadGenerationReader> {
+        Some(self)
+    }
+
     fn model(&self) -> &str {
         &self.model
     }
@@ -530,15 +667,6 @@ impl LabelReadModel for DecisionReader {
         self.recipe.tokens().len()
     }
 
-    /// A third-party rung's catalog price, from the served vault's registry row (FIX
-    /// 11408); none for a rung this host serves, or before a server binds the vault.
-    fn cost_per_thousand(&self) -> Option<f64> {
-        if !self.leaves {
-            return None;
-        }
-        self.host.get()?.cost_per_thousand(&self.engine)
-    }
-
     /// Blocks on the server's runtime until the model answers, so it runs on
     /// a blocking thread, never on one of that runtime's workers. Its caller
     /// owns the lease and settles it. The read holds its managed worker's
@@ -547,35 +675,45 @@ impl LabelReadModel for DecisionReader {
     fn read(
         &self,
         request: &LabelReadRequest<'_>,
-        _lease: &BudgetLease,
+        lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        // Before the state renders or the tokenizer and completion are asked.
-        if !self.permitted {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        if request.questions.is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let prompts = request
-            .questions
-            .iter()
-            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(refused)?;
-        let read = async {
-            let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions).await
-        };
-        // One bound for the tokenizer and completion waits: the decision's work cutoff.
-        match request.work_until {
-            Some(until) => self.runtime.block_on(async {
-                tokio::time::timeout_at(until.into(), read)
-                    .await
-                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-            }),
-            None => self.runtime.block_on(read),
-        }
+        self.read_with_release(request, lease.work_context().map(|context| context.physical), None)
     }
+
+    fn read_while(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadResponse> {
+        let release = || {
+            if may_send() {
+                Ok(())
+            } else {
+                Err(FatalLlmError::Auth.into())
+            }
+        };
+        self.read_with_release(request, lease.work_context().map(|context| context.physical), Some((&release, lease)))
+    }
+}
+
+/// The request's fixed completion fields; the paid tokenizer supplies its end-token id.
+fn completion_fields(prompt: JsonValue, n_probs: u64) -> JsonValue {
+    json!({
+        "prompt": prompt,
+        "n_predict": EOS_READ_TOKENS,
+        "temperature": 0.0,
+        "cache_prompt": true,
+        "id_slot": -1,
+        "stop": [],
+        "response_fields": RESPONSE_FIELDS,
+        "n_probs": n_probs,
+        "post_sampling_probs": false,
+    })
+}
+
+fn tokenize_body(text: &str, special: bool) -> JsonValue {
+    json!({"content": text, "add_special": false, "parse_special": special})
 }
 
 /// What the recipe renders for one question of a pack over `state`. The
@@ -640,7 +778,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
     let eos = body.get("stop_type").and_then(JsonValue::as_str) == Some("eos")
         || body.get("stopped_eos").and_then(JsonValue::as_bool) == Some(true);
     if !eos {
-        return Err(failed(LabelReadFailure::NotEosStop));
+        // A native "limit" alone can also mean a context or time limit.
+        let token_cap = body.get("stop_type").and_then(JsonValue::as_str) == Some("limit")
+            && body.get("truncated").and_then(JsonValue::as_bool) == Some(false)
+            && body
+                .get("tokens_predicted")
+                .and_then(JsonValue::as_u64)
+                .is_some_and(|tokens| tokens >= EOS_READ_TOKENS);
+        return Err(failed(if token_cap {
+            LabelReadFailure::TokenCap
+        } else {
+            LabelReadFailure::NotEosStop
+        }));
     }
     let rows = body
         .get("completion_probabilities")
@@ -698,6 +847,12 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
     weights.iter().map(|weight| weight / total).collect()
 }
 
+#[derive(Clone)]
+struct ReadUsage {
+    usage: LlmUsage,
+    measured: bool,
+}
+
 /// Prompt tokens in, and at least the one position read out: a read that
 /// generates no text still costs its forward pass. An answer without both
 /// counts is refused, so its caller charges the read's reservation. Its
@@ -708,26 +863,32 @@ fn usage(
     body: &JsonValue,
     answering: Option<&AnsweringIdentity>,
     execution: Option<&CacheDigest>,
-) -> LlmResult<LlmUsage> {
+    physical: Option<WorkPhysical>,
+) -> LlmResult<ReadUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
-    let (cache_read, raw_provider) = label_read(body, answering, execution);
-    Ok(LlmUsage {
-        input: LlmInputUsage {
-            total: count("tokens_evaluated")?,
-            cache_read,
-            ..LlmInputUsage::default()
+    let (cache_read, raw_provider) = label_read(body, answering, execution, physical);
+    let input = count("tokens_evaluated")?;
+    let output = count("tokens_predicted")?;
+    Ok(ReadUsage {
+        measured: cache_read.is_some() && input > 0 && output > 0,
+        usage: LlmUsage {
+            input: LlmInputUsage {
+                total: input,
+                cache_read: cache_read.unwrap_or(0),
+                ..LlmInputUsage::default()
+            },
+            output: LlmOutputUsage {
+                total: output.max(1),
+                text: 0,
+                reasoning: 0,
+            },
+            raw_provider,
+            call_metadata: None,
         },
-        output: LlmOutputUsage {
-            total: count("tokens_predicted")?.max(1),
-            text: 0,
-            reasoning: 0,
-        },
-        raw_provider,
-        call_metadata: None,
     })
 }
 
@@ -810,6 +971,13 @@ fn status(code: u16) -> LlmResult<()> {
     }
 }
 
+fn released(failure: HttpReleaseError) -> LlmError {
+    match failure {
+        HttpReleaseError::Transport(failure) => transport(failure),
+        HttpReleaseError::Release(error) => error,
+    }
+}
+
 fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
@@ -821,6 +989,5 @@ fn transport(failure: HttpFailure) -> LlmError {
         }
     }
 }
-
 #[cfg(test)]
 pub(crate) mod tests;
