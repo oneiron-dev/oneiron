@@ -93,6 +93,15 @@ pub(crate) struct FoldWordRef {
     pub(crate) sources: Vec<EntityId>,
 }
 
+/// A fold answer reads as the JSON its guest saw (FIX 18924), so a reader
+/// that wants only that JSON borrows it the same way whether the recorded
+/// answer carries word references or not.
+impl AsRef<str> for FoldAnswer {
+    fn as_ref(&self) -> &str {
+        &self.json
+    }
+}
+
 impl FoldAnswer {
     /// The answer `json`, which copies the words of the folds `words` names.
     pub(crate) const fn new(json: String, words: Vec<FoldWordRef>) -> Self {

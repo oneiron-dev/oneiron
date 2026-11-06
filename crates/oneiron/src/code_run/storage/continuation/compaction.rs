@@ -331,13 +331,13 @@ fn answered_fold_bound(call: &CodeRunBridgeCall) -> Result<u64> {
         .map_err(|_| undecoded_fold_answer())?;
     let handles = match verb {
         SelfFoldCall::Mark { .. } => {
-            fold_answer::<FoldMarked>(&answer)?.map(|marked| vec![marked.fold])
+            fold_answer::<FoldMarked>(answer.as_ref())?.map(|marked| vec![marked.fold])
         }
         SelfFoldCall::Compact { .. } => {
-            fold_answer::<FoldCompactAsked>(&answer)?.map(|asked| asked.pending)
+            fold_answer::<FoldCompactAsked>(answer.as_ref())?.map(|asked| asked.pending)
         }
         SelfFoldCall::Unfold { .. } => {
-            fold_answer::<FoldUnfolded>(&answer)?.map(|unfolded| vec![unfolded.fold])
+            fold_answer::<FoldUnfolded>(answer.as_ref())?.map(|unfolded| vec![unfolded.fold])
         }
         SelfFoldCall::List | SelfFoldCall::Describe { .. } => None,
     };
