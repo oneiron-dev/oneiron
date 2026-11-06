@@ -487,6 +487,13 @@ local copies before the commit and its change-log record; no new check splits
 paired mutations. Nested nontext clones, allocation and later mutation work
 still contain unpolled spans.
 
+The spill-commit change log also prepares its original target-cell list with
+that token before committing, after both value copies. It reuses the existing
+ordered cell-copy helper and moves the finished list into the later record.
+Token-absent calls keep their original post-commit clone, and calls without a
+change log do not copy this list. Cancellation drops local preparation before
+the commit, never between its paired mutations or before the later log record.
+
 Individual allocations, numeric string conversions and writes, null-array
 construction, fragment partition and interval checks, layer value reads and
 clones, zip selection, cell clones, Arrow finishes and reserves still contain
@@ -706,7 +713,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.82): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.83): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -757,7 +764,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.82`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.83`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
