@@ -73,6 +73,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        .merge(phone_voice::routes())
         // Native line/call replay rechecks the live setting; never cache private metadata.
         .route(
             "/phone-lines/{identity_ref}/arrivals",

@@ -1,8 +1,10 @@
 # Phone-line arrival metadata
 
-This slice does not answer a call, accept audio, recognize a speaker, provision a number,
-or connect a telephony provider. FIX 3894 / OF-605 remains partial. Ordinary outbound
-`voice.call` and the existing owner/device voice loop are unchanged.
+Metadata intake does not answer a call, accept audio, recognize a speaker, provision a
+number, or connect a telephony provider. A separate receiving-agent HTTP session path
+is described below. FIX 3894 / OF-605 remains partial; no running-call or provider proof
+is claimed. Ordinary outbound `voice.call` and the existing owner/device voice loop are
+unchanged.
 
 ## What the engine records
 
@@ -75,9 +77,10 @@ interlocutor set travels with the prepared generation. A caller must compare the
 with the scope captured before assembling context; re-stamping an old response with the
 new scope does not make that response safe.
 
-The server has an optional call-bound reader and a weak PCM dequeue fence. Existing
-voice sessions set that reader to `None` and keep their owner-only behavior. No phone
-session factory or audio route activates the new reader yet. The phone-bound brain
+The server has an optional call-bound reader and a weak PCM dequeue fence. Ordinary
+voice sessions set that reader to `None` and keep their owner-only behavior. The separate
+phone HTTP start constructs it from the receiving agent's actual credential and arrival.
+The phone-bound brain
 captures consent before context assembly and registers that generation's sources before
 model admission. A changed scope replaces its history Arc, so an old asynchronous turn
 cannot append into the new scope's history. Old-generation notices and queued PCM are
@@ -142,7 +145,7 @@ a check reads current credential, line and source state. This is a transport car
 not yet a claim that every text provider, queued send or retry invokes it; those
 physical consumers must be connected before phone activation.
 
-The uncalled phone preparation factory consumes this original call-bound reader and
+The phone preparation factory consumes this original call-bound reader and
 requires the same authenticated instrument and projected agent on the same vault before
 allocating its configured call budget. It constructs one anonymous first-claim party
 labeled only by the new opaque call ref: no owner session, PERSON, roster, room or
@@ -151,17 +154,19 @@ its native world scope stays on both direct and speculative readers. The budget 
 and model caller are the actual agent; caller attribution does not change the run's
 payer. Existing configured budget, reserve, suspension and render settings are reused.
 No-room funding retains the native `None` payer; it is not a new agent billing account. Media uses the phone-specific door,
-not the ordinary owner/device door. This constructor is not connected to a public
-start door or a running call. Native action/model-ceiling qualification and the actual
-answering lifecycle remain open; caller attribution is not credential authority.
+not the ordinary owner/device door. The phone HTTP start connects this constructor to
+the shared public-session lifecycle; a running call has not been proved. Native
+action/model-ceiling qualification remains partial; caller attribution is not credential
+authority.
 
 The shared public-session implementation has a private optional phone mode. It reuses
 the same session hold, command queue, media worker, journal, stop and task ownership.
 A phone lookup first matches the original authority, then checks current line consent.
 Its credential/line watcher uses the existing liveness interval; changing the scope's
 value alone does not end the call. Ordinary start still supplies `None` and keeps its
-original owner/device checks. There is no public phone start or HTTP audio door; this
-private mode cannot yet start a phone call through an existing production caller.
+original owner/device checks. The separate receiving-agent HTTP doors select only
+phone sessions under their original credential; they do not loosen the owner doors.
+This source path is not runtime proof of an answered call.
 
 Live Soniox segments reuse that same media door for continuing-stream admission.
 Before socket readiness, frame send, flush, and read-driven flushing, the phone mode
@@ -246,7 +251,51 @@ no live dispatch callback still use the original plain control send.
 All successful responses carry `Cache-Control: no-store`. Owner doors use the vault's current
 owner proof and revalidate it in the native read or writer. Request JSON uses the existing
 deferred body reader after authentication; larger bodies use its existing spool path.
-No new SDK verb, shared secret, number/provider provisioning or audio route is added.
+The metadata doors add no SDK verb, shared secret, number/provider provisioning or
+audio endpoint. The separate phone-session transport below adds no credential or grant.
+
+## Authenticated phone-session HTTP transport
+
+`POST /v1/core/phone-lines/{identity_ref}/arrivals/{arrival_ref}/voice` takes the existing
+`LiveVoiceStartRequest`: `sample_rate`, `channels`, and the existing optional room/roster
+fields. The current anonymous phone factory does not admit a room or roster. The arrival
+reference is the opaque `payload_ref` from metadata intake, not a provider call id or
+caller label. The request must present the receiving agent's own holder-bound verified
+slip with core read/write. It is not the channel MACHINE's credential.
+
+The existing native answer-key constructor checks that credential against the actual live
+line and arrival, proves its principal is the receiving agent, and freezes that agent's
+admitted definition, models and world bounds. No body field, bridge credential, owner
+fallback, actor label or supplied scope replaces these checks. The response is the same
+opaque `LiveVoiceSession` and audio format as the ordinary voice transport.
+
+The same credential then uses these POST routes with the existing typed voice requests:
+
+| Path under `/v1/core` | Request | Reply |
+| --- | --- | --- |
+| `/phone-voice/audio` | `LiveVoiceAudioRequest` | `LiveVoiceProcessed` |
+| `/phone-voice/events` | `LiveVoiceEventsRequest` | `LiveVoiceEvents` |
+| `/phone-voice/ack` | `LiveVoiceAckRequest` | `LiveVoiceProcessed` |
+| `/phone-voice/usage` | `LiveVoiceUsageRequest` | `LiveVoiceUsage` |
+| `/phone-voice/end` | `LiveVoiceSessionRequest` | `LiveVoiceProcessed` |
+| `/phone-voice/close` | `LiveVoiceSessionRequest` | `LiveVoiceProcessed` |
+
+Each request reuses the session store's exact authority binding, live phone consent check
+and existing write-hold admission. These routes select only phone sessions, not ordinary
+owner sessions. Events use the existing phone journal page and its saved-body checks.
+End preserves the final events; close performs the existing end, shutdown and map removal.
+All successful replies carry `Cache-Control: no-store`. The routes sit outside the generic
+HTTP reply cache, so a cached response cannot substitute for current credential or line
+checks. Deferred request-body reading and the shared voice queue remain unchanged.
+
+The existing owner `ai.voice.*` preflights and doors remain owner-only. Ordinary start
+still passes `None`, including its working room/roster behavior. This transport does not
+add a phone tool-context endpoint: the existing owner-only tool-context condition remains
+unchanged. A future phone connector context must use the actual receiving-agent reader
+and source accounting, not bypass that condition or use unrestricted connector memory.
+SDK/OpenAPI discovery, external telephony integration and runtime answering proof remain
+partial. No number is provisioned, no audio or transcript is persisted by metadata intake,
+and these source changes do not prove the complete anonymous-call lifecycle.
 
 ## Completion boundaries
 

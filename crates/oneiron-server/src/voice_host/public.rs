@@ -126,6 +126,19 @@ impl LiveVoiceSessions {
         Ok(entry)
     }
 
+    /// A phone answer opened by this exact receiving-agent credential.
+    pub(crate) fn get_phone(
+        &self,
+        auth: &CoreAuth,
+        session_ref: &str,
+    ) -> MemoryResult<Arc<PublicSession>> {
+        let session = self.get(auth, session_ref)?;
+        if session.phone.is_none() {
+            return Err(unavailable());
+        }
+        Ok(session)
+    }
+
     pub(crate) fn remove(&self, auth: &CoreAuth, session_ref: &str) -> MemoryResult<()> {
         let entry = self.get(auth, session_ref)?;
         entry.shutdown.trigger();
@@ -245,6 +258,19 @@ pub(crate) async fn start_public(
     input: LiveVoiceStartRequest,
 ) -> MemoryResult<LiveVoiceSession> {
     start_public_with(server, auth, input, None).await
+}
+
+/// Opens the existing phone-bound factory under the receiving agent's proof.
+pub(crate) async fn start_phone(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    identity: oneiron::EntityId,
+    arrival_ref: &str,
+    input: LiveVoiceStartRequest,
+) -> MemoryResult<LiveVoiceSession> {
+    let phone = super::PhoneCallRead::new(server.vault().clone(), auth, identity, arrival_ref)
+        .map_err(|_| invalid("phone answer needs the receiving agent's live line and arrival"))?;
+    start_public_with(server, auth, input, Some(phone)).await
 }
 
 async fn start_public_with(
