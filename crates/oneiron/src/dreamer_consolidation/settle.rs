@@ -244,10 +244,21 @@ fn named_ids(body: &ClaimBody) -> Vec<EntityId> {
         .evidence
         .as_ref()
         .map(|evidence| marker_ids(evidence, "refs"));
+    let candidate_evidence = body
+        .evidence
+        .as_ref()
+        .and_then(|evidence| {
+            string_at(
+                evidence,
+                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+            )
+        })
+        .map(|evidence| marker_ids(evidence, "refs"));
     MEMBER_KEYS
         .iter()
         .flat_map(|key| marker_ids(&body.value, key).collect::<Vec<_>>())
         .chain(evidence.into_iter().flatten())
+        .chain(candidate_evidence.into_iter().flatten())
         .filter(|id| seen.insert(*id))
         .collect()
 }
