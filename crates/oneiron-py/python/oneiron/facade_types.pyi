@@ -2867,6 +2867,7 @@ class ContentPartToolCall(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class ContentPartToolResult(TypedDict):
     kind: Literal["tool_result"]
     call_id: str
@@ -17127,6 +17128,7 @@ class LlmStreamEventToolCallEnd(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class LlmStreamEventToolResultStart(TypedDict):
     event: Literal["tool_result_start"]
     part_id: str

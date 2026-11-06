@@ -277,12 +277,14 @@ impl LlmEventBus {
                 call_id,
                 name,
                 input,
+                signature,
             } => self.insert(
                 part_id,
                 ContentPart::ToolCall {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: signature.clone(),
                 },
             ),
             LlmStreamEvent::ToolResultEnd {
