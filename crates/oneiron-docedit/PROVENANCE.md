@@ -124,3 +124,9 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+The ideographic-space estimate change (2026-11-06, FIX 16557) touches
+`src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
+U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,
+and internal separators; other whitespace keeps its existing fallback. Advance,
+words, height, and emission are unchanged; no renderer comparison is claimed.
