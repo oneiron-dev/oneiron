@@ -160,6 +160,7 @@ fn repin_in_txn(
             label.recheck = Some(JudgeLabelRecheck::Pending {
                 rubric: rubric.digest,
             });
+            label.read_position = None;
             stamped.push(label);
         }
     }
@@ -325,6 +326,7 @@ fn settle_recheck_in_txn(
     }
     let fits = fit == JudgeLabelFit::Fits;
     let mut settled = label.clone();
+    settled.read_position = None;
     settled.recheck = if fits {
         None
     } else {
@@ -458,6 +460,7 @@ pub fn record_judge_label_regrade(
             });
             Some(fresh)
         };
+        label.read_position = None;
         LABELS.put(&vault.store, txn, &of.label, &label)?;
         Ok(JudgeLabelRegrade { label, fresh })
     })
