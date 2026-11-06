@@ -106,18 +106,25 @@ pub fn embedded_serve_config(
     dimensions: Option<usize>,
     config_file: Option<&Path>,
 ) -> anyhow::Result<ServeConfig> {
+    let config_file = config_file
+        .map(std::path::absolute)
+        .transpose()
+        .context(cause(
+            EngineErrorKind::Config,
+            "the embedded engine's config path did not resolve",
+        ))?;
     let overrides = EmbeddedHolderOverrides {
         vault_path: vault_path.to_path_buf(),
         dimensions,
     };
     let mut config = crate::config::resolve_serve_config(
-        &overrides.serve_args(config_file.map(Path::to_path_buf)),
+        &overrides.serve_args(config_file.clone()),
     )
     .context(cause(
         EngineErrorKind::Config,
         "the embedded engine's serve config did not resolve",
     ))?;
-    config.config_path = config_file.map(Path::to_path_buf);
+    config.config_path = config_file;
     config.embedded_holder_overrides = Some(overrides);
     Ok(config)
 }
@@ -343,6 +350,25 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         server
             .bootstrap_shared_env(acceptance, entry, target_serve)
             .await
+    }
+
+    /// Retains one shared-env membership in this engine's own config file
+    /// for its next start: upserts `entry` by `(vault_id, member)` over the
+    /// file at [`ServeConfig::config_path`], holding that file's sibling
+    /// lock across the read, modify, validate and atomic replace. The
+    /// running registry is unchanged; a managed engine started without a
+    /// file has nothing to retain and is refused. No state lock is held.
+    pub fn retain_shared_env(&self, entry: &SharedEnvConfig) -> anyhow::Result<()> {
+        let Some(path) = self.config().config_path.clone() else {
+            return Err(failure(
+                EngineErrorKind::Config,
+                "the engine started without a config file; nothing to retain",
+            ));
+        };
+        crate::config::shared_env::retain::retain_shared_env(&path, entry).context(cause(
+            EngineErrorKind::Config,
+            "the shared-env entry was not retained",
+        ))
     }
 
     /// Sends one request over a fresh connection and collects the whole

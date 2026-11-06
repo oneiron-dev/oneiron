@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub(crate) mod retain;
+
 /// One dedicated shared-vault env, as configured.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +23,7 @@ pub struct SharedEnvConfig {
     /// The dedicated env's directory: the vault root the registry opens.
     pub path: PathBuf,
     /// The shared vault id this membership names (the leave check's `vault_id`).
+    #[serde(deserialize_with = "deserialize_vault_id")]
     pub vault_id: u64,
     /// This member's person id, 32 hex characters (the leave check's `member`).
     pub member: String,
@@ -30,6 +33,26 @@ pub struct SharedEnvConfig {
     /// The file holding this membership's lane slip, in the `v2.cred.`
     /// one-string form. Only its owner may read it.
     pub credential_file: PathBuf,
+}
+
+/// `vault_id` as a number or a decimal string: the full `u64` round-trips
+/// through the string form, since a `toml::Table` integer holds only `i64`.
+/// A string that is not a decimal `u64` is a type error.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum VaultIdRepr {
+    Number(u64),
+    Decimal(String),
+}
+
+fn deserialize_vault_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match VaultIdRepr::deserialize(deserializer)? {
+        VaultIdRepr::Number(id) => Ok(id),
+        VaultIdRepr::Decimal(text) => text.parse::<u64>().map_err(serde::de::Error::custom),
+    }
 }
 
 impl SharedEnvConfig {
