@@ -41,6 +41,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+pub(crate) use self::actors_memory::is_named_agent_principal_body;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
