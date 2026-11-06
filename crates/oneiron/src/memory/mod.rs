@@ -123,7 +123,10 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+mod proactivity_digest;
 pub(crate) mod read_capture;
+pub use proactivity_digest::ProactivityDigestRequest;
+
 mod read_lane;
 mod read_selection;
 mod reads;
@@ -262,9 +265,9 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
-    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
-    MemoryWrongRoot,
+    MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{
@@ -406,6 +409,10 @@ pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_hol
 pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
+};
+pub(crate) use witness::{
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
+    archived_message_body,
 };
 pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
