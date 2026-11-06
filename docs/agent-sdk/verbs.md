@@ -27,6 +27,12 @@ both bindings and their export-census tests in one change.
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
+- `self.board.layout`
+- `self.board.fold`
+- `self.board.unfold`
+- `self.board.size`
+- `self.board.filter`
+- `self.board.replace`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
