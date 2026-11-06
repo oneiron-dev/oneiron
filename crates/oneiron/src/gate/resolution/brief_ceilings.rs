@@ -97,7 +97,18 @@ impl PolicyManifestResolution {
                 approval(definition),
             ));
         }
-        for row in self.act_policy.rows() {
+        // A holder row governs only its holder's acts: the agent's brief
+        // shows the vault rows and its own holder rows, never another
+        // holder's.
+        let own_or_vault = |holder: Option<crate::entity_id::EntityId>| {
+            holder.is_none_or(|holder| holder == actor.entity_ref())
+        };
+        for row in self
+            .act_policy
+            .rows()
+            .iter()
+            .filter(|row| own_or_vault(row.holder_ref))
+        {
             rows.push(dated(
                 BriefCeilingTarget::Act {
                     act_class: row.act_class.clone(),
@@ -116,7 +127,12 @@ impl PolicyManifestResolution {
                 },
             ));
         }
-        for row in self.wait_policy.rows() {
+        for row in self
+            .wait_policy
+            .rows()
+            .iter()
+            .filter(|row| own_or_vault(row.holder_ref))
+        {
             rows.push(dated(
                 BriefCeilingTarget::Wait {
                     wait_class: row.wait_class.clone(),
