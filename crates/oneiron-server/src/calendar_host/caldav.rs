@@ -116,7 +116,7 @@ impl HttpCalDav {
         content_type: &str,
         expected: Option<&str>,
         create: bool,
-        depth: Option<&'static str>,
+        depth: bool,
     ) -> Result<Response, CalendarConnectorError> {
         let auth = super::authorization(credential).map_err(|_| {
             CalendarConnectorError::CredentialUnavailable {
@@ -129,8 +129,8 @@ impl HttpCalDav {
             .header(reqwest::header::AUTHORIZATION, auth)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(body);
-        if let Some(depth) = depth {
-            request = request.header("Depth", depth);
+        if depth {
+            request = request.header("Depth", "1");
         }
         if let Some(etag) = expected {
             request = request.header(reqwest::header::IF_MATCH, etag);
@@ -151,7 +151,7 @@ impl HttpCalDav {
         content_type: &str,
         expected: Option<&str>,
         create: bool,
-        depth: Option<&'static str>,
+        depth: bool,
     ) -> Result<Response, CalendarConnectorError> {
         self.with_credential(|credential| {
             let url = self.url(href)?;
@@ -174,17 +174,6 @@ impl HttpCalDav {
         method: &str,
         body: String,
     ) -> Result<Node, CalendarConnectorError> {
-        self.report_at(href, method, body, "1")
-    }
-
-    /// [`Self::report`] at `depth`: `0` reads the resource itself alone.
-    fn report_at(
-        &self,
-        href: &str,
-        method: &str,
-        body: String,
-        depth: &'static str,
-    ) -> Result<Node, CalendarConnectorError> {
         let response = self.request(
             Method::from_bytes(method.as_bytes())
                 .map_err(|_| failure("method", "invalid method"))?,
@@ -193,7 +182,7 @@ impl HttpCalDav {
             "application/xml; charset=utf-8",
             None,
             false,
-            Some(depth),
+            true,
         )?;
         if response.status().as_u16() != 207 {
             return Err(failure(
@@ -229,28 +218,6 @@ impl HttpCalDav {
             .map(|n| n.text.trim().to_owned())
             .ok_or_else(|| failure("discover", "required DAV property absent"))?;
         Ok(self.url(&value)?.to_string())
-    }
-
-    /// The zone the calendar collection at `calendar_href` names its own
-    /// (`CALDAV:calendar-timezone`): its VTIMEZONE's `TZID` (fix list row
-    /// 17868). `None` when it names none, or a name that is not a plain zone
-    /// name.
-    fn collection_zone(
-        &self,
-        calendar_href: &str,
-    ) -> Result<Option<String>, CalendarConnectorError> {
-        let document = self.report_at(
-            calendar_href,
-            "PROPFIND",
-            format!(
-                "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><c:calendar-timezone/></d:prop></d:propfind>"
-            ),
-            "0",
-        )?;
-        Ok(document
-            .children(DAV, "response")
-            .find_map(|row| row.property(CAL, "calendar-timezone"))
-            .and_then(|zone| vtimezone_tzid(&zone.text)))
     }
 
     fn receipt(
@@ -324,13 +291,6 @@ impl CalDavWire for HttpCalDav {
         discovery: &CalDavDiscovery,
         sync_token: Option<&str>,
     ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
-        // The collection's zone places its all-day days and heads each of
-        // its resources (fix list row 17868). A zone other than the one the
-        // token's sync wrote leaves those resources on the old one: the
-        // collection is read again whole, so every all-day event takes it.
-        let zone = self.collection_zone(&discovery.calendar_href)?;
-        let (written_zone, written_token) = sync_token.map_or((None, None), read_cursor);
-        let sync_token = written_token.filter(|_| written_zone == zone.as_deref());
         let token = xml::escape(sync_token.unwrap_or_default());
         let document = self.report(&discovery.calendar_href, "REPORT", format!("<d:sync-collection xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:sync-token>{token}</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/><c:calendar-data/></d:prop></d:sync-collection>"))?;
         let cursor = document
@@ -370,7 +330,7 @@ impl CalDavWire for HttpCalDav {
                         "text/calendar",
                         None,
                         false,
-                        None,
+                        false,
                     )?;
                     if !response.status().is_success() {
                         return Err(failure("sync", "calendar resource unreadable"));
@@ -386,7 +346,6 @@ impl CalDavWire for HttpCalDav {
                     bytes
                 }
             };
-            let ics = with_calendar_zone(ics, zone.as_deref());
             let feed = parse_ics_feed(&ics)?;
             let event = feed
                 .events
@@ -402,7 +361,7 @@ impl CalDavWire for HttpCalDav {
             }));
         }
         Ok(RemoteSyncBatch {
-            next_cursor: Some(write_cursor(zone.as_deref(), &cursor)),
+            next_cursor: Some(cursor),
             changes,
         })
     }
@@ -445,7 +404,7 @@ impl CalDavWire for HttpCalDav {
                 "text/calendar; charset=utf-8",
                 request.expected_etag.as_deref(),
                 request.href.is_none(),
-                None,
+                false,
             )?;
             self.receipt(
                 response,
@@ -480,100 +439,9 @@ impl CalDavWire for HttpCalDav {
                 "text/calendar",
                 Some(expected),
                 false,
-                None,
+                false,
             )?;
             self.receipt(response, href, uid, sequence, [0; 32], Some(expected))
         })
     }
-}
-
-/// The longest collection zone name read.
-const MAX_ZONE_BYTES: usize = 64;
-
-/// What a cursor this host wrote names before its DAV sync token: the zone
-/// the sync wrote into its resources.
-const ZONED_CURSOR: &str = "oneiron-zone:";
-
-/// The zone and DAV sync token a cursor holds. A cursor that names no zone
-/// is the token alone.
-fn read_cursor(cursor: &str) -> (Option<&str>, Option<&str>) {
-    match cursor
-        .strip_prefix(ZONED_CURSOR)
-        .and_then(|rest| rest.split_once('\n'))
-    {
-        Some((zone, token)) => (Some(zone), Some(token)),
-        None => (None, Some(cursor)),
-    }
-}
-
-/// The cursor for DAV sync token `token`, naming the zone `zone` its sync
-/// wrote into its resources.
-fn write_cursor(zone: Option<&str>, token: &str) -> String {
-    match zone {
-        Some(zone) => format!("{ZONED_CURSOR}{zone}\n{token}"),
-        None => token.to_owned(),
-    }
-}
-
-/// The `TZID` of the VTIMEZONE a `CALDAV:calendar-timezone` value carries,
-/// when it is a plain zone name: ASCII letters, digits and `/_+-` only.
-fn vtimezone_tzid(calendar: &str) -> Option<String> {
-    let unfolded = calendar
-        .replace("\r\n ", "")
-        .replace("\r\n\t", "")
-        .replace("\n ", "")
-        .replace("\n\t", "");
-    let mut in_zone = false;
-    for line in unfolded.lines().map(str::trim) {
-        if line.eq_ignore_ascii_case("BEGIN:VTIMEZONE") {
-            in_zone = true;
-        } else if line.eq_ignore_ascii_case("END:VTIMEZONE") {
-            in_zone = false;
-        } else if in_zone
-            && let Some((name, value)) = line.split_once(':')
-            && name
-                .split(';')
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case("TZID"))
-        {
-            let zone = value.trim();
-            return (!zone.is_empty()
-                && zone.len() <= MAX_ZONE_BYTES
-                && zone
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-".contains(&byte)))
-            .then(|| zone.to_owned());
-        }
-    }
-    None
-}
-
-/// `ics` headed by the collection's zone as its `X-WR-TIMEZONE`, which
-/// places its all-day days (fix list row 17868), unless it names a zone of
-/// its own or does not open with `BEGIN:VCALENDAR`.
-fn with_calendar_zone(ics: Vec<u8>, zone: Option<&str>) -> Vec<u8> {
-    let Some(zone) = zone else {
-        return ics;
-    };
-    let Ok(text) = std::str::from_utf8(&ics) else {
-        return ics;
-    };
-    let names_zone = text.lines().any(|line| {
-        line.split([':', ';'])
-            .next()
-            .is_some_and(|name| name.trim().eq_ignore_ascii_case("X-WR-TIMEZONE"))
-    });
-    let Some(first) = text.find('\n') else {
-        return ics;
-    };
-    if names_zone || !text[..first].trim().eq_ignore_ascii_case("BEGIN:VCALENDAR") {
-        return ics;
-    }
-    let mut headed = String::with_capacity(text.len() + zone.len() + 17);
-    headed.push_str(&text[..=first]);
-    headed.push_str("X-WR-TIMEZONE:");
-    headed.push_str(zone);
-    headed.push_str("\r\n");
-    headed.push_str(&text[first + 1..]);
-    headed.into_bytes()
 }

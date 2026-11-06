@@ -115,16 +115,27 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 const BEGIN_VCALENDAR: &str = "BEGIN:VCALENDAR";
 const END_VCALENDAR: &str = "END:VCALENDAR";
 
+/// The longest calendar zone name a VCALENDAR's `X-WR-TIMEZONE` gives.
+const MAX_CALENDAR_ZONE_BYTES: usize = 64;
+
 /// The zone a VCALENDAR names its own (`X-WR-TIMEZONE`, under any
-/// spelling), which places its all-day days (fix list row 17868); `None`
-/// when it names none.
+/// spelling), which places its all-day days (fix list row 17868), when it
+/// is a plain zone name: ASCII letters, digits, spaces and `/_+-.`, at most
+/// 64 bytes. So the name can head a rendered resource again as it is.
+/// `None` when it names none, or anything else.
 fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Option<&'c str> {
     calendar
         .properties
         .iter()
         .find(|prop| prop.name.as_str().eq_ignore_ascii_case("X-WR-TIMEZONE"))
         .map(|prop| prop.val.as_str().trim())
-        .filter(|zone| !zone.is_empty())
+        .filter(|zone| {
+            !zone.is_empty()
+                && zone.len() <= MAX_CALENDAR_ZONE_BYTES
+                && zone
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-. ".contains(&byte))
+        })
 }
 
 /// The zone the VCALENDAR in `input` names its own (`X-WR-TIMEZONE`), the
