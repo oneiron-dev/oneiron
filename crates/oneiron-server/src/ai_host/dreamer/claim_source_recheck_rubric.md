@@ -33,10 +33,9 @@ still stands on its supports as they are now:
   pending appointment, an offer, a current status.
 - Supports that still stand and say what the claim says carry it.
 
-Answer with one JSON object and nothing else:
+Answer with one JSON object, `{"verdict": ...}`, and nothing else: no reason,
+no quoted words.
 
 - `verdict`: `supported` when the supports carry the claim as it stands,
   `weakened` when they still carry it but less firmly than its confidence
   says, `unsupported` when nothing left carries it.
-- `reason`: one or two plain sentences, naming supports by ref rather than
-  quoting them.

@@ -322,14 +322,16 @@ fn settle(vault: &Vault, declaration: &ClaimSourceRecheckDeclaration, now: u64) 
     })
 }
 
-/// The judge's reply shape: a verdict and its reason.
+/// The judge's reply shape: a verdict alone. The durable step keeps its
+/// reply under the claim, not under the mail it read, so a reply with free
+/// text could keep the kept mail's words past their erase (fix list row
+/// 20501): the reply has no field for words.
 fn reply_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object", "additionalProperties": false,
-        "required": ["verdict", "reason"],
+        "required": ["verdict"],
         "properties": {
-            "verdict": {"type": "string", "enum": ["supported", "weakened", "unsupported"]},
-            "reason": {"type": "string"}
+            "verdict": {"type": "string", "enum": ["supported", "weakened", "unsupported"]}
         }
     })
 }
