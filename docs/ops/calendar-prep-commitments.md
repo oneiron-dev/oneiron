@@ -29,8 +29,11 @@ native claim reconstruction and the channel's existing live-head selection. The
 shared CLAIM reader keeps its canonical decoding, source-withdrawal checks and
 vault-authoritative MACHINE-history projection. Standing party STOP still folds
 from the canonical vault; staged content never becomes grant or control authority.
-The public `Memory::calendar_prep` entry still opens its canonical lane. This is not
-a claim that calendar prep is served through an off-record session route.
+The scoped PPR builder and the final candidate deletion/learned-time reads also use
+the serving content reader. The unrestricted builder still supplies the base view.
+The public `Memory::calendar_prep` entry still opens its canonical lane. EVENT facts,
+Session telemetry and the actual Session verb caller remain separate work; this is
+not a claim that calendar prep is served through an off-record session route.
 
 All new evidence must have been learned by the supplied fire instant. The existing
 eligibility, EVENT/attendee PPR seeds, three-hop walk, 64-candidate PPR limit, nine
