@@ -148,6 +148,10 @@ impl<T> ScratchVec<T> {
         self.values.pop()
     }
 
+    pub(super) fn clear(&mut self) {
+        self.values.clear();
+    }
+
     pub(super) fn drain(&mut self, range: std::ops::RangeFull) -> std::vec::Drain<'_, T> {
         self.values.drain(range)
     }
@@ -171,6 +175,35 @@ impl<T> Deref for ScratchVec<T> {
 impl<T> DerefMut for ScratchVec<T> {
     fn deref_mut(&mut self) -> &mut [T] {
         &mut self.values
+    }
+}
+
+/// UTF-8 scratch owns its admitted byte capacity through every borrowed view.
+pub(super) struct ScratchText {
+    bytes: ScratchVec<u8>,
+}
+impl ScratchText {
+    pub(super) fn new(budget: &Budget) -> Self {
+        Self {
+            bytes: ScratchVec::new(budget),
+        }
+    }
+
+    pub(super) fn push(&mut self, value: char) -> Result<()> {
+        let mut encoded = [0; 4];
+        self.push_str(value.encode_utf8(&mut encoded))
+    }
+
+    pub(super) fn push_str(&mut self, value: &str) -> Result<()> {
+        self.bytes.extend(value.bytes())
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.bytes.clear();
+    }
+
+    pub(super) fn as_str(&self) -> Result<&str> {
+        std::str::from_utf8(&self.bytes).map_err(|_| ContentTemplateError::Overflow)
     }
 }
 

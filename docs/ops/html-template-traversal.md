@@ -39,9 +39,9 @@ The requested allocation is admitted before `try_reserve_exact`; any capacity
 surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
 backing by itself does not count the heap payload owned by its elements.
-DOM/parser and selector internals, merge/CSS and text-normalization strings,
-encoding scratch, sorting scratch, font dictionaries, PDF document/codec objects
-and output bytes remain outside this admission slice.
+DOM/parser and selector internals, merge/CSS strings, encoding scratch, sorting
+scratch, font dictionaries, PDF document/codec objects and output bytes remain
+outside this admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
 owned by the generic native `Content` while it encodes them; `AsRef` borrows the
 operations without detaching their backing guard. Cell-page operations move to
@@ -89,3 +89,11 @@ error returns. Checkpoints now run at the native operand/separator/operator
 write boundaries within a page, not only before the page starts. Work inside
 one native formatting, string-escaping, allocation or forwarded write remains
 opaque and is not preempted. Page bytes and codec scratch remain unadmitted.
+
+Preformatted normalization and ordinary Unicode word scratch also own admitted
+UTF-8 byte capacity. Normalization keeps the same CRLF/CR-to-newline and literal
+four-space tab rules. Word splitting keeps the existing Unicode whitespace and
+non-breaking-space rules. Both buffers retain their admission through borrowed
+word calls; clearing a word reuses its capacity without returning live backing.
+Their character encoding uses only stack scratch. The separate Windows-1252
+encoder's `Cow` allocation remains outside this admission slice.
