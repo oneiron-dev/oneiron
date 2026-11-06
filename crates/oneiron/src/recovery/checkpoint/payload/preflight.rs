@@ -429,8 +429,10 @@ impl Preflight {
         if self.families.is_empty() && self.entity_kinds.is_empty() {
             return captured;
         }
-        keep_owner_parts(captured, &|db, key, value| {
-            self.compartments(db, key, value)
-        })
+        keep_owner_parts(
+            captured,
+            &|db, key, value| self.compartments(db, key, value),
+            &|_| true,
+        )
     }
 }
