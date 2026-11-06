@@ -137,3 +137,17 @@ pub(crate) async fn vault_commitments_reminder_route_set(
     )
     .await
 }
+
+pub(crate) async fn vault_commitments_ledger(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::memory::commitment_doors::CommitmentLedgerRequest,
+) -> Listed<oneiron::memory::commitment_doors::CommitmentLedgerView> {
+    as_owner(
+        server,
+        auth,
+        "vault.commitments.ledger",
+        move |memory, owner| memory.commitments_ledger_as(owner, input),
+    )
+    .await
+}

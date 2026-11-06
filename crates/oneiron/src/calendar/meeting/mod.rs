@@ -23,6 +23,12 @@ pub struct CalendarMeetingRequest {
     pub event_ref: String,
 }
 
+impl CalendarMeetingRequest {
+    pub(crate) fn event_id(&self) -> MemoryResult<EntityId> {
+        event_id(&self.event_ref)
+    }
+}
+
 /// The vault-scope `calendar_outcome_grace_seconds` policy row the owner reads
 /// and writes through the policy manifest
 /// (`gate::policy_manifest_doors::set_calendar_outcome_grace_as_owner`); never
@@ -111,17 +117,31 @@ fn signals(event: &crate::calendar::PrepEvent) -> MeetingClassSignals {
 }
 
 fn trace_event(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, event: EntityId) -> crate::Result<()> {
+    trace_event_from_read(memory, &memory.vault().store.read(), txn, event).map(|_| ())
+}
+
+fn trace_event_from_read(
+    memory: &Memory<'_>,
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> crate::Result<Vec<EntityId>> {
+    let mut rows = vec![event];
     memory.produced_from([event]);
-    for id in memory.vault().claims_for_subject_in_txn(txn, &event)? {
+    for id in memory
+        .vault()
+        .claims_for_subject_from_read_in_txn(read, txn, &event)?
+    {
         if memory
             .vault()
-            .get_claim_in_txn(txn, &id)?
+            .get_claim_from_read_in_txn(read, txn, &id)?
             .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
         {
             memory.produced_from([id]);
+            rows.push(id);
         }
     }
-    Ok(())
+    Ok(rows)
 }
 
 fn due_in_txn(
@@ -250,48 +270,76 @@ impl Memory<'_> {
         &self,
         input: &CalendarMeetingRequest,
     ) -> MemoryResult<ScopedReadResult<Option<PrepPack>>> {
-        let event = event_id(&input.event_ref)?;
+        let event = input.event_id()?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        self.calendar_prep_in(event, &lane, None)
+            .map(|(read, _)| read)
+    }
+
+    pub(crate) fn calendar_prep_in(
+        &self,
+        event: EntityId,
+        lane: &crate::claim::ScopedRead<'_>,
+        session: Option<(
+            &crate::off_record::SessionRetrievalTelemetry<'_>,
+            &crate::store::PendingScanChecks,
+        )>,
+    ) -> MemoryResult<(ScopedReadResult<Option<PrepPack>>, Vec<EntityId>)> {
         let scoped = lane.read_projected(
             &[PointRead::id(event)],
             None,
             |txn, _| -> crate::Result<_> {
-                let meeting = meeting_event_in_txn(self.vault(), txn, &lane, event)?;
-                if meeting.is_some() {
-                    trace_event(self, txn, event)?;
-                }
-                Ok(meeting)
+                let meeting = meeting_event_in_txn(self.vault(), txn, lane, event)?;
+                let rows = if meeting.is_some() {
+                    trace_event_from_read(self, &lane.store_read(), txn, event)?
+                } else {
+                    Vec::new()
+                };
+                Ok((meeting, rows))
             },
         )?;
         let mut receipt = scoped.receipt;
-        let Some(event) = scoped.value else {
-            return Ok(ScopedReadResult {
-                value: None,
-                receipt,
-            });
+        let (meeting, mut rows) = scoped.value;
+        let Some(event) = meeting else {
+            return Ok((
+                ScopedReadResult {
+                    value: None,
+                    receipt,
+                },
+                rows,
+            ));
         };
         let pack = build_prep_pack_scoped(
-            &lane,
+            lane,
             &PrepBuildRequest {
                 event,
                 fired_at: self.vault().now_recorded_at(),
                 policy: PrepPolicy::default(),
             },
+            session,
         )?;
         receipt.restrict_with(&pack.receipt);
         if let Some(pack) = &pack.value {
-            self.produced_from(
-                pack.sections
-                    .iter()
-                    .flat_map(|section| &section.items)
-                    .flat_map(|item| &item.source_refs)
-                    .filter_map(|reference| EntityId::from_hex(reference).ok()),
-            );
+            let sources = pack
+                .sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .flat_map(|item| &item.source_refs)
+                .filter_map(|reference| EntityId::from_hex(reference).ok());
+            for id in sources {
+                self.produced_from([id]);
+                if !rows.contains(&id) {
+                    rows.push(id);
+                }
+            }
         }
-        Ok(ScopedReadResult {
-            value: pack.value,
-            receipt,
-        })
+        Ok((
+            ScopedReadResult {
+                value: pack.value,
+                receipt,
+            },
+            rows,
+        ))
     }
 
     pub fn calendar_event_outcome(

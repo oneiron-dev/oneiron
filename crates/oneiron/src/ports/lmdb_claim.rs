@@ -149,26 +149,31 @@ impl Vault {
     }
 }
 
+/// Reads a CLAIM through the caller's captured content view.
+pub(crate) fn read_claim_body_in_txn(
+    store: &crate::store::StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ClaimBody>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    // History keeps every lifecycle status, never words a deletion withdrew
+    // or a source that no longer stands.
+    if !super::safe_read::raw_readable_in_txn(store, rtxn, id, &raw)? {
+        return Ok(None);
+    }
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+    }
+    crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        .map(Some)
+}
+
 impl ClaimStore for Vault {
     fn port_claim_get(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        // History keeps every lifecycle status, never words a deletion withdrew
-        // or a source that no longer stands.
-        if !super::safe_read::raw_readable_in_txn(&self.store, rtxn, id, &raw)? {
-            return Ok(None);
-        }
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
-        }
-        crate::write_envelope::claim_body::decode_claim_body(
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )
-        .map(Some)
+        read_claim_body_in_txn(&self.store.read(), rtxn, id)
     }
     fn port_claim_put(
         &self,

@@ -94,52 +94,116 @@ impl Vault {
         &self,
         contact_ref: &EntityId,
     ) -> Result<CommitmentLedger> {
-        let contact = self
-            .get_counterparty_contact(contact_ref)?
+        let txn = self.store.env.read_txn()?;
+        self.commitment_ledger_for_counterparty_in_txn(
+            &self.store.read(),
+            &txn,
+            contact_ref,
+            |_| Ok(true),
+        )
+        .map(|(ledger, _)| ledger)
+    }
+
+    /// Projects only admitted rows in the caller's snapshot. Obligation ids and
+    /// bodies and contact/identity labels use the same captured `store`.
+    pub(crate) fn commitment_ledger_for_counterparty_in_txn(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        contact_ref: &EntityId,
+        mut admit: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<(CommitmentLedger, [EntityId; 4])> {
+        let (contact, contact_heads) =
+            crate::counterparty_contact::counterparty_contact_label_sources_in_txn(
+                self,
+                store,
+                txn,
+                contact_ref,
+            )?
             .ok_or(Error::EntityNotFound)?;
-        // The channel and address are the identity's facts (OF-272): a
-        // corrected address is the one the ledger names.
-        let facts =
-            self.channel_identity_facts(&contact.identity_ref)?
+        for id in contact_heads {
+            if !admit(&id)? {
+                return Err(Error::EntityNotFound);
+            }
+        }
+        let identity_heads = crate::channel_identity::channel_identity_correctable_head_ids_in_txn(
+            store,
+            txn,
+            &contact.identity_ref,
+        )?;
+        let selected_identity_heads = [
+            crate::channel_identity::PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+            crate::channel_identity::PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+        ]
+        .map(|predicate| {
+            identity_heads
+                .get(predicate)
+                .copied()
                 .ok_or(Error::CorruptedIndex(
                     "counterparty contact channel identity",
-                ))?;
+                ))
+        });
+        let [channel_head, address_head] = selected_identity_heads;
+        let label_heads = [
+            contact_heads[0],
+            contact_heads[1],
+            channel_head?,
+            address_head?,
+        ];
+        for id in &label_heads[2..] {
+            if !admit(id)? {
+                return Err(Error::EntityNotFound);
+            }
+        }
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            store,
+            txn,
+            &contact.identity_ref,
+        )?
+        .ok_or(Error::CorruptedIndex(
+            "counterparty contact channel identity",
+        ))?;
 
-        let (mut owed_by_them, mut owed_to_them) = self.project_commitment_rows(contact_ref)?;
+        let (mut owed_by_them, mut owed_to_them) =
+            self.project_commitment_rows(store, txn, contact_ref, &mut admit)?;
         sort_due(&mut owed_by_them);
         sort_due(&mut owed_to_them);
 
-        Ok(CommitmentLedger {
-            counterparty: CommitmentLedgerCounterparty {
-                contact_ref: *contact_ref,
-                identity_ref: contact.identity_ref,
-                counterparty: contact.counterparty,
-                channel: facts.channel,
-                address_or_handle: facts.address_or_handle,
+        Ok((
+            CommitmentLedger {
+                counterparty: CommitmentLedgerCounterparty {
+                    contact_ref: *contact_ref,
+                    identity_ref: contact.identity_ref,
+                    counterparty: contact.counterparty,
+                    channel: facts.channel,
+                    address_or_handle: facts.address_or_handle,
+                },
+                owed_by_them,
+                owed_to_them,
             },
-            owed_by_them,
-            owed_to_them,
-        })
+            label_heads,
+        ))
     }
 
     /// Walks the CLAIM type-index once and splits the admitted open
     /// commitments into `(owed_by_them, owed_to_them)`, unsorted.
     fn project_commitment_rows(
         &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
+        admit: &mut impl FnMut(&EntityId) -> Result<bool>,
     ) -> Result<(Vec<CommitmentLedgerEntry>, Vec<CommitmentLedgerEntry>)> {
-        let rtxn = self.store.env.read_txn()?;
         let mut owed_by_them = Vec::new();
         let mut owed_to_them = Vec::new();
 
-        for entry in self
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_CLAIM, None)?
-        {
+        for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_CLAIM, None)? {
             let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(&rtxn, &id)?
+            if !admit(&id)? {
+                continue;
+            }
+            let raw = store
+                .port_entity_record(rtxn, &id)?
                 .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("claim type index"))?;
             let header =

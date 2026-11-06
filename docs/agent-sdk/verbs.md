@@ -8,6 +8,7 @@ both bindings and their export-census tests in one change.
 
 - `vault.commitments.create`
 - `vault.commitments.get`
+- `vault.commitments.ledger`
 - `vault.commitments.instances`
 - `vault.commitments.proposals`
 - `vault.commitments.fulfill`

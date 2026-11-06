@@ -14,7 +14,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::scan_check::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use sha2::Digest;
 
 use sha2::Sha256;
@@ -185,7 +185,6 @@ pub(crate) fn counterparty_contact_matches_channel_class(
     Ok(counterparty_contact_channel_class(store, txn, record)?
         .is_none_or(|stored| stored == normalize_channel_class(channel_class)))
 }
-
 /// The contact records the party-channel index names for this party/class pair.
 ///
 /// The index is a CANDIDATE source, never a verdict source: a hit is re-validated
@@ -217,7 +216,6 @@ pub(crate) fn counterparty_contacts_by_party_channel(
     }
     Ok(records)
 }
-
 /// Whether the `counterparty_contact.*` claims name a contact of `party_ref`
 /// on `channel_class`, or on a class its identity does not resolve to: UNKNOWN
 /// matches every class, as above.
@@ -351,6 +349,19 @@ pub(super) fn contact_ids_with_live_head_in_txn(
     live_head_contact_ids_in_txn(store, txn, predicate, Some(value))
 }
 
+/// Candidate contacts in the supplied content view. The caller still admits
+/// each selected label head before serving it. Scan policy is vault authority;
+/// `pending` is the caller's destination for deferred scan observations.
+pub(crate) fn contact_ids_with_live_head_from_read_in_txn(
+    read: &crate::store::StoreRead<'_>,
+    pending: &crate::store::PendingScanChecks,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: &str,
+) -> Result<Vec<EntityId>> {
+    live_head_contact_ids_under(read, read.base(), pending, txn, predicate, Some(value))
+}
+
 /// [`contact_ids_with_live_head_in_txn`], where `None` takes a live head of
 /// any value.
 fn live_head_contact_ids_in_txn(
@@ -359,9 +370,27 @@ fn live_head_contact_ids_in_txn(
     predicate: &str,
     value: Option<&str>,
 ) -> Result<Vec<EntityId>> {
+    live_head_contact_ids_under(
+        store,
+        store,
+        store.pending_scan_checks(),
+        txn,
+        predicate,
+        value,
+    )
+}
+
+fn live_head_contact_ids_under(
+    store: &impl crate::store::ManifestDbs,
+    authority: &Store,
+    pending: &crate::store::PendingScanChecks,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: Option<&str>,
+) -> Result<Vec<EntityId>> {
     const PAGE: usize = 256;
     let mut contacts = std::collections::BTreeSet::new();
-    let mut count = ScanCount::start(store, txn, EngineScan::PartyContactClaims, &[])?;
+    let mut count = ScanCount::start(authority, txn, EngineScan::PartyContactClaims, &[])?;
     let mut after = None;
     loop {
         let page =
@@ -387,7 +416,7 @@ fn live_head_contact_ids_in_txn(
         }
         after = page.last().copied();
     }
-    count.defer(store);
+    count.defer_to(pending);
     let mut ids = Vec::with_capacity(contacts.len());
     for contact in contacts {
         let id = EntityId::from_bytes(contact)?;
@@ -438,7 +467,7 @@ fn contact_claims_match_class(
 /// removes the row and keeps the contact, so row presence can never be the
 /// deletion question.
 pub(super) fn contact_deleted_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<bool> {
@@ -446,7 +475,7 @@ pub(super) fn contact_deleted_in_txn(
 }
 
 pub(super) fn claim_body_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {

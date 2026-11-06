@@ -43,7 +43,8 @@ impl Vault {
         encode_counterparty_contact_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.port_entity_record(&wtxn, id)?.is_some()
-            || live_counterparty_contact_heads_in_txn(self, &wtxn, id)?.is_some()
+            || live_counterparty_contact_heads_in_txn(self, &self.store.read(), &wtxn, id)?
+                .is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
             return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
@@ -152,10 +153,12 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<CounterpartyContactRecord> {
-        if let Some(record) = live_counterparty_contact_heads_in_txn(self, wtxn, id)? {
+        if let Some(record) =
+            live_counterparty_contact_heads_in_txn(self, &self.store.read(), wtxn, id)?
+        {
             return Ok(record);
         }
-        self.reject_non_contact_row_in_txn(wtxn, id)?;
+        self.reject_non_contact_row_in_txn(&self.store.read(), wtxn, id)?;
         Err(Error::EntityNotFound)
     }
 
@@ -164,11 +167,16 @@ impl Vault {
     /// Asked only of an id with no live contact heads: a contact is its claims
     /// (OF-272), so a live contact's type-132 cache row is never read to find
     /// it.
-    fn reject_non_contact_row_in_txn(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<()> {
-        if contact_deleted_in_txn(&self.store, rtxn, id)? {
+    fn reject_non_contact_row_in_txn(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if contact_deleted_in_txn(store, rtxn, id)? {
             return Ok(());
         }
-        if let Some(raw) = self.store.port_entity_record(rtxn, id)?
+        if let Some(raw) = store.port_entity_record(rtxn, id)?
             && raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT
         {
             return Err(Error::InvalidEntityType(raw.entity_type));
@@ -317,10 +325,19 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
-        if let Some(record) = counterparty_contact_in_claims_in_txn(self, rtxn, id)? {
+        self.get_counterparty_contact_from_read_in_txn(&self.store.read(), rtxn, id)
+    }
+
+    pub(crate) fn get_counterparty_contact_from_read_in_txn(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<CounterpartyContactRecord>> {
+        if let Some(record) = counterparty_contact_in_claims_in_txn(self, store, rtxn, id)? {
             return Ok(Some(record));
         }
-        self.reject_non_contact_row_in_txn(rtxn, id)?;
+        self.reject_non_contact_row_in_txn(store, rtxn, id)?;
         Ok(None)
     }
 
@@ -351,7 +368,8 @@ impl Vault {
             PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
             &counterparty,
         )? {
-            if let Some(record) = counterparty_contact_in_claims_in_txn(self, rtxn, &id)?
+            if let Some(record) =
+                counterparty_contact_in_claims_in_txn(self, &self.store.read(), rtxn, &id)?
                 && record.matches_counterparty(identity_ref, &counterparty)
             {
                 return Ok(Some((id, record)));
@@ -369,7 +387,9 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
         for id in self.counterparty_contact_ids_for_identity_in_txn(&rtxn, identity_ref)? {
-            if let Some(record) = counterparty_contact_in_claims_in_txn(self, &rtxn, &id)? {
+            if let Some(record) =
+                counterparty_contact_in_claims_in_txn(self, &self.store.read(), &rtxn, &id)?
+            {
                 records.push((id, record));
             }
         }
@@ -418,9 +438,11 @@ impl Vault {
             if existing_id == *id {
                 continue;
             }
-            if live_counterparty_contact_heads_in_txn(self, txn, &existing_id)?.is_some_and(
-                |stored| stored.matches_counterparty(&record.identity_ref, &record.counterparty),
-            ) {
+            if live_counterparty_contact_heads_in_txn(self, &self.store.read(), txn, &existing_id)?
+                .is_some_and(|stored| {
+                    stored.matches_counterparty(&record.identity_ref, &record.counterparty)
+                })
+            {
                 return Ok(true);
             }
         }

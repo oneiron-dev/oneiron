@@ -6,6 +6,7 @@ use crate::ports::{StaleRead, StaleReadObserver, StaleReadTable};
 
 pub(super) fn live_origin_observed(
     store: &impl ManifestDbs,
+    authority: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
     observer: &mut Option<&mut StaleReadObserver<'_>>,
@@ -19,7 +20,7 @@ pub(super) fn live_origin_observed(
             Some(EdgeKind::ClaimOf),
             None,
         )? {
-            choose_origin(store, txn, entry?.target, &mut chosen, observer)?;
+            choose_origin(store, authority, txn, entry?.target, &mut chosen, observer)?;
         }
     } else {
         use std::ops::Bound;
@@ -51,6 +52,7 @@ pub(super) fn live_origin_observed(
             }
             choose_origin(
                 store,
+                authority,
                 txn,
                 edge.into_edge_info().target,
                 &mut chosen,
@@ -70,6 +72,7 @@ pub(super) fn live_origin_observed(
 
 fn choose_origin(
     store: &impl ManifestDbs,
+    authority: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     chosen: &mut Option<(EntityId, CalendarOrigin)>,
@@ -87,7 +90,9 @@ fn choose_origin(
     let body = crate::claim::decode_claim_body(bytes, true)?;
     if body.predicate == PREDICATE_CALENDAR_ORIGIN
         && claim_surfaceable(&body)
-        && crate::gate::claim_critical_confirm_settled_observed_in_txn(store, txn, &id, observer)?
+        && crate::gate::claim_critical_confirm_settled_observed_in_txn(
+            authority, txn, &id, observer,
+        )?
     {
         let origin = body
             .value
@@ -106,6 +111,7 @@ fn choose_origin(
 
 pub(super) fn replay_origin_bound_observed(
     store: &impl ManifestDbs,
+    authority: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
     observer: &mut Option<&mut StaleReadObserver<'_>>,
@@ -119,7 +125,7 @@ pub(super) fn replay_origin_bound_observed(
     let Some(origin) = declared_origin(&row.body)? else {
         return Ok(true);
     };
-    Ok(live_origin_observed(store, txn, event, observer)? == Some(origin))
+    Ok(live_origin_observed(store, authority, txn, event, observer)? == Some(origin))
 }
 
 pub(crate) fn survives_source_deletion_observed(
@@ -128,11 +134,11 @@ pub(crate) fn survives_source_deletion_observed(
     event: EntityId,
     observer: &mut Option<&mut StaleReadObserver<'_>>,
 ) -> Result<bool> {
-    if !replay_origin_bound_observed(store, txn, event, observer)?
+    if !replay_origin_bound_observed(store, store, txn, event, observer)?
         && let Some(row) = entity_record(store, txn, &event, observer)?
     {
         // Pending native/imported entries keep the original survival behavior.
         return Ok(declared_origin(&row.body)? != Some(CalendarOrigin::Dreamer));
     }
-    Ok(live_origin_observed(store, txn, event, observer)? == Some(CalendarOrigin::Native))
+    Ok(live_origin_observed(store, store, txn, event, observer)? == Some(CalendarOrigin::Native))
 }

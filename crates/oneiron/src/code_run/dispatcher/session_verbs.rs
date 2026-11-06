@@ -44,6 +44,7 @@ pub(super) fn session_read(verb: AgentVerb) -> Option<SessionRead> {
         "vault.hydrate" => Some(SessionRead::Hydrate),
         "vault.refs.resolve" => Some(SessionRead::RefsResolve),
         "vault.search.bm25" => Some(SessionRead::SearchBm25),
+        "vault.calendar.prep" => Some(SessionRead::CalendarPrep),
         _ => None,
     }
 }

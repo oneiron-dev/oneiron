@@ -37,6 +37,7 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 vaultCommitmentsCreate(input: unknown): unknown
 vaultCommitmentsGet(input: unknown): unknown
+vaultCommitmentsLedger(input: unknown): unknown
 vaultCommitmentsInstances(input: unknown): unknown
 vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
