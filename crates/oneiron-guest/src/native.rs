@@ -86,6 +86,7 @@ pub(crate) fn run() -> Result<()> {
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o666))?;
     let egress_listener = egress::bind()?;
+    let ingress_listener = oneiron_container::native_ingress::bind_guest()?;
     let mut command = Command::new("/usr/local/bin/oneiron-fence");
     command
         .arg(&socket)
@@ -117,14 +118,21 @@ pub(crate) fn run() -> Result<()> {
     // The child keeps its normal signal mask. All later PID-1 worker threads
     // inherit blocked SIGCHLD so the final host-custody loop can reap orphans.
     let shutdown_signals = super::boot::block_sigchld()?;
-    let _fence = oneiron_container::serve_native_fence(
-        listener,
-        child.id() as i32,
+    let _fence = Arc::new(
+        oneiron_container::serve_native_fence(
+            listener,
+            child.id() as i32,
+            &start.bridge_token,
+            &read_only_paths,
+            Arc::new(crate::egress::VsockRelay),
+        )
+        .map_err(std::io::Error::other)?,
+    );
+    oneiron_container::native_ingress::serve_guest(
+        ingress_listener,
+        Arc::clone(&_fence),
         &start.bridge_token,
-        &read_only_paths,
-        Arc::new(crate::egress::VsockRelay),
-    )
-    .map_err(std::io::Error::other)?;
+    )?;
     egress::serve(egress_listener)?;
     channel.write_all(&[1])?;
     let mut input = child.stdin.take().ok_or(Error::Runtime("native stdin"))?;
