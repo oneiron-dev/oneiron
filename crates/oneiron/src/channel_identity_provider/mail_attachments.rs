@@ -6,7 +6,9 @@
 //! file in its frozen order as an `attachment` part, its exact bytes in
 //! base64 and its name in RFC 2231 form. Nothing here reads a file: the
 //! drafter's door admits each one and hands its exact copy in, and the
-//! message is written once, when it is frozen.
+//! message is written once, when it is frozen. A kept plan names its files
+//! and message only by their manifest's digest; their holder's live row
+//! keeps them.
 
 use std::fmt::Write as _;
 
@@ -85,16 +87,53 @@ impl MailMessageIdentity {
     }
 }
 
+/// What a send with files was frozen with, as its holder's own live row
+/// keeps it (fix list row 17645): its files in their order and its exact
+/// message. A kept plan names it only by [`Self::digest`], so no image of
+/// the plan carries a file's name, ref or hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MailManifest {
+    pub(crate) attachments: Vec<MailAttachment>,
+    pub(crate) message: MailMessageIdentity,
+}
+
+impl MailManifest {
+    /// The digest a kept plan names this manifest by: every file in its
+    /// slot, then the exact message.
+    #[must_use]
+    pub(crate) fn digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"oneiron.mail.attachment.manifest.v1");
+        hash_attachments(&mut hasher, &self.attachments);
+        hash_message(&mut hasher, Some(&self.message));
+        *hasher.finalize().as_bytes()
+    }
+}
+
 /// The one message a send plan with files sends, kept by its holder where
 /// it was frozen (fix list row 17645): the plan names its length and BLAKE3,
 /// and only its holder opens it. The holder judges the send again in the
-/// writer that admits it and once more at egress, and never renders,
-/// exports or masks anything again.
+/// writer that admits it, at egress, and in the credential door's writer,
+/// and never renders, exports or masks anything again.
 pub(crate) trait RetainedMailMessage {
     /// The content ref of the plan this message is.
     fn content_ref(&self) -> &str;
 
-    /// Judges the frozen send again in `txn`, the writer that admits it.
+    /// The ref of the carrier that holds the message: one per draft and
+    /// revision, as the kept plan names it.
+    fn carrier_ref(&self) -> &str;
+
+    /// The files and the exact message the plan was frozen with, read from
+    /// the holder's own live row; `None` once that row no longer names
+    /// them, and the kept plan is then no plan.
+    ///
+    /// # Errors
+    ///
+    /// The failure of its read.
+    fn manifest(&self) -> Result<Option<MailManifest>>;
+
+    /// Judges the frozen send again in `txn`, a writer: the one that admits
+    /// it, and the credential door's before the message leaves.
     ///
     /// # Errors
     ///

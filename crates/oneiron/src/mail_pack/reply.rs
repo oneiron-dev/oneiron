@@ -47,11 +47,12 @@ use serde::{Deserialize, Serialize};
 use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_attachments::{
-    MailReplyAttachment, MailReplyAttachmentView, ReplyAttached, ReplyRetainedMessage,
-    freeze_gmail_reply, frozen_addresses, reader_reads_attachments_in,
-    readmit_reply_attachments_in, standing_refusal_in,
+    AnsweredMessage, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached,
+    ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply, frozen_addresses,
+    reader_reads_attachments_in, readmit_reply_attachments_in, reply_send_completed,
+    standing_refusal_in,
 };
-use super::reply_custody::seal_reply_message_in_txn;
+use super::reply_custody::{reply_carrier_ref, seal_reply_message_in_txn};
 use super::reply_erase::{
     register_reply_dependencies_in_txn, retire_reply_revision_in_txn, retire_reply_send_in_txn,
 };
@@ -108,9 +109,9 @@ pub enum MailReplyDraftState {
 pub(super) struct MailReplyDraftRow {
     pub(super) source: EntityId,
     /// The thread's CONVERSATION.
-    thread: EntityId,
+    pub(super) thread: EntityId,
     /// The TURN of the message it answers.
-    parent_turn: EntityId,
+    pub(super) parent_turn: EntityId,
     /// The delegated identity a Gmail reply sends through; `None` for one
     /// sent as the mailbox's own account (SMTP, Graph).
     identity: Option<EntityId>,
@@ -361,6 +362,47 @@ fn thread_in(
     }
     messages.sort_by_key(|occurrence| occurrence.received_at);
     Ok((*source, row.clone(), messages))
+}
+
+/// Why the revision `row`, a reply with files, may not land, read in `txn`,
+/// the writer that would land it (fix list row 17645): its thread no longer
+/// one `actor` reads, its mailbox source no longer the one `owner` owns
+/// that replies as `route`, or the message it answers gone
+/// ([`answered_refusal_in`]). An erase that committed after the draft was
+/// read finds no draft to end yet; this writer sees it, and nothing that
+/// erase would have ended is published. A reply without files lands as
+/// before.
+fn publication_refusal_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    route: ReplyRoute,
+    owner: Option<EntityId>,
+    row: &MailReplyDraftRow,
+) -> MemoryResult<Option<String>> {
+    let Some(attached) = &row.attached else {
+        return Ok(None);
+    };
+    let reads = match source_audience::binding_in(vault, txn, &row.thread)? {
+        Some(thread) => source_audience::actor_reads_in(vault, txn, &thread, actor)?,
+        None => false,
+    };
+    if !reads {
+        return Ok(Some(
+            "the thread is gone, or no longer read by the drafter; draft it again".to_owned(),
+        ));
+    }
+    let routed = SOURCES
+        .get(&vault.store, txn, &row.source)?
+        .is_some_and(|mailbox| {
+            mailbox.owner == owner && reply_route(&mailbox).is_ok_and(|now| now == route)
+        });
+    if !routed {
+        return Ok(Some(
+            "the mailbox changed while the reply was drafted; draft it again".to_owned(),
+        ));
+    }
+    Ok(answered_refusal_in(vault, txn, row, attached)?)
 }
 
 /// How a source's replies leave it.
@@ -729,7 +771,8 @@ impl Memory<'_> {
             ));
         }
         // The mailbox's own person approves it, so they are asked.
-        let asked = row.owner.filter(|person| *person != actor);
+        let mailbox_owner = row.owner;
+        let asked = mailbox_owner.filter(|person| *person != actor);
         let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
         // Every recipient the reply names, as it would send, so a redraft to
         // the same people is the same revision (fix list row 17645). The
@@ -808,20 +851,29 @@ impl Memory<'_> {
                 match admitted.take() {
                     None => plan.keep(vault)?,
                     // A reply with files freezes its exact message here,
-                    // once; its plan lands with its draft (fix list row
-                    // 17645).
+                    // once, beside the message it answers; its plan lands
+                    // with its draft (fix list row 17645).
                     Some(admitted) => {
                         let answered = messages
+                            .iter()
+                            .find(|occurrence| occurrence.turn == parent_turn)
+                            .map(|occurrence| AnsweredMessage::of(source, occurrence))
+                            .ok_or_else(|| {
+                                MemoryError::not_found("no message on the thread to reply to")
+                            })?;
+                        let answered_rows = messages
                             .iter()
                             .filter(|occurrence| occurrence.turn == parent_turn)
                             .flat_map(|occurrence| occurrence.messages.iter().copied());
                         let dependencies = admitted.dependencies(
                             [conversation, parent_turn]
                                 .into_iter()
-                                .chain(answered)
+                                .chain(answered_rows)
                                 .chain([source]),
                         );
-                        let reply = freeze_gmail_reply(plan, admitted, dependencies)?;
+                        let carrier = reply_carrier_ref(&id, revision)?;
+                        let reply =
+                            freeze_gmail_reply(plan, admitted, carrier, answered, dependencies)?;
                         plan = reply.plan.clone();
                         frozen = Some(reply);
                     }
@@ -887,9 +939,16 @@ impl Memory<'_> {
                 )
                 .into());
             }
-            // A reply with files lands only while its files still stand and
-            // every recipient is still cleared for each, judged again here
+            // A reply with files lands only while its thread, its mailbox
+            // and the message it answers still stand, and its files still
+            // stand with every recipient still cleared for each, judged
+            // again here, before anything of it is sealed, kept or asked
             // (fix list row 17645).
+            if let Some(refusal) =
+                publication_refusal_in(vault, txn, actor, route, mailbox_owner, &row)?
+            {
+                return Err(MemoryError::bad_request(refusal));
+            }
             if let (Some(frozen), Some(lane)) = (&frozen, &lane) {
                 readmit_reply_attachments_in(
                     vault,
@@ -1153,12 +1212,18 @@ impl Vault {
                 ));
             }
         };
-        // A reply with files sends only the message it was frozen with:
-        // before the press, its send still stands and that message opens as
-        // it was frozen (fix list row 17645).
+        // A reply with files whose send the ledger already completed (the
+        // process stopped before its draft settled) replays that outcome and
+        // settles below; nothing of today's files, recipients or message is
+        // judged, and its message need not be held (fix list row 17645).
+        let completed =
+            row.attached.is_some() && reply_send_completed(self, &request, &row.plan_ref)?;
+        // Any other reply with files sends only the message it was frozen
+        // with: before the press, its send still stands and that message
+        // opens as it was frozen.
         let retained = match &row.attached {
-            Some(_) => Some(ReplyRetainedMessage::for_press(self, id, &row)?),
-            None => None,
+            Some(_) if !completed => Some(ReplyRetainedMessage::for_press(self, id, &row)?),
+            _ => None,
         };
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
@@ -1187,8 +1252,9 @@ impl Vault {
                     "the draft was discarded, sent or left uncertain since it was read",
                 ));
             }
-            // And it still stands in the writer that presses it.
-            if let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
+            // And it still stands in the writer that presses it, unless its
+            // send already completed.
+            if !completed && let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
                 return Err(MemoryError::bad_request(refusal));
             }
             if held.approved_at.is_none() {
@@ -1240,9 +1306,10 @@ impl Vault {
                 held.outcome = Some(outcome);
                 held.updated_at = crate::unix_seconds_now();
                 DRAFTS.put(&self.store, txn, &id, &held)?;
-                // A reply with files that sent, or whose outcome is
-                // uncertain, never sends again: its message and its plan go
-                // in this writer (fix list row 17645).
+                // A reply with files that sent (a completed send's replay
+                // too), or whose outcome is uncertain, never sends again:
+                // the draft settles and its message and its plan go in this
+                // one writer (fix list row 17645).
                 if held.attached.is_some()
                     && matches!(
                         state,

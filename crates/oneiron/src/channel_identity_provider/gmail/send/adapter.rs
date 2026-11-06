@@ -26,6 +26,27 @@ impl GmailDelegatedAdapter {
         identity_id: EntityId,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
+        self.with_send_token_at_door_admitting(vault, identity_id, None, apply)
+    }
+
+    /// [`Self::with_send_token_at_door`] for a send that may carry files
+    /// (fix list row 17645): `retained`, the holder of a frozen send with
+    /// files, judges that send once more in the door's own writer, after
+    /// the row and custody checks and before the token is copied out, so an
+    /// erase or a clearance revocation that commits first stops it here. The
+    /// writer is released before `apply` runs; an erase that commits after
+    /// it finds the send already under way.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_send_token_at_door`], and the holder's refusal.
+    pub(crate) fn with_send_token_at_door_admitting(
+        &self,
+        vault: &Vault,
+        identity_id: EntityId,
+        retained: Option<&dyn RetainedMailMessage>,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
         self.require_send_grant()?;
         // The row check, the custody re-proof and the token copy share one
         // write transaction, so a release or scope removal cannot commit
@@ -34,6 +55,9 @@ impl GmailDelegatedAdapter {
         let wtxn = vault.store.env.write_txn()?;
         self.require_active_row_matches_adapter_in_txn(vault, &wtxn, &identity_id)?;
         self.verify_custody_grant_in_txn(vault, &wtxn)?;
+        if let Some(retained) = retained {
+            retained.admit_in(&wtxn)?;
+        }
         vault.inject_secret_at_door_in_txn(
             wtxn,
             &self.config.custody_record_ref,

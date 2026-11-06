@@ -41,6 +41,16 @@ fn custody_ref(draft: &EntityId, revision: u64) -> Result<EntityId> {
     EntityId::from_bytes(bytes).map_err(|_| Error::InvariantViolation("mail reply custody ref"))
 }
 
+/// The ref a kept Gmail plan names the carrier of revision `revision` of
+/// the draft `draft` by: its custody ref, 32-hex (fix list row 17645).
+///
+/// # Errors
+///
+/// The derivation's invariant failure.
+pub(super) fn reply_carrier_ref(draft: &EntityId, revision: u64) -> Result<String> {
+    Ok(custody_ref(draft, revision)?.to_hex())
+}
+
 /// The revision a stored row is, and its sealed message.
 fn split_row(row: &[u8]) -> Option<(u64, &[u8])> {
     let (revision, sealed) = row.split_first_chunk::<{ size_of::<u64>() }>()?;
