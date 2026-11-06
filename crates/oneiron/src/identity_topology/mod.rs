@@ -113,8 +113,9 @@ pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};
 pub(crate) use attribution::{
-    admitted_author_in_txn, drop_unheld_author_marks_in_txn, effective_author_in_txn,
-    record_author_attribution_in_txn, redact_actor_in_txn, redact_author_attribution_in_txn,
+    admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
+    effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
+    redact_author_attribution_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use attribution::{
