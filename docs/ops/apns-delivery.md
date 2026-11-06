@@ -57,6 +57,12 @@ unpadded Base64URL of UTF-8 JSON, with these fields in this order:
 No fixed token length is assumed. Whitespace, alternative JSON field orders
 and uppercase token encodings are not canonical addresses.
 
+The complete encoded address, including the `apns-address:` prefix, must fit
+ChannelIdentity's existing 512-byte `address_or_handle` bound. The Rust helper
+reports an address that exceeds that bound before provisioning. Use short app
+labels such as `phone`; the encoded size also depends on the topic and token,
+so an app-id length alone does not determine whether the address fits.
+
 1. Call the existing owner-bound `vault.channel_identities.provision` with
    `channel: "apns"`, that `address_or_handle`, `shape: "dedicated_address"`,
    the normal explicit binding, and manual fulfillment.

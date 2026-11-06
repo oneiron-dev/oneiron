@@ -139,24 +139,31 @@ impl Pipe {
         match answered {
             Some(PausedResponse::Whole(response)) => {
                 let encoded = response.body.len().div_ceil(3).saturating_mul(4);
+                let binary_len = binary_headers_len(&response.headers);
+                let header_room = binary_len.map_or(0, |len| {
+                    len.saturating_add(len.div_ceil(3).saturating_mul(4))
+                });
                 let Some(_answer_room) = held_bytes(
                     relay.host_net_floor(),
-                    response.body.len().saturating_add(encoded),
+                    response
+                        .body
+                        .len()
+                        .saturating_add(encoded)
+                        .saturating_add(header_room),
                 ) else {
                     self.fail_paused(&session, &id, "Failed");
                     return;
                 };
-                let headers: Vec<_> = response
-                    .headers
-                    .into_iter()
-                    .map(|(name, value)| json!({"name": name, "value": value}))
-                    .collect();
                 let _ = self.call(
                     Some(&session),
                     "Fetch.fulfillRequest",
-                    json!({"requestId": id,
-                    "responseCode": response.status, "responseHeaders": headers,
-                    "body": base64::engine::general_purpose::STANDARD.encode(response.body)}),
+                    response_params(
+                        &id,
+                        response.status,
+                        response.headers,
+                        base64::engine::general_purpose::STANDARD.encode(response.body),
+                        binary_len,
+                    ),
                     Instant::now() + Duration::from_secs(30),
                 );
             }
@@ -179,8 +186,14 @@ impl Pipe {
     ) {
         let len = usize::try_from(response.body.len()).unwrap_or(usize::MAX);
         let encoded = len.div_ceil(3).saturating_mul(4);
-        let Some(_answer_room) = held_bytes(relay.host_net_floor(), len.saturating_add(encoded))
-        else {
+        let binary_len = binary_headers_len(&response.headers);
+        let header_room = binary_len.map_or(0, |len| {
+            len.saturating_add(len.div_ceil(3).saturating_mul(4))
+        });
+        let Some(_answer_room) = held_bytes(
+            relay.host_net_floor(),
+            len.saturating_add(encoded).saturating_add(header_room),
+        ) else {
             self.fail_paused(session, id, "Failed");
             return;
         };
@@ -202,16 +215,10 @@ impl Pipe {
             self.fail_paused(session, id, "Failed");
             return;
         };
-        let headers: Vec<_> = headers
-            .into_iter()
-            .map(|(name, value)| json!({"name": name, "value": value}))
-            .collect();
         let _ = self.call(
             Some(session),
             "Fetch.fulfillRequest",
-            json!({"requestId": id,
-            "responseCode": status, "responseHeaders": headers,
-            "body": body}),
+            response_params(id, status, headers, body, binary_len),
             Instant::now() + Duration::from_secs(30),
         );
     }
@@ -258,6 +265,60 @@ impl Pipe {
             Instant::now() + Duration::from_secs(30),
         );
     }
+}
+
+/// Binary CDP header storage is needed only where a field is not UTF-8.
+fn binary_headers_len(headers: &[(String, Vec<u8>)]) -> Option<usize> {
+    headers
+        .iter()
+        .any(|(_, value)| std::str::from_utf8(value).is_err())
+        .then(|| {
+            headers
+                .iter()
+                .fold(0usize, |len, (name, value)| {
+                    len.saturating_add(name.len())
+                        .saturating_add(2)
+                        .saturating_add(value.len())
+                        .saturating_add(1)
+                })
+                .saturating_sub(1)
+        })
+}
+
+/// CDP prefers text headers, with its binary carrier for non-UTF-8 fields.
+fn response_params(
+    id: &str,
+    status: u16,
+    headers: Vec<(String, Vec<u8>)>,
+    body: String,
+    binary_len: Option<usize>,
+) -> Value {
+    let mut params = json!({"requestId": id, "responseCode": status});
+    params["body"] = Value::String(body);
+    if let Some(len) = binary_len {
+        let mut bytes = Vec::with_capacity(len);
+        for (name, value) in headers {
+            if !bytes.is_empty() {
+                bytes.push(0);
+            }
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.extend_from_slice(b": ");
+            bytes.extend_from_slice(&value);
+        }
+        params["binaryResponseHeaders"] =
+            Value::String(base64::engine::general_purpose::STANDARD.encode(bytes));
+    } else {
+        params["responseHeaders"] = Value::Array(
+            headers
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = String::from_utf8(value).expect("header encoding checked");
+                    json!({"name": name, "value": value})
+                })
+                .collect(),
+        );
+    }
+    params
 }
 
 /// Room for `bytes` on `floor`'s byte reserve, held until it drops: waited
