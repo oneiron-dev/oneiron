@@ -23,7 +23,11 @@ impl MergeQueue<'_> {
             return Ok(false);
         };
         let _guard = lock_repository(self.repo.common_dir())?;
-        let Some(target) = self.initialized_configuration()?.driver_target else {
+        let Some(target) = self
+            .initialized_configuration()?
+            .ok()
+            .and_then(|config| config.driver_target)
+        else {
             return Ok(false);
         };
         let Some(open) = self
