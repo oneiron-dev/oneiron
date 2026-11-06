@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes};
-use futures_util::{SinkExt, Stream, StreamExt};
+use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
 use oneiron::sync::transport::{
     LinkBytes, MAX_CODEC_INNER_BYTES, TAG_CODEC, TransportError, WireCodecs, decode_codec_frame,
     encode_codec_frame,
@@ -415,11 +415,13 @@ where
         } else {
             "credential revoked"
         };
-        self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
-            reason: Utf8Bytes::from_static(reason),
-        })))
-        .await;
+        // A backpressured peer must not delay revocation or carrier shutdown.
+        let _ = self
+            .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+                reason: Utf8Bytes::from_static(reason),
+            })))
+            .now_or_never();
         self.socket.take();
     }
 
