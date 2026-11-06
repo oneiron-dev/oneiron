@@ -450,8 +450,11 @@ pub(super) fn set_cell(
 /// existing prefix/suffix path.
 /// Same-count lines also keep each original field-free inter-paragraph gap's
 /// exact bytes in place when zero DrawingML `fld` nodes sit wholly inside
-/// that gap; gaps holding any such field keep the existing drop so
-/// field-removal receipts stay truthful. Count-changing output is unchanged.
+/// that gap; count-changing lines keep only matched outer head/tail gaps
+/// wholly between two original head or two original tail paragraphs under
+/// the same gate; gaps holding any such field and all middle, boundary,
+/// added, removed or unmatched gaps keep the existing drop so field-removal
+/// receipts stay truthful.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -701,9 +704,16 @@ fn rebuilt(
     let paired = (paragraphs.len() - head - tail).min(new_count - head - tail);
     let mut out = bytes[..first_node.span.start].to_vec();
     for (index, line) in value.split('\n').enumerate() {
-        if same_count && index > 0 {
-            let gap_start = paragraphs[index - 1].1.span.end;
-            let gap_end = paragraphs[index].1.span.start;
+        let gap_index = if index > 0 && (same_count || index < head) {
+            Some(index)
+        } else if !same_count && index > new_count - tail {
+            Some(paragraphs.len() - (new_count - index))
+        } else {
+            None
+        };
+        if let Some(original) = gap_index {
+            let gap_start = paragraphs[original - 1].1.span.end;
+            let gap_end = paragraphs[original].1.span.start;
             let gap_has_field = within(tree, body).any(|(_, node)| {
                 node.is(DML, "fld") && node.span.start >= gap_start && node.span.end <= gap_end
             });
