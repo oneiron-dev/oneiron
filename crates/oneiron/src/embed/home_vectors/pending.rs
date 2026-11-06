@@ -127,6 +127,17 @@ impl Vault {
         Ok(copied)
     }
 
+    pub(super) fn complete_pending_retained_home_claim(&self, id: &EntityId) -> Result<bool> {
+        let bytes = {
+            let txn = self.store.env.read_txn()?;
+            crate::sync::queue::embed_job_home_claim_copy_in_txn(&self.store, &txn, id)?
+        };
+        let Some(bytes) = bytes else {
+            return Ok(false);
+        };
+        self.complete_retained_home_claim(*id, bytes)
+    }
+
     fn complete_retained_home_claim(&self, id: EntityId, bytes: Vec<u8>) -> Result<bool> {
         let copy = match OpenedRetainedHomeClaim::open(self, &id, bytes.clone()) {
             Ok(Some(copy)) => copy,
