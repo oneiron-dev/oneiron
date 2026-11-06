@@ -91,9 +91,9 @@ oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
 # The model route on the mesh listener (OF-575), with it.
 oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
-# A device renews its paired owner credential at its home (FIX 3377), with
-# the device sync the mesh feature carries.
-oneiron-remote = { path = "../oneiron-remote", optional = true }
+# HTTPS shared-member bootstrap is a native host operation even without mesh.
+# Device credential renewal also reuses this first-party SDK.
+oneiron-remote = { path = "../oneiron-remote" }
 loro = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
@@ -272,5 +272,4 @@ mesh = [
   "dep:webpki-roots",
   "dep:oneiron-llm-own-server",
   "dep:oneiron-mesh-transport",
-  "dep:oneiron-remote",
 ]

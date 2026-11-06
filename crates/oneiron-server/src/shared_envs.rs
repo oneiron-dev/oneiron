@@ -25,6 +25,7 @@
 //! ledger's `housekeeping` entry, and [`SharedEnvRegistry::stop`] beside
 //! `DeviceSyncHost::stop` at shutdown.
 
+mod bootstrap;
 mod insert;
 
 use std::collections::HashMap;
@@ -139,6 +140,16 @@ struct OpenedEnv {
 #[derive(Default)]
 struct SharedEnvInner {
     envs: Mutex<HashMap<SharedEnvKey, SharedEnvEntry>>,
+    /// A join drops its candidate before insertion; shutdown waits for that
+    /// whole lifecycle, then prevents any later join from starting a lane.
+    stopped: tokio::sync::Mutex<bool>,
+}
+
+/// The original startup wiring, retained for joins on this same host.
+struct SharedEnvRuntime {
+    lease_vault_id: u64,
+    admission: crate::server::HousekeepingAdmission,
+    freeze: Option<crate::device_sync::ReapFreeze>,
 }
 
 /// The dedicated shared envs this host keeps open, keyed by membership.
@@ -147,6 +158,7 @@ struct SharedEnvInner {
 #[derive(Clone, Default)]
 pub(crate) struct SharedEnvRegistry {
     inner: Arc<SharedEnvInner>,
+    runtime: Option<Arc<SharedEnvRuntime>>,
 }
 
 impl SharedEnvRegistry {
@@ -180,7 +192,14 @@ impl SharedEnvRegistry {
         admission: crate::server::HousekeepingAdmission,
         freeze: Option<crate::device_sync::ReapFreeze>,
     ) -> Self {
-        let registry = Self::empty();
+        let registry = Self {
+            runtime: Some(Arc::new(SharedEnvRuntime {
+                lease_vault_id,
+                admission: admission.clone(),
+                freeze: freeze.clone(),
+            })),
+            ..Self::empty()
+        };
         for entry in entries {
             let _ = registry
                 .insert(
@@ -284,6 +303,8 @@ impl SharedEnvRegistry {
     /// order: connections detach before the mesh closes and before any
     /// handle drops).
     pub(crate) async fn stop(&self) {
+        let mut stopped = self.inner.stopped.lock().await;
+        *stopped = true;
         let lanes: Vec<ActiveLane> = {
             let mut envs = self.lock();
             envs.values_mut()
@@ -538,7 +559,7 @@ fn open_one(
     lease_vault_id: u64,
 ) -> Result<OpenedEnv, String> {
     let vault_id = spec.vault_id;
-    let mut resolved = config.vault_config();
+    let mut resolved = config.base_vault_config();
     let mut serve_path = config.clone();
     serve_path.vault_path = spec.path.clone();
     serve_path.maximum_tier = false;

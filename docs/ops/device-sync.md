@@ -242,8 +242,8 @@ home_url = "wss://home.example/ws"
 credential_file = "/absolute/path/to/the/membership.cred"
 ```
 
-`path` is the environment's own existing vault directory; serve does not create a new vault there.
-`vault_id` and `member` name the membership the leave check verifies, and `home_url` plus
+At startup, `path` is the environment's own existing vault directory; serve does not create a new
+vault there. `vault_id` and `member` name the membership the leave check verifies, and `home_url` plus
 `credential_file` give its own sync lane the same inputs as a personal `[device_sync]` connection.
 As with direct sync, `ws://` is allowed only to a loopback host; any other network home uses
 `wss://`. On plain serve the section is file-only. On managed
@@ -265,6 +265,36 @@ left, sequentially with an independent budget per handle. A managed wake takes t
 of the personal vault and all retained environments, so a left environment's collection does not
 sleep past its deadline. At stop, lanes drop before handles; in-flight checks and passes finish
 first.
+
+### Accepting into a dedicated target on a running host
+
+A native host holding an actual `oneiron_remote::HttpsSharedInvitationAcceptance` can call
+`SyncServer::bootstrap_shared_env` with a borrowed `Arc` of that value, the selected
+`SharedEnvConfig`, and the dedicated target's `ServeConfig`. This is available without the
+`mesh` feature. The target config's `vault_path` must name the selected environment, and its
+page seal resolves at that target only. No personal vault handle, root secret or page seal
+supplies the replica's authority. The target may be new or an existing native unstarted store;
+the actual import repeats the unstarted-authority check in its own writer.
+
+The selected vault id, member, HTTPS home and caller-held credential key must match the
+original acceptance. The HOME calls and the TARGET admission use separate fresh holder proofs.
+The imported history and all selected windows land through the native batch root, whose final
+same-writer grant and scope checks still apply. No live sync manager or lane is created for the
+candidate. All candidate handles drop before the existing registry insertion reopens it.
+
+The credential file already holds the invitee's paired key. After committed publication, an
+owner-only atomic replacement keeps that same key and saves the returned member token. The
+caller retains the original acceptance and its receipt on every outcome. The method returns an
+outer setup/task result and, once native import answers, a separate inner result and committed
+flag. An import tail error stays an error even if publication committed; neither it nor a later
+credential or registry error deletes the dedicated files. A successful inner result is the real
+registry-held `Arc<Vault>`, checked against its path and membership map, not proof of a completed
+remote sync round.
+
+The registry uses the same startup admission, freeze and lease wiring for this join. Shutdown
+waits for an in-flight join, then starts no later join. This native host entry adds no CLI or app
+binding and no second durable registry. Retaining the entry in explicit host configuration is
+still required to reopen it after restart.
 
 ## How it fits
 
