@@ -29,8 +29,8 @@ use super::owners::{
     key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
 };
 use super::{
-    DerivedRole, DerivedSlot, JoinedTurn, KindPlacement, LoroCarrier, LoroSlot, LoroVerdict,
-    OpenedAtom, OpenedSyncAtoms, Placement, SlotCopy, SyncCarrier, SyncPayloadOwners,
+    DerivedRole, DerivedSlot, JoinedTurn, KindPlacement, LoroCarrier, LoroSlice, LoroSlot,
+    LoroVerdict, OpenedAtom, OpenedSyncAtoms, Placement, SlotCopy, SyncCarrier, SyncPayloadOwners,
     SyncRestoreRows, SyncUnclassified, WINDOW_ROUND_TRIP,
 };
 use crate::entity_id::EntityId;
@@ -65,15 +65,97 @@ pub(super) fn restore(
 ) -> Result<SyncRestoreRows> {
     let mut restored = SyncRestoreRows::default();
     let mut markers = BTreeMap::new();
-    for carrier in carriers {
-        let (bytes, lossless, equivalent) = join(carrier, opened, &mut restored.dropped)?;
-        let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| bad_part())?;
-        for row in &carrier.rows {
-            if row.at.db != row.carrier.db() || !row.at.path.is_empty() {
-                return Err(bad_part());
+    let mut windows: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, carrier) in carriers.iter().enumerate() {
+        windows.entry(&carrier.window).or_default().push(index);
+    }
+    // Reconstruct a whole native window first, then publish rows in the
+    // original carrier/row order. No group is joined twice.
+    let mut native_rows = BTreeMap::new();
+    for indexes in windows.values() {
+        if !indexes
+            .iter()
+            .any(|&index| !carriers[index].record_documents.is_empty())
+        {
+            continue;
+        }
+        let slices: Vec<Vec<LoroSlice>> = indexes
+            .iter()
+            .map(|&index| {
+                carriers[index]
+                    .rows
+                    .iter()
+                    .map(|row| row.slice.clone())
+                    .collect()
+            })
+            .collect();
+        let mut ordinary_lossless = Vec::with_capacity(indexes.len());
+        let mut groups = Vec::with_capacity(indexes.len());
+        for (&index, slices) in indexes.iter().zip(&slices) {
+            let carrier = &carriers[index];
+            let (available, erased, lossless) =
+                open_ordinary(carrier, opened, &mut restored.dropped)?;
+            ordinary_lossless.push(lossless);
+            groups.push(
+                super::record_documents::opened::RecordDocumentRestoreGroup {
+                    skeleton: &carrier.skeleton,
+                    sources: &carrier.record_documents,
+                    available,
+                    erased,
+                    slices,
+                },
+            );
+        }
+        let rebuilt = super::record_documents::opened::reconstruct_window_opened(
+            groups,
+            opened,
+            &mut restored.dropped,
+        )?;
+        if rebuilt.len() != indexes.len() {
+            return Err(bad_part());
+        }
+        for ((&index, rebuilt), ordinary_lossless) in
+            indexes.iter().zip(rebuilt).zip(ordinary_lossless)
+        {
+            native_rows.insert(index, (rebuilt, ordinary_lossless));
+        }
+    }
+    for (index, carrier) in carriers.iter().enumerate() {
+        let (rows, lossless, equivalent, rewritten_native_history) = match native_rows
+            .remove(&index)
+        {
+            Some((rebuilt, ordinary_lossless)) => {
+                if rebuilt.rows.len() != carrier.rows.len()
+                    || rebuilt.slices.len() != carrier.rows.len()
+                {
+                    return Err(bad_part());
+                }
+                let rows = rebuilt.rows.into_iter().zip(rebuilt.slices).collect();
+                (
+                    rows,
+                    ordinary_lossless && rebuilt.native_lossless,
+                    !rebuilt.rewritten_native_history,
+                    rebuilt.rewritten_native_history,
+                )
             }
-            let blob = export_slice(&doc, &row.slice)?;
-            if !holds_slice(&blob, &row.slice) {
+            None => {
+                let (bytes, lossless, equivalent) = join(carrier, opened, &mut restored.dropped)?;
+                let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| bad_part())?;
+                let rows = carrier
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        export_slice(&doc, &row.slice).map(|bytes| (bytes, row.slice.clone()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                (rows, lossless, equivalent, false)
+            }
+        };
+        for (row, (blob, slice)) in carrier.rows.iter().zip(rows) {
+            if row.at.db != row.carrier.db()
+                || !row.at.path.is_empty()
+                || !holds_slice(&blob, &slice)
+            {
                 return Err(bad_part());
             }
             let value = match row.carrier {
@@ -87,7 +169,7 @@ pub(super) fn restore(
         }
         let resync = marker(&WINDOW_FULL_RESYNC_MARKER, &carrier.window);
         markers.insert(resync, MARKER.to_vec());
-        if !lossless && ALTERED_WINDOW_HISTORY_FREE {
+        if (!lossless || rewritten_native_history) && ALTERED_WINDOW_HISTORY_FREE {
             let history_free = marker(&SYNC_HISTORY_FREE_WINDOW, &carrier.window);
             markers.insert(history_free, MARKER.to_vec());
         }
@@ -95,7 +177,8 @@ pub(super) fn restore(
             window: carrier.window.clone(),
             equivalent,
             lossless,
-            policy: WINDOW_ROUND_TRIP,
+            rewritten_native_history,
+            policy: (!rewritten_native_history).then_some(WINDOW_ROUND_TRIP),
         });
     }
     restored.markers = markers.into_iter().collect();
@@ -117,9 +200,40 @@ fn join(
     opened: &dyn OpenedSyncAtoms,
     dropped: &mut Vec<RowLocator>,
 ) -> Result<(Vec<u8>, bool, bool)> {
+    if !carrier.record_documents.is_empty() {
+        return Err(bad_part());
+    }
+    let (available, erased, lossless) = open_ordinary(carrier, opened, dropped)?;
+    let skeleton = &carrier.skeleton;
+    let joined =
+        LoroDoc::join_root_map_checkpoint(skeleton, &available, &erased).map_err(|_| bad_part())?;
+    if !joined.report.equivalent {
+        return Err(bad_part());
+    }
+    Ok((joined.bytes, lossless, joined.report.equivalent))
+}
+
+/// Opens ordinary slots under their original keys and homes. Native slots
+/// are empty shells; only their authenticated source owner may rebuild them.
+fn open_ordinary(
+    carrier: &LoroCarrier,
+    opened: &dyn OpenedSyncAtoms,
+    dropped: &mut Vec<RowLocator>,
+) -> Result<(Vec<Atom>, Vec<AtomId>, bool)> {
     let skeleton = &carrier.skeleton;
     if carrier.slots.len() != skeleton.slots.len() {
         return Err(bad_part());
+    }
+    super::frame::record_documents::validate(skeleton, &carrier.record_documents)?;
+    let native = super::frame::record_documents::slots(&carrier.record_documents);
+    for &id in &native {
+        let slot = usize::try_from(id)
+            .ok()
+            .and_then(|id| carrier.slots.get(id))
+            .ok_or_else(bad_part)?;
+        if !slot.copies.is_empty() || !slot.holes.is_empty() || slot.derived.is_some() {
+            return Err(bad_part());
+        }
     }
     let sites = sites(skeleton)?;
     let mut available = Vec::new();
@@ -150,10 +264,10 @@ fn join(
         .zip(&skeleton.slots)
         .enumerate()
     {
-        if shape.kind != SlotKind::Key {
+        let id = AtomId::try_from(index).map_err(|_| bad_part())?;
+        if native.contains(&id) || shape.kind != SlotKind::Key {
             continue;
         }
-        let id = AtomId::try_from(index).map_err(|_| bad_part())?;
         let Some((root, _)) = *site else {
             return Err(bad_part());
         };
@@ -203,6 +317,9 @@ fn join(
         .enumerate()
     {
         let id = AtomId::try_from(index).map_err(|_| bad_part())?;
+        if native.contains(&id) {
+            continue;
+        }
         let Some((root, key)) = *site else {
             return Err(bad_part());
         };
@@ -265,12 +382,7 @@ fn join(
             }
         }
     }
-    let joined =
-        LoroDoc::join_root_map_checkpoint(skeleton, &available, &erased).map_err(|_| bad_part())?;
-    if !joined.report.equivalent {
-        return Err(bad_part());
-    }
-    Ok((joined.bytes, lossless, joined.report.equivalent))
+    Ok((available, erased, lossless))
 }
 
 /// The joined turn `turn` re-parted as it opened, from its first copy that

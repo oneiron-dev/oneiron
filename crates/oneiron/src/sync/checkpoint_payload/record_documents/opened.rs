@@ -69,6 +69,7 @@ pub(crate) struct RecordDocumentRestoreGroup<'a> {
 pub(crate) fn reconstruct_window_opened(
     groups: Vec<RecordDocumentRestoreGroup<'_>>,
     opened: &dyn OpenedSyncAtoms,
+    dropped: &mut Vec<crate::store::checkpoint_payload::rows::RowLocator>,
 ) -> Result<Vec<reconstruct::ReconstructedWindow>> {
     let mut cache = OpenedSources::default();
     let mut transports: Vec<Vec<Option<OpenedRecordDocument>>> = Vec::with_capacity(groups.len());
@@ -78,9 +79,13 @@ pub(crate) fn reconstruct_window_opened(
         for source in group.sources {
             let identity =
                 reconstruct::source_site(group.skeleton, &source.entity_key, &source.slots)?;
-            group_transports.push(source.open_using(opened, &mut |content, actors| {
+            let transport = source.open_using(opened, &mut |content, actors| {
                 cache.open(identity.clone(), content, actors)
-            })?);
+            })?;
+            if transport.is_none() {
+                dropped.extend(source.copies.iter().map(|copy| copy.at.clone()));
+            }
+            group_transports.push(transport);
         }
         transports.push(group_transports);
     }
