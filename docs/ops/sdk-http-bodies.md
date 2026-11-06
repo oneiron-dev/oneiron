@@ -113,3 +113,19 @@ The required `body` stays present, including null. The native writer still
 selects the id, entity type, learned time and stored body, including a TURN's
 announcement normalization. Its writes, authorization, input and hooks do not
 change. The existing UniFFI receipt codec is separate and unchanged.
+
+
+### Core shape output documents
+
+The core `vault.shape.read`, `vault.shape.plan`, `vault.shape.apply`,
+`vault.shape.groups`, `vault.shape.groups.resolve`, `vault.shape.items.receipt`
+and `vault.shape.plan.card` result adapters move each returned manifest row's
+JSON around the original whole-result codec. This covers stored and live seed
+rows, plan items and undeclared rows, the before/after rows in apply receipts,
+and the items in each inbox group.
+Present null JSON keeps its field; absent JSON stays omitted. Native tags,
+field positions, array order, finite fields and optional results keep their
+existing encoding. The plan card's generated UI stays on its original codec.
+Native producers, read projections, authority, writes, inputs, hooks and the
+separate UniFFI adapters are unchanged. This is not a general depth or memory
+bound.

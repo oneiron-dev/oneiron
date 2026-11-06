@@ -30390,49 +30390,49 @@ fn invoke_vault_shape_read(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_read(memory, decode(value)?)?)
+    shape_output::read(vault_shape_read(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_plan(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_plan(memory, decode(value)?)?)
+    shape_output::plan(vault_shape_plan(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_apply(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_apply(memory, decode(value)?)?)
+    shape_output::receipt(vault_shape_apply(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_plan_card(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_plan_card(memory, decode(value)?)?)
+    shape_output::card(vault_shape_plan_card(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_items_receipt(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_items_receipt(memory, decode(value)?)?)
+    shape_output::item(vault_shape_items_receipt(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_groups(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_groups(memory, decode(value)?)?)
+    shape_output::groups(vault_shape_groups(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shape_groups_resolve(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_shape_groups_resolve(memory, decode(value)?)?)
+    shape_output::receipt(vault_shape_groups_resolve(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_self_message(
