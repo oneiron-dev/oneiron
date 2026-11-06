@@ -17320,13 +17320,16 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WorkflowCaptureHandle"
+     ],
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
       "crate-vis": 6,
-      "fn": 4,
-      "re-export": 2
+      "fn": 5,
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
@@ -33864,6 +33867,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embed/binding_move/stock.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embed/cold_attach.rs",
      "purpose": "First-provider backfill, distinct from embedding-space migration",
      "surface": {
@@ -33937,7 +33950,20 @@
      "surface": {
       "crate-vis": 20,
       "fn": 4,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnboundMediaSample"
+     ],
+     "path": "src/embed/media/unbound.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -34128,7 +34154,7 @@
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
       "const": 5,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 11,
       "struct": 5,
@@ -34141,6 +34167,16 @@
      "notable": [],
      "path": "src/embed/space_move/cutover.rs",
      "purpose": "The backlog a move's swap reads again in its own writer (FIX 9833)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_move/stock.rs",
+     "purpose": "—",
      "surface": {
       "crate-vis": 1
      }
@@ -70939,7 +70975,7 @@
      "path": "src/store/checkpoint_payload/instance.rs",
      "purpose": "The instance table of checkpoint payload compartments (KS-7, `checkpoint_payload:instance:v1:`): one row per…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -90448,7 +90484,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 37,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -91472,7 +91508,7 @@
    },
    "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6431,
+   "source_files": 6434,
    "test_files": 895
   },
   "oneiron-android": {
@@ -124114,13 +124150,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/http/client.rs",
+     "purpose": "Shared provider HTTP client execution",
+     "surface": {
+      "crate-vis": 20
      }
     },
     {
@@ -124237,7 +124283,7 @@
      "path": "src/models/ladder/shadow_capture.rs",
      "purpose": "The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -126784,6 +126830,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/media_embedding/stock.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -128721,7 +128777,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 120,
+     "files": 121,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128798,7 +128854,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 80,
+     "files": 81,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -128882,9 +128938,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1610,
+   "source_files": 1612,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
