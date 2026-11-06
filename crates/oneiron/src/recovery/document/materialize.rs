@@ -13,6 +13,39 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Scope = BTreeSet<[u8; 16]>;
 
+#[derive(Default)]
+pub(in crate::recovery) struct NoteScopeRows {
+    next: usize,
+    scope: Scope,
+}
+
+impl NoteScopeRows {
+    pub(in crate::recovery) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> bool {
+        let end = self
+            .next
+            .saturating_add(max_rows.max(1))
+            .min(snapshot.entity_blobs.len());
+        for row in &snapshot.entity_blobs[self.next..end] {
+            if row.blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
+                && crate::batch::EntityMetadataHeader::parse(&row.blob)
+                    .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_NOTE)
+            {
+                self.scope.insert(row.id);
+            }
+        }
+        self.next = end;
+        self.next == snapshot.entity_blobs.len()
+    }
+
+    pub(in crate::recovery) fn scope(&self) -> &Scope {
+        &self.scope
+    }
+}
+
 /// One stale row this pass drops: a proposal document, or a receipt/fork/
 /// bundle row addressed by its typed table.
 enum StaleMetadata {
@@ -236,18 +269,19 @@ impl CanonicalSnapshot {
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
     ) -> Result<()> {
-        let scope = self
-            .entity_blobs
-            .iter()
-            .filter(|row| {
-                row.blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
-                    && crate::batch::EntityMetadataHeader::parse(&row.blob).is_some_and(|header| {
-                        header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                    })
-            })
-            .map(|row| row.id)
-            .collect();
-        plan(vault, txn, self, &scope).map(|_| ())
+        let mut rows = NoteScopeRows::default();
+        while !rows.advance(self, usize::MAX) {}
+        self.preflight_note_recovery_in_scope(vault, txn, rows.scope())
+    }
+
+    /// The same plan in the caller's transaction, with its immutable source's NOTE ids.
+    pub(crate) fn preflight_note_recovery_in_scope(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        scope: &BTreeSet<[u8; 16]>,
+    ) -> Result<()> {
+        plan(vault, txn, self, scope).map(|_| ())
     }
 }
 
