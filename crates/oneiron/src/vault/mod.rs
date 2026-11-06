@@ -203,7 +203,8 @@ pub struct Vault {
     /// FIX 4747: this process released its connector-send executor leases as
     /// it closes (`release_send_executor_leases`); from then on it takes,
     /// renews and reaps none, so a pass still running before the workers stop
-    /// cannot undo the release. In memory only.
+    /// cannot undo the release, until a new serve run over the same open
+    /// vault resumes them (`resume_send_executor_leases`). In memory only.
     pub(crate) send_executor_leases_released: std::sync::atomic::AtomicBool,
     /// This device's home search, lent by its own sync connection
     /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
