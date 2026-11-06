@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use loro::LoroDoc;
 use oneiron::authority::PeerMachine;
-use oneiron::sync::{SyncSelector, WindowKey, WindowManager, filtered_window_doc_for_peer};
+use oneiron::sync::{
+    SyncSelector, WindowKey, WindowManager, filtered_window_doc_for_peer_in_scope,
+};
 
 use super::window_sync::selector_grant_scope;
 
@@ -119,15 +121,17 @@ pub(super) fn rebuild(
     key: &WindowKey,
     selector: &SyncSelector,
     peer: PeerMachine,
+    credential_scope: Option<&oneiron::federation::Scope>,
 ) -> Option<LoroDoc> {
     let rebuilt = manager.open_window(key).and_then(|window| {
-        filtered_window_doc_for_peer(
+        filtered_window_doc_for_peer_in_scope(
             vault,
             &window.doc,
             key,
             selector_grant_scope(),
             selector,
             peer,
+            credential_scope,
         )
     });
     match rebuilt {

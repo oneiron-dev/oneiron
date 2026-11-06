@@ -15,7 +15,22 @@ pub(crate) fn admit_note_in_txn(
     selector: &SyncSelector,
     writer: Option<EntityId>,
 ) -> Result<FederationDirectionScope> {
-    let admission = authorize_in_txn(vault, txn, scope, selector, writer)?;
+    admit_note_in_txn_with_scope(vault, txn, id, scope, selector, writer, None)
+}
+
+pub(crate) fn admit_note_in_txn_with_scope(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    writer: Option<EntityId>,
+    credential_scope: Option<&crate::federation::Scope>,
+) -> Result<FederationDirectionScope> {
+    let mut admission = authorize_in_txn(vault, txn, scope, selector, writer)?;
+    if let Some(bound) = credential_scope {
+        admission.grant.authority_scope = admission.grant.authority_scope.meet(bound);
+    }
     let raw = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_NOTE

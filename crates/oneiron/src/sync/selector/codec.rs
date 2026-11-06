@@ -19,8 +19,11 @@ use crate::federation::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
-use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
-use super::born_with::carry_born_with;
+use super::authorize::{
+    authorize_selector_export, filter_window_doc, filter_window_doc_in_scope,
+    strip_guest_share_metadata,
+};
+use super::born_with::{carry_born_with, carry_born_with_in_scope};
 use crate::provenance::birth::WithheldKey;
 use crate::sync::row_birth::BirthReach;
 
@@ -302,6 +305,22 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
+    filtered_window_doc_for_peer_in_scope(vault, source, key, grant_scope, selector, peer, None)
+}
+
+/// Destination-aware selector export under the transport's admitted credential scope.
+/// Grant and selector checks still run; `None` keeps the grant-only entry's behavior.
+pub fn filtered_window_doc_for_peer_in_scope(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    peer: crate::authority::PeerMachine,
+    credential_scope: Option<&crate::federation::Scope>,
+) -> Result<LoroDoc> {
+    let credential_scope = credential_scope.map(crate::claim::ScopedReadActorKey::read_authority);
+    let credential_scope = credential_scope.as_ref();
     let withheld;
     let reach = match peer {
         crate::authority::PeerMachine::Proven { .. } => BirthReach::OwnMachines,
@@ -312,7 +331,7 @@ pub fn filtered_window_doc_for_peer(
     };
     let now_secs = vault.store.clock.now_recorded_at();
     let position = authorize_selector_export(vault, grant_scope, selector, now_secs)?;
-    let out = filter_window_doc(
+    let out = filter_window_doc_in_scope(
         vault,
         source,
         key,
@@ -320,16 +339,18 @@ pub fn filtered_window_doc_for_peer(
         &position,
         Withhold::Peer(peer),
         reach,
+        credential_scope,
     )?;
     // Beside the masked births goes the text the grant's owner lets travel.
     if matches!(reach, BirthReach::OtherVault(_)) {
-        carry_born_with(
+        carry_born_with_in_scope(
             vault,
             &out,
             grant_scope,
             selector,
             now_secs,
             Withhold::Peer(peer),
+            credential_scope,
         )?;
     }
     Ok(out)

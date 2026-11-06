@@ -101,6 +101,18 @@ pub(super) fn carry_born_with(
     now_secs: u64,
     withhold: Withhold<'_>,
 ) -> Result<()> {
+    carry_born_with_in_scope(vault, doc, scope, selector, now_secs, withhold, None)
+}
+
+pub(super) fn carry_born_with_in_scope(
+    vault: &Vault,
+    doc: &LoroDoc,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    now_secs: u64,
+    withhold: Withhold<'_>,
+    credential_scope: Option<&crate::federation::Scope>,
+) -> Result<()> {
     let Some(bound) = vault.federation_grant_travel(&selector.grant_id)? else {
         return Ok(());
     };
@@ -108,7 +120,7 @@ pub(super) fn carry_born_with(
     let rows = carried_rows(doc);
     // A choice without the prompt sends no prompt text, so no source is read.
     let births = if bound.travel.born_with.contains(&BornWithField::Prompt) {
-        readable_births(vault, scope, selector, now_secs, &rows)?
+        readable_births(vault, scope, selector, now_secs, &rows, credential_scope)?
     } else {
         rows.iter().map(|_| None).collect()
     };
@@ -158,6 +170,7 @@ fn readable_births(
     selector: &SyncSelector,
     now_secs: u64,
     rows: &[(EntityId, u8)],
+    credential_scope: Option<&crate::federation::Scope>,
 ) -> Result<Vec<Option<ReadableBirth>>> {
     let txn = vault.store.env.read_txn()?;
     let mut births = Vec::with_capacity(rows.len());
@@ -171,7 +184,12 @@ fn readable_births(
         .any(|input| input.role == MadeByInputRole::Prompt);
     let admission = if prompted {
         match authorize_at_in_txn(vault, &txn, scope, selector, None, now_secs) {
-            Ok(admission) => Some(admission),
+            Ok(mut admission) => {
+                if let Some(bound) = credential_scope {
+                    admission.grant.authority_scope = admission.grant.authority_scope.meet(bound);
+                }
+                Some(admission)
+            }
             Err(Error::Sync(SyncError::SyncProtocolError {
                 context: SyncProtocolValidation::Selector { .. },
             })) => None,

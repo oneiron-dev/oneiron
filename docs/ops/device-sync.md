@@ -277,3 +277,19 @@ first.
   - bootstrapping a fresh vault from the home, rather than a copy of it;
   - moving to a new home when the election changes;
   - the apps.
+
+## Federation selector reads
+
+A federation selector fetch is separate from the full-window device sync above. Its
+rows must pass both the selector's live grant and the credential admitted on that
+socket. The same credential scope bounds source-backed text, NOTE review
+attachments, tombstones and base-window edge endpoints. Prompt sources in
+born-with text use that scope too, even when the source row is not in the window.
+A bundle remains whole when all its members pass; otherwise the existing NOTE
+projection keeps only its admitted members.
+
+By-reference bodies use the same bound when a held selector copy is rebuilt and
+when a dropped copy is rebuilt lazily. The scope comes from the socket's live
+bound authentication, not from a second stored scope registry. Grant, selector,
+pact, peer-world and facet-read checks still run. Grant-only engine callers keep
+their existing behavior; this adds no setting, expiry or transfer limit.

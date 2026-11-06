@@ -13,6 +13,21 @@ pub(in crate::sync::selector) fn filter_window_doc(
     withhold: Withhold<'_>,
     reach: BirthReach<'_>,
 ) -> Result<LoroDoc> {
+    filter_window_doc_in_scope(
+        vault, source, key, selector, position, withhold, reach, None,
+    )
+}
+
+pub(in crate::sync::selector) fn filter_window_doc_in_scope(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    selector: &SyncSelector,
+    position: &Position,
+    withhold: Withhold<'_>,
+    reach: BirthReach<'_>,
+    credential_scope: Option<&crate::federation::Scope>,
+) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
@@ -34,6 +49,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
         return Ok(out);
     }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let authority_scope = match credential_scope {
+        Some(bound) => grant.authority_scope.meet(bound),
+        None => grant.authority_scope.clone(),
+    };
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this
     // `rtxn`. Opening nested read txns on this thread would fail with
@@ -154,7 +173,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // A NOTE sits at one world it is in that the grant and the selector
         // both hold (FIX-LIST 9433).
         let selected = note_world::selector_world_axis(selector.world);
-        let held = [&grant.authority_scope.worlds, &selected];
+        let held = [&authority_scope.worlds, &selected];
         let scope = match note_world::blob_scope_held_at(&vault.store, &rtxn, id, blob, &held) {
             Ok(Some(scope)) => scope,
             Ok(None) => return,
@@ -163,10 +182,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         };
-        if !grant
-            .authority_scope
-            .admits("read", &scope, &crate::federation::Scope::top())
-        {
+        if !authority_scope.admits("read", &scope, &crate::federation::Scope::top()) {
             return;
         }
         match super::super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
@@ -207,7 +223,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                     vault,
                     &rtxn,
                     (source, raw),
-                    &grant.authority_scope,
+                    &authority_scope,
                     selector,
                     scope_position,
                     &facet_scope,
@@ -337,7 +353,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // flag holds here, as it keeps every other row (this corrects #1402's
     // authority-mode NOTE drop).
     let grant_selector = Some((grant.scope, selector));
-    let notes = NoteSelection::judged_in(vault, &rtxn, &flagged, source, &kept, grant_selector)?;
+    let notes = NoteSelection::judged_in_with_scope(
+        vault,
+        &rtxn,
+        &flagged,
+        source,
+        &kept,
+        grant_selector,
+        credential_scope,
+    )?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
@@ -381,7 +405,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, withhold)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold,
+            credential_scope,
+        )?
     } else {
         BTreeSet::new()
     };
@@ -410,8 +442,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let out_tombstones = out.get_map("tombstones");
     let open = facets.is_none() && band_filter(scope_position).is_none();
     let all = matches!(selector.world, SyncSelectorWorld::All);
-    let export =
-        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
+    let export = super::super::tombstones::TombstoneExport::new(&authority_scope, open && all);
     let ttxn = vault.store.env.read_txn()?;
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
         let Ok(id) = EntityId::from_hex(raw_key) else {
