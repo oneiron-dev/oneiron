@@ -14,6 +14,7 @@ use super::payload::{CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
+use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
 
 /// Passport `system` key for our own outbound iMIP writes.
@@ -145,7 +146,7 @@ impl CalendarInviteAdmission {
         }
 
         let claim_id = vault.store.clock.entity_id()?;
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             PREDICATE_CALENDAR_PASSPORT,
             ClaimSubject::Entity(self.event_ref),
             encode_passport_value(&self.next),
@@ -153,6 +154,24 @@ impl CalendarInviteAdmission {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )?;
+        // Blind-review P1a (REVIEW-4389): the constructor's scope_facet is
+        // the EVENT's substrate id — a derived id, not a stored FACET — so
+        // the CLAIM birth edge the put stamps would fail InvalidFacet. The
+        // passport takes the EVENT's own stored birth facet (its put wrote
+        // the FacetOf edge in this txn), else the vault default.
+        let event_facet =
+            crate::federation::record_scope::birth_facet(&vault.store, wtxn, self.event_ref)?;
+        body.scope_facet = match event_facet {
+            Some(facet)
+                if vault
+                    .store
+                    .port_entity_record(wtxn, &facet)?
+                    .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_FACET) =>
+            {
+                facet
+            }
+            _ => crate::claim::default_facet_in(&vault.store, wtxn)?,
+        };
         let occurred = TimeRange {
             start: now,
             end: now,

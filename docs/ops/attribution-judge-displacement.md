@@ -34,5 +34,14 @@ After the displacement marker writer commits, supersede runs the existing full
 amendment reconcile once, before its ordinary affected-skill reproject loop.
 This reaches amendment-only subjects without requiring a later unrelated pass.
 There is no nested writer. An error propagates, the truthful markers remain, and
-a repeated supersede retries the same idempotent reconciliation. This does not
-add an automatic ExecutionLapse-only actor reproject trigger.
+a repeated supersede retries the same idempotent reconciliation.
+
+ExecutionLapse actor credit is reconciled inside the marker writer, after all
+matching judgments have their markers. Only an existing failed direct-credit
+row with the exact stored credit, attempt, context and cell coordinates can
+leave. Missing provenance or any live seating judgment keeps it unchanged. The
+same attempt's existing driver row is recomputed across the credit's effective
+subjects; a standing loss from another subject survives. Its key, coordinates,
+anchor, time and other provenance stay unchanged. No actor is passed through
+skill priors, confidence caches or floor proposals, and no missing driver row is
+created. Repeated supersede uses the same idempotent path.

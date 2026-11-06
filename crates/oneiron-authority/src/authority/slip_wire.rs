@@ -89,7 +89,90 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
     if let Some(renews) = action.renews {
         entries.push((Value::from(SLIP_KEY_RENEWS), binary_value(renews)));
     }
+    // FIX 4325: only a contact-bound mint carries the key, after the
+    // renews's, so every other mint's bytes stay as they were.
+    if let Some(binding) = &claims.trusted_contact {
+        entries.push((
+            Value::from(SLIP_KEY_TRUSTED_CONTACT),
+            trusted_contact_value(binding),
+        ));
+    }
+    // FIX 10624: only a seat-child mint carries the key, after the
+    // trusted-contact's, so every other mint's bytes stay as they were.
+    if let Some(binding) = &claims.seat_claim {
+        entries.push((Value::from(SLIP_KEY_SEAT_CLAIM), seat_claim_value(binding)));
+    }
+    // FIX 11713: only a mint a person approved carries the key, after the
+    // seat claim's, so every other mint's bytes stay as they were.
+    if let Some(member) = action.minting_member {
+        entries.push((
+            Value::from(SLIP_KEY_MINTING_MEMBER),
+            Value::from(member.to_hex()),
+        ));
+    }
     Value::Map(entries)
+}
+
+fn seat_claim_value(binding: &SeatClaimSlipBinding) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(SEAT_CLAIM_KEY_ATTEMPT),
+            binary_value_16(binding.attempt),
+        ),
+        (
+            Value::from(SEAT_CLAIM_KEY_LEASE_OWNER),
+            Value::from(binding.lease_owner.as_str()),
+        ),
+        (
+            Value::from(SEAT_CLAIM_KEY_ATTEMPT_COUNT),
+            Value::from(binding.attempt_count),
+        ),
+    ])
+}
+
+fn decode_seat_claim(value: &Value) -> Result<SeatClaimSlipBinding> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SLIP_SEAT_CLAIM_KEYS)?;
+    let attempt_count = required(entries, SEAT_CLAIM_KEY_ATTEMPT_COUNT)?
+        .as_u64()
+        .and_then(|count| u32::try_from(count).ok())
+        .ok_or_else(invalid_authority)?;
+    let binding = SeatClaimSlipBinding {
+        attempt: decode_16(required(entries, SEAT_CLAIM_KEY_ATTEMPT)?)?,
+        lease_owner: decode_string(required(entries, SEAT_CLAIM_KEY_LEASE_OWNER)?)?,
+        attempt_count,
+    };
+    binding.validate()?;
+    Ok(binding)
+}
+
+fn trusted_contact_value(binding: &TrustedContactSlipBinding) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(TRUSTED_CONTACT_KEY_PERSON),
+            Value::from(binding.person.to_hex()),
+        ),
+        (
+            Value::from(TRUSTED_CONTACT_KEY_VERSION),
+            Value::from(binding.version),
+        ),
+    ])
+}
+
+fn decode_trusted_contact(value: &Value) -> Result<TrustedContactSlipBinding> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SLIP_TRUSTED_CONTACT_KEYS)?;
+    let person_text = decode_string(required(entries, TRUSTED_CONTACT_KEY_PERSON)?)?;
+    let person = crate::EntityId::from_hex(&person_text).map_err(|_| invalid_authority())?;
+    if person.to_hex() != person_text {
+        return Err(invalid_authority());
+    }
+    let version = required(entries, TRUSTED_CONTACT_KEY_VERSION)?
+        .as_u64()
+        .ok_or_else(invalid_authority)?;
+    let binding = TrustedContactSlipBinding { person, version };
+    binding.validate()?;
+    Ok(binding)
 }
 
 fn delegation_value(delegation: &SupportDelegation) -> Value {
@@ -179,13 +262,24 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
 }
 
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    // The support delegation (OF-606), the comm reach (FIX 3899) and a
-    // renewal's predecessor (FIX 5481) are the optional keys: each at most
-    // once, and every other key exactly as before.
+    // The support delegation (OF-606), the comm reach (FIX 3899), a
+    // renewal's predecessor (FIX 5481), a trusted-contact binding (FIX 4325),
+    // a seat claim (FIX 10624) and the minting member (FIX 11713) are the
+    // optional keys: each at most once, and every other key exactly as
+    // before. A mint signed without one decodes with it absent.
     let delegations = optional_values(entries, SLIP_KEY_DELEGATION);
     let comms = optional_values(entries, SLIP_KEY_COMM);
     let renewals = optional_values(entries, SLIP_KEY_RENEWS);
-    if delegations.len() > 1 || comms.len() > 1 || renewals.len() > 1 {
+    let trusted_contacts = optional_values(entries, SLIP_KEY_TRUSTED_CONTACT);
+    let seat_claims = optional_values(entries, SLIP_KEY_SEAT_CLAIM);
+    let minting_members = optional_values(entries, SLIP_KEY_MINTING_MEMBER);
+    if delegations.len() > 1
+        || comms.len() > 1
+        || renewals.len() > 1
+        || trusted_contacts.len() > 1
+        || seat_claims.len() > 1
+        || minting_members.len() > 1
+    {
         return Err(invalid_authority());
     }
     let base: Vec<(Value, Value)> = entries
@@ -193,7 +287,14 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
         .filter(|(key, _)| {
             !matches!(
                 key.as_str(),
-                Some(SLIP_KEY_DELEGATION | SLIP_KEY_COMM | SLIP_KEY_RENEWS)
+                Some(
+                    SLIP_KEY_DELEGATION
+                        | SLIP_KEY_COMM
+                        | SLIP_KEY_RENEWS
+                        | SLIP_KEY_TRUSTED_CONTACT
+                        | SLIP_KEY_SEAT_CLAIM
+                        | SLIP_KEY_MINTING_MEMBER
+                )
             )
         })
         .cloned()
@@ -277,10 +378,23 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
                     .ok_or_else(invalid_authority)
             })
             .transpose()?,
+        trusted_contact: trusted_contacts
+            .first()
+            .map(|value| decode_trusted_contact(value))
+            .transpose()?,
+        seat_claim: seat_claims
+            .first()
+            .map(|value| decode_seat_claim(value))
+            .transpose()?,
     };
     let action = SlipMintAction {
         claims,
         renews: renewals.first().copied().map(decode_hash).transpose()?,
+        minting_member: minting_members
+            .first()
+            .copied()
+            .map(decode_id)
+            .transpose()?,
     };
     action.validate()?;
     Ok(AuthorityOp::SlipMint(action))

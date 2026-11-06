@@ -27,7 +27,7 @@ use tokio::sync::watch;
 
 use self::draft::{DraftPass, draft_pass};
 use self::pace::Pace;
-use super::dreamer::{PassAdmission, admit, pause, paused};
+use super::dreamer::{PassAdmission, admit, pause, pause_lifted, paused};
 use crate::config::models::DreamerSettings;
 use crate::models::ModelRuntime;
 
@@ -118,17 +118,6 @@ async fn retry_due(due: Option<tokio::time::Instant>) {
     match due {
         Some(due) => tokio::time::sleep_until(due).await,
         None => std::future::pending::<()>().await,
-    }
-}
-
-/// Resolves once the pause `epoch` held lifts: the epoch closed at a thaw,
-/// or cleared. Pends while it holds none.
-async fn pause_lifted(epoch: Option<watch::Receiver<bool>>) {
-    match epoch {
-        Some(mut epoch) if paused(Some(&epoch)) => {
-            let _ = epoch.wait_for(|held| !*held).await;
-        }
-        _ => std::future::pending::<()>().await,
     }
 }
 

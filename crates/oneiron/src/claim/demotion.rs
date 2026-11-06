@@ -236,6 +236,7 @@ impl Vault {
                 end: now,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,

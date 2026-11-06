@@ -39,6 +39,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::Summarize,
                 error: code.to_owned(),
                 code: None,
+                disk_floor: None,
             })
         };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {

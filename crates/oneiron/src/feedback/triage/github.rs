@@ -139,15 +139,15 @@ pub(super) fn evidence_issue(
     vault: &Vault,
     handoff: &FeedbackTriageHandoff,
 ) -> Result<GithubIssueRevision> {
-    if !is_github_source(&handoff.source_ref.source) {
+    let (source_ref, evidence) = handoff.retained()?;
+    if !is_github_source(&source_ref.source) {
         return Err(invalid_job());
     }
     let raw = {
         let txn = vault.store.env.read_txn()?;
-        let raw =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &handoff.evidence)?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &evidence)?;
         match raw {
-            Some(raw) => Some(vault.materialized_row_in_txn(&txn, &handoff.evidence, raw)?),
+            Some(raw) => Some(vault.materialized_row_in_txn(&txn, &evidence, raw)?),
             None => None,
         }
     }
@@ -162,7 +162,7 @@ pub(super) fn evidence_issue(
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .and_then(|bytes| rmp_serde::from_slice(bytes).ok())
         .ok_or(mismatch)?;
-    if github_revision(&issue)?.0 != handoff.source_ref {
+    if github_revision(&issue)?.0 != *source_ref {
         return Err(Error::CorruptedIndex("feedback triage issue revision"));
     }
     Ok(issue)

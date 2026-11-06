@@ -152,6 +152,7 @@ impl Vault {
                 entity_type: crate::registry::ENTITY_TYPE_MACHINE,
                 occurred: TimeRange { start: 0, end: 0 },
                 learned_at: 0,
+                row_version: None,
                 data: body.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

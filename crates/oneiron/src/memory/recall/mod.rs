@@ -465,7 +465,6 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
 }
 
 impl Memory<'_> {
-
     /// The one recall body. `session` is `None` for every canonical caller,
     /// which therefore takes byte-identical base paths. `pin` is a paid
     /// recall's one selection, shared by its passes (FIX 5006).
@@ -599,8 +598,15 @@ impl Memory<'_> {
         // as_of, never at the wall clock (FIX 12226).
         let census = census.with_judged_at(execution.as_of);
         let lane = lane.with_judged_at(execution.as_of);
-        let mut receipt = lane.read_receipt(None, 0)?;
-        let (plan_filter, plan_policy) = lane.recall_plan()?;
+        // The receipt of a search: the candidates it ranks, the key's own
+        // rows and those its own live Grants read (FIX 7528). A key that
+        // reads nothing by itself still recalls what a Grant of its own reads.
+        let mut receipt = lane.search_receipt(None, 0)?;
+        let crate::claim::SearchPlan {
+            filter: plan_filter,
+            candidates: plan_candidates,
+            policy: plan_policy,
+        } = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
         let pack_format = format.map(parse_pack_format).transpose()?;
@@ -772,7 +778,7 @@ impl Memory<'_> {
                 .world(world_scope)
                 .corpus(projects.clone())
                 .retrieval_effort(effective, &seeds)
-                .authority_filter(plan_filter.clone())
+                .authority_filter(plan_candidates.clone())
                 .token_budget(budget);
             builder = builder
                 .filter_candidates(&admitted)
@@ -967,7 +973,6 @@ impl Memory<'_> {
         }
         Ok(pack)
     }
-
 
     /// The worlds one recall reads (ARCH-0022). A named world reads with base
     /// reality; no name reads the actor's default, base plus its active world.

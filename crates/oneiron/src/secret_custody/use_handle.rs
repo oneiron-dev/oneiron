@@ -37,6 +37,7 @@
 //! door (`ConnectorCallHost::clears_at_door`).
 
 mod bind;
+mod broker;
 mod lease;
 mod native_mail;
 mod output;
@@ -65,6 +66,10 @@ use crate::store::{GateDecisionId, Store};
 use crate::vault::Vault;
 
 pub use self::bind::{SECRET_BIND_REASON, SecretBindRequest, SecretBound};
+pub use self::broker::{
+    BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply,
+    SECRET_USE_BROKER_MODELS,
+};
 pub use self::output::{
     KeptSentValue, SECRET_USE_CLEAR_VALUE_SOURCE, SecretClearValueSource, SecretReleasePolicy,
     SentPresentation, SentValue,
@@ -93,10 +98,10 @@ pub const SECRET_USE_CONNECTOR_CALL: &str = "connector.call";
 /// The operations `self.use` hands a secret to, each a trusted door that
 /// already takes a credential at T0 through the credential door: the
 /// read-only provider checks the engine ships, to their fixed provider
-/// endpoints or the native mail server the host installed. Other canon
+/// endpoints, the native mail server or model provider the host installed. Other canon
 /// rows wait for their own entry (the FIX-LIST names them). One table, so a
 /// ruling changes one entry.
-pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 5] = [
+pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 6] = [
     SecretUseOperation {
         name: SLACK_AUTH_TEST_CHECK,
         effector: "connector:slack",
@@ -126,6 +131,12 @@ pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 5] = [
         effector: "connector:native_mail",
         what: "The host's native mail JMAP discovery and domain read with the credential",
         consume: native_mail::check,
+    },
+    SecretUseOperation {
+        name: SECRET_USE_BROKER_MODELS,
+        effector: "broker:model",
+        what: "The configured model provider's model listing through the credential broker",
+        consume: broker::models,
     },
 ];
 

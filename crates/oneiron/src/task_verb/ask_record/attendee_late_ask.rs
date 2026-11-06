@@ -134,4 +134,46 @@ impl Vault {
         }
         Ok(Some(fact.question()))
     }
+
+    /// The identity the owner gave a first-entered speaker: the answer on
+    /// its original entry revision, or the first late answer where the
+    /// entry asked nothing. `None` while unanswered and for a PERSON.
+    pub(crate) fn attendee_entry_identity_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fact: &AttendeeEntryFact,
+    ) -> Result<Option<crate::disclosure::AttendeeIdentityChoice>> {
+        let ContainerAttendee::Speaker {
+            session_key,
+            speaker_key,
+        } = &fact.attendee
+        else {
+            return Ok(None);
+        };
+        if let Some(choice) =
+            self.attendee_identity_in_txn(txn, session_key, speaker_key, fact.roster_revision)?
+        {
+            return Ok(Some(choice));
+        }
+        let entry_ref = super::attendee_entry::attendee_entry_id(fact.container, &fact.attendee)?;
+        let Some(late) =
+            read::<AttendeeLateAskFact>(self, txn, late_ask_id(entry_ref)?, ATTENDEE_LATE_ASK)?
+        else {
+            return Ok(None);
+        };
+        late.validate()?;
+        if late.entry_ref != entry_ref
+            || late.container != fact.container
+            || late.session_key != *session_key
+            || late.speaker_key != *speaker_key
+        {
+            return Ok(None);
+        }
+        self.attendee_identity_in_txn(
+            txn,
+            &late.session_key,
+            &late.speaker_key,
+            late.roster_revision,
+        )
+    }
 }

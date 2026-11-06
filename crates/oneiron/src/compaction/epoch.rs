@@ -900,6 +900,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
                     entity_type: ENTITY_TYPE_SUMMARY,
                     occurred,
                     learned_at: at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,

@@ -24,15 +24,52 @@ and started milestone. Dispatch, cancellation, panic containment and settlement
 use the existing wake-pass path. No work is marked completed merely because
 a host advertises support.
 
+## Landed outcomes settle with their budget
+
+For an executor's `Landed` outcome, the wake driver commits landing acceptance,
+reserve spend, the resume point, the terminal landing or handoff, and budget
+settlement in one transaction. The charge is the executor's actual
+`completed_units` plus the reserve units the queue actually spent. An exhausted
+reserve still spends nothing. Retained owed units use the normal settlement.
+
+A failure before that commit leaves the previous queue and budget state intact;
+it cannot commit a terminal landing alone and strand its reservation. Attempt
+and job notifications follow the commit. Standalone queue landing APIs remain
+available and keep their own transaction boundaries.
+
 ## What is unchanged
 
 A host that does not opt in leaves Coach queues to their existing consumers.
 No job is discarded, parked, detached from its parent or assigned a new deadline
 because no embedded Coach executor is present. The server's Coach consumers
-continue to work as before. Hosts should choose which consumer runs their work;
-normal queue leases still decide each actual admission.
+continue to work as before. Normal queue leases still decide each actual
+admission when a worker and a wake pass both serve the queue.
 
 This is an execution port for an invoked wake pass, not a Coach model, a new
 scheduler or a timer registration. The host still supplies its executor and
 drives its wake passes. It does not make an unconfigured embedded host execute
 Coach work or prove that every night run finishes.
+
+## The served wake pass borrows the installed heal consumer
+
+When serve installs its Coach-heal worker, it shares that worker's actual
+publisher candidates and served runtime with the same `AiHandle`. A wake pass
+on the bound server can then admit `coach.heal` and call the worker's existing
+per-attempt dispatcher. This includes code fixes with those publisher
+candidates, health-card asks, CASE heals and Issues. It does not opt in to the
+separate `coach.host` queue.
+
+The pass holds the server and the installed resources through execution. The
+blocking dispatcher runs on the served runtime, not the Dreamer supervisor's
+current-thread runtime, and the pass awaits it before returning an outcome.
+The wake driver alone settles its admitted lease. It never calls the worker's
+round, admission or settlement. Coach model and decision calls retain their
+existing payment lines; the queue reservation adds no second model charge.
+A per-attempt error is reported as a terminal failure, as in the worker, and a
+panic reaches the wake driver's existing panic containment.
+
+Without the actual bound server and installed worker resources, this wrapper
+does not advertise heal support; any inner executor's capability is preserved.
+No new timer or readiness policy is added. Unconfigured and hostless executors
+still need their own real Coach supplier. This served integration is not proof
+that all night runs finish or that hostless Coach work executes.

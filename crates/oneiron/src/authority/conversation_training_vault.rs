@@ -247,6 +247,18 @@ impl Vault {
         self.setting_view_in_txn(&txn, &fold)
     }
 
+    /// Whether `person` reads the vault's setting, as
+    /// [`Self::conversation_learning_view`] admits a reader: a live owner,
+    /// member, delegate or guest of this vault. Every other read of the
+    /// setting applies the same rule (FIX 10752).
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub(crate) fn conversation_learning_reader(&self, person: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.conversation_learning_reader_in_txn(&txn, person)
+    }
+
     /// The vault's setting as the vault itself reads it, for the status its
     /// host reports to a supervisor (FIX 5575): one read transaction, no
     /// person, no act and no writer. It grants nothing, and the reader rule

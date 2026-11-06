@@ -19,12 +19,16 @@
 //! past it (FIX 5619, Rule 5): its size never refuses it, only the disk's
 //! floor ([`verify_held`]).
 
+mod widen;
+
+pub(super) use widen::verify_widen;
+
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
 use axum::body::{Body, BodyDataStream, Bytes};
 use axum::extract::Request;
 use axum::http::StatusCode;
-use axum::http::header::CONTENT_LENGTH;
+use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, UPGRADE};
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
@@ -35,7 +39,7 @@ use oneiron_vault_contract::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::ledger::WakeLedger;
-use super::state_serve::{ManagedOwnerHolder, owner_attestation_refused};
+use super::state_serve::{ManagedOwnerHolder, McpLifecycleObservation, owner_attestation_refused};
 use crate::server::SyncServer;
 
 /// The most of a staged body read at once, as it is hashed and as it is
@@ -159,9 +163,84 @@ fn verify_in_memory(
     if !verified {
         return Err(owner_attestation_refused(parts.uri.path()));
     }
+    let lifecycle_observation = mcp_lifecycle_observation(&parts, &body);
     let mut request = Request::from_parts(parts, Body::from(body));
     request.extensions_mut().insert(ManagedOwnerHolder(holder));
+    if lifecycle_observation {
+        request.extensions_mut().insert(McpLifecycleObservation);
+    }
     Ok(request)
+}
+
+/// Classifies already-held bytes without changing their later validation or dispatch.
+fn mcp_lifecycle_observation(parts: &Parts, body: &[u8]) -> bool {
+    if parts.method != axum::http::Method::POST
+        || parts.headers.contains_key(UPGRADE)
+        || parts.headers.contains_key(CONTENT_ENCODING)
+    {
+        return false;
+    }
+    let mode = if parts.uri.path() == crate::cli::McpSurface::Primary.path() {
+        crate::mcp::McpSurfaceMode::Primary
+    } else if parts.uri.path() == crate::cli::McpSurface::ToolFirst.path() {
+        crate::mcp::McpSurfaceMode::ToolFirst
+    } else {
+        return false;
+    };
+    #[derive(serde::Deserialize)]
+    struct Call<'a> {
+        #[serde(borrow)]
+        jsonrpc: &'a str,
+        #[serde(borrow)]
+        method: &'a str,
+        #[serde(borrow)]
+        params: Params<'a>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Params<'a> {
+        #[serde(borrow)]
+        name: &'a str,
+    }
+    let Ok(call) = serde_json::from_slice::<Call<'_>>(body) else {
+        return false;
+    };
+    if call.jsonrpc != "2.0" || call.method != "tools/call" {
+        return false;
+    }
+    let Some(tool) = crate::mcp::try_registered_surface(mode)
+        .ok()
+        .and_then(|surface| surface.resolve(call.params.name))
+    else {
+        return false;
+    };
+    match tool {
+        crate::mcp::McpEndpointTool::Verb(_) => {
+            crate::api::is_slim_lifecycle_observation(tool.name())
+        }
+        crate::mcp::McpEndpointTool::InvokeAction => {
+            #[derive(serde::Deserialize)]
+            struct ActionCall<'a> {
+                #[serde(borrow)]
+                params: ActionParams<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionParams<'a> {
+                #[serde(borrow)]
+                arguments: ActionArguments<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionArguments<'a> {
+                #[serde(borrow)]
+                verb: &'a str,
+            }
+            serde_json::from_slice::<ActionCall<'_>>(body)
+                .ok()
+                .is_some_and(|action| {
+                    crate::api::is_slim_lifecycle_observation(action.params.arguments.verb)
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Verifies `assertion` over the request `parts` head with its body of

@@ -145,6 +145,7 @@ pub(super) fn land(
         &id,
         occurred,
         header.learned_at,
+        header.row_version,
         staged,
         tier,
         None,

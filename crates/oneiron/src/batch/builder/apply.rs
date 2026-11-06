@@ -22,7 +22,8 @@ impl BatchBuilder<'_> {
     /// Note: operations are staged eagerly into `wtxn`. If this returns an
     /// error, earlier writes may already be present in the transaction, so
     /// callers must abort the transaction (drop without committing) to discard
-    /// it.
+    /// it. Actor-bound batches stage in a savepoint, so a refused routed
+    /// projection leaves neither its source event nor any head change behind.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
     }
@@ -98,14 +99,80 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
-        // A generic put of a projector-only `comm.*` class leaves the batch
-        // here, before the gate, VAD and lexical staging, as the projector's
-        // source event in `wtxn`. An actor-bound batch's puts stay with the
-        // door, gated for its actor.
-        let routed = if actor.is_none() {
-            crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
+        if let Some(actor) = actor {
+            let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
+            let mut staged = vault.store.env.nested_write_txn(wtxn)?;
+            let scope =
+                has_owner.then(|| super::vad_postcommit::VadPostcommitScope::new(vault, &staged));
+            self.apply_staged(
+                &mut staged,
+                gate_mode,
+                Some(&actor),
+                authority_beside,
+                own_device,
+            )?;
+            staged.commit()?;
+            if let Some(scope) = scope {
+                super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+            }
+            Ok(())
         } else {
-            std::collections::BTreeSet::new()
+            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+        }
+    }
+
+    fn apply_staged(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        gate_mode: ApplyOpsGateMode,
+        actor: Option<&crate::WriteActor>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
+        own_device: Option<&VerifiedOwnDeviceLane>,
+    ) -> Result<()> {
+        let vault = self.vault;
+        // Preserve original-position admission before routing removes a Put.
+        // Actual head changes and the remaining ops get their own final checks.
+        let original = actor
+            .map(|actor| {
+                super::super::actor_content::ContentWriteSet::before(vault, wtxn, actor, &self.ops)
+            })
+            .transpose()?
+            .flatten();
+        let mut gate_mode = gate_mode
+            .with_birth_mask(self.birth_mask)
+            .with_text_births(std::mem::take(&mut self.text_births))
+            .with_births(std::mem::take(&mut self.births))
+            .with_asset_files(std::mem::take(&mut self.asset_files))
+            .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
+            .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
+            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
+        let mut original_bodies = Vec::new();
+        let taken = if actor.is_some() {
+            crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
+                vault,
+                wtxn,
+                &mut self.ops,
+                &gate_mode.births,
+            )?
+        } else {
+            crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
+        };
+        let routed = match taken {
+            Some(routed) => match actor {
+                Some(actor) => {
+                    original_bodies.extend_from_slice(routed.inputs());
+                    super::comm_input::admit_routed_inputs(
+                        vault,
+                        wtxn,
+                        routed.inputs(),
+                        &mut gate_mode,
+                    )?;
+                    let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
+                    routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+                }
+                None => routed.record_in_txn(vault, wtxn)?,
+            },
+            None => std::collections::BTreeSet::new(),
         };
         let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
@@ -130,12 +197,6 @@ impl BatchBuilder<'_> {
         rows.extend(routed);
         #[cfg(feature = "sync")]
         let removed_edges = super::vad_postcommit::ops_removed_edges(&self.ops);
-        let gate_mode = gate_mode
-            .with_birth_mask(self.birth_mask)
-            .with_text_births(std::mem::take(&mut self.text_births))
-            .with_births(std::mem::take(&mut self.births))
-            .with_asset_files(std::mem::take(&mut self.asset_files))
-            .with_replicated_puts(std::mem::take(&mut self.replicated_puts));
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);
@@ -151,7 +212,7 @@ impl BatchBuilder<'_> {
             apply_actor_ops(
                 vault,
                 wtxn,
-                &actor,
+                actor,
                 ops,
                 text_index_trusted,
                 gate_mode,
@@ -170,6 +231,9 @@ impl BatchBuilder<'_> {
                 authority_beside,
                 own_device,
             )?;
+        }
+        if let (Some(actor), Some(original)) = (actor, original) {
+            original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
@@ -213,6 +277,7 @@ pub(super) fn admit_federated_puts(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
             ..
         } = &mut ops[*index]
@@ -222,6 +287,7 @@ pub(super) fn admit_federated_puts(
             blob.extend_from_slice(&occurred.start.to_be_bytes());
             blob.extend_from_slice(&occurred.end.to_be_bytes());
             blob.extend_from_slice(&learned_at.to_be_bytes());
+            blob.extend_from_slice(&row_version.unwrap_or(0).to_be_bytes());
             blob.extend_from_slice(data);
             let admitted = crate::sync::selector::admit_federated_entity_blob(
                 vault,

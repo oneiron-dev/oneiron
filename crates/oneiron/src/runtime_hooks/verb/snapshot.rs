@@ -16,7 +16,7 @@ use crate::task_verb::revoke_lands::Landing;
 
 use super::state::Carry;
 use super::storage::SessionCarry;
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookPre};
+use super::{InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre};
 
 /// What of a [`VerbHookPre`] a consent wait keeps: the call but for its
 /// reader, the rewritten args, when the pre chain ran, and the landing
@@ -27,7 +27,7 @@ pub struct VerbHookPreSnapshot {
     invocation: InvocationId,
     actor: EntityId,
     class: HookActorClass,
-    scope: Option<String>,
+    scope: Option<VerbCallScope>,
     board_epoch: Option<u64>,
     turn: Option<HookTurnTarget>,
     domain: VerbDomain,
@@ -110,6 +110,7 @@ impl VerbHookPreSnapshot {
             session: self.session,
             // A rebuilt post-only pre never compensates a pre failure (FIX 1431).
             resumed_ask: None,
+            read_capture: None,
         }
     }
 }

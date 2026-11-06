@@ -22,7 +22,7 @@ pub(crate) fn embeddable_payload_in_txn(
         return Ok(turn_text_in_txn(vault, txn, id)?.map(PendingEmbeddingPayload::TurnText));
     }
     // An ASSET embeds its repo copy (FIX 7608 slice 3).
-    super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)
+    super::repo_projection::pending_payload_in_txn(vault, txn, id, entity_type, body)
 }
 
 /// [`embeddable_payload_in_txn`] read through `store`: base, or a room's view, whose turns and
@@ -55,9 +55,9 @@ pub(super) fn embeddable_payload_in(
         return Ok(Some((PendingEmbeddingPayload::TurnText(text), rows)));
     }
     let payload = if entity_type == crate::registry::ENTITY_TYPE_ASSET {
-        super::repo_projection::asset_payload_in(vault, store, txn, body)?
+        super::repo_projection::asset_payload_in(vault, store, txn, id, body)?
     } else {
-        super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)?
+        super::repo_projection::pending_payload_in_txn(vault, txn, id, entity_type, body)?
     };
     Ok(payload.map(|payload| (payload, vec![*id])))
 }
@@ -138,12 +138,15 @@ pub(crate) fn embeddable_payload(entity_type: u8, body: &[u8]) -> Option<Pending
 pub(super) fn is_embeddable_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
     entity_type: u8,
     body: &[u8],
 ) -> Result<bool> {
     if entity_type != crate::registry::ENTITY_TYPE_ASSET {
         return Ok(embeddable_payload(entity_type, body).is_some());
     }
+    let filed = super::repo_projection::repo_file_body_in(vault, &vault.store, txn, id, body)?;
+    let body = filed.as_deref().unwrap_or(body);
     Ok(super::media::asset_text(body, |blob| {
         super::repo_projection::repo_blob_body_in_txn(vault, txn, blob)
     })?
