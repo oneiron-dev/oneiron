@@ -20,7 +20,12 @@
 //! its original room on the host floor; the launcher keeps no host
 //! descriptor. The kernel takes the launcher as the sender: a receiver with
 //! SO_PASSCRED sees the launcher's credentials, and credentials a message
-//! names (SCM_CREDENTIALS) must be the launcher's.
+//! names (SCM_CREDENTIALS) must be the launcher's. In the same way, a
+//! receiver with SO_PASSPIDFD gets a pidfd of the launcher. The kernel
+//! would also resolve a relative pathname destination against the
+//! launcher's working directory, so the launcher sends a datagram to that
+//! path in the calling task's (/proc/<tid>/cwd/<path>). When that path
+//! does not fit sun_path, the send fails ENAMETOOLONG and nothing is sent.
 //!
 //! The launcher judges each message as the kernel does: a buffer it cannot
 //! read fails EFAULT, a control buffer longer than [`MESSAGE_BOUND`]
@@ -387,7 +392,9 @@ impl Call<'_> {
 
     /// The message's data and destination name, as the kernel takes them:
     /// a stream may take part of a long write, and a datagram or seqpacket
-    /// message no longer than the socket's SO_SNDBUF must fit whole.
+    /// message no longer than the socket's SO_SNDBUF must fit whole. A Unix
+    /// datagram's relative pathname names the calling task's working
+    /// directory ([`resolved`]).
     fn payload(
         &self,
         header: &libc::msghdr,
@@ -395,7 +402,16 @@ impl Call<'_> {
         total: usize,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         let pid = self.n.pid;
-        let length = if socket_option(&self.socket, libc::SO_TYPE)? == libc::SOCK_STREAM {
+        let kind = socket_option(&self.socket, libc::SO_TYPE)?;
+        let mut destination = name(pid, header)?;
+        // Only a datagram goes to the name it gives: a stream refuses a
+        // name, and a seqpacket socket ignores it.
+        if kind == libc::SOCK_DGRAM
+            && socket_option(&self.socket, libc::SO_DOMAIN)? == libc::AF_UNIX
+        {
+            destination = resolved(&self.task, destination)?;
+        }
+        let length = if kind == libc::SOCK_STREAM {
             total.min(MESSAGE_BOUND)
         } else if usize::try_from(socket_option(&self.socket, libc::SO_SNDBUF)?)
             .is_ok_and(|bound| total <= bound)
@@ -404,7 +420,7 @@ impl Call<'_> {
         } else {
             return Err(io::Error::from_raw_os_error(libc::EMSGSIZE));
         };
-        Ok((gather(pid, vectors, length)?, name(pid, header)?))
+        Ok((gather(pid, vectors, length)?, destination))
     }
 
     /// Answers the call with `error`. A send to a closed peer raises
@@ -604,6 +620,38 @@ fn name(pid: u32, header: &libc::msghdr) -> io::Result<Vec<u8>> {
     let mut name = vec![0; length];
     remote(pid, header.msg_name as u64, &mut name, false)?;
     Ok(name)
+}
+
+/// A Unix datagram's destination `name`, as the launcher sends it for
+/// `task` (FIX 6185). A pathname whose sun_path is relative names the
+/// task's working directory through /proc/<tid>/cwd, with the length to
+/// match: the launcher's own working directory is not the task's. A path
+/// that then does not fit sun_path with its NUL fails ENAMETOOLONG, and
+/// nothing is sent. An absolute or abstract name, or one the kernel
+/// refuses, is sent unchanged.
+fn resolved(task: &Task, name: Vec<u8>) -> io::Result<Vec<u8>> {
+    let offset = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    let family = (libc::AF_UNIX as libc::sa_family_t).to_ne_bytes();
+    if name.len() <= offset || name.len() > size_of::<libc::sockaddr_un>() {
+        return Ok(name);
+    }
+    // The kernel reads sun_path up to its first NUL; an abstract name
+    // starts with one.
+    let path = &name[offset..];
+    let end = path.iter().position(|&byte| byte == 0);
+    let path = &path[..end.unwrap_or(path.len())];
+    if name[..offset] != family[..] || path.first().is_none_or(|&byte| byte == b'/') {
+        return Ok(name);
+    }
+    let mut anchored = name[..offset].to_vec();
+    anchored.extend_from_slice(task.working_directory().as_bytes());
+    anchored.push(b'/');
+    anchored.extend_from_slice(path);
+    anchored.push(0);
+    if anchored.len() > size_of::<libc::sockaddr_un>() {
+        return Err(io::Error::from_raw_os_error(libc::ENAMETOOLONG));
+    }
+    Ok(anchored)
 }
 
 /// A descriptor's device, inode and file type.

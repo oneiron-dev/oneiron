@@ -11,6 +11,10 @@
 //! unshared is never shared again, so a proof after a copy covers the copy.
 //! A task whose table is its own then answers ENOTSUP, and the launcher
 //! keeps no copy from it.
+//!
+//! A thread may also have its own working directory. A relative pathname
+//! the task names resolves against it, and the launcher reaches it as
+//! /proc/<tid>/cwd.
 
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -72,6 +76,12 @@ impl Task {
             shared_table(self.tid, self.tgid)?;
         }
         Ok(copy)
+    }
+
+    /// The launcher's path to the task's own working directory, against
+    /// which a relative pathname the task names resolves.
+    pub(super) fn working_directory(&self) -> String {
+        format!("/proc/{}/cwd", self.tid)
     }
 
     /// Raises `signal` in the task (tgkill).

@@ -15,6 +15,17 @@
 //! what does not fit closes, and the guest sees MSG_CTRUNC, as the kernel
 //! does it. The witness is never installed.
 //!
+//! Two control messages carry a descriptor: rights (SCM_RIGHTS), and the
+//! sender's pidfd (SCM_PIDFD) on a socket with SO_PASSPIDFD. The kernel
+//! installs that pidfd in the launcher, so the launcher passes it on as it
+//! passes rights: it installs it in the calling task, close-on-exec as the
+//! kernel makes every pidfd, and writes the guest's number into the
+//! message. The same fit, truncation and replacement rules apply, and the
+//! launcher's copy always closes. A negative value in a pidfd message is
+//! the kernel's errno for a pidfd it could not make: it is data, and is
+//! copied. The other control messages (SCM_CREDENTIALS, SCM_SECURITY)
+//! carry data only, and are copied as they came.
+//!
 //! The message is taken, its descriptors installed and its witness closed
 //! under the inventory lock, so a scan sees the transfer hold or the table
 //! hold, never neither. A peek takes copies, installs them, and leaves the
@@ -36,9 +47,10 @@
 //! slots, then the header and a recvmmsg's length. When one of those writes
 //! fails, or the answer does, each descriptor the call installed is
 //! replaced at its number by the launcher's /dev/null (ADDFD with
-//! SECCOMP_ADDFD_FLAG_SETFD): the socket leaves the guest's table, and the
-//! guest keeps only a /dev/null at a number it never learned. A call that
-//! ended keeps what it was given, because the kernel takes no ADDFD for it.
+//! SECCOMP_ADDFD_FLAG_SETFD): the descriptor leaves the guest's table, and
+//! the guest keeps only a /dev/null at a number it never learned. A call
+//! that ended keeps what it was given, because the kernel takes no ADDFD
+//! for it.
 
 use super::wait::{Wait, Waited, may_wait};
 use super::{
@@ -51,6 +63,11 @@ use std::io;
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
+
+/// Linux's control message type for the sender's pidfd (linux/socket.h),
+/// which a socket with SO_PASSPIDFD receives; libc names no Linux value
+/// for it.
+const SCM_PIDFD: i32 = 4;
 
 /// A recvmsg (one header) or recvmmsg (`vector`) on a native socket. A
 /// recvmmsg waits for each message as a blocking one does, or for the
@@ -113,9 +130,10 @@ pub(super) fn receive(
 
 /// What one received message carried, in order.
 enum Received {
-    /// A rights message: the launcher's copies of its descriptors, the
-    /// witness left out.
-    Rights(Vec<OwnedFd>),
+    /// A control message that carries descriptors, of type `kind`: rights
+    /// (SCM_RIGHTS), the witness left out, or the sender's pidfd
+    /// (SCM_PIDFD). The launcher's copies, in order.
+    Descriptors { kind: i32, fds: Vec<OwnedFd> },
     /// Any other control message, as the kernel wrote it.
     Other {
         level: i32,
@@ -148,16 +166,18 @@ struct Incoming {
 /// any install, with a zeroed slot for each descriptor that fits.
 struct Layout {
     control: Vec<u8>,
-    /// The rights messages that fit, in order.
-    rights: Vec<RightsMessage>,
+    /// The descriptor messages that fit, in order.
+    descriptors: Vec<DescriptorMessage>,
     /// Some of what the message carried did not fit.
     truncated: bool,
 }
 
-/// One rights message of a layout.
-struct RightsMessage {
+/// One control message of a layout that carries descriptors.
+struct DescriptorMessage {
     /// Where its header starts in the control bytes.
     at: usize,
+    /// Its type: SCM_RIGHTS or SCM_PIDFD.
+    kind: i32,
     /// The launcher's copies of the descriptors its slots name, in order.
     fds: Vec<OwnedFd>,
     /// How many of them the calling task holds.
@@ -248,7 +268,10 @@ impl Call<'_> {
     fn install(&self, listener: &OwnedFd, layout: &mut Layout, cloexec: bool) -> Vec<i32> {
         let offset = aligned(size_of::<libc::cmsghdr>());
         let mut numbers = Vec::new();
-        for message in &mut layout.rights {
+        for message in &mut layout.descriptors {
+            // The kernel makes every pidfd close-on-exec, whatever the
+            // receive's flags.
+            let cloexec = cloexec || message.kind == SCM_PIDFD;
             for fd in &message.fds {
                 let added = linux::add_fd(listener.as_raw_fd(), self.n.id, fd.as_raw_fd(), cloexec);
                 let Ok(number) = added else {
@@ -270,7 +293,7 @@ impl Call<'_> {
                     put_control(
                         &mut layout.control,
                         libc::SOL_SOCKET,
-                        libc::SCM_RIGHTS,
+                        message.kind,
                         &installed,
                     );
                 }
@@ -283,7 +306,7 @@ impl Call<'_> {
     }
 
     /// The writes after an install, none of which reads the guest: each
-    /// rights message's header and numbers, then the message header at
+    /// descriptor message's header and numbers, then the message header at
     /// `pointer`, then a recvmmsg's `length`.
     fn finish(
         &self,
@@ -294,7 +317,11 @@ impl Call<'_> {
     ) -> io::Result<()> {
         let pid = self.n.pid;
         let offset = aligned(size_of::<libc::cmsghdr>());
-        for message in layout.rights.iter().filter(|message| message.installed > 0) {
+        for message in layout
+            .descriptors
+            .iter()
+            .filter(|message| message.installed > 0)
+        {
             let end = message.at + offset + message.installed * size_of::<RawFd>();
             let address = header.msg_control as u64 + message.at as u64;
             remote(pid, address, &mut layout.control[message.at..end], true)?;
@@ -308,7 +335,8 @@ impl Call<'_> {
 
     /// Replaces each descriptor in `numbers`, which this call installed,
     /// by the launcher's /dev/null at the same number (ADDFD with
-    /// SECCOMP_ADDFD_FLAG_SETFD), so the socket leaves the guest's table.
+    /// SECCOMP_ADDFD_FLAG_SETFD), so the socket or pidfd leaves the
+    /// guest's table.
     fn replace(&self, listener: &OwnedFd, numbers: &[i32]) {
         if numbers.is_empty() {
             return;
@@ -331,7 +359,7 @@ impl Layout {
         let offset = aligned(size_of::<libc::cmsghdr>());
         let mut layout = Self {
             control: Vec::new(),
-            rights: Vec::new(),
+            descriptors: Vec::new(),
             truncated: false,
         };
         for received in carried {
@@ -348,7 +376,9 @@ impl Layout {
                         layout.truncated = true;
                     }
                 }
-                Received::Rights(mut fds) => {
+                // A pidfd message fits as a rights message of one
+                // descriptor does: the kernel places it only whole.
+                Received::Descriptors { kind, mut fds } => {
                     let fit = room.saturating_sub(offset) / size_of::<RawFd>();
                     if fds.len() > fit {
                         fds.truncate(fit);
@@ -357,14 +387,10 @@ impl Layout {
                     if !fds.is_empty() {
                         let at = layout.control.len();
                         let slots = vec![0; fds.len() * size_of::<RawFd>()];
-                        put_control(
-                            &mut layout.control,
-                            libc::SOL_SOCKET,
-                            libc::SCM_RIGHTS,
-                            &slots,
-                        );
-                        layout.rights.push(RightsMessage {
+                        put_control(&mut layout.control, libc::SOL_SOCKET, kind, &slots);
+                        layout.descriptors.push(DescriptorMessage {
                             at,
+                            kind,
                             fds,
                             installed: 0,
                         });
@@ -465,13 +491,18 @@ impl Incoming {
 }
 
 /// What the launcher's received control bytes carried, in order, and the
-/// witnesses apart. Each received descriptor is owned first, so none stays
-/// open in the launcher.
+/// witnesses apart. Each received descriptor, of a rights message or a
+/// pidfd, is owned first, so none stays open in the launcher.
 fn carried(control: &[u8], rights: &Rights) -> (Vec<Received>, Vec<OwnedFd>) {
     let mut carried = Vec::new();
     let mut witnesses = Vec::new();
     for found in controls(control).0 {
-        if !found.rights() {
+        // A pidfd message names one descriptor, or holds the negative
+        // errno of a pidfd the kernel could not make: then it is data.
+        let pidfd = found.level == libc::SOL_SOCKET
+            && found.kind == SCM_PIDFD
+            && fds_of(found.data).next().is_some_and(|fd| fd >= 0);
+        if !found.rights() && !pidfd {
             carried.push(Received::Other {
                 level: found.level,
                 kind: found.kind,
@@ -479,17 +510,23 @@ fn carried(control: &[u8], rights: &Rights) -> (Vec<Received>, Vec<OwnedFd>) {
             });
             continue;
         }
+        let count = if pidfd { 1 } else { usize::MAX };
         let mut fds = Vec::new();
-        for fd in fds_of(found.data) {
+        for fd in fds_of(found.data).take(count) {
             // SAFETY: the kernel installed each received descriptor in the
             // launcher; it is owned once from here on.
             let fd = unsafe { OwnedFd::from_raw_fd(fd) };
             match identity(&fd) {
-                Ok((device, inode, _)) if rights.witness(device, inode) => witnesses.push(fd),
+                Ok((device, inode, _)) if !pidfd && rights.witness(device, inode) => {
+                    witnesses.push(fd);
+                }
                 _ => fds.push(fd),
             }
         }
-        carried.push(Received::Rights(fds));
+        carried.push(Received::Descriptors {
+            kind: found.kind,
+            fds,
+        });
     }
     (carried, witnesses)
 }
