@@ -397,3 +397,18 @@ a present call with null arguments or returns remains present. Restore keeps
 all three original outcome variants and the existing admission receipt. Native
 inputs, typed clients, hooks, authority and public result shapes are unchanged.
 This source change does not prove a runtime depth or memory bound.
+
+## Connector manifest output schemas
+
+The connector-pack prepare, get, qualify, accept and update results and both
+proxy registration results consume every tool's optional resolved input schema
+with the existing owned `WireJson` conversion. This includes the instance data
+inside schema defaults, constants and enums. A resolved object schema does not
+bound the depth of those JSON subtrees.
+
+All tool schemas are consumed before the first conversion error. The original
+whole-record codec handles the finite remainder, then the schemas are put back
+in tool order. Missing and null optional schemas retain the original absent
+result. Native schema validation, inputs, clients, grants, hooks, row evidence,
+public record shapes and finite conversion diagnostics are unchanged. This is
+selected output conversion, not end-to-end depth, memory or runtime proof.

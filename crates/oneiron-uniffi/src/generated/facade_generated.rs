@@ -1389,27 +1389,27 @@ export_facade! {
 "vault.packs.connector.prepare" => fn vault_packs_connector_prepare(&self, input: ConnectorPackPrepareRequest) -> ConnectorPackView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackPrepareRequest = crate::codec::lower_record("vault.packs.connector.prepare", input)?;
     let output = client.vault_packs_connector_prepare(&input)?;
-    crate::codec::lift_record("vault.packs.connector.prepare", &output)
+    crate::codec::lift_connector_pack_view("vault.packs.connector.prepare", output)
 };
 "vault.packs.connector.get" => fn vault_packs_connector_get(&self, input: ConnectorPackGetRequest) -> ConnectorPackView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackGetRequest = crate::codec::lower_record("vault.packs.connector.get", input)?;
     let output = client.vault_packs_connector_get(&input)?;
-    crate::codec::lift_record("vault.packs.connector.get", &output)
+    crate::codec::lift_connector_pack_view("vault.packs.connector.get", output)
 };
 "vault.packs.connector.qualify" => fn vault_packs_connector_qualify(&self, input: ConnectorPackQualifyRequest) -> ConnectorPackView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackQualifyRequest = crate::codec::lower_record("vault.packs.connector.qualify", input)?;
     let output = client.vault_packs_connector_qualify(&input)?;
-    crate::codec::lift_record("vault.packs.connector.qualify", &output)
+    crate::codec::lift_connector_pack_view("vault.packs.connector.qualify", output)
 };
 "vault.packs.connector.accept" => fn vault_packs_connector_accept(&self, input: ConnectorPackAcceptRequest) -> ConnectorPackView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackAcceptRequest = crate::codec::lower_record("vault.packs.connector.accept", input)?;
     let output = client.vault_packs_connector_accept(&input)?;
-    crate::codec::lift_record("vault.packs.connector.accept", &output)
+    crate::codec::lift_connector_pack_view("vault.packs.connector.accept", output)
 };
 "vault.packs.connector.update" => fn vault_packs_connector_update(&self, input: ConnectorPackUpdateRequest) -> ConnectorPackDelta = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackUpdateRequest = crate::codec::lower_record("vault.packs.connector.update", input)?;
     let output = client.vault_packs_connector_update(&input)?;
-    crate::codec::lift_record("vault.packs.connector.update", &output)
+    crate::codec::lift_connector_pack_delta("vault.packs.connector.update", output)
 };
 "vault.packs.connector.grants.get" => fn vault_packs_connector_grants_get(&self, input: ConnectorPackGrantsGetRequest) -> ConnectorPackGrants = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest = crate::codec::lower_record("vault.packs.connector.grants.get", input)?;
@@ -1469,12 +1469,12 @@ export_facade! {
 "vault.connectors.proxy.admit" => fn vault_connectors_proxy_admit(&self, input: ProxyConnectorAdmitRequest) -> ProxyConnectorRegistration = |client| {
     let input: oneiron::task_verb::sdk::ProxyConnectorAdmitRequest = crate::codec::lower_record("vault.connectors.proxy.admit", input)?;
     let output = client.vault_connectors_proxy_admit(&input)?;
-    crate::codec::lift_record("vault.connectors.proxy.admit", &output)
+    crate::codec::lift_proxy_connector_registration("vault.connectors.proxy.admit", output)
 };
 "vault.connectors.proxy.revoke_write" => fn vault_connectors_proxy_revoke_write(&self, input: ProxyConnectorRevokeWriteRequest) -> ProxyConnectorRegistration = |client| {
     let input: oneiron::task_verb::sdk::ProxyConnectorRevokeWriteRequest = crate::codec::lower_record("vault.connectors.proxy.revoke_write", input)?;
     let output = client.vault_connectors_proxy_revoke_write(&input)?;
-    crate::codec::lift_record("vault.connectors.proxy.revoke_write", &output)
+    crate::codec::lift_proxy_connector_registration("vault.connectors.proxy.revoke_write", output)
 };
 "vault.connectors.slates.redraft" => fn vault_connectors_slates_redraft(&self, input: ConnectorSlateRedraftRequest) -> ConnectorSlateRedraftReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSlateRedraftRequest = crate::codec::lower_record("vault.connectors.slates.redraft", input)?;

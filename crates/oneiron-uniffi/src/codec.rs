@@ -52,6 +52,10 @@ mod browser_batch;
 mod checkpoints;
 mod claims;
 mod core_write;
+mod connector_manifests;
+pub(crate) use connector_manifests::{
+    lift_connector_pack_delta, lift_connector_pack_view, lift_proxy_connector_registration,
+};
 mod diagnostics;
 mod feedback;
 mod generated_lenses;
