@@ -189,15 +189,37 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
     }
 }
 
-/// The bare address of one address header value (`Name <a@b>` or `a@b`).
-fn bare_address(text: &str) -> Option<String> {
-    let text = text.trim();
-    let address = match (text.rfind('<'), text.rfind('>')) {
-        (Some(open), Some(close)) if open < close => &text[open + 1..close],
-        _ => text,
-    };
-    let address = address.trim();
-    (!address.is_empty() && address.contains('@')).then(|| address.to_owned())
+/// The mailboxes of one address header value, a comma-separated list
+/// (`Name <a@b>, c@d`): each one's bare address. Commas inside a quoted
+/// display name or an angle address do not split it.
+fn mailboxes(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (mut start, mut quoted, mut angled) = (0, false, false);
+    for (at, character) in text.char_indices() {
+        match character {
+            '"' if !angled => quoted = !quoted,
+            '<' if !quoted => angled = true,
+            '>' if !quoted => angled = false,
+            ',' if !quoted && !angled => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let address = match (part.rfind('<'), part.rfind('>')) {
+                (Some(open), Some(close)) if open < close => &part[open + 1..close],
+                _ => part,
+            };
+            address.trim().to_owned()
+        })
+        .collect()
 }
 
 /// The subject a reply carries: the parent's, marked as a reply once.
@@ -316,12 +338,26 @@ fn plan_for(
     composed_at: u64,
 ) -> MemoryResult<GmailSendPlan> {
     let refuse = |message: &str| MemoryError::bad_request(message.to_owned());
-    let to = match parent.reply_to.as_slice() {
-        [] => parent.from.as_deref().and_then(bare_address),
-        [only] => bare_address(only),
-        _ => return Err(refuse("the message names more than one Reply-To address")),
-    }
-    .ok_or_else(|| refuse("the message names no address to reply to"))?;
+    // The one mailbox a reply goes to: the Reply-To list, else the From
+    // list, each exactly one address; more than one is refused, not cut.
+    let named: Vec<String> = if parent.reply_to.is_empty() {
+        parent.from.as_deref().map(mailboxes).unwrap_or_default()
+    } else {
+        parent
+            .reply_to
+            .iter()
+            .flat_map(|entry| mailboxes(entry))
+            .collect()
+    };
+    let to = match named.as_slice() {
+        [only] if only.contains('@') => only.clone(),
+        [] | [_] => return Err(refuse("the message names no address to reply to")),
+        _ => {
+            return Err(refuse(
+                "the message names more than one address to reply to",
+            ));
+        }
+    };
     let thread_id = parent
         .thread_id
         .as_deref()
@@ -447,13 +483,10 @@ impl Memory {
             updated_at: now,
         };
         vault.with_write_txn_grouped(|txn| {
-            // The draft lands only against the revision this call read: a
-            // concurrent revision or approval wins.
-            if DRAFTS
-                .get(&vault.store, txn, &id)?
-                .map(|held| held.revision)
-                != prior.as_ref().map(|prior| prior.revision)
-            {
+            // The draft lands only over exactly the row this call read, a
+            // proposed one or none: a concurrent revision, approval or
+            // discard wins.
+            if DRAFTS.get(&vault.store, txn, &id)? != prior {
                 return Err(crate::Error::InvalidConfig(
                     "the draft changed while it was redrafted".to_owned(),
                 ));
@@ -496,7 +529,7 @@ impl Memory {
                 drafts.push(view(id, &row));
             }
         }
-        drafts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        drafts.sort_by_key(|draft| std::cmp::Reverse(draft.updated_at));
         Ok(MailReplyDraftPage { drafts })
     }
 
@@ -563,7 +596,7 @@ impl Vault {
     ) -> MemoryResult<MailReplyDraftView> {
         let id = EntityId::from_hex(&input.draft_ref)?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
-        let actor = owner.actor();
+        let actor = owner.revalidate(self)?;
         let (row, source) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
@@ -590,8 +623,9 @@ impl Vault {
                     "the send's outcome is uncertain; the ledger holds it",
                 ));
             }
-            MailReplyDraftState::Sent | MailReplyDraftState::Discarded => {
-                return Ok(view(id, &row));
+            MailReplyDraftState::Sent => return Ok(view(id, &row)),
+            MailReplyDraftState::Discarded => {
+                return Err(invalid_state("the draft was discarded; it never sends"));
             }
         }
         let identity = sending_identity(&source)?;
@@ -607,10 +641,30 @@ impl Vault {
             &request, identity, actor,
         )?;
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+            // Every press, a retry too, proves the owner again in the writer
+            // that acts, and finds the mailbox still theirs.
+            if owner.revalidate_in_txn(self, txn)? != actor
+                || SOURCES
+                    .get(&self.store, txn, &row.source)?
+                    .and_then(|source| source.owner)
+                    != Some(actor)
+            {
+                return Err(MemoryError::bad_request(
+                    "only the mailbox's own person approves its replies",
+                ));
+            }
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
             if held.revision != row.revision || held.plan_ref != row.plan_ref {
                 return Err(invalid_state(
                     "the draft changed since it was reviewed; review its current revision",
+                ));
+            }
+            if !matches!(
+                held.state,
+                MailReplyDraftState::Proposed | MailReplyDraftState::Approved
+            ) {
+                return Err(invalid_state(
+                    "the draft was discarded, sent or left uncertain since it was read",
                 ));
             }
             if held.approved_at.is_none() {
