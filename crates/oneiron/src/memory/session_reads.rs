@@ -1,7 +1,7 @@
 //! The reads a code run bound to an off-record session serves through the
 //! room's own view (WILL L11-01, S01-1): `vault.get`, `vault.hydrate`,
-//! `vault.refs.resolve`, `vault.search.bm25` and the run's own
-//! `vault.search`.
+//! `vault.refs.resolve`, `vault.search.bm25`, `vault.receipts` ([`receipts`],
+//! FIX 7355) and the run's own `vault.search`.
 //!
 //! Each call reads ONE view of the room ([`SessionReadContext`]), under the
 //! narrow key the run's host admitted for its caller, never a wider one:
@@ -60,6 +60,8 @@ pub struct QueryBm25Request {
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
+mod receipts;
+
 /// One read a run bound to a room serves through the room's view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionRead {
@@ -71,6 +73,8 @@ pub(crate) enum SessionRead {
     RefsResolve,
     /// `vault.search.bm25`.
     SearchBm25,
+    /// `vault.receipts` (FIX 7355).
+    Receipts,
 }
 
 /// What one read in the room answers.
@@ -167,6 +171,11 @@ impl<'s> SessionReadContext<'s> {
                     .filter_map(|record| EntityId::from_hex(&record.id).ok())
                     .collect();
                 (encode(&read)?, rows)
+            }
+            SessionRead::Receipts => {
+                let page = self.receipts_page(&decode(input)?)?;
+                let rows = receipts::page_rows(&page);
+                (encode(&page)?, rows)
             }
         };
         Ok(SessionAnswer::Answered { output, rows })

@@ -339,9 +339,8 @@ impl<S: SeatGuest> RunSeats<S> {
             return;
         }
         let seats = Arc::downgrade(self);
-        let spawned = std::thread::Builder::new()
-            .name(format!("{}-seats", S::GUEST))
-            .spawn(move || reap_loop(&seats));
+        let spawned =
+            crate::engine_thread(format!("{}-seats", S::GUEST)).spawn(move || reap_loop(&seats));
         if let Err(error) = spawned {
             self.reaping.store(false, Ordering::Release);
             tracing::warn!(%error, guest = S::GUEST, "the run guests' idle reaper did not start");
