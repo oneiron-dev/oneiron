@@ -45,8 +45,14 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
+            let rekeys = decode_tombstone_value(raw_value)
+                .is_hard()
+                .then(|| crate::channel_identity::AssignmentRekeys::begin(&self.store));
             let (outcome, _changed, cancelled) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+            if let Some(rekeys) = rekeys {
+                rekeys.finish(&self.store, &mut wtxn)?;
+            }
             wtxn.commit()?;
             Ok((outcome, cancelled))
         });
