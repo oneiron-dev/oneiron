@@ -541,13 +541,22 @@ impl Step<'_> {
 
     /// The mailbox's own addresses as its provider proves them now (fix
     /// list row 20400), written to the source in a commit of their own
-    /// when they changed. A provider that proves none, or a read it refuses
-    /// (a missing scope) or that fails, keeps the stored set for this step:
+    /// when they changed, at most once per
+    /// [`OWN_ADDRESSES_REFRESH_SECS`](super::state::OWN_ADDRESSES_REFRESH_SECS)
+    /// of answers. A provider that proves none, or a read it refuses (a
+    /// missing scope) or that fails, keeps the stored set for this step:
     /// never the step's failure.
     fn refresh_own_addresses(&mut self) -> Result<()> {
+        if self.state()?.own_addresses_read_at.is_some_and(|read| {
+            self.at.saturating_sub(read) < super::state::OWN_ADDRESSES_REFRESH_SECS
+        }) {
+            return Ok(());
+        }
         let Ok(Some(proven)) = self.wire.own_addresses(&self.wire_source) else {
             return Ok(());
         };
+        let at = self.at;
+        self.write_state(|state| state.own_addresses_read_at = Some(at))?;
         let own = proven_own_address_set(&self.row.address, &proven);
         if own == self.row.own_addresses {
             return Ok(());
