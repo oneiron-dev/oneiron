@@ -81,6 +81,33 @@ pub(in crate::models) fn capture(
 }
 
 impl StockWeights {
+    /// A card comes from this runtime's captured worker manifest even when
+    /// its files are absent. No install, file read, launch or inference runs.
+    pub(in crate::models) fn download_card(
+        &self,
+    ) -> Option<oneiron::skill_optimize::StockDownloadCard> {
+        let spec = self.worker.spec();
+        let manifest = install::weights_manifest(&self.artifact, spec.kind, false).ok()?;
+        manifest.validate().ok()?;
+        Some(oneiron::skill_optimize::StockDownloadCard {
+            model: spec.model.as_str().to_owned(),
+            manifest_sha256: manifest.digest().ok()?,
+            repository: manifest.repo.to_string(),
+            revision: manifest.revision.to_string(),
+            licence: manifest.licence.id.to_string(),
+            licence_file: manifest.licence.file.to_string(),
+            files: manifest
+                .files
+                .iter()
+                .map(|file| oneiron::skill_optimize::StockDownloadFile {
+                    path: file.path.to_string(),
+                    sha256: file.sha256.to_string(),
+                    bytes: file.bytes,
+                })
+                .collect(),
+        })
+    }
+
     /// Every declared file must still match its size and SHA-256. The
     /// installer's existing stamp cache avoids hashing unchanged files.
     /// Unknown or mismatched files produce no positive claim; no network,

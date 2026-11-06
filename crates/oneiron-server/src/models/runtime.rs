@@ -5,6 +5,15 @@
 use super::*;
 
 impl ModelRuntime {
+    /// Exact file/licence card for the captured native worker, independent
+    /// of whether its files have already been downloaded.
+    pub(crate) fn stock_download_card(
+        &self,
+        model: &str,
+    ) -> Option<oneiron::skill_optimize::StockDownloadCard> {
+        self.stock_weights.get(model)?.download_card()
+    }
+
     /// Current verified files for this captured managed model, not evidence
     /// that a registry backend is loaded or has the same serving revision.
     pub(crate) fn stock_weights(&self, model: &str) -> Option<serde_json::Value> {
