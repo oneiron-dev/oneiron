@@ -51,7 +51,7 @@ fn refused(reason: &'static str) -> Error {
 
 /// What a carried arming row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum ArmingRow {
     Armed(TurnProgramArming),
     Disarmed {
@@ -90,7 +90,7 @@ impl ArmingRow {
 
 /// What a carried wake row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum WakeRow {
     /// A riding wake its recording machine still owes the home.
     Owed(TurnProgramWake),
@@ -306,8 +306,8 @@ pub(crate) fn merge_arming_row_in_txn(
 /// Merges one carried wake row, in the caller's writer. An `Owed` row is
 /// owed here on the elected home alone, when its arming is held here and
 /// wakes on it and neither the wake nor its admission is; before its arming
-/// arrives it is left in the window. An `Admitted` row clears the riding
-/// wake this machine recorded under its key.
+/// arrives it is left in the window. An `Admitted` row consumes the riding
+/// wake this machine recorded under its key, on any machine.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -319,12 +319,14 @@ pub(crate) fn merge_wake_row_in_txn(
     }
     let wake = match decode_wake(bytes)? {
         WakeRow::Owed(wake) => wake,
-        WakeRow::Admitted { .. } => {
-            return Ok(if drop_wake_row_in_txn(vault, txn, map_key)? {
-                RowMerge::Written
-            } else {
-                RowMerge::Held
-            });
+        WakeRow::Admitted { admission, .. } => {
+            return Ok(
+                if consume_decided_wake_in_txn(vault, txn, map_key, admission)? {
+                    RowMerge::Written
+                } else {
+                    RowMerge::Held
+                },
+            );
         }
     };
     if home_here_in_txn(vault, txn)? != Some(true) {
@@ -350,10 +352,37 @@ pub(crate) fn merge_wake_row_in_txn(
     Ok(RowMerge::Written)
 }
 
+/// Consumes, in the caller's writer, the wake an `Admitted` row decided: the
+/// home that admitted it wrote that terminal row, so this machine never
+/// admits it again, whatever its own home role or the arming's state now (a
+/// machine elected home after the old home decided still holds the wake it
+/// recorded). Only a wake whose own authority rides and whose admission the
+/// row names goes. Answers whether a wake went.
+fn consume_decided_wake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    map_key: &str,
+    admission: [u8; 32],
+) -> Result<bool> {
+    let Some(key) = wake_key_ids(map_key) else {
+        return Ok(false);
+    };
+    let Some(wake) = WAKE.get(vault, &*txn, &key)? else {
+        return Ok(false);
+    };
+    if !wake.authority.rides_to_home() || wake.admission_id() != admission {
+        return Ok(false);
+    }
+    WAKE.delete(vault, txn, &key)?;
+    super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), key)?;
+    Ok(true)
+}
+
 /// Drops, in the caller's writer, the riding wake this machine recorded
-/// under `map_key` once the window holds it decided or no longer holds it:
-/// the home admitted it, or an erase took it. The home keeps what it owes;
-/// a wake that does not ride was never carried. Answers whether a wake went.
+/// under `map_key` once the window no longer holds it: an erase took it (a
+/// decided wake arrives as an `Admitted` row instead). The home keeps what
+/// it owes; a wake that does not ride was never carried. Answers whether a
+/// wake went.
 pub(crate) fn drop_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
