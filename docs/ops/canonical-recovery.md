@@ -1,7 +1,16 @@
 # Canonical window recovery
 
 Canonical window recovery takes turns on the vault's existing task-work line.
-During verification, it recaptures the rebuilt window in four structural stages:
+
+Before reconstruction, artifact validation returns its turn between the existing
+ordered groups: manifest and ordering, window rows, asset body references, NOTE
+documents, entity documents, row births, and withdrawn cutoffs. The artifact is
+rewritten for actors erased here once, then stays immutable across those turns.
+Every group must pass before encoding, reconstruction, quarantine or a durable
+write. A validation error clears the group cursor; a retry applies current local
+erasures again. Synchronous validation drives the same groups to completion.
+
+During verification, recovery recaptures the rebuilt window in four structural stages:
 
 | Stage | Work |
 | --- | --- |
@@ -26,8 +35,8 @@ completion synchronously. The stages do not introduce a worker thread or move
 a read transaction between threads. Existing NOTE and sync capture helpers,
 and the writer that couples NOTE cleanup with publication, are unchanged.
 
-These are structural yields, not row-level or time-bounded pages. A stage can
-still enumerate a whole map or run a whole nested document scan. Artifact
-validation and encoding, transactional preflight, the NOTE workflow plan and
-the final snapshot comparison also remain whole operations. No new setting,
-limit or deadline is introduced.
+These are structural yields, not row-level or time-bounded pages. A capture
+stage or validation group can still enumerate a whole map or run a whole nested
+document scan. Actor erasure, encoding and hashing, transactional preflight, the
+NOTE workflow plan and the final snapshot comparison remain whole operations.
+No new setting, limit or deadline is introduced.
