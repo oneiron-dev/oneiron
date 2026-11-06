@@ -73,6 +73,14 @@ at least two plain-assignment links. Without an actual wrapper `exports` assignm
 the old `exports` binding remains detached; a repeated whole store does not reconnect it.
 A chain containing only wrapper `exports` assignments keeps its ordinary handling.
 
+Stable whole-slot/wrapper chains may also return the already-current module value.
+For `module.exports = module.exports = module.exports`, the declared keys and existing
+wrapper alias are preserved. Adding an actual `exports` assignment, as in
+`exports = module.exports = module.exports`, reconnects that wrapper to the current
+module without clearing its keys. A terminal `exports` reference qualifies only when
+that wrapper already aliases the current module. These are direct native identity
+checks, not arbitrary alias inference; a current value is not a fresh replacement.
+
 Mixed chains can also contain eligible named properties of the current module value.
 Each property receiver is captured before the right-hand side, and all stores use
 the same fresh terminal value in inner-to-outer order. For
