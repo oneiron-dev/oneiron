@@ -42,6 +42,18 @@ pub enum CodeWaitChoice {
     Deny,
 }
 
+/// The standing grant's scope. Omitting it selects this connection, class
+/// and project; asking-lineage is an explicit narrower choice.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWaitRememberScope {
+    #[default]
+    Connection,
+    AskingLineage,
+}
+
 /// One answer to one sealed wait, standing on the word the owner gave on
 /// the wait's ask. No reply, grant, effect or clock is taken.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -49,6 +61,9 @@ pub enum CodeWaitChoice {
 pub struct CodeWaitResolveRequest {
     pub target: CodeWaitTarget,
     pub answer: CodeWaitChoice,
+    /// Only for approve-and-stop-asking. `None` means this connection,
+    /// class and exact project, not the asking lineage or the whole vault.
+    pub remember_scope: Option<CodeWaitRememberScope>,
     /// The owner's own word on the wait's ask (`tasks.answer`), naming the
     /// same choice.
     pub word_ref: EntityId,
@@ -85,6 +100,10 @@ pub enum CodeWaitSettleOutcome {
 pub struct CodeWaitAnswerView {
     pub answer: CodeWaitChoice,
     pub word_ref: EntityId,
+    /// The first stop-asking answer's actual scope, not a later retry's input.
+    pub remember_scope: Option<CodeWaitRememberScope>,
+    /// The native standing grant's revocation reference, when one was minted.
+    pub remembered_grant_ref: Option<String>,
     /// The consent act's receipt, `gate:<hex>`.
     pub decision_ref: String,
     pub answered_at_ms: u64,
