@@ -18619,7 +18619,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -18632,9 +18632,63 @@
      "path": "src/code_sandbox/egress/name_gate.rs",
      "purpose": "The name a raw stream carries to an address that a name of the owner allowlist admitted (FIX 7652, FIX 634)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/quic/crypto.rs",
+     "purpose": "The client Initial keys of a QUIC connection, and the opening of one Initial packet with them (FIX 8991)…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/quic/flows.rs",
+     "purpose": "The QUIC flows of one proxy, by target, version and the Destination Connection ID their keys derive from…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/quic/initial.rs",
+     "purpose": "QUIC long headers and Initial frames, as the datagram name gate reads them (FIX 8991): RFC 9000 17.2 and 19…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EgressDatagramNameRefusal"
+     ],
+     "path": "src/code_sandbox/egress/quic/mod.rs",
+     "purpose": "The QUIC Initial name gate on the native datagram relay (FIX 8991)",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/quic/reassembly.rs",
+     "purpose": "The CRYPTO stream of one QUIC connection's Initials, reassembled by offset until the ClientHello it opens…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -60695,7 +60749,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 19,
+      "fn": 20,
       "re-export": 14,
       "struct": 3
      }
@@ -60748,6 +60802,16 @@
      "notable": [],
      "path": "src/recovery/checkpoint/payload/actors.rs",
      "purpose": "Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/automatic.rs",
+     "purpose": "The positive, known-world slice of an automatic physical backup",
      "surface": {
       "crate-vis": 4
      }
@@ -61018,6 +61082,7 @@
      "kind": "src",
      "notable": [
       "BackupMarker",
+      "BackupSelection",
       "BackupSnapshotReceipt",
       "BackupWatermark"
      ],
@@ -61026,7 +61091,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 14,
+      "enum": 1,
+      "fn": 17,
       "re-export": 1,
       "struct": 3,
       "type": 1
@@ -89856,7 +89922,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 47,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90675,7 +90741,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -91174,7 +91240,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6407,
+   "source_files": 6413,
    "test_files": 895
   },
   "oneiron-android": {
@@ -125187,7 +125253,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -125251,13 +125317,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/finalize.rs",
      "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {

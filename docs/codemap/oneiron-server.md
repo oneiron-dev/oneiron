@@ -1538,14 +1538,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/tests/support.rs` | test | m | 38 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
 | `src/oneironer/tests/worker.rs` | test | m | 6 crate-vis | — | The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job… |
 | `src/oneironer/wire.rs` | src | s | 3 crate-vis | — | The qualify case input as JSON writes it, shared by qualification and calibration |
-| `src/owner/backup.rs` | src | m | 19 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup.rs` | src | m | 20 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
 | `src/owner/backup/checkpoint_fact.rs` | src | s | 3 crate-vis | — | Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX… |
 | `src/owner/backup/custody.rs` | src | m | 13 crate-vis | — | Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685) |
 | `src/owner/backup/custody/anchor_client.rs` | src | s | 2 crate-vis | — | The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with… |
 | `src/owner/backup/custody/anchor_credentials.rs` | src | s | 9 crate-vis | — | The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a… |
 | `src/owner/backup/custody/anchor_transport.rs` | src | s | 5 crate-vis | — | A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a… |
 | `src/owner/backup/custody/home_fetch.rs` | src | s | 1 crate-vis | — | A restore's custody read from the residence home (FIX 5846, `--custody-home`): a new host that holds the kit… |
-| `src/owner/backup/finalize.rs` | src | s | 13 crate-vis | — | A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04) |
+| `src/owner/backup/finalize.rs` | src | m | 14 crate-vis | — | A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04) |
 | `src/owner/backup/handoff.rs` | src | s | 7 crate-vis | — | The prune pin (LC backup shipper rows, Engine 10-20) |
 | `src/owner/backup/payload_retention.rs` | src | s | 3 crate-vis | — | Checkpoint payload retention beside a vault's backups (KS7-5): each backup's kept-generation inventory lands… |
 | `src/owner/backup/rehearse.rs` | src | m | 14 crate-vis | — | Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and… |
