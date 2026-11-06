@@ -517,14 +517,25 @@ fn receive_proposals_cancellable(
                     deadline,
                 )?;
             }
-            GuestFrame::OutputText { target, start, frame } => {
+            GuestFrame::OutputText {
+                target,
+                start,
+                frame,
+            } => {
                 let target = match target.as_str() {
                     "console" => crate::engine_executor::JsCodeModeStream::Console,
                     "finish" => crate::engine_executor::JsCodeModeStream::Finish { start },
                     "store" => crate::engine_executor::JsCodeModeStream::Store { start },
                     _ => return Err(refused("unknown streamed output target")),
                 };
-                receive_output(&mut stream, deadline, cancel, output, target, frame.into_bytes())?;
+                receive_output(
+                    &mut stream,
+                    deadline,
+                    cancel,
+                    output,
+                    target,
+                    frame.into_bytes(),
+                )?;
             }
             GuestFrame::OutputBytes { path, frame } => {
                 let path = SandboxVirtualPath::try_new(path)?;
@@ -605,9 +616,14 @@ fn receive_output(
             };
             if write_frame(
                 stream,
-                &HostFrame::Failure { code, detail: &error.to_string() },
+                &HostFrame::Failure {
+                    code,
+                    detail: &error.to_string(),
+                },
                 deadline,
-            ).is_ok() {
+            )
+            .is_ok()
+            {
                 cancel.check()?;
                 let _ = read_frame(stream, deadline);
             }
