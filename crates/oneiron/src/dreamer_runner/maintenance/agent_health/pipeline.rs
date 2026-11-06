@@ -571,6 +571,7 @@ fn merge(
         opened_at: now,
         updated_at: now,
         coach: None,
+        legacy_draft_scrubbed: false,
         observed_brief: None,
         reviewer: detector_id(finding.signal),
         reviewer_revision: revision,

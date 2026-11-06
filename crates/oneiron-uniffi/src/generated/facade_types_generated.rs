@@ -2207,6 +2207,12 @@ pub struct AgentHealthCard {
     #[serde(rename = "coach", default, skip_serializing_if = "Option::is_none")]
     pub coach: Option<AgentHealthCoachAsk>,
     #[serde(
+        rename = "legacy_draft_scrubbed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legacy_draft_scrubbed: Option<bool>,
+    #[serde(
         rename = "observed_brief",
         default,
         skip_serializing_if = "Option::is_none"

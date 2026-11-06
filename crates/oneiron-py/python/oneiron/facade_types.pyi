@@ -661,6 +661,7 @@ class AgentHealthCard(TypedDict):
     opened_at: int
     updated_at: int
     coach: NotRequired[AgentHealthCoachAsk | None]
+    legacy_draft_scrubbed: NotRequired[bool]
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
     reviewer_revision: NotRequired[EntityId | None]
