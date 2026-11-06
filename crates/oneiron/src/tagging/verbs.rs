@@ -590,8 +590,8 @@ impl Memory<'_> {
     /// Resolves a turn ref and admits it on the bound actor's recorded
     /// lane, listing it as the answer's producer, with the lane's receipt
     /// for the answer. An absent turn, and one the lane does not read, get
-    /// one NOT_FOUND that carries the receipt (FIX 10170), which counts the
-    /// hidden turn as the lane's other reads count a withheld row (FIX 10707).
+    /// one NOT_FOUND that carries the receipt (FIX 10170). A denial at the
+    /// lane's own floor adds no omission count.
     fn tagging_turn(&self, reference: &str) -> MemoryResult<(EntityId, ScopedReadReceipt)> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let turn = match resolve_entity_ref(self.vault(), reference) {
@@ -603,7 +603,7 @@ impl Memory<'_> {
         };
         self.produced_from([turn]);
         if !lane.is_entity_readable(&turn)? {
-            let receipt = lane.read_receipt(None, lane.suppression_of(&turn)?)?;
+            let receipt = lane.read_receipt(None, 0)?;
             return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
         Ok((turn, lane.read_receipt(None, 0)?))
@@ -731,9 +731,8 @@ impl Memory<'_> {
 
     /// `vault.tagging.mentions`: the saved mentions naming one entity,
     /// each served only while its turn reads on the caller's lane; a hidden
-    /// turn's mention is left out before the limit counts, and the receipt
-    /// counts the hidden turn once, as the lane counts a withheld row, never
-    /// naming it (FIX 10170, 10707).
+    /// turn's mention is left out before the limit counts (FIX 10170).
+    /// Denials at the lane's own floor add no omission count.
     pub fn tagging_mentions(
         &self,
         input: &TaggingMentionsRequest,
@@ -752,17 +751,12 @@ impl Memory<'_> {
             Err(error) => return Err(error),
         };
         let mut mentions = Vec::new();
-        let mut withheld = 0;
-        let mut hidden = std::collections::BTreeSet::new();
         let mut current = std::collections::BTreeMap::new();
         for hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
             }
             if !lane.is_entity_readable(&hit.turn)? {
-                if hidden.insert(hit.turn) {
-                    withheld += lane.suppression_of(&hit.turn)?;
-                }
                 continue;
             }
             let freshness = match current.get(&hit.turn) {
@@ -781,7 +775,7 @@ impl Memory<'_> {
             entity_ref: entity.to_hex(),
             mentions,
         };
-        let receipt = lane.read_receipt(None, withheld)?;
+        let receipt = lane.read_receipt(None, 0)?;
         Ok(ScopedReadResult { value, receipt })
     }
 }
