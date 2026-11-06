@@ -144,7 +144,9 @@ no text or only empty text still follows the original unavailable result.
 Appending can reallocate and is not pre-admitted by this transfer.
 
 Before building the dynamic JSON value, `ai.reply` moves the standing compiled
-text into a local owner and borrows it for the prefix. The standing option and
+text into a local owner, then reuses that owned string for the prefix by appending
+the same separator and evidence. It does not first copy the standing text into a
+second prefix allocation; appending can still reallocate. The standing option and
 its object fields remain present until the original JSON key removal, with an
 empty compiled-text field. This avoids copying that discarded text while
 preserving the original key positions and removal order, including an
