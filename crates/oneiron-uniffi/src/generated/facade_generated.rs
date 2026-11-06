@@ -3694,7 +3694,7 @@ export_facade! {
 "vault.code.merge_queue.observe" => fn vault_code_merge_queue_observe(&self, input: MergeQueueObserveRequest) -> MergeQueueObservation = |client| {
     let input: oneiron::memory::merge_queue_doors::MergeQueueObserveRequest = crate::codec::lower_record("vault.code.merge_queue.observe", input)?;
     let output = client.vault_code_merge_queue_observe(&input)?;
-    crate::codec::lift_record("vault.code.merge_queue.observe", &output)
+    crate::codec::lift_merge_queue_observation("vault.code.merge_queue.observe", output)
 };
 "vault.code.merge_queue.requeue_survivors" => fn vault_code_merge_queue_requeue_survivors(&self, input: MergeQueueBatchRequest) -> MergeQueueRequeueView = |client| {
     let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.requeue_survivors", input)?;
