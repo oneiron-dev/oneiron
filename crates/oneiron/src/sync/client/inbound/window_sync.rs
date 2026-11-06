@@ -11,7 +11,6 @@ use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
-use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
@@ -19,7 +18,7 @@ use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_s
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
     LoadedWindow, QueuedSends, ReplacementByteBound, WindowExport, apply_pending_window_updates,
-    load_window_from_state, persisted_window_pads,
+    load_window_from_state,
 };
 
 impl SyncClient {
@@ -359,8 +358,13 @@ impl SyncClient {
         window_key: &str,
         home: VersionVector,
     ) -> std::result::Result<(), TransportError> {
+        // A peer session's vector is no home witness (FIX 4748). A world
+        // window's, and a BASE window's an owner's discard took rows from,
+        // which its projection waits to see cover the window (FIX 14534 part
+        // E), is kept as the home's.
         if self.peer_session.is_none()
-            && WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+            && (WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+                || self.discard_touched(window_key)?)
         {
             crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
@@ -698,9 +702,17 @@ impl SyncClient {
                         }
                     };
                 // Its pads persist by reference where custody here holds them
-                // (FIX 7107).
-                let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-                if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                // (FIX 7107); a BASE window's as the owner's discard projects
+                // it, for what the home holds of it (FIX 14534 part E).
+                let durable_vv = durable_doc.oplog_vv();
+                if let Err(e) = crate::sync::window::persist_window_arrival(
+                    &self.vault,
+                    &key,
+                    &window.doc,
+                    &durable_vv,
+                    &missing,
+                    false,
+                ) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
                         "persist live durable delta: {e}"
@@ -712,9 +724,18 @@ impl SyncClient {
             // accepted update bytes ourselves: without a u:w: row, remote state —
             // including tombstones, whose LMDB purge already ran — would vanish
             // from the doc on restart. Its pads persist by reference where
-            // custody here holds them (FIX 7107).
-            let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
+            // custody here holds them (FIX 7107); a BASE window's as the owner's
+            // discard projects it (FIX 14534 part E). The home sent it, unless
+            // this connection is a federation peer's.
+            let from_home = self.config.federation_peer.is_none();
+            if let Err(e) = crate::sync::window::persist_window_arrival(
+                &self.vault,
+                &key,
+                &window.doc,
+                &vv_before,
+                payload,
+                from_home,
+            ) {
                 // Never leave RAM ahead of durable state on a FAILED persist
                 // (client analog of the ONE-1129 server evict-on-persist-failure):
                 // the import advanced this doc's version vector, so keeping the
@@ -792,6 +813,15 @@ impl SyncClient {
         payload: &[u8],
         server_vv: &VersionVector,
     ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+        // A window an owner's discard projected holds rewritten deletes at
+        // the operations it rewrote: none goes to a home that does not hold
+        // those operations already (FIX 14534 part E, E2 = A).
+        if self
+            .projection_floor(window.key.as_str())?
+            .is_some_and(|floor| !server_vv.includes_vv(&floor))
+        {
+            return Ok(None);
+        }
         let export = crate::sync::window::export_window_since_for(
             &self.vault,
             &window.key,
@@ -867,6 +897,36 @@ impl SyncClient {
             .into_result()?,
         );
         Ok(Some(answer))
+    }
+
+    /// Whether an owner's discard took rows from BASE window `window_key`.
+    fn discard_touched(&self, window_key: &str) -> std::result::Result<bool, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
+        crate::sync::window::discard_touched_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
+    }
+
+    /// The floor an owner's discard projection filed for BASE window
+    /// `window_key`, if one did.
+    fn projection_floor(
+        &self,
+        window_key: &str,
+    ) -> std::result::Result<Option<VersionVector>, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
+        crate::sync::window::projection_floor_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
     }
 
     /// `REPLACEMENT_REQUEST` frames asking the server for each of `windows` whole.
