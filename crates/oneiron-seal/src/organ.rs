@@ -131,13 +131,13 @@ impl Organ for SealOrgan {
             (VERB_INSPECT, INSPECT_SCHEMA),
             (VERB_PREPARE, PREPARE_SCHEMA),
         ]
-            .into_iter()
-            .map(|(name, schema)| VerbSpec {
-                name: name.to_owned(),
-                schema,
-                kinds: Vec::new(),
-            })
-            .collect()
+        .into_iter()
+        .map(|(name, schema)| VerbSpec {
+            name: name.to_owned(),
+            schema,
+            kinds: Vec::new(),
+        })
+        .collect()
     }
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
@@ -193,9 +193,12 @@ struct TsaArgs {
     policy_oid: Option<String>,
 }
 
-/// `seal.inspect` args: none (schema 1). PDF work needs no trust anchors.
+/// `seal.inspect` carries the caller's existing per-stream codec bound.
+/// PDF work needs no trust anchors.
 #[derive(Deserialize)]
-struct InspectArgs {}
+struct InspectArgs {
+    stream_decode_bytes: u64,
+}
 
 /// `seal.prepare` args (schema 1): the host's projection of the engine's
 /// preparation, lent scalars the ported pipeline takes as-is. The organ's
@@ -509,7 +512,11 @@ fn work_limits<'a>(
     ledger: &'a Arc<MemoryLedger>,
 ) -> WorkLimits<'a> {
     let _ = asker;
-    WorkLimits { ledger, observed }
+    WorkLimits {
+        ledger,
+        observed,
+        stream_decode_bytes: None,
+    }
 }
 
 /// The call's operation ledger and counts for the ported pipeline: the
@@ -536,11 +543,13 @@ fn inspect(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError>
         return Err(bad("seal.inspect is schema 1"));
     }
     let memory = ReplyMemory(call.asker());
-    let _args: InspectArgs = memory.args(call.args, "inspect args")?;
+    let args: InspectArgs = memory.args(call.args, "inspect args")?;
     let pdf = the_pdf(call)?;
     let asker = call.asker();
     let (operation, ledger) = pdf_work_operation(asker.clone())?;
-    let limits = work_limits(&asker, &operation.observed, &ledger);
+    let mut limits = work_limits(&asker, &operation.observed, &ledger);
+    limits.stream_decode_bytes =
+        Some(usize::try_from(args.stream_decode_bytes).unwrap_or(usize::MAX));
     let failed = |err: SealError| -> Result<Answer, OrganError> {
         let failure = InspectReply::Failed(Failure::of(err, Some(pdf), &memory)?);
         report(&failure, &operation.observed, &memory)
@@ -611,9 +620,9 @@ fn prepare(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError>
             WireValue::Checked(_) => 0,
             WireValue::Signature { image_ref } => image_ref.len(),
         };
-        if let Err(err) = admit(
-            ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)),
-        ) {
+        if let Err(err) =
+            admit(ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)))
+        {
             return failed(err);
         }
         let burned = match value {

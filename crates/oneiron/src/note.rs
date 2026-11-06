@@ -66,6 +66,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
+    recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 pub use tombstone_review::NoteTombstoneProposal;
@@ -312,11 +313,13 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
 pub(crate) use document_store::{
     DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };
+pub(crate) use saved::PreparedSavedNote;
 mod files;
 pub use files::{
     DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts,

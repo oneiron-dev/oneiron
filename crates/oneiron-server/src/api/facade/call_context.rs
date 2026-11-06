@@ -11,7 +11,7 @@
 use axum::http::{Extensions, HeaderMap, StatusCode};
 use oneiron::EntityId;
 use oneiron::authority::ActSurface;
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows};
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows, SigningRequestTransport};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::runtime_hooks::verb::VerbAskDrainPermit;
 
@@ -113,6 +113,7 @@ pub(crate) struct FacadeCall<'a> {
     /// the home an opened device asks (FIX 2905, FIX 2907). `None` for an
     /// owner-grade caller, and for an ingress that carries no per-call proof.
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    signing_request_transport: Option<SigningRequestTransport>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -151,6 +152,17 @@ impl<'a> FacadeCall<'a> {
             forwarded: (!auth.is_owner_grade())
                 .then(|| auth.forwarded_caller_proof_admitted(headers, extensions))
                 .flatten(),
+            signing_request_transport: Some(SigningRequestTransport::new(
+                extensions
+                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                    // Embedded requests use loopback:0 for locality, not a TCP peer.
+                    .filter(|peer| peer.0.port() != 0)
+                    .map(|peer| peer.0.ip()),
+                headers
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned),
+            )),
         }
     }
 
@@ -183,6 +195,7 @@ impl<'a> FacadeCall<'a> {
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
+            signing_request_transport: None,
         }
     }
 
@@ -224,6 +237,7 @@ impl<'a> FacadeCall<'a> {
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
+            signing_request_transport: None,
         }
     }
 
@@ -284,6 +298,23 @@ impl<'a> FacadeCall<'a> {
         self.surface
     }
 
+    /// Actual request or same-connection upgrade observations, for signing audit only.
+    pub(super) fn signing_request_transport(&self) -> Option<SigningRequestTransport> {
+        self.signing_request_transport.clone()
+    }
+
+    /// Binds the actual upgrade observations from this call's own socket.
+    /// An in-process call or resumed drain leaves them absent.
+    pub(crate) fn with_signing_request_transport(
+        self,
+        transport: Option<SigningRequestTransport>,
+    ) -> Self {
+        Self {
+            signing_request_transport: transport,
+            ..self
+        }
+    }
+
     /// Who this call asks an opened device's home for (FIX 2905): an
     /// owner-grade credential is the device's owner; a narrower one is
     /// judged at the home on the holder proof its ingress carried, and with
@@ -342,6 +373,7 @@ impl<'a> FacadeCall<'a> {
             subscription: self.subscription.clone(),
             surface: self.surface,
             forwarded: self.forwarded.clone(),
+            signing_request_transport: self.signing_request_transport.clone(),
         }
     }
 }
@@ -361,6 +393,7 @@ pub(super) struct OwnedFacadeCall {
     subscription: Option<String>,
     surface: ActSurface,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    signing_request_transport: Option<SigningRequestTransport>,
 }
 
 impl OwnedFacadeCall {
@@ -378,6 +411,7 @@ impl OwnedFacadeCall {
             subscription: self.subscription.clone(),
             surface: self.surface,
             forwarded: self.forwarded.clone(),
+            signing_request_transport: self.signing_request_transport.clone(),
         }
     }
 }

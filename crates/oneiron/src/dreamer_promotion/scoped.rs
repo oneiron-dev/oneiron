@@ -20,6 +20,27 @@ pub fn promote_scoped_consolidation(
     write: ScopedConsolidationWrite,
     checker: Option<&BoundedAutoChecker>,
 ) -> Result<PromotionOutcome> {
+    promote_scoped_consolidation_inner(vault, run, write, checker, false)
+}
+
+/// The owned attempt sink co-commits materialized outputs with their claim or
+/// attachment. Custom sinks retain the public door's unrecorded behavior.
+pub(super) fn promote_scoped_consolidation_recording_outputs(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    write: ScopedConsolidationWrite,
+    checker: Option<&BoundedAutoChecker>,
+) -> Result<PromotionOutcome> {
+    promote_scoped_consolidation_inner(vault, run, write, checker, true)
+}
+
+fn promote_scoped_consolidation_inner(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    write: ScopedConsolidationWrite,
+    checker: Option<&BoundedAutoChecker>,
+    record_outputs: bool,
+) -> Result<PromotionOutcome> {
     write.fence.validate_run(run)?;
     if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
@@ -84,6 +105,7 @@ pub fn promote_scoped_consolidation(
             &evidence,
             checker,
             &bound,
+            record_outputs,
         ) {
             Ok(stored) => {
                 answers.extend(stored);
@@ -149,6 +171,7 @@ pub fn promote_scoped_consolidation(
             Some(&write.fence),
             Some(&evidence),
             &bound,
+            record_outputs,
         ) {
             Ok(ClaimApprovalStatus::Auto) => {
                 stood.insert(id, evidence_refs);
@@ -268,6 +291,7 @@ fn attach_evidence(
     evidence: &VerifiedEvidenceSet,
     checker: Option<&BoundedAutoChecker>,
     answers: &[ResolvedConflictOutput],
+    record_outputs: bool,
 ) -> Result<Vec<ResolvedConflictOutput>> {
     let source = evidence.meet();
     let envelope = WriteEnvelope::with_lineage(
@@ -368,6 +392,14 @@ fn attach_evidence(
             return Err(Error::InvalidClaimBody(
                 "evidence attachment altered its head",
             ));
+        }
+        if record_outputs {
+            crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
+                vault,
+                txn,
+                run.attempt_id,
+                &[head],
+            )?;
         }
         Ok(stored)
     });
@@ -542,6 +574,7 @@ fn attach_ref(
         )?;
         return Ok(stored_answers);
     }
+    let at = run.now_ms / 1_000;
     if vault
         .store
         .port_edge_get(txn, &source, EdgeKind::Supports, &head)?
@@ -551,7 +584,7 @@ fn attach_ref(
         // Gate above; provenance policy and both edge indexes co-commit below.
         vault
             .batch_in()
-            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, run.now_ms)
+            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, at)
             .apply(txn)?;
     }
     vault.write_edge_provenance_in_txn(
@@ -561,7 +594,7 @@ fn attach_ref(
             subject: &edge,
             body: &record,
             actor_class: run.agent_actor.actor_class(),
-            learned_at: run.now_ms,
+            learned_at: at,
             explicit_prior: None,
             scope_project: None,
             imported_evidence: None,
