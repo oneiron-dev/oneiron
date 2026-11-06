@@ -26,6 +26,9 @@
 //! the call on (outside a runtime there is none at all), so there the call
 //! runs on the server's own [`CallRuntime`]. Every door of such a host takes
 //! it, so no pooled connection belongs to a thread that is waiting.
+//! The recall's cancellation flag also wakes this wait. A ready cancellation
+//! wins before the call is polled; an in-flight call is dropped locally, as
+//! when its deadline expires, without claiming the provider stopped.
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -205,6 +208,7 @@ impl RecallRerankHost for ServedRerank {
             };
             context
         });
+        let cancel = run.work_context().cancel;
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
@@ -227,13 +231,20 @@ impl RecallRerankHost for ServedRerank {
         );
         // The timer is made inside the runtime that drives it: a sync door's
         // thread has none of its own.
-        let answered = match answer_at {
-            Some(at) => self
-                .runtime
-                .block_on(async move { tokio::time::timeout_at(at.into(), generate).await })
-                .map_err(|_| unavailable("the reranker did not answer before the deadline"))?,
-            None => self.runtime.block_on(generate),
-        };
+        let answered = self.runtime.block_on(async move {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(unavailable("the reranker call was cancelled")),
+                answered = async move {
+                    match answer_at {
+                        Some(at) => tokio::time::timeout_at(at.into(), generate)
+                            .await
+                            .map_err(|_| unavailable("the reranker did not answer before the deadline")),
+                        None => Ok(generate.await),
+                    }
+                } => answered,
+            }
+        })?;
         let response = answered.map_err(|error| match error {
             _ if egress.refused() => {
                 unavailable("a row became device-only while the reranker was called")
