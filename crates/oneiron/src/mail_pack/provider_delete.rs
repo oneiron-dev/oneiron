@@ -44,9 +44,24 @@ pub(super) fn apply_provider_delete(
     let outcome = match row.on_provider_delete {
         MailProviderDeleteSetting::KeepInMemory => ProviderDeleteOutcome::Kept,
         MailProviderDeleteSetting::ForgetToo => {
+            let artifacts = super::attachments::message_artifacts(vault, source, provider_id)?;
+            // A held record refuses before anything goes: a forget a legal
+            // hold stops leaves the copy whole and live, for the next try,
+            // never half erased.
+            {
+                let txn = vault.store.env.read_txn()?;
+                let mut ids = artifacts.clone();
+                ids.extend(occurrence.messages.iter().copied());
+                ids.push(occurrence.turn);
+                vault.store.reject_legal_holds_in_txn(
+                    &txn,
+                    &ids,
+                    &crate::store::legal_hold::HoldActor::UNATTRIBUTED,
+                )?;
+            }
             // The opened attachments' artifacts go first: their rows name
             // them, and the message's erase removes the rows.
-            for artifact in super::attachments::message_artifacts(vault, source, provider_id)? {
+            for artifact in artifacts {
                 vault.delete_entity_with_reason(&artifact, DeleteReason::UserDelete)?;
             }
             for message in &occurrence.messages {
