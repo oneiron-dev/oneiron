@@ -38139,7 +38139,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 37
      }
     },
     {
@@ -39191,14 +39191,17 @@
       "PolicySource",
       "SensitivityBand",
       "SensitivityName",
+      "SheetAnswerLimit",
       "SourceTrust",
-      "SourceTrustRow"
+      "SourceTrustRow",
+      "TeacherProbeHolderFloor",
+      "TeacherProbePolicy"
      ],
      "path": "src/gate/policy_manifest_doors/types.rs",
      "purpose": "Typed DEC-0005 policy axes",
      "surface": {
       "enum": 7,
-      "struct": 15
+      "struct": 18
      }
     },
     {
@@ -39476,7 +39479,7 @@
      "path": "src/gate/resolution/manifest_memo.rs",
      "purpose": "Decodes a store keeps between policy resolutions: a byte-charged LRU (FIX 5987)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -144508,6 +144511,7 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "SheetAnswerLimit",
       "ShownCustomerHold",
       "SieveEvidenceCursor",
       "SieveEvidenceRequest",
@@ -144898,6 +144902,8 @@
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
+      "TeacherProbeHolderFloor",
+      "TeacherProbePolicy",
       "TeamAxis",
       "TeamBindingView",
       "TeamPlan",
@@ -145260,7 +145266,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1135,
-      "struct": 3436
+      "struct": 3439
      }
     },
     {
