@@ -26,18 +26,26 @@
 //! of its reports. A step row stamps each owner of its step (FIX 6659): its
 //! actor, its subject and, once the step logs, its terminal claim. An erase
 //! of any of them takes the row, and none is kept for an owner already gone.
+//! Each stamp is mirrored by an owner witness keyed apart from the row (FIX
+//! 6734), so the row is still taken when it no longer decodes.
 
+mod ownership;
+mod receipts;
 mod response;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
+pub(crate) use self::ownership::blocked_capture_witness_owner;
+
 // FIX 6708: both row kinds in checkpoint images, as row-held responses.
-pub(crate) use self::response::{blocked_capture_owners, blocked_capture_scan};
+pub(crate) use self::response::{
+    blocked_capture_owners, blocked_capture_owners_in_txn, blocked_capture_scan,
+};
 
 /// Receipt rows. Key: the receipt.
 const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
@@ -46,6 +54,14 @@ const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
 /// Step rows, in the same table. Key: [`StepSourceKey`].
 const STEPS: SideTable<StepSourceKey, StepReplaySource, Named> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
+
+/// Whether a masked copy of a `COACH_BLOCKED_SOURCE` row still decodes as
+/// either of its two current stored values, for the historical lift sweep
+/// (FIX 2680): a receipt row's replay source, or a step row's kept request.
+pub(crate) fn coach_blocked_source_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BlockedReplaySource, Named>(bytes)
+        || crate::side_table::decodes::<StepReplaySource, Named>(bytes)
+}
 
 /// The byte a step row's key leads with. A receipt row's key is the
 /// receipt's 16 bytes alone, so the two never share a key's length.
@@ -303,7 +319,7 @@ pub(super) fn put_in_txn(
         sent.kept = None;
     }
     if source.kept_mut().is_none() {
-        return SOURCE.put(vault, txn, receipt, &source);
+        return receipts::put_in_txn(vault, txn, receipt, &source);
     }
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     match put_kept_in_txn(vault, &mut savepoint, receipt, source.clone()) {
@@ -324,7 +340,7 @@ pub(super) fn put_in_txn(
             {
                 sent.kept = None;
             }
-            SOURCE.put(vault, txn, receipt, &source)
+            receipts::put_in_txn(vault, txn, receipt, &source)
         }
     }
 }
@@ -342,7 +358,7 @@ fn put_kept_in_txn(
     if let Some(kept) = source.kept_mut() {
         kept.stored = canonical_hash(&kept.request)?;
     }
-    SOURCE.put(vault, txn, receipt, &source)
+    receipts::put_in_txn(vault, txn, receipt, &source)
 }
 
 /// The replay source the report `receipt` was filed with, if any. A row
@@ -439,7 +455,14 @@ fn keep_durable_step(
         STEPS.admit(vault, txn, &key, &mut row)?;
         let mut row = STEPS.decode_value(&STEPS.encode_value(&row)?)?;
         row.request.stored = canonical_hash(&row.request.request)?;
-        STEPS.put(vault, txn, &key, &row)
+        if STEPS.contains(&vault.store, &*txn, &key)? {
+            ownership::remove_capture_owners_in_txn(&vault.store, txn, &key)?;
+        }
+        STEPS.put(vault, txn, &key, &row)?;
+        // The capture's owner witnesses (FIX 6734): its actual actor and subject, no claim
+        // yet. A witness put that fails rolls the capture back with it; outside, the
+        // capture stays best effort as before.
+        ownership::put_capture_owners_in_txn(&vault.store, txn, &key, row.actor, row.subject)
     })
 }
 
@@ -480,10 +503,12 @@ fn step_prefix(attempt: AttemptId, step: &[u8; 32]) -> Vec<u8> {
 /// Binds the terminal claim `claim` that logs `step` of `attempt` to every
 /// request kept for the step (FIX 6659), each lease and call of it, in the
 /// claim's own write, so an erase of the claim takes them once the
-/// step-state row that names it is gone. A row that does not decode names
-/// no owner and stays as it is. A binding that fails takes the step's kept
-/// requests instead, so none is kept unbound: the claim files as before,
-/// and the step's replay is then not exact.
+/// step-state row that names it is gone. A row that does not decode keeps
+/// its bytes; one whose full key still names this exact step gains the
+/// claim's witness (FIX 6734), never a guessed actor or subject. A binding
+/// that fails takes the step's kept requests and their witnesses instead,
+/// so none is kept unbound: the claim files as before, and the step's
+/// replay is then not exact.
 pub(crate) fn bind_step_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -508,8 +533,9 @@ pub(crate) fn bind_step_claim_in_txn(
     }
 }
 
-/// Stamps `claim` on each step row of `step` of `attempt` that decodes. A
-/// row one of whose owners is gone in this write is taken instead of bound
+/// Stamps `claim` on each step row of `step` of `attempt` that decodes, and witnesses it
+/// for every valid-keyed row even when the row itself does not decode (FIX 6734). A row one
+/// of whose owners is gone in this write is taken with all its witnesses instead of bound
 /// (FIX 6252).
 fn bind_claim_in_txn(
     vault: &Vault,
@@ -520,21 +546,48 @@ fn bind_claim_in_txn(
 ) -> Result<()> {
     let mut bound = Vec::new();
     let mut gone = Vec::new();
+    let mut opaque = Vec::new();
     for row in STEPS.iter_raw_from(&vault.store, &*wtxn, &step_prefix(attempt, step))? {
         let (key, bytes) = row?;
-        if let Some(key) = StepSourceKey::decode_key(&key)
-            && let Ok(mut source) = STEPS.decode_value(&bytes)
-        {
-            source.claim = Some(claim);
-            if crate::llm::owner_gone_in_txn(vault, &*wtxn, &source.owners())? {
-                gone.push(key);
-            } else {
-                bound.push((key, source));
+        // The full key must decode and name this exact step (FIX 6734): a prefix hit
+        // alone never gains a witness.
+        let Some(key) = StepSourceKey::decode_key(&key) else {
+            continue;
+        };
+        if key.attempt != attempt || key.step != *step {
+            continue;
+        }
+        match STEPS.decode_value(&bytes) {
+            Ok(mut source) => {
+                source.claim = Some(claim);
+                if crate::llm::owner_gone_in_txn(vault, &*wtxn, &source.owners())? {
+                    gone.push(key);
+                } else {
+                    bound.push((key, source));
+                }
             }
+            // Valid-keyed but undecodable: the terminal claim is witnessed below, never
+            // a guessed actor or subject; their rows stand as written.
+            Err(_) => opaque.push(key),
         }
     }
     for key in &gone {
         STEPS.delete(&vault.store, wtxn, key)?;
+        ownership::remove_capture_owners_in_txn(&vault.store, wtxn, key)?;
+    }
+    let keys: Vec<_> = bound
+        .iter()
+        .map(|(key, _)| key)
+        .chain(opaque.iter())
+        .collect();
+    for key in &keys {
+        ownership::replace_claim_in_txn(&vault.store, wtxn, key, claim)?;
+    }
+    // The claim owns every retained image of these exact captures, including
+    // an earlier value no longer named by the current binding.
+    let history = response::bind_capture_claim_in_txn(vault, wtxn, &keys, claim)?;
+    if !history.is_empty() {
+        vault.store.key_custody().journal_body_history(history)?;
     }
     for (key, source) in &bound {
         STEPS.put(vault, wtxn, key, source)?;
@@ -543,7 +596,8 @@ fn bind_claim_in_txn(
 }
 
 /// Takes every request kept for `step` of `attempt` (FIX 6659), each lease
-/// generation and call of it, in `wtxn`.
+/// generation and call of it, with all their owner witnesses (FIX 6734), in
+/// `wtxn`.
 pub(crate) fn remove_step_sources_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -551,7 +605,7 @@ pub(crate) fn remove_step_sources_in_txn(
     step: &[u8; 32],
 ) -> Result<()> {
     STEPS.delete_from(&vault.store, wtxn, &step_prefix(attempt, step))?;
-    Ok(())
+    ownership::remove_step_owners_in_txn(&vault.store, wtxn, attempt, step)
 }
 
 /// An erase of `actor` takes, in the erase's own writer, each receipt row of
@@ -559,8 +613,9 @@ pub(crate) fn remove_step_sources_in_txn(
 /// step row that stamps it as an owner (FIX 6659): a call it made, a step
 /// about it, or one its terminal claim logged, with the request each keeps,
 /// and revokes each custody record the side-row wall minted from a row it
-/// takes (FIX 6710). A row that does not decode names no owner and stays as
-/// it is.
+/// takes (FIX 6710). A row that does not decode is still taken when a
+/// witness names its exact receipt or step key (FIX 6734); a deleted capture's
+/// witnesses go with it, every role. A row no owner names stays as it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -595,13 +650,33 @@ pub(crate) fn erase_blocked_source_actor_as_in_txn(
             steps.push(step);
         }
     }
+    // The actor's witnesses name its captures even when their rows no longer decode
+    // (FIX 6734); unioned with the decoded selection, deduped by key.
+    for step in ownership::steps_of_owner_in(&vault.store, &*wtxn, actor)? {
+        if !steps.contains(&step) {
+            steps.push(step);
+        }
+    }
+    for receipt in ownership::receipts_of_owner_in(&vault.store, &*wtxn, actor)? {
+        if !receipts.contains(&receipt) {
+            receipts.push(receipt);
+        }
+    }
     for receipt in &receipts {
-        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
-        SOURCE.delete(&vault.store, wtxn, receipt)?;
+        if SOURCE.contains(&vault.store, &*wtxn, receipt)? {
+            revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
+            SOURCE.delete(&vault.store, wtxn, receipt)?;
+        }
+        ownership::remove_receipt_owners_in_txn(&vault.store, wtxn, receipt)?;
     }
     for step in &steps {
-        revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step), act)?;
-        STEPS.delete(&vault.store, wtxn, step)?;
+        // A capture already gone leaves its witnesses behind; they go without minting a
+        // custody revoke for a row that is not there.
+        if STEPS.contains(&vault.store, &*wtxn, step)? {
+            revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step), act)?;
+            STEPS.delete(&vault.store, wtxn, step)?;
+        }
+        ownership::remove_capture_owners_in_txn(&vault.store, wtxn, step)?;
     }
     Ok(())
 }
@@ -624,8 +699,9 @@ fn revoke_lifted_in_txn(
 /// A hard non-erase delete of `entity` takes the requests kept for it (FIX
 /// 6711), each step row that stamps it as an owner, in `wtxn`: the rows a
 /// soft delete keeps for a restore. The receipt rows stay, as does the
-/// actor scrub, with erase. A row that does not decode names no owner and
-/// stays as it is.
+/// actor scrub, with erase. A row that does not decode is still dropped
+/// when a witness names its exact key (FIX 6734); one no owner names stays
+/// as it is.
 pub(crate) fn drop_blocked_source_steps_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -641,8 +717,16 @@ pub(crate) fn drop_blocked_source_steps_in_txn(
             steps.push(step);
         }
     }
+    // Witnesses name the entity's captures even when their rows no longer decode
+    // (FIX 6734); unioned with the decoded selection, deduped by key.
+    for step in ownership::steps_of_owner_in(store, &*wtxn, entity)? {
+        if !steps.contains(&step) {
+            steps.push(step);
+        }
+    }
     for step in &steps {
         STEPS.delete(store, wtxn, step)?;
+        ownership::remove_capture_owners_in_txn(store, wtxn, step)?;
     }
     Ok(())
 }

@@ -14,7 +14,7 @@ use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf, Value};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
-use crate::host::{CallMeasure, CallSize};
+use crate::host::{CallMeasure, CallSize, LentRegion, OrganHost};
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
 use crate::spec::{LentInput, OrganCall};
@@ -30,23 +30,69 @@ impl HostedSealer<'_> {
         lent: Vec<LentInput>,
         handlers: &AskHandlers<'_>,
     ) -> Result<(Value, OrganOutcome), EsignSealerError> {
-        let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
-        let mut measure = CallMeasure::default();
-        let called = self.host.call_sized_with(
-            self.vault,
-            call,
-            lent,
-            handlers,
-            call_size(lent_bytes),
-            &mut measure,
-        );
-        measure_frames(self.vault, &measure);
-        let mut outcome = called.map_err(super::host_failure)?;
-        let report = std::mem::replace(&mut outcome.report, Value::Nil);
-        let (reply, observed) = Observed::split(report);
-        observed.measure(self.vault);
-        Ok((reply, outcome))
+        self.sized_call_measured(call, lent, handlers, &mut CallMeasure::default())
     }
+
+    pub(super) fn sized_call_measured(
+        &self,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        handlers: &AskHandlers<'_>,
+        measure: &mut CallMeasure,
+    ) -> Result<(Value, OrganOutcome), EsignSealerError> {
+        sized_call(self.host, self.vault, call, lent, handlers, measure)
+    }
+}
+
+/// The shared call path needs a host and a vault, not a signing identity.
+pub(super) fn sized_call(
+    host: &OrganHost,
+    vault: &Vault,
+    call: OrganCall,
+    lent: Vec<LentInput>,
+    handlers: &AskHandlers<'_>,
+    measure: &mut CallMeasure,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
+    let called = host.call_sized_with(vault, call, lent, handlers, call_size(lent_bytes), measure);
+    read_sized_call(vault, called, measure)
+}
+
+/// The region and absolute deadline were admitted by this caller, not
+/// reconstructed from a new duration here.
+pub(super) fn sized_region_call_until(
+    host: &OrganHost,
+    vault: &Vault,
+    call: OrganCall,
+    input: LentRegion,
+    handlers: &AskHandlers<'_>,
+    deadline: std::time::Instant,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    let size = call_size(input.len());
+    let mut measure = CallMeasure::default();
+    let called = host.call_sized_region_until_with(
+        vault,
+        call,
+        input,
+        handlers,
+        size,
+        &mut measure,
+        deadline,
+    );
+    read_sized_call(vault, called, &measure)
+}
+
+fn read_sized_call(
+    vault: &Vault,
+    called: Result<OrganOutcome, crate::error::HostError>,
+    measure: &CallMeasure,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    measure_frames(vault, measure);
+    let mut outcome = called.map_err(super::host_failure)?;
+    let report = std::mem::replace(&mut outcome.report, Value::Nil);
+    let (reply, observed) = Observed::split(report);
+    observed.measure(vault);
+    Ok((reply, outcome))
 }
 
 /// What a seal or verification call books, and the memory grant of its
@@ -60,7 +106,7 @@ const CALL_BASE_BYTES: u64 = 256 << 20;
 
 /// The size of a call that lends `lent` bytes. The host never gives it
 /// less than the install grant.
-fn call_size(lent: u64) -> CallSize {
+pub(super) fn call_size(lent: u64) -> CallSize {
     let bytes = lent
         .saturating_mul(CALL_BYTES_PER_LENT_BYTE)
         .saturating_add(CALL_BASE_BYTES);
@@ -74,7 +120,7 @@ fn call_size(lent: u64) -> CallSize {
 /// (`observed`). A report without one counted nothing.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct Observed {
+pub(super) struct Observed {
     pdf_objects: u64,
     raw_definitions: u64,
     structural_work: u64,
@@ -93,7 +139,7 @@ struct Observed {
 
 impl Observed {
     /// The report's outcome, with the `observed` entry beside it taken out.
-    fn split(report: Value) -> (Value, Self) {
+    pub(super) fn split(report: Value) -> (Value, Self) {
         match report.into_map() {
             Ok(entries) => {
                 let (observed, outcome): (Vec<_>, Vec<_>) = entries
@@ -110,7 +156,7 @@ impl Observed {
     }
 
     /// Asks each row the counts crossed.
-    fn measure(&self, vault: &Vault) {
+    pub(super) fn measure(&self, vault: &Vault) {
         for (row, measured) in [
             (EngineLimit::SealPdfObjects, self.pdf_objects),
             (EngineLimit::SealRawDefinitions, self.raw_definitions),
@@ -137,7 +183,7 @@ impl Observed {
 
 /// Asks the frame rows what the call's frames carried, as encoded: the
 /// largest the host sent, and the largest the organ sent back.
-fn measure_frames(vault: &Vault, measure: &CallMeasure) {
+pub(super) fn measure_frames(vault: &Vault, measure: &CallMeasure) {
     vault.measure_limit(EngineLimit::SealCallFrameBytes, measure.largest_sent_frame);
     vault.measure_limit(
         EngineLimit::SealReplyFrameBytes,

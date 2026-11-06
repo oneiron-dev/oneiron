@@ -206,6 +206,7 @@ pub(crate) fn erase_room_side_rows(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(&mut heed::RwTxn<'_>, &EntityId) -> Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
@@ -214,7 +215,7 @@ pub(crate) fn erase_room_side_rows(
         Some(crate::registry::ENTITY_TYPE_CONVERSATION) => delete_room_metadata(store, txn, *id)?,
         Some(crate::registry::ENTITY_TYPE_TURN) => {
             // A root's audience edits go with it (FIX 5639).
-            super::audience_edit_guard::tear_root_edits_in_txn(store, txn, id)?;
+            super::audience_edit_guard::tear_root_edits_in_txn(store, txn, id, deindex)?;
             let room = match TURNS.get(store, txn, id)? {
                 Some(turn) => super::liveness::is_thread_root(&turn)
                     .then(|| EntityId::from_hex(&turn.room_id))

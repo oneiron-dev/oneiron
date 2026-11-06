@@ -3,10 +3,10 @@
 //! The engine owns the seat contract (`oneiron::dispatch_byoa::official_seats`);
 //! this module is the host half: owner settings in, a sign-in surface out, a
 //! local executor for the official signed-in CLIs, and the Dreamer executor
-//! that dispatches admitted work onto a seat. No type here can hold a vendor
-//! token either: settings carry labels and custody handles, the surface
-//! carries an argv or a browser URL the PERSON runs, and the control plane
-//! holds nothing.
+//! that dispatches admitted work onto a seat. Public settings carry labels
+//! and custody handles, and the surface carries an argv or a browser URL
+//! the PERSON runs. The private SIWC module keeps verified credentials only
+//! in a protected runtime-local file; the control plane holds nothing.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -40,6 +40,7 @@ use super::secret_destinations::RunSecretDestinations;
 
 mod drain;
 mod runner_work;
+pub(crate) mod siwc;
 mod surface;
 
 use drain::{Drain, drain_spooled};
@@ -51,7 +52,7 @@ pub use surface::{
 /// Env names that would hand the official CLI a credential from OUR process
 /// instead of the login the person made in the CLI's own store. The seat
 /// runs on the person's sign-in, so these never cross into the child.
-const SEAT_ENV_REMOVED: [&str; 5] = [
+pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",

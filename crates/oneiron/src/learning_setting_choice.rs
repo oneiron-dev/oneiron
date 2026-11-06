@@ -24,6 +24,7 @@ use crate::learning_setting::{
     SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
     read_scopes_in_txn, scoped_row_key,
 };
+use crate::learning_setting_doors::{LearningSettingMode, LearningSettingScope};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::team::spawn_need::SpawnNeed;
@@ -100,6 +101,45 @@ pub struct ChoiceRow {
     pub at: u64,
     /// The owner's own reason, kept as written.
     pub why: String,
+}
+
+/// The owner row that supplied one field of a live plan's `asked` need.
+/// Captured beside its value, not resolved again when the receipt is read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnChoiceSource {
+    /// `model`, `width`, `pattern` or `budget`.
+    pub key: String,
+    pub mode: LearningSettingMode,
+    pub scope: LearningSettingScope,
+    /// The goal or project id in hex, or the task type's node; no reference
+    /// for a vault row. Type rows apply at every tree version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_ref: Option<String>,
+    /// Unix seconds the selected row was set, as read for this plan.
+    pub at: u64,
+}
+
+impl SpawnChoiceSource {
+    fn new(choice: SpawnChoice, mode: SettingMode, scope: &SettingScope, at: u64) -> Self {
+        let (scope, scope_ref) = match scope {
+            SettingScope::Vault => (LearningSettingScope::Vault, None),
+            SettingScope::Goal(goal) => (LearningSettingScope::Goal, Some(goal.to_hex())),
+            SettingScope::Project(project) => {
+                (LearningSettingScope::Project, Some(project.to_hex()))
+            }
+            SettingScope::Type(type_ref) => (
+                LearningSettingScope::TaskType,
+                Some(type_ref.node_id.clone()),
+            ),
+        };
+        Self {
+            key: choice.as_str().to_owned(),
+            mode: mode.into(),
+            scope,
+            scope_ref,
+            at,
+        }
+    }
 }
 
 /// Owner choice rows, keyed as the numeric rows are: `choice "\0" mode`, then
@@ -309,7 +349,7 @@ fn rows_in_order(
     txn: &heed::RoTxn<'_>,
     scopes: &[SettingScope],
     choice: SpawnChoice,
-) -> Result<Vec<SpawnOverride<ChoiceValue>>> {
+) -> Result<Vec<(SpawnOverride<ChoiceValue>, SpawnChoiceSource)>> {
     let mut out = Vec::new();
     for mode in [SettingMode::Pin, SettingMode::Seed] {
         for scope in scopes {
@@ -321,14 +361,16 @@ fn rows_in_order(
             if row.value.choice() != choice {
                 continue;
             }
-            out.push(match (mode, row.weight_runs) {
+            let source = SpawnChoiceSource::new(choice, mode, scope, row.at);
+            let value = match (mode, row.weight_runs) {
                 (SettingMode::Pin, _) => SpawnOverride::Pin { value: row.value },
                 (SettingMode::Seed, Some(weight_runs)) => SpawnOverride::Seed {
                     value: row.value,
                     weight_runs,
                 },
                 (SettingMode::Seed, None) => continue,
-            });
+            };
+            out.push((value, source));
         }
     }
     Ok(out)
@@ -354,9 +396,10 @@ pub(crate) fn lay_owner_choices_in_txn(
     scopes: &[SettingScope],
     seats: &[ModelId],
     need: &mut SpawnNeed,
-) -> Result<()> {
+) -> Result<Vec<SpawnChoiceSource>> {
+    let mut sources = Vec::new();
     let width = need.pinned_width();
-    lay(
+    sources.extend(lay(
         &mut need.pattern,
         rows_in_order(store, txn, scopes, SpawnChoice::Pattern)?,
         |value| match value {
@@ -364,9 +407,9 @@ pub(crate) fn lay_owner_choices_in_txn(
             _ => None,
         },
         |pattern| width.is_none_or(|width| pattern.admits_width(width)),
-    );
+    ));
     let pattern = need.pinned_pattern();
-    lay(
+    sources.extend(lay(
         &mut need.width,
         rows_in_order(store, txn, scopes, SpawnChoice::Width)?,
         |value| match value {
@@ -374,12 +417,12 @@ pub(crate) fn lay_owner_choices_in_txn(
             _ => None,
         },
         |width| pattern.is_none_or(|pattern| pattern.admits_width(*width)),
-    );
+    ));
     let call_pinned_model = need.pinned_model().is_some();
     // Only a seed waits on a seat: a pin is the owner's fixed value.
     let models = rows_in_order(store, txn, scopes, SpawnChoice::Model)?
         .into_iter()
-        .filter(|row| match row {
+        .filter(|(row, _)| match row {
             SpawnOverride::Seed {
                 value: ChoiceValue::Model(model),
                 ..
@@ -387,7 +430,7 @@ pub(crate) fn lay_owner_choices_in_txn(
             _ => true,
         })
         .collect();
-    lay(
+    sources.extend(lay(
         &mut need.model,
         models,
         |value| match value {
@@ -395,8 +438,8 @@ pub(crate) fn lay_owner_choices_in_txn(
             _ => None,
         },
         |_| true,
-    );
-    lay(
+    ));
+    sources.extend(lay(
         &mut need.budget_cap_units,
         rows_in_order(store, txn, scopes, SpawnChoice::Budget)?,
         |value| match value {
@@ -404,11 +447,11 @@ pub(crate) fn lay_owner_choices_in_txn(
             _ => None,
         },
         |_| true,
-    );
-    if call_pinned_model {
-        return Ok(());
+    ));
+    if !call_pinned_model {
+        require_pinned_model(need, seats)?;
     }
-    require_pinned_model(need, seats)
+    Ok(sources)
 }
 
 /// The owner's model pin, once laid, needs an offered seat (FIX 10011): a
@@ -431,26 +474,56 @@ fn require_pinned_model(need: &SpawnNeed, seats: &[ModelId]) -> Result<()> {
 /// call's seed only a pin, over the call's pin nothing.
 fn lay<T>(
     field: &mut Option<SpawnOverride<T>>,
-    rows: Vec<SpawnOverride<ChoiceValue>>,
+    rows: Vec<(SpawnOverride<ChoiceValue>, SpawnChoiceSource)>,
     take: impl Fn(ChoiceValue) -> Option<T>,
     admits_pin: impl Fn(&T) -> bool,
-) {
+) -> Option<SpawnChoiceSource> {
     if field.as_ref().is_some_and(SpawnOverride::is_pin) {
-        return;
+        return None;
     }
     let call_seeded = field.is_some();
-    let found = rows.into_iter().find_map(|row| match row {
-        SpawnOverride::Pin { value } => take(value)
-            .filter(|value| admits_pin(value))
-            .map(|value| SpawnOverride::Pin { value }),
-        SpawnOverride::Seed { .. } if call_seeded => None,
-        SpawnOverride::Seed { value, weight_runs } => {
-            take(value).map(|value| SpawnOverride::Seed { value, weight_runs })
-        }
+    let found = rows.into_iter().find_map(|(row, source)| {
+        let value = match row {
+            SpawnOverride::Pin { value } => take(value)
+                .filter(|value| admits_pin(value))
+                .map(|value| SpawnOverride::Pin { value }),
+            SpawnOverride::Seed { .. } if call_seeded => None,
+            SpawnOverride::Seed { value, weight_runs } => {
+                take(value).map(|value| SpawnOverride::Seed { value, weight_runs })
+            }
+        };
+        value.map(|value| (value, source))
     });
-    if found.is_some() {
-        *field = found;
-    }
+    let (value, source) = found?;
+    *field = Some(value);
+    Some(source)
+}
+
+/// Read the owner's budget beneath an unplanned spawn with no explicit cap.
+/// The caller keeps its original request identity and admits this same result
+/// through the ordinary launch budget path; this is not a spend grant.
+pub(crate) fn owner_spawn_budget_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &crate::task_type::TaskTypeRef,
+) -> Result<Option<u64>> {
+    let type_ref = crate::learning::TypeRef::from(type_ref);
+    let scopes = read_scopes_in_txn(vault, txn, project, Some(&type_ref))?;
+    let mut budget = None;
+    let _ = lay(
+        &mut budget,
+        rows_in_order(&vault.store, txn, &scopes, SpawnChoice::Budget)?,
+        |value| match value {
+            ChoiceValue::Budget(units) => Some(units),
+            _ => None,
+        },
+        |_| true,
+    );
+    Ok(crate::agent_dispatch::resolved_budget_ask(
+        budget.as_ref(),
+        None,
+    ))
 }
 
 impl LivePlanRequest<'_> {
@@ -466,21 +539,24 @@ impl LivePlanRequest<'_> {
         &self,
         vault: &Vault,
         project: Option<EntityId>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Vec<SpawnChoiceSource>)> {
         let mut need = self.need.clone();
         let type_ref = crate::learning::TypeRef::from(&need.type_ref);
         let seats: Vec<ModelId> = self.seats.iter().map(|seat| seat.model.clone()).collect();
-        {
+        let sources = {
             let txn = vault.store.env.read_txn()?;
             let scopes = read_scopes_in_txn(vault, &txn, project, Some(&type_ref))?;
-            lay_owner_choices_in_txn(&vault.store, &txn, &scopes, &seats, &mut need)?;
-        }
-        Ok(Self {
-            need,
-            seats: self.seats,
-            skills: self.skills,
-            executor: self.executor,
-            decisions: self.decisions,
-        })
+            lay_owner_choices_in_txn(&vault.store, &txn, &scopes, &seats, &mut need)?
+        };
+        Ok((
+            Self {
+                need,
+                seats: self.seats,
+                skills: self.skills,
+                executor: self.executor,
+                decisions: self.decisions,
+            },
+            sources,
+        ))
     }
 }

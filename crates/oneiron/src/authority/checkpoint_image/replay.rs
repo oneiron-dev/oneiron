@@ -282,6 +282,8 @@ fold_state_fields!(
     refused_grant_travel,
     checkpoint_policy,
     home_pick,
+    origin_cut,
+    device_succession,
     conversation_training,
     conversation_training_vault,
     policy_settings,

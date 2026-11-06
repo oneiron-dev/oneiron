@@ -168,6 +168,16 @@ fn project(
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
         // late joins the used chain, though both came after the run froze.
+        let fields = super::judge_binding::with_workflow_judge_in_txn(
+            vault,
+            txn,
+            attempt_receipt,
+            fields.clone(),
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a workflow's Done judge was not joined; its credit keeps the frozen judge");
+            fields.clone()
+        });
         let fields = joined_fields_in_txn(
             vault,
             txn,
@@ -175,7 +185,7 @@ fn project(
             &outcome.receipt,
             &outcome.axis,
             outcome.goal_revision.as_deref(),
-            fields.clone(),
+            fields,
         )?;
         if let Some(previous) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? {
             if previous.anchor != anchor
@@ -305,7 +315,6 @@ fn project(
                 vault,
                 txn,
                 subject,
-                Some(fields.executor.as_str()),
                 attempt_receipt,
             )? {
                 person_share = Some(person_share.map_or(share, |held| held.max(share)));
@@ -313,9 +322,8 @@ fn project(
         }
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
-            let (success, weight) = effective_observation_in_txn(
-                vault, txn, &credit, &fields, &subject, success, weight,
-            )?;
+            let (success, weight) =
+                effective_observation_in_txn(vault, txn, &credit, &subject, success, weight)?;
             let learning = credit_evidence(&credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
         }
