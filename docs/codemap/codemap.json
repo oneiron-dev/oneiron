@@ -114695,7 +114695,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 57
      }
     },
     {
@@ -116045,7 +116045,17 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/pairing/redeem_backoff.rs",
+     "purpose": "The pairing redeem door's failure backoff, per client address (FIX 12477, Engine 11-06 08:17 = A)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -119483,7 +119493,7 @@
      "path": "src/connector_call_host/sent.rs",
      "purpose": "What one send of the call host came to, before the ledger scrubs its raw fields",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -120364,7 +120374,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ApiError",
@@ -120380,7 +120390,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 2,
-      "fn": 27,
+      "fn": 28,
       "re-export": 1,
       "struct": 4
      }
@@ -127783,7 +127793,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 673,
+     "files": 674,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127988,7 +127998,7 @@
     "error": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Structured HTTP API errors and their schema catalog"
     },
@@ -128294,9 +128304,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 49,
+   "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1599,
+   "source_files": 1600,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
