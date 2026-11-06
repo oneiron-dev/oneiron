@@ -3,10 +3,11 @@
 //!
 //! A [`QueueWork`] is a snapshot instruction, never a capability: the driver
 //! reads the queue again under its repository writer before it acts. A
-//! batch's [`QueueBatchDrive`] keeps only what the driver decided and must
-//! not decide twice: its custody pins, its overlap handoff, its survivor
-//! disposition and its last typed hold. Check status and receipts stay on
-//! the checker's own rows and are joined, never copied.
+//! batch's [`QueueBatchDrive`] keeps only what was decided and must not be
+//! decided twice: the driver's custody pins, overlap handoff and last typed
+//! hold, and the survivor disposition the owner's requeue or the driver's
+//! writes (FIX 4362). Check status and receipts stay on the checker's own
+//! rows and are joined, never copied.
 use serde::{Deserialize, Serialize};
 
 use crate::merge_queue::tested_types::QueueExportHold;
@@ -115,7 +116,8 @@ pub struct QueueDriverTarget {
     pub branch_subject: EntityId,
 }
 
-/// A quarantined batch's survivor disposition, decided once.
+/// A quarantined batch's survivor disposition, decided once by the owner's
+/// requeue or the driver's, whichever writes first (FIX 4362).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueSurvivorLink {
     /// No member survived.
@@ -144,7 +146,8 @@ pub struct QueueConflictLink {
     pub superseded: bool,
 }
 
-/// What the driver decided for one batch.
+/// What was decided for one batch: by the driver, and its survivor links
+/// by the owner's requeue too (FIX 4362).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueBatchDrive {
     /// Its staged commits carry keep-refs; false again once a settled
