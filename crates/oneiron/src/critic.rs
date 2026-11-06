@@ -71,7 +71,6 @@ impl SideKey for CritiqueArtifactKey {
     }
 }
 
-use crate::store::critic_lens::MAX_CATALOG_LENSES;
 use crate::store::critic_lens::MAX_CONTRACT_BYTES;
 use crate::store::critic_lens::MAX_DOMAIN_BYTES;
 use crate::store::critic_lens::MAX_ID_BYTES;
