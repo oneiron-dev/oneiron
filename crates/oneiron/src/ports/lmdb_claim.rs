@@ -149,6 +149,19 @@ impl Vault {
     }
 }
 
+/// Stored CLAIM bytes from the same reader position, not a history projection.
+/// Base bytes borrow the transaction; an overlay's owned row stays owned.
+/// Grammar and history validation still run through the canonical decoder.
+pub(crate) struct StoredClaimBody<'txn> {
+    raw: std::borrow::Cow<'txn, [u8]>,
+}
+
+impl StoredClaimBody<'_> {
+    pub(crate) fn body(&self) -> &[u8] {
+        &self.raw[ENTITY_METADATA_HEADER_LEN..]
+    }
+}
+
 impl Vault {
     pub(crate) fn claim_body_with_scope_memory_in_txn(
         &self,
@@ -177,12 +190,20 @@ impl Vault {
             crate::write_envelope::claim_body::ClaimBodyReadError,
         >,
     ) -> std::result::Result<Option<T>, crate::write_envelope::claim_body::ClaimBodyReadError> {
-        let Some(raw) = self
-            .store
-            .entities
-            .get(rtxn, id.as_bytes())
-            .map_err(Error::from)?
-        else {
+        let Some(source) = self.stored_claim_body_in_txn(rtxn, id)? else {
+            return Ok(None);
+        };
+        decode(source.body()).map(Some)
+    }
+
+    /// Keeps the original stored row without copying a base-backed body.
+    /// No decoded value or selected history birth borrows from this carrier.
+    pub(crate) fn stored_claim_body_in_txn<'txn>(
+        &self,
+        rtxn: &'txn RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<StoredClaimBody<'txn>>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
         // History keeps every lifecycle status, never words a deletion withdrew
@@ -193,9 +214,9 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM").into());
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
-        decode(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        Ok(Some(StoredClaimBody { raw }))
     }
 }
 

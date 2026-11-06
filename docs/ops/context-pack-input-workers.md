@@ -534,3 +534,18 @@ This retires scalar input backing, not all retained inputs. Counterparty and
 notes can still remain live while another canonical read needs memory.
 It does not establish FIFO progress, a global heap bound, or custody for a new
 owned copy. The full retained-input and typed-output findings remain open.
+
+## Stored claim source ownership
+
+`Vault::stored_claim_body_in_txn` keeps the row from the original `entities.get`
+through a private `Cow` carrier. A base row borrows the same read transaction;
+a staged overlay row keeps its existing owned bytes. `body()` borrows that
+carrier, so it does not return a transaction loan into an owned overlay buffer.
+The existing callback read immediately decodes that body as before.
+
+This port preserves the original readability, header, type, grammar, and history
+order. The carrier itself establishes only stored-row readability and type,
+not canonical grammar or a selected machine-history birth. It adds no row read
+or raw-body copy. It does not yet change the contact collector's retained
+counterparty and notes, admit an overlay's existing row clone, or establish FIFO
+progress. The retained-input and typed-output findings remain open.
