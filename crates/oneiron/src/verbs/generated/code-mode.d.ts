@@ -11,9 +11,9 @@
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
 // Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4628 declarations.
-// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Replies: 1122 fully typed, 190 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 117; unread shapes: none.
+// Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -3121,7 +3121,7 @@ declare namespace Sdk {
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
   type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
-  type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
+  type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null; hook_notice?: unknown | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
   type TaskAnswerRequest = { handle: TaskAskHandle; word: TaskAskWord };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };

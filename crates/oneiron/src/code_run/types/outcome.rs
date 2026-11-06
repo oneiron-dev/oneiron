@@ -206,6 +206,9 @@ pub struct SelfDurableWait {
     pub effect: SelfEffect,
     pub reason: SelfDurableWaitReason,
     pub prompt: Option<String>,
+    /// A supplied hook notice beside this wait, never authority to settle it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_notice: Option<serde_json::Value>,
 }
 
 /// Why a dispatched effect parked instead of committing immediately.
@@ -230,6 +233,7 @@ pub const fn peer_result_wait(task_ref: EntityId) -> SelfDurableWait {
         effect: SelfEffect::TaskDelegate,
         reason: SelfDurableWaitReason::PeerResult,
         prompt: None,
+        hook_notice: None,
     }
 }
 

@@ -6,8 +6,8 @@ are `Any`, and the census below counts them.
 
 Census: 1262 facade rows, 4571 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Results: 1093 of 1262 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -15750,6 +15750,7 @@ class SelfDurableWait(TypedDict):
     effect: SelfEffect
     reason: SelfDurableWaitReason
     prompt: NotRequired[str | None]
+    hook_notice: NotRequired[Any | None]
 class TaskAskWaitPendingBody(TypedDict):
     trap_ref: str
 class TaskAskWaitPending(TypedDict):

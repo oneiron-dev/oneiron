@@ -7,8 +7,8 @@ The Python stubs carry the same names in the generated `facade_types.pyi`.
 // of scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 // Census: 1262 facade rows, 4571 declarations.
 // Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 121; unread shapes: 0.
+// Results: 1093 of 1262 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+// Opaque serde_json::Value leaves: 122; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -6208,7 +6208,7 @@ export type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse
 /** `oneiron::code_run::types::outcome::SelfDurableWaitReason` */
 export type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult"
 /** `oneiron::code_run::types::outcome::SelfDurableWait` */
-export type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null }
+export type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null; hook_notice?: unknown | null }
 /** `oneiron::task_verb::ask_types::TaskAskWait` */
 export type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult }
 /** `oneiron::verbs::TaskAnswerRequest` */

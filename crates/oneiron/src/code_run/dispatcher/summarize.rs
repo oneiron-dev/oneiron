@@ -109,6 +109,7 @@ impl HostSelfDispatcher<'_> {
             effect: SelfEffect::Summarize,
             reason: SelfDurableWaitReason::PeerResult,
             prompt: Some(format!("{SUMMARIZE_PROMPT}{}", task.to_hex())),
+            hook_notice: None,
         }))
     }
 

@@ -559,6 +559,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::AgentVerb,
                 reason: SelfDurableWaitReason::OutboundEffect,
                 prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
+                hook_notice: wait_hook_notice(&outcome),
             }));
         }
         if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
@@ -572,6 +573,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::AgentVerb,
                 reason: SelfDurableWaitReason::OutboundEffect,
                 prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
+                hook_notice: wait_hook_notice(&outcome),
             }));
         }
         Ok(connector_call_answer(verb, outcome))
@@ -732,7 +734,18 @@ fn connector_call_answer(verb: AgentVerb, outcome: SelfDispatchOutcome) -> SelfD
         effect: SelfEffect::AgentVerb,
         reason: SelfDurableWaitReason::OutboundEffect,
         prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
+        hook_notice: wait_hook_notice(&outcome),
     })
+}
+
+/// A wait drops the answer's rows, so it keeps only a content-free notice.
+fn wait_hook_notice(outcome: &SelfDispatchOutcome) -> Option<Value> {
+    let notice = match outcome {
+        SelfDispatchOutcome::AgentVerb(answer) => answer.hook_notice.as_ref(),
+        SelfDispatchOutcome::Denied(denied) => denied.hook_notice.as_ref(),
+        _ => None,
+    };
+    notice.map(|_| serde_json::json!(crate::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY))
 }
 
 /// The ref of the connector call a verb's answer holds or retries: a

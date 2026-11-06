@@ -49667,6 +49667,12 @@ pub struct SelfDurableWait {
     pub reason: SelfDurableWaitReason,
     #[serde(rename = "prompt", default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    #[serde(
+        rename = "hook_notice",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hook_notice: Option<crate::WireJson>,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskWait`.

@@ -349,6 +349,7 @@ fn stopped(effect: SelfEffect, stop: VerbHookStop) -> SelfDispatchOutcome {
                     effect: SelfEffect::TasksWait,
                     reason: SelfDurableWaitReason::PeerResult,
                     prompt: Some(format!("{VERB_HOOK_WAIT}{invocation}")),
+                    hook_notice: None,
                 }),
                 None => denied(effect, VERB_HOOK_PENDING, vec![invocation, ask]),
             }

@@ -91,6 +91,7 @@ fn request_park(request: EntityId) -> SelfDurableWait {
         effect: SelfEffect::TasksWait,
         reason: SelfDurableWaitReason::HumanInput,
         prompt: None,
+        hook_notice: None,
     }
 }
 
