@@ -38,6 +38,7 @@ mod backend;
 mod credential;
 mod handle;
 mod overlay;
+mod output;
 mod scratch;
 
 pub use self::adapter::MicroVmSandboxAdapter;
@@ -56,6 +57,7 @@ pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, 
 #[cfg(all(unix, feature = "microvm-firecracker"))]
 pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
+pub use self::output::{MicroVmOutputBodies, MicroVmOutputSink, MicroVmOutputSpool};
 
 // Re-anchors the `super::firecracker` path inside `backend.rs`: the flat
 // microvm.rs resolved `super` to the parent `code_sandbox` module, while the
