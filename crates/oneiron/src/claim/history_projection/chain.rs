@@ -53,6 +53,38 @@ impl ControlRows for StoreRows {
     }
 }
 
+/// The sourced reader's index ids, without changing native navigation.
+struct ObservedIndexRows<'a> {
+    source: &'a dyn ControlRows,
+    index_ids: std::cell::RefCell<Vec<EntityId>>,
+}
+
+impl ControlRows for ObservedIndexRows<'_> {
+    fn index_ids(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let ids = self.source.index_ids(store, txn, target)?;
+        self.index_ids.borrow_mut().extend_from_slice(&ids);
+        Ok(ids)
+    }
+
+    fn row<'a>(
+        &'a self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Cow<'a, [u8]>>> {
+        self.source.row(store, txn, id)
+    }
+
+    fn handoff_signed(&self, packet: &ClaimHistoryHandoff) -> bool {
+        self.source.handoff_signed(packet)
+    }
+}
+
 /// Verified navigation from the target-local projection index, for the
 /// history the trusted pin names. A malformed index/record refuses; absence
 /// is typed incomplete, never an empty history.
@@ -403,11 +435,10 @@ pub(crate) fn resolved_machine_history_from(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<ClaimTransitionProjection> {
-    resolved_machine_history_with_sources_from(rows, store, txn, fold, target)
-        .map(|(projection, _)| projection)
+    eligible_machine_history_from(rows, store, txn, fold, target).map(|(projection, _)| projection)
 }
 
-/// The same resolved history beside the carrier entities it actually read.
+/// The same resolved history beside enumerated index ids and read carriers.
 pub(crate) fn resolved_machine_history_with_sources(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -418,6 +449,23 @@ pub(crate) fn resolved_machine_history_with_sources(
 }
 
 fn resolved_machine_history_with_sources_from(
+    rows: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
+    let observed = ObservedIndexRows {
+        source: rows,
+        index_ids: std::cell::RefCell::new(Vec::new()),
+    };
+    let (projection, mut sources) =
+        eligible_machine_history_from(&observed, store, txn, fold, target)?;
+    sources.extend(observed.index_ids.into_inner());
+    Ok((projection, sources))
+}
+
+fn eligible_machine_history_from(
     rows: &dyn ControlRows,
     store: &Store,
     txn: &heed::RoTxn<'_>,
