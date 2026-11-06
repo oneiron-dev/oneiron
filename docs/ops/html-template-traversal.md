@@ -207,7 +207,7 @@ later budget checkpoints to the checked driver's existing error channel; the
 driver drops the partial parser and DOM instead of returning success.
 Ordinary parser calls keep their original wrapping and coalescing behavior.
 This covers parser text insertion, not later DOM setters, ordinary allocating
-clones or mutations, incoming token and pending-table vector backing, callback
+clones or mutations, incoming token storage, callback
 metadata, other private payloads or allocator-private overhead. Those gaps and
 opaque native work keep full FIX 9615 PART; no default cap or timer is added.
 
@@ -220,7 +220,18 @@ step through the checked parser's same first typed error channel.
 The native allocation header retains its reservation through pending-vector
 moves, whitespace inspection, foster-parent or ordinary flush, and early-error
 drop. Split status, scalar-stream coalescing, bytes, order and the ordinary
-no-reservation paths remain unchanged. The pending vector's own backing and
-its take-to-iterator lifetime, incoming token storage, callback metadata and
-other private allocations remain unadmitted. This payload-only slice does not
-complete FIX 9615 or make opaque native work preemptible.
+no-reservation paths remain unchanged. Incoming token storage, callback metadata
+and other private allocations remain unadmitted. This does not complete
+FIX 9615 or make opaque native work preemptible.
+
+The pending table vector also owns its native backing admission. Its private
+carrier reserves a full replacement while the old vector and its reservation
+are live, settles actual tuple-vector capacity, moves entries and publishes
+the replacement before freeing old storage and returning the old admission.
+Taking the pending work moves that whole carrier into the original flush.
+Its owning iterator frees the remaining entries and vector allocation before
+returning admission, including early refusals. Coalescing an existing payload
+does not allocate another vector slot. Native capacity or allocation failures
+use the same first typed error channel; ordinary no-reservation paths retain
+their original vector growth and flush behavior. Boxed guard metadata and
+allocator-private overhead remain outside the reported capacity.

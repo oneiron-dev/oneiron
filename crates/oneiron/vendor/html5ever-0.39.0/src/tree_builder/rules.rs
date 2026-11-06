@@ -1142,6 +1142,9 @@ where
                     let Some(text) = self.prepare_pending_table_text(text) else {
                         return ProcessResult::Stopped;
                     };
+                    if !self.reserve_pending_table_storage(&mut pending, 1) {
+                        return ProcessResult::Stopped;
+                    }
                     pending.push((split, text));
                     ProcessResult::Done
                 },

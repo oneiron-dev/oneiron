@@ -3,7 +3,7 @@
 use super::{loop_until_done, ParseOpts};
 use crate::buffer_queue::BufferQueue;
 use crate::tendril::stream::{TendrilSink, Utf8LossyDecoder};
-use crate::tendril::{fmt::UTF8, StrTendril};
+use crate::tendril::{fmt::UTF8, ReserveError, StrTendril};
 use crate::tokenizer::{Token, TokenSink, TokenSinkResult, Tokenizer};
 use crate::tree_builder::{TreeBuilder, TreeSink, TreeSinkOperation};
 use std::borrow::Cow;
@@ -294,6 +294,50 @@ where
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
                             .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
+    /// Install before input to reserve native pending-table vector storage.
+    /// Native capacity is measured and its reservation moves with the vector
+    /// through take and flush. The iterator frees before returning admission.
+    /// Native capacity/allocation failures use the caller's typed mapper and
+    /// this parser's existing first-error channel.
+    pub fn with_pending_table_storage_reservation<R, G, S, M>(
+        mut self,
+        reserve: G,
+        settle: S,
+        map_error: M,
+    ) -> Self
+    where
+        E: Send + 'static,
+        R: Send + Sync + 'static,
+        G: Fn(usize) -> Result<R, E> + Send + 'static,
+        S: Fn(&mut R, usize) -> Result<(), E> + Send + 'static,
+        M: Fn(ReserveError<E>) -> E + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .sink
+            .sink
+            .set_pending_table_storage_reservation(Box::new(move |pending, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match pending.try_reserve(additional, &reserve, &settle) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert_with(|| map_error(refusal));
                         false
                     }
                 }

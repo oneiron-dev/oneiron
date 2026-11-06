@@ -1,6 +1,6 @@
 //! Admission before native tree-sink operations that may grow a node arena.
 
-use super::TreeBuilder;
+use super::{pending_table_text::PendingTableText, TreeBuilder};
 use crate::tendril::StrTendril;
 use crate::{tree_builder::NodeOrText, QualName};
 
@@ -26,6 +26,9 @@ pub enum TreeSinkOperation<'a, Handle> {
 pub(super) type SinkCheckpoint<Handle, Sink> =
     Box<dyn Fn(&Sink, TreeSinkOperation<'_, Handle>) -> bool + Send>;
 
+pub(super) type PendingTableStorageReservation =
+    Box<dyn Fn(&mut PendingTableText, usize) -> bool + Send>;
+
 pub(super) type PendingTableTextReservation = Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>;
 
 pub(super) type OpenElementsReservation<Handle> =
@@ -34,6 +37,23 @@ pub(super) type OpenElementsReservation<Handle> =
 impl<Handle, Sink> TreeBuilder<Handle, Sink> {
     pub(crate) fn coalesce_table_text(&mut self) {
         self.coalesce_table_text = true;
+    }
+
+    pub(crate) fn set_pending_table_storage_reservation(
+        &mut self,
+        reservation: PendingTableStorageReservation,
+    ) {
+        self.pending_table_storage_reservation = Some(reservation);
+    }
+
+    pub(super) fn reserve_pending_table_storage(
+        &self,
+        pending: &mut PendingTableText,
+        additional: usize,
+    ) -> bool {
+        self.pending_table_storage_reservation
+            .as_ref()
+            .is_none_or(|reservation| reservation(pending, additional))
     }
 
     pub(crate) fn set_pending_table_text_reservation(
