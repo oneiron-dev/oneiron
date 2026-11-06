@@ -97,18 +97,19 @@ settlements remain unchanged. Caller-run handles bind to the capture inside its 
 funded handles are created inside that scope. Capture never settles the permit again.
 
 A nonlocal extraction needs its actual request's native extraction admission too.
-System One and the nonlocal house reader do not yet supply that request through
-the captured interface, so those contexts return unsupported before any capture,
-read or send. The existing admitted-purpose normalization also treats both autonomy
-purposes as extraction. The on-device house reader can capture with its native
-generation port or without a generation admission. A run's credential check is not
-the host's extraction predicate. The captured context also borrows the original
+The nonlocal house reader does not yet supply that request through the captured
+interface, so that context returns unsupported before any capture, read or send.
+A System One rung without an explicit catalog binding likewise returns unsupported
+before any capture; with one it prepares its actual transformed native request
+before paid admission, admits its content-complete view, and sends those same owned
+body bytes on the original seat afterward, with the caller's current work time and
+physical credential release. The existing admitted-purpose normalization also treats
+both autonomy purposes as extraction. The on-device house reader can capture with its
+native generation port or without a generation admission. A run's credential check is
+not the host's extraction predicate. The captured context also borrows the original
 request's complete scope; evidence identifiers do not recreate that scope.
-The System One adapter can prepare its actual transformed native request before
-paid admission and send those same owned body bytes on the original seat afterward,
-with the caller's current work time and physical credential release. That preparation
-does not itself supply extraction authorization or enable the unsupported path.
-These are unfinished request adapters, not new egress policies or
+Preparing native bytes or naming a catalog model does not itself authorize egress.
+These remain scoped request adapters, not new egress policies or
 ordinary-call refusals. Neither provider's capture support enables the excluded
 stronger Arc path. Local vision remains unsupported through the captured interface.
 
