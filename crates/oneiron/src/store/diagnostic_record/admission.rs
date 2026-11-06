@@ -1,4 +1,7 @@
-//! Content-address and occurrence binding shared by local and replicated puts.
+//! Core half of `store::diagnostic_record::admission`: its store-layer items live in `oneiron_store::diagnostic_record::admission` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::diagnostic_record::admission::*;
 
 use super::{
     DiagnosticEvent, diagnostic_event_id, invalid_diagnostic, validate_diagnostic_event_body_bytes,
@@ -37,25 +40,6 @@ pub(crate) fn stored_diagnostic_event(
     let event = validate_stored_diagnostic_event_body_bytes(data)?;
     bind_address(id, occurred, data, &event)?;
     Ok(event)
-}
-
-fn bind_address(
-    id: &EntityId,
-    occurred: TimeRange,
-    data: &[u8],
-    event: &DiagnosticEvent,
-) -> Result<()> {
-    if diagnostic_event_id(&event.detector_id, data) != *id {
-        return Err(invalid_diagnostic(
-            "diagnostic id does not match detector and body",
-        ));
-    }
-    if occurred.start != event.valid_from || occurred.end != event.valid_to.unwrap_or(u64::MAX) {
-        return Err(invalid_diagnostic(
-            "diagnostic occurrence does not match body validity",
-        ));
-    }
-    Ok(())
 }
 
 /// Base DIAGNOSTIC writes may not cite an evaporating room, even when their
