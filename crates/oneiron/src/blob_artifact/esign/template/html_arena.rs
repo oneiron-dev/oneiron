@@ -125,6 +125,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
         let tag_name = Mutex::new(Backing::new(budget.clone()));
         let attribute_name = Mutex::new(Backing::new(budget.clone()));
+        let attribute_storage_budget = budget.clone();
         let attribute_value_budget = budget.clone();
         let comment_budget = budget.clone();
         let doctype_budget = budget.clone();
@@ -155,6 +156,13 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                     .unwrap_or_else(PoisonError::into_inner)
                     .reserve_string(text, additional)
             })
+            .with_tag_attributes_reservation(
+                move |bytes| reserve(&attribute_storage_budget, bytes),
+                Backing::resize,
+                tendril_error,
+                Document::create_element_with_tag_attributes,
+                Document::add_tag_attributes_if_missing,
+            )
             .with_attribute_value_reservation(move |value, additional| {
                 let additional =
                     u32::try_from(additional).map_err(|_| ContentTemplateError::Overflow)?;
