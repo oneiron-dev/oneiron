@@ -106,6 +106,7 @@ impl FloorWrites<'_> {
         vault: &Vault,
         session_ref: &str,
         plans: &[PromotePlan],
+        imported_digests: &mut Vec<[u8; 32]>,
     ) -> Result<Vec<crate::store::result_body_pins::ResultBodyPin>> {
         let results: Vec<_> = plans
             .iter()
@@ -118,7 +119,14 @@ impl FloorWrites<'_> {
         let mut imported = Vec::with_capacity(results.len());
         for (_, attachment) in &results {
             match vault.promote_off_record_message_result_body(session_ref, &room, attachment) {
-                Ok(pin) => imported.push(pin),
+                Ok(pin) => {
+                    if let Some(digest) = pin.digest()
+                        && !imported_digests.contains(&digest)
+                    {
+                        imported_digests.push(digest);
+                    }
+                    imported.push(pin);
+                }
                 Err(error) => {
                     vault.discard_unnamed_promoted_bodies(imported);
                     return Err(error);
