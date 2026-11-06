@@ -29,8 +29,8 @@ mod codec;
 mod leaf_keys;
 pub use codec::{
     CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, DECODED_FRAME_KIND_IDS, LinkBytes,
-    MAX_CODEC_INNER_BYTES, MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket,
-    codec_ids, decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame,
+    MAX_CODEC_INNER_BYTES, MAX_HELLO_CODECS, PreparedWireFrame, TAG_CODEC, TagBytesRow, WireCodecs,
+    WireSocket, codec_ids, decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame,
     encode_http_body, frame_kind_ids, process_link_bytes,
 };
 pub use leaf_keys::{
