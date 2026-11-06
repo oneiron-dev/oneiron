@@ -61,7 +61,7 @@ impl PreparedHomeClaimDelivery {
 /// Native send evidence captured by the same read that selected the copy.
 struct PreparedSealedHomeClaimVector {
     copy: SealedHomeClaimVector,
-    source: Vec<u8>,
+    vector: super::HomeClaimVector,
     recipient_encryption_key: Vec<u8>,
 }
 
@@ -259,7 +259,7 @@ impl Vault {
         .to_bytes();
         Ok(Some(PreparedSealedHomeClaimVector {
             copy,
-            source: vector.source,
+            vector,
             recipient_encryption_key: key.to_bytes().to_vec(),
         }))
     }

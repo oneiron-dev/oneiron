@@ -28,7 +28,7 @@ use crate::{EntityId, Error, ModelId, ModelLocality, Result, Vault};
 
 /// One settled default CLAIM vector and the complete source image it embeds.
 /// A transport receipt, not a read grant or canonical claim history.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HomeClaimVector {
     pub entity_id: EntityId,
