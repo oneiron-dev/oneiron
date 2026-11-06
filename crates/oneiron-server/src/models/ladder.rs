@@ -1355,6 +1355,27 @@ impl OfferLadder {
             .map(|(response, _)| response)
     }
 
+    /// Per-offer source admission with the actual answering rung's binding.
+    /// The same walk, deadline, waits and owner fallback as `generate_admitted`.
+    pub(crate) async fn generate_admitted_recorded(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        sources: &dyn SourceAdmission,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_from(
+            run,
+            request,
+            selector,
+            &|| true,
+            self.host_wait(),
+            true,
+            Some(sources),
+        )
+        .await
+    }
+
     /// [`Self::generate_within`]; once every rung has parked, a call whose
     /// parked offer has the owner's fallback goes there, when
     /// `may_fall_back` (a fallback's own call falls back no further). Boxed,

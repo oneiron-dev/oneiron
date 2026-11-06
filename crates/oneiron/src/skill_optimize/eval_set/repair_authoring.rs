@@ -21,6 +21,7 @@ use crate::dreamer_runner::{
 use crate::ingest::AgUiFileReadInput;
 use crate::memory::stored_read::StoredReadContext;
 use crate::memory::{Memory, MemoryResult};
+use crate::settings::ReadDestination;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Explicit, source-bound Repair authoring; not the nightly sweep's facet.
@@ -78,12 +79,17 @@ impl Memory<'_> {
 
 /// An actual leased Coach job's source reader and its metadata-only choices.
 /// Neither the reader nor the captured context is exposed to the host.
+#[derive(Clone)]
 pub struct EvalRepairAuthoringSource<'v> {
-    reader: Memory<'v>,
+    vault: &'v Vault,
+    context: StoredReadContext,
+    nomination: EvalRepairNominationRequest,
+    destination: Option<ReadDestination>,
     job: RepairJob,
     nominations: EvalRepairNominations,
 }
 
+#[derive(Clone)]
 struct RepairJob {
     id: AttemptId,
     lease_owner: String,
@@ -148,7 +154,10 @@ impl Vault {
         let reader = bound.context.restore(self)?;
         let nominations = reader.nominate_eval_repairs(&bound.nomination)?;
         Ok(EvalRepairAuthoringSource {
-            reader,
+            vault: self,
+            context: bound.context,
+            nomination: bound.nomination,
+            destination: None,
             job: RepairJob {
                 id: record.id,
                 lease_owner,
@@ -163,7 +172,7 @@ impl Vault {
 impl EvalRepairAuthoringSource<'_> {
     fn check_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         let payload = job_payload_in_txn(
-            self.reader.vault(),
+            self.vault,
             txn,
             self.job.id,
             &self.job.lease_owner,
@@ -176,8 +185,83 @@ impl EvalRepairAuthoringSource<'_> {
     }
 
     fn check(&self) -> Result<()> {
-        let txn = self.reader.vault().store.env.read_txn()?;
+        let txn = self.vault.store.env.read_txn()?;
         self.check_in_txn(&txn)
+    }
+
+    /// Read these Repair choices for an actual model destination, through the
+    /// original credential and room. The destination only narrows that reader.
+    /// Keep the returned handle, including its scoped receipts, before sending
+    /// its choices. This admits Repair sources, not the separate inventory.
+    pub fn for_destination(&self, destination: &ReadDestination) -> MemoryResult<Self> {
+        self.check()?;
+        let reader = self
+            .context
+            .restore(self.vault)?
+            .for_destination(destination);
+        let mut nominations = reader.nominate_eval_repairs(&self.nomination)?;
+        // A new read may discover more captures. This call may send only the
+        // exact recipes its original source handle nominated.
+        for source in &mut nominations.sources {
+            source.tasks.retain(|read| {
+                read.as_ref()
+                    .ok()
+                    .and_then(|read| read.recipe.as_ref())
+                    .is_some_and(|recipe| self.nominated(recipe))
+            });
+        }
+        nominations
+            .sources
+            .retain(|source| !source.tasks.is_empty());
+        Ok(Self {
+            vault: self.vault,
+            context: StoredReadContext::of(&reader),
+            nomination: self.nomination.clone(),
+            destination: Some(destination.clone()),
+            job: self.job.clone(),
+            nominations,
+        })
+    }
+
+    /// Whether every exact recipe in this retained destination-bound read still
+    /// reads there now. New choices never stand in for a source that lapsed.
+    pub fn recheck_destination(&self, destination: &ReadDestination) -> MemoryResult<bool> {
+        if self.destination.as_ref() != Some(destination) {
+            return Ok(false);
+        }
+        self.check()?;
+        let reader = self
+            .context
+            .restore(self.vault)?
+            .for_destination(destination);
+        for recipe in self.recipes() {
+            let read = reader.read_eval_repair_task(&recipe.source)?;
+            if !read.task.is_some_and(|task| {
+                task.source == recipe.source && task.task_hash == recipe.task_hash
+            }) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Only successful source pins, without task bodies, expected responses or
+    /// discovery errors. The native read receipts remain on this handle.
+    pub fn recipes(&self) -> Vec<EvalRepairCaseRecipe> {
+        let mut recipes = Vec::new();
+        for recipe in self
+            .nominations
+            .sources
+            .iter()
+            .flat_map(|source| &source.tasks)
+            .filter_map(|read| read.as_ref().ok())
+            .filter_map(|read| read.recipe.as_ref())
+        {
+            if !recipes.contains(recipe) {
+                recipes.push(recipe.clone());
+            }
+        }
+        recipes
     }
 
     pub(super) fn nominated(&self, recipe: &EvalRepairCaseRecipe) -> bool {
@@ -197,7 +281,7 @@ impl EvalRepairAuthoringSource<'_> {
     ) -> MemoryResult<(EvalAuthoringInventory, Option<Vec<EntityId>>)> {
         self.check()?;
         Ok(super::authoring::repair_authoring_inventory_sourced(
-            self.reader.vault(),
+            self.vault,
             &self.nominations,
             now,
         )?)
@@ -217,8 +301,9 @@ impl EvalRepairAuthoringSource<'_> {
         let mut rows = Vec::new();
         let answer: MemoryResult<EvalRepairCohortReport> = (|| {
             self.check()?;
+            let reader = self.context.restore(self.vault)?;
             super::authoring::apply_repair_authoring_plan(
-                &self.reader,
+                &reader,
                 self,
                 input,
                 inventory,
@@ -251,9 +336,10 @@ impl EvalRepairAuthoringSource<'_> {
             claim_ref: source.claim_ref.clone(),
             source_hash: source.source_hash.clone(),
         };
-        let lane = self.reader.read_lane(ClaimReadStatus::Recorded)?;
+        let reader = self.context.restore(self.vault)?;
+        let lane = reader.read_lane(ClaimReadStatus::Recorded)?;
         lane.persist_grant_clock()?;
-        let vault = self.reader.vault();
+        let vault = self.vault;
         let _bodies = vault.pin_all_result_bodies();
         let now = vault.now_recorded_at();
         Ok(vault.with_write_txn_grouped(|txn| {

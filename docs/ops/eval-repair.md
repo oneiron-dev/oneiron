@@ -128,3 +128,24 @@ endpoint. The server's loaded-skill input/output and attempt read-set integratio
 still need a consumer for this explicit job. Existing manual owner calls and
 receipt-based nightly authoring are unchanged. No new source ledger, training
 permission, label, or read grant is created.
+
+### Actual model destinations
+
+A source-bound Coach Repair handle retains its private original read context,
+not a live `Memory` across a model wait. Each operation restores the same
+credential, host action and room terms through the native stored-read path.
+`for_destination` meets an actual model rung's destination into that context
+and reads the nomination sources again. The returned handle retains those
+scoped receipts and only exact successful recipes from the original choices.
+`recipes` exposes pins, never task bodies, expected responses or read errors.
+
+Keep that returned handle before sending those recipes. Immediately before the
+send, `recheck_destination` checks the exact destination, canonical job stamp
+and current lease, then point-reads every retained recipe under that same
+original context and destination. A newer discovery page does not displace a
+still-readable recipe during this recheck. Changed or withheld sources do not
+stand in for the exact source and complete task hash that were offered.
+
+This admits the Repair source choices only. The ordinary authoring inventory,
+the loaded skill and their model release still need their own native admission;
+this API is not proof that the automatic server consumer is connected.
