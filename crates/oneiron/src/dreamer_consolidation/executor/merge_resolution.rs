@@ -457,11 +457,12 @@ impl ConsolidationExecutor<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: system.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: lines }],
+                    content: vec![ContentPart::Text { text: lines, signature: None }],
                 },
             ],
             tools: Vec::new(),
@@ -507,7 +508,7 @@ fn decode_merged_value(response: &LlmResponse) -> Option<Value> {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

@@ -11,9 +11,10 @@
 //! exactly, and its lengths and SHA-256 are the snapshot's. Any other answer
 //! is a cut: the caller drops what it got and goes cold.
 use oneiron::llm::{
-    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionCapability, SessionExport, SessionExported,
-    SessionImport, SessionImported, SessionOp,
+    DispatchRelease, SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionCapability, SessionExport,
+    SessionExported, SessionImport, SessionImported, SessionOp,
 };
+use oneiron::{BudgetLease, LlmError};
 use oneiron_driver::InferenceWorker;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -30,6 +31,18 @@ pub(in crate::models) enum OpFault {
     Refused(String),
     /// The channel failed or the answer did not read: it may have run.
     Cut,
+}
+
+/// A call-owned release failure is not a worker refusal or a lost session.
+pub(in crate::models) enum ReleasedOpFault {
+    Operation(OpFault),
+    Release(LlmError),
+}
+
+impl From<OpFault> for ReleasedOpFault {
+    fn from(fault: OpFault) -> Self {
+        Self::Operation(fault)
+    }
 }
 
 /// The session ops `launch` advertises in its authenticated hello; `None`
@@ -57,14 +70,7 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
     conversation: Option<&JsonValue>,
     worker: &InferenceWorker,
 ) -> Result<R, OpFault> {
-    let body = serde_json::to_value(body).map_err(|_| OpFault::Cut)?;
-    let input = match conversation {
-        Some(conversation) => {
-            let bytes = serde_json::to_vec(conversation).map_err(|_| OpFault::Cut)?;
-            Some(InputRegion::new(&bytes).map_err(|_| OpFault::Cut)?)
-        }
-        None => None,
-    };
+    let (body, input) = request(body, conversation)?;
     let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|_| OpFault::Cut)?;
@@ -79,6 +85,60 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
         .map_err(|_| OpFault::Cut)?;
     // The worker holds its own copy of the region once it has answered.
     drop(input);
+    response(op, frame, worker)
+}
+
+/// Sends the same session input with the model call's borrowed release.
+pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
+    launch: &NativeLaunch,
+    epoch: &str,
+    op: SessionOp,
+    body: &B,
+    conversation: Option<&JsonValue>,
+    worker: &InferenceWorker,
+    release: (DispatchRelease<'_>, &BudgetLease),
+) -> Result<R, ReleasedOpFault> {
+    let (body, input) = request(body, conversation)?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| OpFault::Cut)?;
+    let frame = channel
+        .exchange_with_release(
+            op.wire_name(),
+            Some(epoch),
+            body,
+            input.as_ref().map(InputRegion::outbound),
+            Some(release),
+        )
+        .await
+        .map_err(|error| match release_error(&error) {
+            Some(error) => ReleasedOpFault::Release(error),
+            None => ReleasedOpFault::Operation(OpFault::Cut),
+        })?;
+    drop(input);
+    response(op, frame, worker).map_err(ReleasedOpFault::Operation)
+}
+
+fn request<B: Serialize>(
+    body: &B,
+    conversation: Option<&JsonValue>,
+) -> Result<(JsonValue, Option<InputRegion>), OpFault> {
+    let body = serde_json::to_value(body).map_err(|_| OpFault::Cut)?;
+    let input = match conversation {
+        Some(conversation) => {
+            let bytes = serde_json::to_vec(conversation).map_err(|_| OpFault::Cut)?;
+            Some(InputRegion::new(&bytes).map_err(|_| OpFault::Cut)?)
+        }
+        None => None,
+    };
+    Ok((body, input))
+}
+
+fn response<R: DeserializeOwned>(
+    op: SessionOp,
+    frame: Incoming,
+    worker: &InferenceWorker,
+) -> Result<R, OpFault> {
     if frame.op == "refused" {
         return Err(OpFault::Refused(wire::refusal_code(&frame.body).to_owned()));
     }
@@ -143,10 +203,7 @@ pub(in crate::models) async fn import(
     worker: &InferenceWorker,
 ) -> Result<SessionImported, OpFault> {
     let op = SessionOp::Import;
-    if snapshot.len() != body.snapshot_bytes {
-        return Err(cut(op, &"the region is not the snapshot the body names"));
-    }
-    let request = serde_json::to_value(body).map_err(|e| cut(op, &e))?;
+    let request = import_request(body, snapshot)?;
     let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|e| cut(op, &e))?;
@@ -159,6 +216,54 @@ pub(in crate::models) async fn import(
         )
         .await
         .map_err(|e| cut(op, &e))?;
+    imported(epoch, body, frame, worker)
+}
+
+/// Imports a snapshot under the same release as the call that restores it.
+pub(in crate::models) async fn import_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionImport,
+    snapshot: &SnapshotRegion,
+    worker: &InferenceWorker,
+    release: (DispatchRelease<'_>, &BudgetLease),
+) -> Result<SessionImported, ReleasedOpFault> {
+    let op = SessionOp::Import;
+    let request = import_request(body, snapshot)?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|e| cut(op, &e))?;
+    let frame = channel
+        .exchange_with_release(
+            op.wire_name(),
+            Some(epoch),
+            request,
+            Some(snapshot.outbound()),
+            Some(release),
+        )
+        .await
+        .map_err(|error| match release_error(&error) {
+            Some(error) => ReleasedOpFault::Release(error),
+            None => ReleasedOpFault::Operation(cut(op, &error)),
+        })?;
+    imported(epoch, body, frame, worker).map_err(ReleasedOpFault::Operation)
+}
+
+fn import_request(body: &SessionImport, snapshot: &SnapshotRegion) -> Result<JsonValue, OpFault> {
+    let op = SessionOp::Import;
+    if snapshot.len() != body.snapshot_bytes {
+        return Err(cut(op, &"the region is not the snapshot the body names"));
+    }
+    serde_json::to_value(body).map_err(|e| cut(op, &e))
+}
+
+fn imported(
+    epoch: &str,
+    body: &SessionImport,
+    frame: Incoming,
+    worker: &InferenceWorker,
+) -> Result<SessionImported, OpFault> {
+    let op = SessionOp::Import;
     let answer: SessionImported = answer_of(op, epoch, &frame)?;
     if answer.staged != body.checkpoint {
         return Err(cut(op, &"the answer staged another checkpoint"));
@@ -170,6 +275,10 @@ pub(in crate::models) async fn import(
     }
     report(worker, &frame.body);
     Ok(answer)
+}
+
+fn release_error(error: &std::io::Error) -> Option<LlmError> {
+    error.get_ref()?.downcast_ref::<LlmError>().cloned()
 }
 
 /// The answer `frame` gives `op`: its own frame, from the incarnation

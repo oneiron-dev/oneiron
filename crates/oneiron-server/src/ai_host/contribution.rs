@@ -389,7 +389,7 @@ fn task_text(vault: &Vault, task: &LlmRequest) -> String {
         .filter(|message| message.role != LlmMessageRole::System)
         .flat_map(|message| &message.content)
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -421,7 +421,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

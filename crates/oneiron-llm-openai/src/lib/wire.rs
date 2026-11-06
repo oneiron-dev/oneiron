@@ -216,6 +216,7 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
     {
         content.push(ContentPart::Text {
             text: text.to_owned(),
+            signature: None,
         });
     }
     if let Some(reasoning) = message
@@ -324,7 +325,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                     | oneiron::ReasoningPartKind::Count,
                 ..
             } => {}
-            ContentPart::Text { text }
+            ContentPart::Text { text, .. }
             | ContentPart::Reasoning {
                 text,
                 reasoning_kind: oneiron::ReasoningPartKind::Full,

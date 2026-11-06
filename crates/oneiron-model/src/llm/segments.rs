@@ -484,7 +484,7 @@ fn message_stamp(message: &LlmMessage) -> MessageStamp {
     let mut plain = message.role != LlmMessageRole::Tool;
     for part in &message.content {
         match part {
-            ContentPart::Text { text: piece } => text.push_str(piece),
+            ContentPart::Text { text: piece, .. } => text.push_str(piece),
             _ => plain = false,
         }
     }

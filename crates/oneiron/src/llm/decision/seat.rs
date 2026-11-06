@@ -124,6 +124,15 @@ pub struct SeatAnswer {
 
 pub type SeatFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<SeatAnswer>> + Send + 'a>>;
 
+/// An actual seat read and, when its adapter supplies one, a fingerprint of
+/// the built provider request. Missing evidence never changes the read result.
+pub struct SeatRead {
+    pub request: Option<crate::code_run::model_call::NativeReadDigests>,
+    pub result: LlmResult<SeatAnswer>,
+}
+
+pub type SeatReadFuture<'a> = Pin<Box<dyn Future<Output = SeatRead> + Send + 'a>>;
+
 /// A provider-specific seat behind the shared typed-decision boundary.
 /// Hosts select providers; this trait never selects an egress route itself.
 /// `time_left` is the call's work time left: a seat with a native deadline gets it,
@@ -144,6 +153,22 @@ pub trait DecisionSeat: Send + Sync {
         lease: &'a BudgetLease,
         time_left: Duration,
     ) -> SeatFuture<'a>;
+
+    /// Reads once. An adapter without an actual request-fingerprint producer
+    /// returns no evidence rather than guessing one from the logical request.
+    fn ask_recorded<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(async move {
+            SeatRead {
+                request: None,
+                result: self.ask(request, lease, time_left).await,
+            }
+        })
+    }
 }
 
 /// One off-hot remote rung under the call's one clock, `deadline`. The caller owns

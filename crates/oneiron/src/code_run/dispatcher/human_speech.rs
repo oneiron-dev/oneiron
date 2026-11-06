@@ -182,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             .filter(|message| message.role == crate::LlmMessageRole::System)
             .flat_map(|message| &message.content)
             .filter_map(|part| match part {
-                crate::ContentPart::Text { text } => Some(text.as_str()),
+                crate::ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()

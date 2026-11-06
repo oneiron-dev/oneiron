@@ -3,10 +3,12 @@ use super::super::{
     BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmCapability, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat,
 };
+use super::generation::GenerationOutcome;
 use super::schema_runtime::{self, SchemaValidationOutcome, SchemaValidationRequest};
 use super::types::ReplyCheck;
 use super::{DurableStepError, DurableStepResult};
 use crate::dreamer_wake::{StepCalls, WakePassDeadline};
+use crate::llm::decision::DecisionGenerationAdmission;
 
 /// The shared validator also serves hosts implementing self.json.validate.
 pub fn validate_json_schema(
@@ -42,7 +44,7 @@ pub(super) fn validate_fallback(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -71,13 +73,17 @@ pub(super) async fn generate(
     capture: &(dyn Fn(&LlmRequest, u32) + Sync),
     check: Option<&ReplyCheck>,
     max_retries: usize,
-) -> DurableStepResult<LlmResponse> {
+    generation: Option<&dyn DecisionGenerationAdmission>,
+) -> DurableStepResult<GenerationOutcome<LlmResponse>> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
+        if generation.is_some_and(|generation| !generation.admit()) {
+            return Ok(GenerationOutcome::Cut { usage: None });
+        }
         let response =
             super::retry::generate_with_retry(backend, request, lease, max_retries).await?;
         calls.invoiced(0, &response.usage);
         let Some(Err(error)) = check.map(|check| check(&response)) else {
-            return Ok(response);
+            return Ok(GenerationOutcome::Completed(response));
         };
         // One answer, paid and refused, as a native schema miss is.
         guard
@@ -126,6 +132,7 @@ pub(super) async fn generate(
                 content: vec![ContentPart::Text {
                 text: serde_json::json!({"response_format":{"type":"json_schema","schema":schema}})
                     .to_string(),
+                    signature: None,
             }],
             },
         );
@@ -167,6 +174,11 @@ pub(super) async fn generate(
             capture(&wire, call);
             &correction.lease
         };
+        if generation.is_some_and(|generation| !generation.admit()) {
+            return Ok(GenerationOutcome::Cut {
+                usage: (attempt > 1).then_some(usage),
+            });
+        }
         let mut response = match super::retry::generate_with_retry(
             backend,
             &wire,
@@ -196,7 +208,7 @@ pub(super) async fn generate(
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -238,7 +250,7 @@ pub(super) async fn generate(
                     usage: Box::new(usage),
                 });
             }
-            return Ok(response);
+            return Ok(GenerationOutcome::Completed(response));
         }
         if attempt == max_attempts {
             return Err(DurableStepError::SpentSchemaValidation {
@@ -254,6 +266,7 @@ pub(super) async fn generate(
                 text:
                     serde_json::json!({"schema_validation_errors":errors,"required_schema":schema})
                         .to_string(),
+                        signature: None,
             }],
         });
     }

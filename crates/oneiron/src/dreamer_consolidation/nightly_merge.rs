@@ -327,11 +327,12 @@ impl ConsolidationExecutor<'_> {
                         role: LlmMessageRole::System,
                         content: vec![ContentPart::Text {
                             text: input.instruction.clone(),
+                            signature: None,
                         }],
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
-                        content: vec![ContentPart::Text { text }],
+                        content: vec![ContentPart::Text { text, signature: None }],
                     },
                 ],
                 tools: Vec::new(),

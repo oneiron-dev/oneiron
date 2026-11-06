@@ -43,6 +43,10 @@ impl LlmBackend for SourcedRunBackend {
 }
 
 impl SourcedBackend for SourcedRunBackend {
+    fn run(&self) -> Option<&RunAdmission> {
+        Some(&self.run)
+    }
+
     fn sourced(&self, rows: Vec<EntityId>) -> Box<dyn LlmBackend + '_> {
         Box::new(RunBackend::new(
             Arc::clone(&self.ladder),
@@ -108,6 +112,10 @@ impl LlmBackend for ServedRealization {
 }
 
 impl SourcedBackend for ServedRealization {
+    fn run(&self) -> Option<&RunAdmission> {
+        Some(&self.run)
+    }
+
     fn sourced(&self, rows: Vec<EntityId>) -> Box<dyn LlmBackend + '_> {
         Box::new(SourcedRealization {
             realization: self,

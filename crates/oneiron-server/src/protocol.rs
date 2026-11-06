@@ -3,6 +3,8 @@
 //! Re-exports the shared wire protocol from `oneiron::sync` and adds
 //! server-specific types: `SyncMessage`, `ProtocolError`, and close codes.
 
+pub(crate) use oneiron::sync::transport::TAG_PRIVATE_HUMAN;
+
 // Re-export shared wire constants and encode/decode functions.
 pub(crate) use oneiron::sync::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, decode_window_sync,

@@ -2907,6 +2907,7 @@ endpoint = "https://systemone.example/v1/systemone"   # HTTPS, or HTTP on loopba
 key_env = "ONEIRON_SYSTEMONE_KEY"                     # its bearer token
 model = "systemone-head"
 version = "2026-10-01"
+# catalog_model = "your-provider/systemone-head@2026-10-01" # optional: actual catalog identity
 remote_opt_in = false   # a vault that is not hosted sends unit state only with this set
 budget_units = 100000   # its own meter; models.raw_budget_units when unset
 
@@ -2989,6 +2990,13 @@ payer and evidence. Failed or cancelled calls keep their reservation as
 spend. It never runs on a relay vault. The escalation read is metered on
 `models.raw_budget_units`. A model rung blocks on the server's runtime, so a
 caller runs a ladder call on a blocking thread.
+
+An optional `catalog_model` names the explicit catalog identity for the same
+native endpoint, as `provider/name@revision`. Its name and revision must equal
+`model` and `version`. Without one the seat keeps its ordinary behavior and
+captured extraction stays unsupported before capture; with one the captured
+extraction path prepares the actual native request, admits its content-complete
+view, and sends the same prepared bytes.
 
 An omitted `models.decisions.system_one.budget_units` takes `models.raw_budget_units`. An omitted `models.decisions.big.budget_units` takes `models.raw_budget_units` too. Each is uncapped when the raw meter is. The Local-vision seat spends on `models.raw_budget_units` too, so it is uncapped when the raw meter is.
 

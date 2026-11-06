@@ -68,12 +68,16 @@ use crate::server::SyncServer;
 
 mod adapters;
 mod attach;
+mod captured;
 mod claim_merge;
 mod doors;
+mod native_capture;
+mod native_read;
 mod notes;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
+pub(crate) use native_read::run_native_read;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
@@ -262,6 +266,7 @@ impl DecisionHost {
         mut self,
         read: Option<&(DecisionReadDoor, BudgetGuard)>,
         admission: ReadAdmission,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.escalation = None;
         self.ladder.paired = None;
@@ -342,10 +347,12 @@ impl DecisionHost {
         };
         match HouseRead::new(
             door.reader(),
+            door.native_reader(),
             gate,
             paired,
             self.ladder.person.clone(),
             door.connector().locality == ModelLocality::ThirdParty,
+            vault,
         ) {
             Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
             Err(error) => {
@@ -403,6 +410,7 @@ impl DecisionHost {
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.system_one = None;
         self.remote_opt_in = settings.is_some_and(|settings| settings.remote_opt_in);
@@ -416,6 +424,7 @@ impl DecisionHost {
             posture,
             runtime,
             self.broker.as_ref(),
+            vault,
         ) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
@@ -648,8 +657,10 @@ struct HouseGate {
 /// engine's [`DecisionReadProvider`], which admits and settles each read
 /// through its [`HouseGate`]. The reader blocks on the server's runtime.
 struct HouseRead {
+    vault: Arc<Vault>,
     pin: ProviderPin,
     reader: Arc<dyn LabelReadModel>,
+    native: Option<Arc<crate::models::DecisionReader>>,
     gate: HouseGate,
     paired: DecisionQuestion,
     person: Option<DecisionQuestion>,
@@ -660,16 +671,20 @@ struct HouseRead {
 impl HouseRead {
     fn new(
         reader: Arc<dyn LabelReadModel>,
+        native: Option<Arc<crate::models::DecisionReader>>,
         gate: HouseGate,
         paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
         leaves: bool,
+        vault: &Arc<Vault>,
     ) -> oneiron::Result<Self> {
         let read = Self {
+            vault: Arc::clone(vault),
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
             paired,
             person,
             reader,
+            native,
             gate,
             leaves,
         };
@@ -698,6 +713,7 @@ impl HouseRead {
 /// `key_secret` seat reads its key at the vault's custody door for each
 /// call, through the credential broker.
 struct SystemOneRung {
+    vault: Arc<Vault>,
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
     /// The host account and receipt sink for calls without a caller's run (FIX 3795).
@@ -707,6 +723,9 @@ struct SystemOneRung {
     connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
+    /// Explicit catalog identity for the same native endpoint, when the
+    /// owner configured one. None keeps old ordinary behavior.
+    native_catalog: Option<ModelId>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -718,9 +737,17 @@ impl SystemOneRung {
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
         broker: Option<&crate::models::BrokerContext>,
+        vault: &Arc<Vault>,
     ) -> anyhow::Result<Self> {
         let endpoint = settings.endpoint.clone();
         let (model, version) = (settings.model.clone(), settings.version.clone());
+        if let Some(catalog) = &settings.catalog_model {
+            if catalog.name() != model || catalog.revision() != version {
+                anyhow::bail!(
+                    "models.decisions.system_one.catalog_model name@revision must equal model and version"
+                );
+            }
+        }
         let seat = match (&settings.key_env, &settings.key_secret) {
             (Some(env), _) => {
                 let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
@@ -762,6 +789,7 @@ impl SystemOneRung {
             rates: Vec::new(),
         };
         Ok(Self {
+            vault: Arc::clone(vault),
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
                 "system-one",
@@ -772,6 +800,7 @@ impl SystemOneRung {
             connector,
             posture,
             remote_opt_in: settings.remote_opt_in,
+            native_catalog: settings.catalog_model.clone(),
             runtime,
         })
     }
