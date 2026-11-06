@@ -271,6 +271,22 @@ impl Vault {
         )
     }
 
+    /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
+    /// an ask (FIX 1765): a saved call that is gone is a skip, never a fresh
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub fn pre_verb_hooks_retained(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_retained_in(VerbHookStorage::Canonical, call, args, check, None)
+    }
+
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without
     /// its caller: an ask saves `resume`, and once the drain ran the call a
     /// retry presenting the same target gets [`VerbHookStop::Completed`] or

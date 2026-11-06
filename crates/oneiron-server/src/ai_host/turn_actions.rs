@@ -54,6 +54,7 @@ use crate::api::ai::chat::{
     ActionSession, Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential,
     TurnSources, after_turn, begin_sourced_answer_with_fallback, keepalive_every,
     live_fork_unavailable, reuse_chat_breakpoint, text_message, turn_generate_pre,
+    turn_generate_pre_retained,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
@@ -432,18 +433,24 @@ async fn act(
     // reply's producer ends. A queued action carries no credential: its hooks
     // read as its actor. Its room is the conversation the action's context
     // resolved. Its call derives from the attempt, so the same attempt run
-    // again finds the call that asked and the answer.
-    let generating = match turn_generate_pre(
-        vault,
-        actor,
-        Some(turn_action_hook_parent(attempt)),
-        None,
-        &action.conversation.to_hex(),
-        Some(action.conversation),
-        None,
-    )
-    .map_err(|error| error.to_string())?
-    {
+    // again finds the call that asked and the answer; run again, it needs
+    // that saved call, and one that is gone ends it as a skip.
+    let parent = turn_action_hook_parent(attempt);
+    let room_ref = action.conversation.to_hex();
+    let pre = if turn_action_resumed_from_hook(attempt) {
+        turn_generate_pre_retained(vault, actor, parent, &room_ref, Some(action.conversation))
+    } else {
+        turn_generate_pre(
+            vault,
+            actor,
+            Some(parent),
+            None,
+            &room_ref,
+            Some(action.conversation),
+            None,
+        )
+    };
+    let generating = match pre.map_err(|error| error.to_string())? {
         Ok(generating) => generating,
         Err(VerbHookStop::Pending { invocation, ask }) => {
             return match (

@@ -69,6 +69,26 @@ pub(crate) fn turn_generate_pre(
     })
 }
 
+/// [`turn_generate_pre`] for a queued turn action its host hook's ask held
+/// (FIX 1765): `invocation` is the parent its hook call derives from, as on
+/// its first run. A saved call that is gone is a skip, never a fresh call.
+pub(crate) fn turn_generate_pre_retained(
+    vault: &Vault,
+    actor: EntityId,
+    invocation: InvocationId,
+    room: &str,
+    resolved: Option<EntityId>,
+) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
+    let args = turn_generate_args(room);
+    crate::server::blocking(|| {
+        vault.pre_verb_hooks_retained(
+            turn_generate_call(actor, Some(invocation), None, resolved),
+            args.clone(),
+            &|rewritten: &Value| host_args_kept(&args, rewritten),
+        )
+    })
+}
+
 /// The input of a turn's `host.turn.generate` call in `room`: what its
 /// chain reads, and what its hook session is judged on (FIX 10344).
 pub(in crate::api::ai::chat) fn turn_generate_args(room: &str) -> Value {
