@@ -4929,6 +4929,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/pact_openings.rs",
+     "purpose": "This install's live check of each pact's scope commitment (FIX 11730)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/past_grant_standing.rs",
      "purpose": "Prior signed owner-agent standing for main-log WorldPrivacy acts (FIX 4703)",
      "surface": {
@@ -4982,7 +4992,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -6026,7 +6036,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -21707,7 +21717,7 @@
       "const": 9,
       "crate-vis": 1,
       "fn": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3,
       "trait": 1
      }
@@ -21724,6 +21734,20 @@
       "const": 2,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoogleAuthorizationCode",
+      "GoogleAuthorizationGrant"
+     ],
+     "path": "src/connector_key/setup/google_code.rs",
+     "purpose": "Google's code exchange, called with values held inside admitted credential doors",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -41574,7 +41598,7 @@
      "path": "src/identity_topology/attribution.rs",
      "purpose": "Erasable authorship for immutable type-76 decisions",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -62330,10 +62354,30 @@
      "purpose": "Three-tier repair driver: whole validation and publication, the work between them paged on the vault's fair…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/ladder/equivalence.rs",
+     "purpose": "Pure row equality of one owned recapture after native pad normalization",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/ladder/manifest_chunks.rs",
+     "purpose": "The native manifest chunks, in their original serialization and error order",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -62515,6 +62559,16 @@
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/work/encoded_digest.rs",
+     "purpose": "Resumable outer hashing of the original bounded canonical byte buffer",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -72081,7 +72135,7 @@
      "path": "src/store/checkpoint_payload/rows/restore.rs",
      "purpose": "Putting an opened compartment's rows back, through the one restore-only raw-row sink",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -73010,7 +73064,7 @@
      "path": "src/store/grant_scope_custody.rs",
      "purpose": "A federation grant's scope opening keys (FIX 7907, 7958, L04's half): the secret each pact epoch's scope…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -83686,7 +83740,7 @@
      "path": "src/vault/entity_revision/storage/checkpoint/document.rs",
      "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91174,7 +91228,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 255,
+     "files": 256,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91461,7 +91515,7 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92203,7 +92257,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 125,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92702,7 +92756,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6529,
+   "source_files": 6534,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96792,7 +96846,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp/paused.rs",
@@ -117484,6 +117538,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/pack_routes/gmail_exchange.rs",
+     "purpose": "Owner-admitted Google authorization codes enter only through credential custody",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/pack_routes/hook_proposals.rs",
      "purpose": "`/v1/owner/packs/hooks/proposals`: an agent's hook that asks wider than its own ceiling (ARCH-0080 §10…",
      "surface": {
@@ -129989,7 +130053,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 691,
+     "files": 692,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130509,7 +130573,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1645,
+   "source_files": 1646,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
