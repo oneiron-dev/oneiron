@@ -117,9 +117,11 @@ replacements, because an inner replacement can already have detached it.
 
 The same flat form also accepts an identity-only prefix, such as
 `module.exports = (module.exports = module.exports, module.exports)`.
-Every prefix assignment must read the current native whole slot. The final
-element must read that same slot or the wrapper `exports` binding when it already
-aliases the current module. Either form preserves the declared keys and the
+Every prefix assignment must read the current native whole slot or the wrapper
+`exports` binding when it already aliases that current value. The final element
+must read the same slot or that already-aliased wrapper. For example,
+`module.exports = (module.exports = exports, module.exports)` preserves the
+current value when `exports` already aliases it. Either form preserves the declared keys and the
 existing wrapper alias; it neither replaces the value nor reconnects a detached
 `exports` binding. Mixing current reads and fresh prefix values, or ending a
 current-only prefix with a fresh value, keeps the ordinary fallback.
