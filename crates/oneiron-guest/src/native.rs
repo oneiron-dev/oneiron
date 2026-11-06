@@ -74,7 +74,8 @@ pub(crate) fn run() -> Result<()> {
     }
     super::boot::prepare_pids(start.pids)?;
     let control = connect_control(&start.bridge_token)?;
-    super::native_mounts::prepare(&mut channel, start.mounts_bytes, start.mounts_digest)?;
+    let read_only_paths =
+        super::native_mounts::prepare(&mut channel, start.mounts_bytes, start.mounts_digest)?;
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::Path::new("/run/oneiron-native");
     std::fs::create_dir(directory)?;
@@ -86,7 +87,11 @@ pub(crate) fn run() -> Result<()> {
     command
         .arg(&socket)
         .arg(&start.bridge_token)
-        .arg(start.reconnect_ms.to_string())
+        .arg(start.reconnect_ms.to_string());
+    for path in &read_only_paths {
+        command.arg("--read-only").arg(path);
+    }
+    command
         .arg("--")
         .args(&start.command)
         .env_clear()
@@ -112,6 +117,7 @@ pub(crate) fn run() -> Result<()> {
         listener,
         child.id() as i32,
         &start.bridge_token,
+        &read_only_paths,
         Arc::new(crate::egress::VsockRelay),
     )
     .map_err(std::io::Error::other)?;

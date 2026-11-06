@@ -29,6 +29,7 @@ pub(crate) struct Supervisor {
     directory: tempfile::TempDir,
     generation: String,
     launcher_digest: String,
+    ruleset_hash: String,
     config: FenceConfig,
 }
 struct Socket {
@@ -81,7 +82,11 @@ impl Drop for Guard {
     }
 }
 impl Supervisor {
-    pub(crate) fn bind(config: &FenceConfig, generation: String) -> Result<Self> {
+    pub(crate) fn bind(
+        config: &FenceConfig,
+        generation: String,
+        read_only_paths: &[PathBuf],
+    ) -> Result<Self> {
         let directory = tempfile::Builder::new()
             .prefix("oneiron-fence-")
             .tempdir_in("/tmp")
@@ -104,6 +109,7 @@ impl Supervisor {
             directory,
             generation,
             launcher_digest: digest.finalize().to_hex().to_string(),
+            ruleset_hash: linux::ruleset_hash(read_only_paths),
             config: config.clone(),
         })
     }
@@ -226,7 +232,7 @@ impl Supervisor {
     fn proved(&self, hello: &wire::Hello) -> bool {
         hello.generation == self.generation
             && hello.landlock_abi >= 3
-            && hello.ruleset_hash == linux::ruleset_hash()
+            && hello.ruleset_hash == self.ruleset_hash
             && hello.seccomp_hash == linux::filter_hash(hello.parent_pid, hello.bootstrap_fd)
             && hello.no_new_privs
             && !hello.capabilities.is_empty()
@@ -677,6 +683,7 @@ pub fn serve_native(
     listener: UnixListener,
     pid: i32,
     generation: &str,
+    read_only_paths: &[PathBuf],
     relay: Arc<dyn EgressRelay>,
 ) -> Result<NativeFenceGuard> {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -699,7 +706,7 @@ pub fn serve_native(
         || hello.parent_pid != pid as u32
         || hello.generation != generation
         || hello.landlock_abi < 3
-        || hello.ruleset_hash != linux::ruleset_hash()
+        || hello.ruleset_hash != linux::ruleset_hash(read_only_paths)
         || hello.seccomp_hash != linux::filter_hash(hello.parent_pid, hello.bootstrap_fd)
         || hello.capabilities.bytes().any(|c| c != b'0')
     {
