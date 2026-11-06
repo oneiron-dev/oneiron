@@ -20,7 +20,7 @@ pub(crate) trait ControlRows {
     fn row<'a>(
         &'a self,
         store: &Store,
-        txn: &heed::RoTxn<'_>,
+        txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Cow<'a, [u8]>>>;
 
@@ -46,10 +46,10 @@ impl ControlRows for StoreRows {
     fn row<'a>(
         &'a self,
         store: &Store,
-        txn: &heed::RoTxn<'_>,
+        txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Cow<'a, [u8]>>> {
-        Ok(crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.map(Cow::Owned))
+        store.entities.get(txn, id.as_bytes())
     }
 }
 
