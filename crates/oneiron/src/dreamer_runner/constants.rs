@@ -63,7 +63,8 @@ pub(super) const KEY_CARRIED_SPEND: &str = "carried_spend";
 
 // v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
-pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 2;
+// v3 retains the native birth generation; an explicit reserve encodes nil.
+pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 3;
 pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
 // The typed `cause` key is mandatory too: a row without one fails closed.
@@ -79,10 +80,12 @@ pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_OWED_CALLS,
     KEY_UPDATED_AT,
 ];
-pub(super) const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 7] = [
+pub(super) const KEY_BIRTH_GENERATION: &str = "birth_generation";
+pub(super) const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
     KEY_ATTEMPT_ID,
+    KEY_BIRTH_GENERATION,
     KEY_RESERVED_UNITS,
     KEY_OWED_UNITS,
     KEY_CREATED_AT,
