@@ -1666,7 +1666,7 @@ declare namespace Sdk {
   type OffRecordRoomSaved = { saved: OffRecordRoomSavedTurn[] };
   type OffRecordRoomExportRequest = { room: string; session_ref: string; travel?: CopyTravelChoice | null };
   type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string };
-  type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
+  type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; erased: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
   type OffRecordRoomCopyResult = { label: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean };
   type OffRecordRoomExportResult = MessageResultAttachment | OffRecordRoomCopyResult;
   type OffRecordRoomExportMessage = { author: string; message_type: string; content: string; order: number; result?: OffRecordRoomExportResult | null };
