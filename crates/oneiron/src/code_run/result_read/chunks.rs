@@ -2,7 +2,8 @@
 //! range of its parent named `<occurrence>#<start>-<end>` in the
 //! parent's own bytes, so a chunk of a range is a range of the same
 //! parent. No byte is copied and nothing is published: a chunk is read as
-//! its parent is.
+//! its parent is. A scoped child's page stops at its live cutoff, checked
+//! before each chunk and each line it counts (FIX 8233).
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, decode, floor_boundary, invalid_input,
@@ -190,6 +191,7 @@ fn by_bytes(
     let base = body.base();
     let mut s = start;
     loop {
+        body.live_cutoff().check()?;
         if s >= len {
             return Ok((None, false));
         }
@@ -266,6 +268,7 @@ fn by_tokens(
     let (mut buf, mut buf_at) = (Vec::new(), start);
     let (mut chunk_start, mut at, mut count, mut cut) = (start, start, 0_u64, false);
     loop {
+        body.live_cutoff().check()?;
         if at >= len {
             if at > chunk_start {
                 page.push(entry(parent, base, chunk_start, at, cut));
@@ -347,6 +350,7 @@ fn by_lines(
     let mut index = window_index(body, scan, from)?;
     let mut at = from;
     loop {
+        body.live_cutoff().check()?;
         if at.offset >= len {
             return Ok((None, false));
         }
