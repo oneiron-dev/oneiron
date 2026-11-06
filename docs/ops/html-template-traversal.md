@@ -39,7 +39,7 @@ The requested allocation is admitted before `try_reserve_exact`; any capacity
 surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
 backing by itself does not count the heap payload owned by its elements.
-DOM/parser and selector internals, merge strings, sorting scratch, font
+DOM/parser and selector internals, sorting scratch, font
 dictionaries, PDF document/codec objects and output bytes remain outside this
 admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
@@ -112,3 +112,10 @@ Selectors keep the same ID/class specificity and source-order precedence. Their
 counts are stored instead of a second owned selector string. Declaration bytes,
 separator order and inline-style order remain unchanged. Native style selection,
 attribute/tendril copies, matcher internals and sorting scratch are not covered.
+
+Text merge also builds its temporary UTF-8 result in admitted scratch. The
+buffer retains its full capacity while the native DOM setter consumes a borrowed
+view, including errors, and frees its bytes before returning their admission.
+Merge-field syntax, validation and expansion order are unchanged. The native
+DOM's resulting text/tendril allocation is separate and remains unadmitted;
+this guard covers only the caller-owned expansion buffer, not stored DOM text.
