@@ -88,15 +88,15 @@ pub fn audit_as_owner(
 ) -> Result<SealReceiptView> {
     vault.with_write_txn_grouped(|txn| {
         validate_owner_in_txn(vault, txn, owner)?;
-        let mut receipt = vault
-            .sealed_attempt_receipt_in_txn(txn, input.attempt)?
+        let mut stored = SEALS
+            .get(&vault.store, txn, input.attempt.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        if receipt.passing && receipt.draw.is_none() {
-            let rate = audit_rate_in_txn(vault, txn, &receipt)?;
-            draw_audit(&mut receipt, rate, crate::unix_seconds_now());
-            SEALS.put(&vault.store, txn, input.attempt.as_bytes(), &receipt)?;
+        if stored.receipt.passing && stored.receipt.draw.is_none() {
+            let rate = audit_rate_in_txn(vault, txn, &stored.receipt)?;
+            draw_audit(&mut stored.receipt, rate, crate::unix_seconds_now());
+            SEALS.put(&vault.store, txn, input.attempt.as_bytes(), &stored)?;
         }
-        Ok(receipt.into())
+        Ok(stored.receipt.into())
     })
 }
 
@@ -147,7 +147,11 @@ pub fn pending_sourced_as_owner(
     let txn = vault.store.env.read_txn()?;
     validate_owner_in_txn(vault, &txn, owner)?;
     let mut sourced = Vec::new();
-    for (_, receipt) in SEALS.scan(&vault.store, &txn)? {
+    for receipt in SEALS
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(_, stored)| stored.receipt)
+    {
         if input
             .attempt
             .is_some_and(|attempt| receipt.confession.attempt != attempt)
@@ -259,6 +263,7 @@ pub fn complete_as_owner(
                 input.attempt,
                 input.kind,
                 &input.outcome,
+                None,
                 crate::unix_seconds_now(),
             )
             .map(Into::into)
