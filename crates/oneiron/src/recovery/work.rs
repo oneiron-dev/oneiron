@@ -356,7 +356,7 @@ impl RecoveryWork {
             let plan = self
                 .preflight_note_plan
                 .get_or_insert_with(NotePlanRows::default);
-            if !plan.advance(&self.source, self.budget.max_obligations) {
+            if !plan.advance(&self.source, rows.scope(), self.budget.max_obligations) {
                 self.doc = Some(doc);
                 return Ok(());
             }

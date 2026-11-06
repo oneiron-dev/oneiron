@@ -54,6 +54,7 @@ enum PlanSourceStage {
     Receipts,
     Forks,
     Bundles,
+    BundleMembers,
     Complete,
 }
 
@@ -65,6 +66,8 @@ pub(crate) struct NotePlanRows {
     live: BTreeSet<([u8; 16], [u8; 16])>,
     expected_docs: BTreeSet<(EntityId, EntityId)>,
     invalid_document: Option<usize>,
+    member: usize,
+    partially_admitted: bool,
     receipts: BTreeMap<[u8; 16], usize>,
     forks: BTreeMap<EntityId, usize>,
     bundles: BTreeMap<EntityId, usize>,
@@ -74,9 +77,10 @@ impl NotePlanRows {
     pub(in crate::recovery) fn advance(
         &mut self,
         snapshot: &CanonicalSnapshot,
+        admitted: &Scope,
         max_rows: usize,
     ) -> bool {
-        for _ in 0..max_rows.max(1) {
+        'units: for _ in 0..max_rows.max(1) {
             loop {
                 match self.stage {
                     PlanSourceStage::Heads => {
@@ -123,7 +127,29 @@ impl NotePlanRows {
                             self.bundles.insert(row.id, self.next);
                             break;
                         }
-                        self.stage = PlanSourceStage::Complete;
+                        self.stage = PlanSourceStage::BundleMembers;
+                    }
+                    PlanSourceStage::BundleMembers => {
+                        let Some(bundle) = snapshot.note_proposals.get(self.next) else {
+                            self.stage = PlanSourceStage::Complete;
+                            continue;
+                        };
+                        let note = if let Some(fork) = bundle.waiting.get(self.member) {
+                            Some(fork.note.as_bytes())
+                        } else {
+                            bundle
+                                .landed
+                                .get(self.member - bundle.waiting.len())
+                                .map(|receipt| receipt.note.as_bytes())
+                        };
+                        if let Some(note) = note {
+                            self.partially_admitted |= !admitted.contains(note);
+                            self.member += 1;
+                        } else {
+                            self.next += 1;
+                            self.member = 0;
+                        }
+                        continue 'units;
                     }
                     PlanSourceStage::Complete => return true,
                 }
@@ -212,7 +238,7 @@ fn plan(
         Some(rows) => rows,
         None => {
             source_rows = NotePlanRows::default();
-            while !source_rows.advance(snapshot, usize::MAX) {}
+            while !source_rows.advance(snapshot, admitted, usize::MAX) {}
             &source_rows
         }
     };
@@ -283,10 +309,8 @@ fn plan(
         stored_forks.insert(fork.fork, fork);
     }
     let expected_bundles = &rows.bundles;
-    for bundle in &snapshot.note_proposals {
-        if !workflow::bundle_notes(bundle).is_subset(admitted) {
-            return Err(invalid("proposal was only partially admitted"));
-        }
+    if rows.partially_admitted {
+        return Err(invalid("proposal was only partially admitted"));
     }
     for (bundle_id, bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         let mut notes = workflow::bundle_notes(&bundle);
