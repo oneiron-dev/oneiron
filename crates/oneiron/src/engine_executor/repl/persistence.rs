@@ -309,6 +309,11 @@ impl EngineNativeExecutor<'_> {
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
+        // The task its host declared the caller's own, kept as a body the
+        // run owns, so its host can enter it again after a restart (FIX
+        // 4606).
+        let declared = self.gated_write.declared_caller_task(config.run_id);
+        record_caller_task(&self.storage, &mut record, config, declared)?;
         // The run's clock and config are durable from its start: a process
         // that stops after the first step's writes and before its checkpoint
         // resumes under them, never under a fresh clock or another task. Its
