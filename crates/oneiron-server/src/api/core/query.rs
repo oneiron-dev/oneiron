@@ -419,21 +419,6 @@ where
     }
 }
 
-/// Whether `read`'s caller reads `id` under each private thread it sits in,
-/// turn by turn, the opener included (FIX 5652): the one bound the TURN
-/// routes hold the owner's read to (FIX 5938). One it does not read is one
-/// that is not here.
-pub(crate) fn core_private_threads_admit(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    id: &oneiron::EntityId,
-) -> Result<bool, ApiError> {
-    vault.private_threads_admit(read, id).map_err(|error| {
-        tracing::error!(error = %error, id = %id.to_hex(), "core private-thread check failed");
-        core_engine_error("core private-thread check failed", error)
-    })
-}
-
 pub(crate) fn is_deleted_shell_for_core_list(
     vault: &oneiron::Vault,
     id: &oneiron::EntityId,
