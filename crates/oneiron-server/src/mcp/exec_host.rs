@@ -28,8 +28,10 @@ mod compaction_home;
 mod description_route;
 mod native_run;
 mod off_record_run;
+mod resume_condition;
 mod served;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
+pub use self::resume_condition::{McpCodeRunResumeCondition, McpCodeRunResumed};
 pub use self::served::{CodeRunLimits, McpEngineNativeCodeHost};
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
@@ -189,6 +191,23 @@ pub trait McpCodeExecutionHost: Send + Sync {
     ) -> Pin<
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
+
+    /// [`Self::execute`] for the automatic re-entry of a run parked on a
+    /// durable wait (FIX 4606). The host takes the run's single flight and
+    /// its run permit as for any entry. Then it reads the run's record
+    /// again: a run that left the wait or the generation in `condition`
+    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. A
+    /// caller's own call goes through [`Self::execute`] and carries no
+    /// condition. The default host cannot read the record under its single
+    /// flight, so it enters nothing; the caller's next call enters the run.
+    fn execute_resumed<'a>(
+        &'a self,
+        _request: McpCodeExecutionRequest<'a>,
+        _condition: McpCodeRunResumeCondition,
+    ) -> Pin<Box<dyn Future<Output = Result<McpCodeRunResumed, McpCodeExecutionError>> + Send + 'a>>
+    {
+        Box::pin(std::future::ready(Ok(McpCodeRunResumed::Superseded)))
+    }
 
     /// The engine-native host behind this seam, for a host worker that runs
     /// on the same provider and run permits; `None` for any other host.

@@ -22,6 +22,14 @@
 //! helper as the caller's own call, under the host's single flight, run
 //! admission, model seat and spend line, each verb call under its own gate.
 //!
+//! Readiness is checked before the run is the re-entry's own, so it is only
+//! a hint. A caller's own call can reach the host's single flight first,
+//! consume the reply and move the record on. The re-entry therefore carries
+//! the wait and the generation it was readied for, and the host reads the
+//! record again once the single flight and the run permit are the
+//! re-entry's own. A record that moved runs no batch for it, and the
+//! re-entry ends as one that started nothing.
+//!
 //! An entry's outcome replaces the registration: another wait registers that
 //! wait, and any other end removes it. The caller's own call stays a valid
 //! re-entry and takes its turn in the same single flight. The registry is
@@ -38,7 +46,7 @@ use oneiron::engine_executor::EngineExecutorOutcome;
 use oneiron::runtime_hooks::verb::{VerbAskInstrument, VerbAskRefusal};
 
 use super::McpCallContext;
-use crate::mcp::McpCodeExecutionError;
+use crate::mcp::{McpCodeExecutionError, McpCodeRunResumeCondition};
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// The host's background write gate, held weak (FIX 4606): the strong gate
@@ -246,7 +254,8 @@ enum McpCodeRunReadiness {
 
 /// What one entry's end tells of its run.
 enum McpCodeRunEnd {
-    /// The entry waited out its turn and started nothing.
+    /// The entry waited out its turn, or, as a re-entry, found its run moved
+    /// past the wait it was readied for (FIX 4606), and started nothing.
     Untouched,
     /// The run's state after the entry is unknown: it failed, or its caller
     /// left before its outcome came back.
@@ -343,7 +352,10 @@ impl McpCodeRunEntry {
         self.run_id
     }
 
-    /// Whether this is the only entry of its run under way.
+    /// Whether this is the only entry of its run under way. This is a
+    /// readiness hint only (FIX 4606): a caller's own call can begin right
+    /// after it answers. The host's read of the run's record under its
+    /// single flight is the fence.
     fn sole(&self) -> bool {
         self.server
             .mcp_code_run_continuations
@@ -371,6 +383,15 @@ impl McpCodeRunEntry {
         {
             reenter_if_ready(&self.server, continuation);
         }
+    }
+
+    /// Ends this re-entry as one that started nothing (FIX 4606): its run
+    /// had left the wait or the generation it was readied for once the
+    /// host's single flight was its own. Its claim already took the
+    /// registration it was readied from. A registration a newer entry made
+    /// stands for the settler's next pass.
+    pub(super) fn supersede(mut self) {
+        self.end(McpCodeRunEnd::Untouched);
     }
 
     /// Ends this entry with `end`; answers the continuation it registered.
@@ -450,8 +471,10 @@ fn reenter_if_ready(server: &Arc<SyncServer>, continuation: McpCodeRunContinuati
 
 /// Enters a ready run again for its original caller, or not at all: the
 /// caller must stand now, and a call of its own that began meanwhile takes
-/// the run where it stands instead. The outcome goes to no one; the run's
-/// record keeps it for the caller's next call.
+/// the run where it stands instead. The entry carries the wait and the
+/// generation its registration was readied for, and the host enters the run
+/// only while its record still stands there (FIX 4606). The outcome goes to
+/// no one; the run's record keeps it for the caller's next call.
 async fn reenter(
     server: Arc<SyncServer>,
     entry: McpCodeRunEntry,
@@ -464,23 +487,30 @@ async fn reenter(
         return;
     }
     let run = continuation.wait.run.to_hex();
-    let entered = super::exec_board_verbs::enter_mcp_code_run(
+    let entered = super::exec_board_verbs::resume_mcp_code_run(
         &server,
         &continuation.caller,
         &continuation.run_ref,
         &continuation.task,
         entry,
+        McpCodeRunResumeCondition::new(continuation.wait, continuation.generation),
     )
     .await;
-    match entered.map(|entered| entered.outcome) {
-        Ok(Ok(outcome)) => {
+    match entered.map(|entered| entered.map(|entered| entered.outcome)) {
+        Ok(None) => {
+            tracing::debug!(
+                %run,
+                "a parked MCP code run was not entered again: another entry took it past the wait its re-entry was readied for"
+            );
+        }
+        Ok(Some(Ok(outcome))) => {
             tracing::debug!(
                 %run,
                 status = ?outcome.status,
                 "a parked MCP code run entered again once its wait's reply was delivered"
             );
         }
-        Ok(Err(error)) => {
+        Ok(Some(Err(error))) => {
             tracing::info!(
                 %run,
                 %error,
