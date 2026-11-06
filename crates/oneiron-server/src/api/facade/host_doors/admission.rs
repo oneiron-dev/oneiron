@@ -560,6 +560,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
         | Row::VaultCodeOplog
+        | Row::VaultCodeSecretsGet
+        | Row::VaultCodeSecretsPropose
         | Row::VaultResultsStatus
         | Row::VaultResultsRecover
         | Row::VaultResultsRead

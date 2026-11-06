@@ -71,6 +71,7 @@ impl SyncClient {
             out.extend(polled);
             Ok::<_, TransportError>((out, births))
         })?;
+        bodies.retry_positions(&self.manager);
         if !births.is_empty() {
             self.release_body_births(births);
         }
@@ -116,6 +117,7 @@ impl SyncClient {
                 MAX_DECODED_PAYLOAD_BYTES,
             )
         });
+        bodies.retry_positions(&self.manager);
         polled.unwrap_or_else(|error| {
             tracing::warn!(%error, "asset body poll failed");
             Vec::new()

@@ -311,7 +311,9 @@ impl<'work> TombstoneBatch<'work> {
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
-            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value) {
+            if let Err(fence_err) =
+                vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value)
+            {
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
@@ -336,10 +338,7 @@ impl<'work> TombstoneBatch<'work> {
         // applies (mirrors set_remat_marker_in_txn parent bookkeeping).
         for work in staged.iter().filter(|work| !work.hard) {
             if let Err(marker_err) = quarantine::enqueue_tombstone_reassert_marker_in_txn(
-                vault,
-                parent,
-                window_key,
-                &work.id,
+                vault, parent, window_key, &work.id,
             ) {
                 tracing::error!(
                     tombstone = %work.crdt_key,
@@ -350,6 +349,22 @@ impl<'work> TombstoneBatch<'work> {
             }
         }
         Ok((affected, cancelled))
+    }
+    fn into_effects(
+        self,
+        affected: Vec<EntityId>,
+        cancelled: Vec<(crate::attempt_queue::AttemptId, u32)>,
+    ) -> TombstoneEffects {
+        TombstoneEffects {
+            failures: self
+                .failures
+                .into_iter()
+                .map(|(work, stage, error)| (work.crdt_key.clone(), stage, error))
+                .collect(),
+            applied: self.applied,
+            affected,
+            cancelled,
+        }
     }
 }
 
@@ -384,8 +399,6 @@ fn apply_tombstone_batch(
     note_tombstone_batch_top_level_txn();
     let batch = vault
         .with_write_txn_grouped(|parent| state.stage_in_txn(vault, window_key, staged, parent));
-    let TombstoneBatch { failures, applied } = state;
-
     if let Err(e) = &batch {
         tracing::error!(
             window = %window_key,
@@ -411,48 +424,190 @@ fn apply_tombstone_batch(
         return None;
     }
 
-    if let Ok((_, cancelled)) = &batch {
-        crate::attempt_queue::AttemptQueue::new(vault)
-            .erased_payload_cancellations_committed(cancelled);
+    batch.ok().map(|(affected, cancelled)| {
+        state
+            .into_effects(affected, cancelled)
+            .publish_under_lock(vault, window_key)
+    })
+}
+
+/// Owned deletion effects; publication belongs to the actual committing door.
+pub(in crate::sync) struct TombstoneEffects {
+    failures: Vec<(String, TombstoneFailureStage, Error)>,
+    applied: Vec<EntityId>,
+    affected: Vec<EntityId>,
+    cancelled: Vec<(crate::attempt_queue::AttemptId, u32)>,
+}
+
+impl TombstoneEffects {
+    pub(in crate::sync) fn publish_after_commit(
+        self,
+        vault: &Vault,
+        window_key: &str,
+    ) -> Vec<EntityId> {
+        self.publish(vault, window_key, |applied| {
+            crate::sync::note::deleted_elsewhere(vault, window_key, applied);
+        })
     }
-    loop {
-        match vault.collect_lfs_garbage(32) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(kind = ?error.kind(), "lfs deletion byte reclamation remains queued");
-                break;
+
+    fn publish_under_lock(self, vault: &Vault, window_key: &str) -> Vec<EntityId> {
+        self.publish(vault, window_key, |applied| {
+            crate::sync::note::deleted_elsewhere_under_lock(vault, window_key, applied);
+        })
+    }
+
+    fn publish(
+        self,
+        vault: &Vault,
+        window_key: &str,
+        scrub: impl FnOnce(Vec<EntityId>),
+    ) -> Vec<EntityId> {
+        crate::attempt_queue::AttemptQueue::new(vault)
+            .erased_payload_cancellations_committed(&self.cancelled);
+        loop {
+            match vault.collect_lfs_garbage(32) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(kind = ?error.kind(), "lfs deletion byte reclamation remains queued");
+                    break;
+                }
             }
         }
-    }
-    #[cfg(unix)]
-    if let Err(error) = vault.collect_released_result_bodies(256) {
-        tracing::error!(kind = ?error.kind(), "released result bodies remain queued");
-    }
-    vault.finish_gate_decision_retirements_after_commit();
-    for (work, stage, err) in &failures {
-        match stage {
-            TombstoneFailureStage::Replay => tracing::error!(
-                tombstone = %work.crdt_key,
-                window = %window_key,
-                kind = ?err.kind(),
-                "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagged entity-scoped rm: marker for durable retry"
-            ),
-            TombstoneFailureStage::ReceiverScrub => tracing::error!(
-                tombstone = %work.crdt_key,
-                window = %window_key,
-                kind = ?err.kind(),
-                "observer-b: receiver outbox scrub FAILED after hard tombstone replay; the item's purge was rolled back and flagged with an entity-scoped rm: marker for durable retry"
-            ),
+        #[cfg(unix)]
+        if let Err(error) = vault.collect_released_result_bodies(256) {
+            tracing::error!(kind = ?error.kind(), "released result bodies remain queued");
         }
+        vault.finish_gate_decision_retirements_after_commit();
+        for (crdt_key, stage, err) in &self.failures {
+            match stage {
+                TombstoneFailureStage::Replay => tracing::error!(
+                    tombstone = %crdt_key,
+                    window = %window_key,
+                    kind = ?err.kind(),
+                    "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagged entity-scoped rm: marker for durable retry"
+                ),
+                TombstoneFailureStage::ReceiverScrub => tracing::error!(
+                    tombstone = %crdt_key,
+                    window = %window_key,
+                    kind = ?err.kind(),
+                    "observer-b: receiver outbox scrub FAILED after hard tombstone replay; the item's purge was rolled back and flagged with an entity-scoped rm: marker for durable retry"
+                ),
+            }
+        }
+
+        scrub(self.applied);
+        self.affected
     }
-    if batch.is_ok() {
-        // A peer's NOTE tombstone scrubs the NOTE's attachments from the
-        // receiver's other windows too (FIX 12128), under this callback's
-        // materializer lock, which the lock-held variant skips taking.
-        crate::sync::note::deleted_elsewhere_under_lock(vault, window_key, applied);
+}
+
+/// Materializes an isolated candidate's tombstone delta in its caller's writer.
+pub(in crate::sync) fn stage_tombstones_in_txn(
+    vault: &Vault,
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    window_key: &str,
+    parent: &mut heed::RwTxn<'_>,
+) -> Result<TombstoneEffects> {
+    let window = crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
+    let entities_map = doc.get_map("entities");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    let mut staged = Vec::new();
+    for (key, value) in &delta.updated {
+        let Some(value) = value else {
+            quarantine_rejected_op_in_txn(
+                vault,
+                parent,
+                window_key,
+                QuarantineContainer::Tombstones,
+                key.as_ref(),
+                &Error::sync_protocol(SyncProtocolValidation::TombstoneRemovalDelta),
+                &[],
+            )?;
+            if let Ok(id) = EntityId::from_hex(key.as_ref()) {
+                quarantine::enqueue_tombstone_reassert_marker_in_txn(
+                    vault, parent, window_key, &id,
+                )?;
+            }
+            continue;
+        };
+        let raw_value: &[u8] = match value {
+            loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) => bytes,
+            _ => &[],
+        };
+        let (id, hard) = match crate::sync::ingest::classify_tombstone_in_txn(
+            vault,
+            parent,
+            &entities_map,
+            key.as_ref(),
+            raw_value,
+        ) {
+            TombstoneStep::Refuse { err, .. } => {
+                quarantine_rejected_op_in_txn(
+                    vault,
+                    parent,
+                    window_key,
+                    QuarantineContainer::Tombstones,
+                    key.as_ref(),
+                    &err,
+                    raw_value,
+                )?;
+                continue;
+            }
+            TombstoneStep::Replay { id, hard } => (id, hard),
+        };
+        let mut residence =
+            crate::sync::types::tombstone_residence_in(vault, parent, &id, &window)?;
+        if residence == crate::sync::types::TombstoneResidence::Unknown
+            && window.world().is_some()
+            && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
+            && crate::sync::types::retained_world_shell_belongs_to_window(
+                vault,
+                parent,
+                doc,
+                &tombstones,
+                &id,
+                &raw,
+                &window,
+                false,
+            )?
+        {
+            residence = crate::sync::types::TombstoneResidence::Match;
+        }
+        match residence {
+            crate::sync::types::TombstoneResidence::Wrong => {
+                quarantine_rejected_op_in_txn(
+                    vault,
+                    parent,
+                    window_key,
+                    QuarantineContainer::Tombstones,
+                    key.as_ref(),
+                    &Error::InvalidConfig("tombstone outside window residence".into()),
+                    raw_value,
+                )?;
+                continue;
+            }
+            crate::sync::types::TombstoneResidence::Unknown if window.world().is_some() => continue,
+            _ => {}
+        }
+        staged.push(TombstoneWork {
+            id,
+            crdt_key: key.to_string(),
+            raw_value: raw_value.to_vec(),
+            witnessed_shell: residence == crate::sync::types::TombstoneResidence::Match
+                && window.world().is_some()
+                && map_get_bytes(&entities_map, &id.to_hex())
+                    .is_some_and(|raw| raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN),
+            hard,
+        });
     }
-    batch.ok().map(|(affected, _)| affected)
+    let mut state = TombstoneBatch::default();
+    let (affected, cancelled) = if staged.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        state.stage_in_txn(vault, window_key, &staged, parent)?
+    };
+    Ok(state.into_effects(affected, cancelled))
 }
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)
