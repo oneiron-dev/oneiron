@@ -399,6 +399,19 @@ impl WindowManager {
         Ok(opened)
     }
 
+    /// Captures only an already registered window's weak identity. The caller
+    /// already holds its import handle, so this never waits for a transition
+    /// that may itself be waiting for that handle to drop.
+    pub(in crate::sync) fn weak_window_if_same(
+        &self,
+        window: &LoadedWindow,
+    ) -> Option<Weak<LoadedWindow>> {
+        self.lock_registry()
+            .get(&window.key)
+            .filter(|current| std::ptr::eq(window, current.as_ref()))
+            .map(Arc::downgrade)
+    }
+
     /// Returns the live window for `key` if loaded — registry lookup only,
     /// never opens. This is the lookup seam M4-10 delete routing uses to
     /// commit tombstones through the live doc when the window is loaded.
