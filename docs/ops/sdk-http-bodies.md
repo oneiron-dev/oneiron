@@ -42,3 +42,15 @@ Absent gets stay JSON null; put receipts and search results keep their
 existing fields and ordering. Native storage, input decoding, verb hooks,
 and client result types are unchanged. Other core result encoders retain
 their existing behavior.
+
+## Core saved-query results
+
+The core `self.saved_query.create`, `self.saved_query.update`, and
+`self.saved_query.archive` result adapters move claim operands and judge
+rubrics out of the returned record before its existing structural codec
+runs. `self.saved_query.read` does the same when its record is present.
+The adapters restore each original JSON value at its existing field.
+Filter and matcher tags, term order, explicit nulls, lifecycle fields, and
+the read result's `found` and `record` fields keep their existing encoding.
+Membership results and host-only evaluation are unchanged. These result
+adapters do not change storage, query admission, input decoding, or hooks.

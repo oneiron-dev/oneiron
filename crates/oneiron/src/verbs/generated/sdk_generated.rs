@@ -24423,10 +24423,18 @@ pub fn invoke(
         "vault.turn_programs.arm" => encode(vault_turn_programs_arm(memory, decode(value)?)?),
         "vault.turn_programs.disarm" => encode(vault_turn_programs_disarm(memory, decode(value)?)?),
         "vault.turn_programs.rebind" => encode(vault_turn_programs_rebind(memory, decode(value)?)?),
-        "self.saved_query.create" => encode(self_saved_query_create(memory, decode(value)?)?),
-        "self.saved_query.read" => encode(self_saved_query_read(memory, decode(value)?)?),
-        "self.saved_query.update" => encode(self_saved_query_update(memory, decode(value)?)?),
-        "self.saved_query.archive" => encode(self_saved_query_archive(memory, decode(value)?)?),
+        "self.saved_query.create" => {
+            saved_query_output::record(self_saved_query_create(memory, decode(value)?)?)
+        }
+        "self.saved_query.read" => {
+            saved_query_output::read(self_saved_query_read(memory, decode(value)?)?)
+        }
+        "self.saved_query.update" => {
+            saved_query_output::record(self_saved_query_update(memory, decode(value)?)?)
+        }
+        "self.saved_query.archive" => {
+            saved_query_output::record(self_saved_query_archive(memory, decode(value)?)?)
+        }
         "self.saved_query.members" => encode(self_saved_query_members(memory, decode(value)?)?),
         "self.saved_query.evaluate" => encode(self_saved_query_evaluate(memory, decode(value)?)?),
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
