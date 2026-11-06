@@ -19,7 +19,7 @@
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality resumes between rows and within
-//! entity blobs, current document text, titles and field names.
+//! entity blobs, current document text, titles, field names and receipt bytes.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
