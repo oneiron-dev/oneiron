@@ -15,6 +15,7 @@ use std::io::Cursor;
 
 use reqwest::header::HeaderName;
 
+use super::request::RequestBody;
 use super::*;
 use crate::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 
@@ -50,7 +51,7 @@ impl RemoteClient {
         method: Method,
         url: Url,
         headers: HeaderMap,
-        body: Option<Vec<u8>>,
+        body: Option<RequestBody>,
         long: bool,
     ) -> Result<Reply, MemoryError> {
         match &self.wire {
@@ -62,7 +63,7 @@ impl RemoteClient {
                 let agent = if long { export_agent } else { agent };
                 let mut request = agent.request(method, url).headers(headers);
                 if let Some(body) = body {
-                    request = request.body(body);
+                    request = request.body(body.into_http());
                 }
                 let response = request
                     .send()
@@ -88,7 +89,7 @@ fn exchange_in_process(
     method: &Method,
     url: &Url,
     headers: &HeaderMap,
-    body: Option<Vec<u8>>,
+    body: Option<RequestBody>,
     long: bool,
 ) -> Result<Reply, MemoryError> {
     let path = match url.query() {
@@ -102,7 +103,10 @@ fn exchange_in_process(
             .iter()
             .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().to_vec()))
             .collect(),
-        body: body.unwrap_or_default(),
+        body: body
+            .map(RequestBody::into_bytes)
+            .transpose()?
+            .unwrap_or_default(),
     };
     let (status, reply_headers, body) = if long {
         let InProcessStream {
