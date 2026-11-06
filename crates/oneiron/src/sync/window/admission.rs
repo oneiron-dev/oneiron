@@ -741,7 +741,7 @@ fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
 /// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
 /// `None` when the bytes are no fast snapshot whose state sections read one
 /// way, or the root does not load; `Some(None)` when it encodes no root.
-pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
+pub(in crate::sync) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
     let sections = snapshot_sections(snapshot)?;
     let [_, latest, root] = sections;
     if !(latest == EMPTY_STATE || state_section_is_canonical(latest))
