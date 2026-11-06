@@ -385,6 +385,7 @@ fn put_carrier_in_txn(
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,

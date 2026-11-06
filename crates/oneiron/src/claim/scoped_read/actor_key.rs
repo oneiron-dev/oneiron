@@ -465,7 +465,9 @@ impl ScopedReadActorKey {
     /// owner act does (`AuthenticatedOwner::revalidate_in_txn`: this vault, a
     /// live person who owns it now, any credential or host action the proof
     /// bound), so a key built before the owner lapsed reads nothing after.
-    /// Only [`crate::Vault::owner_proof_read_key`] builds one.
+    /// Built by [`crate::Vault::owner_proof_read_key`] or the queue-exhaust
+    /// reader's [`crate::Vault::queue_check_owner_read_key`], which also
+    /// retains the request's actual credential or host-action bounds.
     #[must_use]
     pub(crate) fn guarded_by_owner_proof(
         mut self,
@@ -651,6 +653,13 @@ impl ScopedReadActorKey {
             unscoped_rows_open: true,
             ..self.require_access_grants(principal_ref)
         }
+    }
+
+    /// Whether this key uses the relationship-only grant gate, rather than
+    /// requiring access grants for unscoped rows too. Saved native work keeps
+    /// this basis beside its scope; the flag grants no authority on its own.
+    pub(crate) fn uses_relationship_grants(&self) -> bool {
+        self.enforce_access_grants && self.unscoped_rows_open
     }
 
     /// A narrower credential of the vault owner's: it reads a relationship's

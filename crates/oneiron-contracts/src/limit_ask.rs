@@ -525,6 +525,10 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Files one legacy codebase snapshot manifest names (FIX 74). Past
+    /// it the row asks whether everything is okay and the manifest is
+    /// kept whole.
+    CodebaseManifestFiles,
     /// Result rows one search, recall or context-pack door was asked for:
     /// the caller's requested count, measured where the door serves it.
     /// Past it the row asks whether everything is okay and the whole
@@ -544,6 +548,18 @@ pub enum EngineLimit {
     /// past it the row asks whether everything is okay and the whole budget
     /// is offered to the existing execution path.
     MemoryReasonTokens,
+    /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
+    /// Past it the row asks whether everything is okay and the pack is
+    /// still served whole; nothing is refused or clamped.
+    ContextEdgeHops,
+    /// Neighbors one context-pack edge walk hydrates (FIX 63). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextNeighbors,
+    /// Edges one context-pack retrieval budget selects (FIX 64). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextSelectedEdges,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

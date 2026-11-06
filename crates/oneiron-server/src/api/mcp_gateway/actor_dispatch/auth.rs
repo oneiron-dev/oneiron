@@ -37,13 +37,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
     let proof_headers = mcp_proof_headers(headers)?;
-    let auth = crate::auth::CoreAuth::from_headers(
-        &proof_headers,
-        &server.config,
-        server.vault().as_ref(),
-    )
-    .map_err(|_| mcp_proof_error())?
-    .at(locality);
+    let verified = if server.managed_issuer.is_some() {
+        crate::auth::CoreAuth::from_headers(&proof_headers, &server.config, server.vault().as_ref())
+    } else {
+        crate::auth::CoreAuth::for_server_async(&proof_headers, server).await
+    };
+    let auth = verified.map_err(|_| mcp_proof_error())?.at(locality);
     let (session, room_turn) = mcp_request_placement(headers)?;
     // A narrower caller's own holder proof, for the home an opened device
     // asks (FIX 2905): the one this request was admitted on.
@@ -157,6 +156,7 @@ pub(super) async fn registered_actor(
         drain: None,
         forwarded: None,
         client_surface: None,
+        signing_request_transport: None,
     })
 }
 
