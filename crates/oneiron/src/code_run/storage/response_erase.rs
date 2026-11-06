@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
 use super::records::REPLAY_RECORDS;
-use super::replay_bodies::erase_replies;
+use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, erase_replies};
 use super::replay_capsule::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_actor};
 use super::response_owners::{
     ResponseOwner, mark_response_erased_in_txn, owner_rows_of_in_txn, response_owner_in_txn,
@@ -73,7 +73,7 @@ pub(crate) fn erase_actor_responses_in_txn(
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            release_reply_outputs_in_txn(store, wtxn, record.run_id, &record.outputs)?;
+            release_reply_outputs_in_txn(store, wtxn, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         }
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
@@ -102,6 +102,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
     // A spawn whose target an erase took keeps no ask, whether or not its
     // run's replies are erased (FIX 9180).
     record = fence_spawn_targets_in_txn(&vault.store, wtxn, record)?;
+    record = fence_sourced_outputs_in_txn(&vault.store, wtxn, record)?;
     let owner = response_owner_in_txn(&vault.store, wtxn, &record.run_id)?;
     let stamped = owner.and_then(ResponseOwner::actor);
     let live = record.live_run.as_ref().map(|live| live.actor);
@@ -115,7 +116,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
         return Ok(record);
     }
     let run = owner.map_or(record.run_id, |owner| owner.run);
-    release_reply_outputs_in_txn(&vault.store, wtxn, record.run_id, &record.outputs)?;
+    release_reply_outputs_in_txn(&vault.store, wtxn, &record)?;
     erase_replies(record.to_mut())?;
     mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?;
     Ok(record)
@@ -179,7 +180,7 @@ pub(crate) fn retire_actor_responses_in_txn(
         .collect();
     for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            held.extend(reply_occurrences(record.run_id, &record.outputs));
+            held.extend(reply_occurrences(&record));
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
@@ -240,26 +241,27 @@ fn actor_records_in_txn(
     Ok(records)
 }
 
-/// The occurrences run `owner` holds of those of `outputs` that hold reply
-/// content.
-fn reply_occurrences(owner: EntityId, outputs: &[CodeRunRawOutput]) -> Vec<Occurrence> {
-    outputs
+/// The record's owned reply occurrences. An exact canonical native receipt
+/// keeps its original standing independently of its shared content hash.
+fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
+    record
+        .outputs
         .iter()
-        .filter(|output| holds_reply_content(&output.path))
-        .map(|output| (owner, output.path.clone(), output.handle.clone()))
+        .filter(|output| {
+            holds_reply_content(&output.path) && !record.output_is_retained_receipt(output)
+        })
+        .map(|output| (record.run_id, output.path.clone(), output.handle.clone()))
         .collect()
 }
 
-/// Releases run `owner`'s occurrence of each of `outputs` that holds reply
-/// content, with that occurrence's own taint and secret marks and no
-/// other's.
+/// Releases the record's reply occurrences with each occurrence's own taint
+/// and secret marks, never another holder's or a retained receipt's.
 fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
-    outputs: &[CodeRunRawOutput],
+    record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    for (owner, path, handle) in reply_occurrences(owner, outputs) {
+    for (owner, path, handle) in reply_occurrences(record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
     Ok(())
@@ -282,4 +284,122 @@ pub(super) fn release_occurrence_in_txn(
     crate::code_run::drop_code_run_result_marks_in_txn(store, wtxn, &marks)?;
     release_body_in_txn(store, wtxn, &owner, &occurrence.id())?;
     Ok(held)
+}
+
+/// Retires only the persisted output occurrences whose frozen input rows
+/// name `source`, in the source erase's accepted writer. The run's other
+/// replies and its response owner are unchanged.
+pub(crate) fn retire_sourced_code_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    let mut records = Vec::new();
+    for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {
+        let (key, bytes) = row?;
+        let Some(id) = <EntityId as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        let Ok(record) = REPLAY_RECORDS.decode_value(&bytes) else {
+            continue;
+        };
+        if record.outputs.iter().any(|output| {
+            output
+                .input_rows
+                .as_ref()
+                .is_some_and(|rows| rows.contains(source))
+        }) {
+            records.push((id, record));
+        }
+    }
+    let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
+    for (id, record) in records {
+        let mut paths = BTreeSet::new();
+        for output in &record.outputs {
+            if !output
+                .input_rows
+                .as_ref()
+                .is_some_and(|rows| rows.contains(source))
+            {
+                continue;
+            }
+            let occurrence = ResultOccurrence::owned(record.run_id, &output.path)?;
+            crate::ports::stage_stale_mark_in_txn(store, wtxn, &occurrence.id(), at)?;
+            if let Some(digest) = release_occurrence_in_txn(
+                store,
+                wtxn,
+                record.run_id,
+                output.path.clone(),
+                output.handle.clone(),
+            )? {
+                released.entry(record.run_id).or_default().insert(digest);
+            }
+            paths.insert(output.path.clone());
+        }
+        REPLAY_RECORDS.put_erased(
+            store,
+            wtxn,
+            &id,
+            Erased::code_run_output_previews(record, &paths),
+        )?;
+    }
+    retire_released_outputs_in_txn(store, wtxn, released)
+}
+
+/// A later replay write cannot republish a retired occurrence's preview or
+/// hold. The marker belongs to the occurrence, not its shared content hash.
+fn fence_sourced_outputs_in_txn<'r>(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut record: Cow<'r, CodeRunReplayRecord>,
+) -> Result<Cow<'r, CodeRunReplayRecord>> {
+    let mut withdrawn = Vec::new();
+    for (index, output) in record.outputs.iter().enumerate() {
+        let occurrence = ResultOccurrence::owned(record.run_id, &output.path)?;
+        if !crate::ports::body_readable_in_txn(
+            store,
+            wtxn,
+            &occurrence.id(),
+            &[],
+            crate::ports::BodyStale::Withdrawn,
+        )? {
+            withdrawn.push(index);
+        }
+    }
+    if withdrawn.is_empty() {
+        return Ok(record);
+    }
+    let record_mut = record.to_mut();
+    let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
+    for index in withdrawn {
+        let output = &mut record_mut.outputs[index];
+        if let Some(digest) = release_occurrence_in_txn(
+            store,
+            wtxn,
+            record_mut.run_id,
+            output.path.clone(),
+            output.handle.clone(),
+        )? {
+            released
+                .entry(record_mut.run_id)
+                .or_default()
+                .insert(digest);
+        }
+        output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
+    }
+    retire_released_outputs_in_txn(store, wtxn, released)?;
+    Ok(record)
+}
+
+fn retire_released_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    released: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+) -> Result<()> {
+    for (owner, digests) in released {
+        let digests: Vec<_> = digests.into_iter().collect();
+        crate::store::erase_bodies_in_txn(store, wtxn, &owner, &digests)?;
+    }
+    Ok(())
 }

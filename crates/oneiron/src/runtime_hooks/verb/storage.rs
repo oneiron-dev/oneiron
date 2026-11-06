@@ -36,8 +36,7 @@
 //! fails hides the read's result, one that does not block fails open, and
 //! with no sandbox installed, hooks off or none matching the call passes
 //! through. When a session keeps no records for a call, its hooks' outcomes
-//! apply all the same and each hook's disposition says why the receipt was
-//! not kept.
+//! apply all the same and each hook's disposition says why the receipt was not kept.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -68,8 +67,10 @@ use crate::{EntityId, MemoryError, Result, Vault};
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
+mod invocation_claims;
 mod named_pause;
 mod room_pause;
+mod room_tail;
 mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
@@ -230,6 +231,7 @@ pub(crate) struct SessionHookKeep {
 /// What the keep holds under one key: its records and its paused calls.
 struct Kept {
     overlay: Arc<SessionOverlay>,
+    invocations: Option<invocation_claims::SessionInvocations>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
     /// Their typed questions, answers and settlements, by group (FIX 10087).
@@ -486,6 +488,7 @@ impl SessionHookKeep {
         }
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            invocations: None,
             asks: HashMap::new(),
             ask_records: HashMap::new(),
         })))
@@ -762,6 +765,7 @@ impl Vault {
                     landing: None,
                     session: Some(hooks.carry()),
                     resumed_ask: None,
+                    read_capture: None,
                 }));
             }
         };

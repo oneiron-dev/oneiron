@@ -114,6 +114,16 @@ pub(super) fn media_device_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
 }
 
 impl Vault {
+    pub(crate) fn embedding_provenance_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbeddingProvenance>> {
+        EMBEDDING_DEVICE.get(&self.store, txn, id)
+    }
+}
+
+impl Vault {
     /// Who computed `id`'s stored vector; `None` when it has none. A vector
     /// with no record reads as [`EmbeddingProvenance::unknown`].
     pub fn embedding_provenance(&self, id: &EntityId) -> Result<Option<EmbeddingProvenance>> {
