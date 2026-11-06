@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::vault_read::{VaultReadMethod, VaultReadRequest};
 use oneiron::memory::{Memory, RewriteAdmit};
 use oneiron::runtime_hooks::verb::{VerbAskCredential, VerbAskDoor};
 use oneiron::runtime_hooks::{VerbCall, VerbHookPre};
@@ -20,7 +21,9 @@ use super::admission::mcp_admit_scoped_verb;
 use super::tasks_response::mcp_agent_verb_arguments;
 use super::{McpCallContext, McpGatewayError, mcp_facade_error};
 use crate::api::facade::RowHookResume;
-use crate::mcp::{McpEndpointTool, McpResolvedActor, McpSurfaceMode, try_registered_surface};
+use crate::mcp::{
+    McpEndpointTool, McpResolvedActor, McpSurfaceMode, McpVerbArguments, try_registered_surface,
+};
 use crate::server::SyncServer;
 
 /// The pre chain of MCP row `tool` over its `input`, for `actor` calling
@@ -157,7 +160,8 @@ fn mcp_hooks_admitted(
 
 /// The admission a connector's own call of `tool` meets, run on a hook's
 /// rewritten args for the same actor. A row no generated tool carries
-/// admits no rewrite.
+/// admits no rewrite. A native read's args are its native request: they
+/// meet that method's own request validation first (FIX 1435).
 fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContext) -> RewriteAdmit {
     let resolved = try_registered_surface(McpSurfaceMode::ToolFirst)
         .ok()
@@ -172,7 +176,10 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
         let Some(tool) = generated else {
             return Err("no MCP tool carries this row to re-admit its args".to_owned());
         };
-        let arguments = mcp_agent_verb_arguments(tool.name, rewritten).map_err(refused)?;
+        let arguments = match tool.memory_method() {
+            Some(method) => mcp_native_read_arguments(method, rewritten)?,
+            None => mcp_agent_verb_arguments(tool.name, rewritten).map_err(refused)?,
+        };
         arguments
             .validate(tool.name, tool)
             .map_err(|error| refused(mcp_tool_validation_error(error)))?;
@@ -181,6 +188,19 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
         crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
+    })
+}
+
+/// The `tools/call` arguments a native read's `request` projects onto, once
+/// it passed `method`'s own request validation (FIX 1435).
+fn mcp_native_read_arguments(
+    method: VaultReadMethod,
+    request: &Value,
+) -> Result<McpVerbArguments, String> {
+    VaultReadRequest::validate_body(method, request).map_err(|error| error.to_string())?;
+    Ok(McpVerbArguments {
+        request: Some(request.clone()),
+        ..McpVerbArguments::default()
     })
 }
 
@@ -303,7 +323,8 @@ impl McpCallContext {
 
 /// The saved `call` run again in `context`, its door rebuilt: the saved args
 /// meet the admission the caller's own call of the tool meets, then run
-/// through the same dispatch.
+/// through the same dispatch. A native read runs again through its own
+/// verb-hook boundary, on the saved request (FIX 1435).
 #[cfg(feature = "code-sandbox-wasmtime")]
 async fn rerun_saved_call(
     server: &Arc<SyncServer>,
@@ -314,6 +335,25 @@ async fn rerun_saved_call(
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
+    if let Some(McpEndpointTool::Verb(tool)) = try_registered_surface(McpSurfaceMode::ToolFirst)
+        .ok()
+        .and_then(|surface| surface.resolve(&call.verb))
+        && let Some(method) = tool.memory_method()
+    {
+        // The native read's boundary, on the heap (FIX 12072).
+        let ran = Box::pin(
+            super::tasks_response::native_read::execute_native_read_input(
+                server,
+                tool,
+                method,
+                call.args,
+                context,
+                &mut served,
+            ),
+        )
+        .await;
+        return Ok(ran.map(|(output, _)| output).map_err(mcp_saved_error));
+    }
     let mut board_hooks = None;
     // The verb table's fan-out, on the heap (FIX 12072).
     let ran = Box::pin(super::tasks_response::execute_agent_verb_input(
