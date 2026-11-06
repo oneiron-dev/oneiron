@@ -24,6 +24,7 @@
 //! `final` feed the worker's activity (FIX 9190), as the supervisor's own
 //! poll ([`activity`]) does.
 mod buffer;
+mod evaluator_ops;
 mod session_ops;
 mod transport;
 mod updates;
@@ -43,7 +44,12 @@ pub(super) use session_ops::{
     prepare_source_released as session_prepare_source_released,
 };
 pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
+// FIX 14975: the drafter evaluator's op, and the chat body split it sends.
+pub(super) use evaluator_ops::{
+    advertised as evaluator_advertised, evaluate as evaluator_generate,
+};
 pub(super) use transport::next_request_id;
+pub(super) use wire::split_request;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
