@@ -31,8 +31,18 @@ separate authority-genesis hex used by `VaultUsage`. The owner is the original
 usage producer's input, never inferred from a financial account or vault id.
 The runtime control request is `AllocationInstall { delivery }` on the existing
 authenticated ctl channel. It uses the existing managed write/reap admission
-and only the native backend selected at startup; it does not retarget a shared
-ordinary runtime. Its usage owner must match the bound producer.
+and can install the first original allocation into an already-running ordinary
+server. The descriptor commits before the shared future-run selection is
+published. Subsequent deliveries use that same native ledger, and their owner
+must match its original producer. If usage metering was already bound, the first
+delivery must match that meter's owner and reuses the same meter. No owner is
+inferred from an account, a reflected balance or the routing id.
+
+Each new run snapshots the current selection. Runs constructed before that
+publication keep their original backend and line, and already-admitted usage
+keeps its original owner and prices. Native holds are never copied or reissued.
+Reading the selection does not acquire the installation mutex or wait for its
+vault writer; calls can continue on the ordinary path until publication.
 
 `VaultAllocationLedger::install_backed` retains the original allocation and
 `AllocationTerms` (owner, ordered rates and issue clock) in the native writer.
@@ -108,8 +118,10 @@ Every mutation returns `AllocationCommit`. Once its `value` is present, the
 allocation write is durable, even if `postcommit_error` reports a later vault
 failure. Do not undo that operation, return its capacity or mint a new identity
 because unrelated postcommit work failed. Before-commit storage or producer
-errors remain errors, not exhausted-budget denials. No host, run, budget or
-resident mutex is held while this backend acquires its writer.
+errors remain errors, not exhausted-budget denials. No `HostAccount`, run, budget or
+resident mutex is held while this backend acquires its writer. First live
+selection serializes installations only; run factories read the once-published
+selection without that installation mutex.
 
 The new row is a LIVE restore family and is not imaged into checkpoint payloads.
 Actor erase removes the stored resident attribution without releasing money or
@@ -199,9 +211,10 @@ still selects its original ordinary path. Configured raw calls and the
 server's injected raw backend carry that same native selection, including
 both owned builder orderings for the injected backend. Existing settlement
 capture, original request/source overlays and chosen observers remain attached.
-The attachment passes these owned bindings before `Arc<ModelRuntime>` exists;
-it neither mutates worker identity nor retargets an already shared runtime.
-Select native metering before attaching the AI host or starting its workers.
+The attachment passes the shared future-run binding before `Arc<ModelRuntime>`
+exists. First live delivery can publish that binding later without changing
+worker identity or any constructed run. An explicit startup selection still
+binds native metering before attaching the AI host or starting its workers.
 
 Media job factories, standalone House gates and direct non-runtime run
 factories still need their original native binding joins. Existing kept media

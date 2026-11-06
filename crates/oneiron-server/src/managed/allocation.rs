@@ -31,7 +31,6 @@ pub(super) fn bind(
     vault_name: &str,
     delivery: AllocationDelivery,
 ) -> anyhow::Result<SyncServer> {
-    let server = server.with_native_usage_metering(delivery.usage_owner.clone())?;
     install(&server, vault_name, delivery)?;
     Ok(server)
 }
@@ -47,16 +46,6 @@ pub(super) fn install(
         delivery.vault_id == vault_name,
         "allocation names another managed vault"
     );
-    let usage = server
-        .vault_usage()
-        .ok_or_else(|| anyhow::anyhow!("native usage was not bound at startup"))?;
-    anyhow::ensure!(
-        usage.owner() == delivery.usage_owner,
-        "allocation names another usage producer"
-    );
-    let ledger = server
-        .persistent_allocation_ledger()
-        .ok_or_else(|| anyhow::anyhow!("native allocation was not selected at startup"))?;
     let allocation = Allocation {
         reference: AllocationRef {
             id: delivery.allocation.id,
@@ -80,7 +69,7 @@ pub(super) fn install(
             .collect::<Result<Vec<_>, oneiron::llm::run_admission::DeclarationError>>()?,
         issued_at: delivery.issued_at,
     };
-    let commit = ledger.install_backed(allocation, terms)?;
+    let commit = server.install_native_allocation(allocation, terms)?;
     if commit.postcommit_error.is_some() {
         tracing::error!(
             revision = commit.revision,

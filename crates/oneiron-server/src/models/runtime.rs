@@ -15,7 +15,7 @@ impl ModelRuntime {
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
             host: None,
-            native_allocation: None,
+            native_allocation: Default::default(),
             decision_read: None,
             stays_on_device: BTreeSet::new(),
             media: MediaRuntime::empty(),
@@ -48,12 +48,12 @@ impl ModelRuntime {
         self.host.clone()
     }
 
-    pub(crate) fn with_native_allocation(mut self, native: Option<NativeRunAllocation>) -> Self {
+    pub(crate) fn with_native_allocation(mut self, native: NativeUsageBinding) -> Self {
         self.native_allocation = native;
         self
     }
 
-    pub(crate) fn native_allocation(&self) -> Option<NativeRunAllocation> {
+    pub(crate) fn native_allocation(&self) -> NativeUsageBinding {
         self.native_allocation.clone()
     }
 
@@ -61,8 +61,8 @@ impl ModelRuntime {
     /// [`undeclared_run`]), with this runtime's receipts.
     #[must_use]
     pub fn undeclared_run(&self, run: impl Into<String>, meter: BudgetGuard) -> RunAdmission {
-        match &self.native_allocation {
-            Some(native) => native.funded_run(run, meter, None, None),
+        match self.native_allocation.current() {
+            Some(native) => native.runs().funded_run(run, meter, None, None),
             None => undeclared_run(run, meter, self.host.clone(), Arc::clone(&self.receipts)),
         }
     }
@@ -77,8 +77,8 @@ impl ModelRuntime {
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
     ) -> RunAdmission {
-        match &self.native_allocation {
-            Some(native) => native.funded_run(run, meter, payer, None),
+        match self.native_allocation.current() {
+            Some(native) => native.runs().funded_run(run, meter, payer, None),
             None => raw::funded_run(
                 run,
                 meter,
@@ -99,8 +99,10 @@ impl ModelRuntime {
         meter: BudgetGuard,
         attribution: RunAttribution,
     ) -> RunAdmission {
-        if let Some(native) = &self.native_allocation {
-            return native.funded_run(run, meter, None, Some(attribution));
+        if let Some(native) = self.native_allocation.current() {
+            return native
+                .runs()
+                .funded_run(run, meter, None, Some(attribution));
         }
         let line = BudgetLine {
             limit_units: meter.read().limit_units,
@@ -132,9 +134,12 @@ impl ModelRuntime {
         host: Option<Arc<HostAccount>>,
     ) -> DeclaredRun {
         if host.is_none()
-            && let Some(native) = &self.native_allocation
+            && let Some(native) = self.native_allocation.current()
         {
-            return DeclaredRun::new(native.declared_run(run, declaration), self.router.clone());
+            return DeclaredRun::new(
+                native.runs().declared_run(run, declaration),
+                self.router.clone(),
+            );
         }
         DeclaredRun::new(
             RunAdmission::new(
@@ -472,7 +477,7 @@ impl ModelRuntime {
             status,
             receipts: Arc::new(LoggedReceipts),
             host: None,
-            native_allocation: None,
+            native_allocation: Default::default(),
             decision_read,
             stays_on_device: config.stays_on_device.clone(),
             media,

@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use super::SyncServer;
 
-mod native;
-pub(super) use native::NativeUsage;
+use crate::models::NativeUsage;
 
 impl SyncServer {
     /// Selects native custody before work starts, using this vault's actual
@@ -12,20 +11,81 @@ impl SyncServer {
     /// replenishes a grant. The trusted host delivers original allocations
     /// through `persistent_allocation_ledger`, never a reflected live balance.
     pub fn with_native_usage_metering(
-        self,
+        mut self,
         owner: impl Into<String>,
     ) -> Result<Self, oneiron::llm::run_admission::AllocationStoreError> {
-        let mut server = self.with_usage_metering(owner).map_err(|error| {
-            oneiron::llm::run_admission::AllocationStoreError::Producer(Box::new(error))
-        })?;
-        let usage = server
-            .vault_usage()
-            .expect("the original usage meter was bound");
-        server.native_usage = Some(NativeUsage::new(usage, Arc::clone(&server.run_receipts))?);
-        if let Some(raw) = server.llm.take() {
-            server.llm = Some(raw.with_native_allocation(server.native_runs()));
+        let owner = owner.into();
+        {
+            let _installation = self.native_usage.installation();
+            if let Some(native) = self.native_usage.current() {
+                Self::check_native_owner(&native, &owner)?;
+            } else {
+                let usage = self.native_usage_meter(&owner)?;
+                let native = NativeUsage::new(Arc::clone(&usage), Arc::clone(&self.run_receipts))?;
+                self.run_receipts.meter(usage);
+                self.native_usage.publish(native);
+            }
         }
-        Ok(server)
+        if let Some(raw) = self.llm.take() {
+            self.llm = Some(raw.with_native_allocation(self.native_runs()));
+        }
+        Ok(self)
+    }
+
+    /// Publishes a first live binding only after the original delivery commits.
+    /// Existing runs retain the backend they captured before this selection.
+    pub(crate) fn install_native_allocation(
+        &self,
+        allocation: oneiron::llm::run_admission::Allocation,
+        terms: oneiron::llm::run_admission::AllocationTerms,
+    ) -> Result<
+        oneiron::llm::run_admission::AllocationCommit<()>,
+        oneiron::llm::run_admission::AllocationStoreError,
+    > {
+        let _installation = self.native_usage.installation();
+        if let Some(native) = self.native_usage.current() {
+            Self::check_native_owner(&native, &terms.usage_owner)?;
+            return native.ledger.install_backed(allocation, terms);
+        }
+        let usage = self.native_usage_meter(&terms.usage_owner)?;
+        let native = NativeUsage::new(Arc::clone(&usage), Arc::clone(&self.run_receipts))?;
+        let commit = native.ledger.install_backed(allocation, terms)?;
+        self.run_receipts.meter(usage);
+        self.native_usage.publish(native);
+        Ok(commit)
+    }
+
+    fn check_native_owner(
+        native: &NativeUsage,
+        owner: &str,
+    ) -> Result<(), oneiron::llm::run_admission::AllocationStoreError> {
+        if native.producer.owner() == owner {
+            return Ok(());
+        }
+        Err(oneiron::llm::run_admission::AllocationStoreError::Producer(
+            Box::new(crate::usage::UsageError::InvalidField {
+                field: "usageOwner",
+                message: "allocation names another usage producer",
+            }),
+        ))
+    }
+
+    fn native_usage_meter(
+        &self,
+        owner: &str,
+    ) -> Result<Arc<crate::runtime::VaultUsage>, oneiron::llm::run_admission::AllocationStoreError>
+    {
+        let usage = match self.vault_usage() {
+            Some(usage) if usage.owner() == owner => Ok(usage),
+            Some(_) => Err(crate::usage::UsageError::InvalidField {
+                field: "usageOwner",
+                message: "allocation names another usage producer",
+            }),
+            None => self.new_usage_meter(owner.to_owned()),
+        };
+        usage.map_err(|error| {
+            oneiron::llm::run_admission::AllocationStoreError::Producer(Box::new(error))
+        })
     }
 
     /// The selected authoritative ledger, for original trusted-host grants,
@@ -35,12 +95,12 @@ impl SyncServer {
         &self,
     ) -> Option<Arc<oneiron::llm::run_admission::VaultAllocationLedger>> {
         self.native_usage
-            .as_ref()
+            .current()
             .map(|native| Arc::clone(&native.ledger))
     }
 
-    pub(crate) fn native_runs(&self) -> Option<crate::models::NativeRunAllocation> {
-        self.native_usage.as_ref().map(|native| native.runs())
+    pub(crate) fn native_runs(&self) -> crate::models::NativeUsageBinding {
+        self.native_usage.clone()
     }
 
     /// An undeclared run using the explicitly selected native backend, or
@@ -52,7 +112,7 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> oneiron::llm::run_admission::RunAdmission {
         let run = run.into();
-        match &self.native_usage {
+        match self.native_usage.current() {
             Some(native) => native.undeclared_run(run, meter),
             None => self.ai.model_runtime().undeclared_run(run, meter),
         }
@@ -66,7 +126,7 @@ impl SyncServer {
         if let Some(backend) = permit.persistent_allocation() {
             let native = self
                 .native_usage
-                .as_ref()
+                .current()
                 .filter(|native| Arc::ptr_eq(&native.backend, &backend))
                 .ok_or(crate::usage::UsageError::InvalidField {
                     field: "nativeUsageAdmission",
@@ -93,6 +153,15 @@ impl SyncServer {
         self,
         owner: impl Into<String>,
     ) -> Result<Self, crate::usage::UsageError> {
+        let usage = self.new_usage_meter(owner.into())?;
+        self.run_receipts.meter(usage);
+        Ok(self)
+    }
+
+    fn new_usage_meter(
+        &self,
+        owner: String,
+    ) -> Result<Arc<crate::runtime::VaultUsage>, crate::usage::UsageError> {
         let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
             crate::usage::UsageError::InvalidField {
                 field: "vaultId",
@@ -100,16 +169,14 @@ impl SyncServer {
             },
         )?;
         let vault_id = vault_id.iter().map(|byte| format!("{byte:02x}")).collect();
-        let usage = crate::runtime::VaultUsage::new(
+        crate::runtime::VaultUsage::new(
             self.usage_ledger.clone(),
-            owner.into(),
+            owner,
             vault_id,
             Arc::clone(&self.vault),
             Arc::clone(&self.retained),
             Arc::clone(self.wire_telemetry.limit_questions()),
-        )?;
-        self.run_receipts.meter(usage);
-        Ok(self)
+        )
     }
 
     #[must_use]
@@ -148,7 +215,7 @@ impl SyncServer {
 
     fn flush_usage_meters(&self, stopping: bool) {
         self.retrieval_buffer.flush();
-        if let Some(native) = &self.native_usage
+        if let Some(native) = self.native_usage.current()
             && let Err(error) = native.backend.retry_settlements()
         {
             tracing::warn!(%error, stopping, "original native terminals remain in memory for retry");
