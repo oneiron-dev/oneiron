@@ -425,6 +425,11 @@ impl Vault {
                 prior_source,
             )?;
         }
+        // A model pack's install may change the pack the vault follows; the
+        // change keeps the receipt it replaced (FIX 5367).
+        if receipt.kind == PackKind::Model {
+            self.note_active_model_pack_in_txn(txn)?;
+        }
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash
         {

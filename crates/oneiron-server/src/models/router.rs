@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use oneiron::llm::model_pack::AccessSnapshot;
 use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
 
 use super::ladder::OfferLadder;
@@ -151,6 +152,25 @@ impl ModelRouter {
                 .map(|(model, (locality, _))| (model.clone(), *locality)),
         );
         served
+    }
+
+    /// The access this router's offers hold now, each with the models it
+    /// serves by their own id, configured or mesh-discovered, as
+    /// [`Self::served`] finds them (FIX 5366): what a vault's model pack
+    /// picks a role's variant from. Read from the host-bound offers alone;
+    /// nothing is probed. A seat's rungs, reached only through the seat,
+    /// are left out.
+    pub fn access_snapshot(&self) -> AccessSnapshot {
+        let mut snapshot = AccessSnapshot::new();
+        let discovered = self.discovered();
+        for (model, (_, ladder)) in self.routes.iter().chain(discovered.iter()) {
+            for offer in ladder.offer_bindings() {
+                if offer.model == *model {
+                    snapshot.insert_offer(offer);
+                }
+            }
+        }
+        snapshot
     }
 
     /// Each model the last mesh catalog refresh found, with the machine id

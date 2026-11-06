@@ -53,6 +53,10 @@ impl Vault {
                 }
             }
             admission::PACK_INSTALL.delete(&self.store, txn, &name)?;
+            // Removing a model pack may change the pack the vault follows.
+            if receipt.kind == super::PackKind::Model {
+                self.note_active_model_pack_in_txn(txn)?;
+            }
             if let Some(candidate) = super::builtin::reseeded_candidate(&receipt) {
                 admission::PACK_CANDIDATE.put(
                     &self.store,
