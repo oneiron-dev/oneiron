@@ -4,9 +4,10 @@
 //! Who may do what (owner MAIL-SHARE = A): a personal mailbox and a
 //! calendar are connected, and their settings set, by their own person; a
 //! group address by the vault's Owner or an Admin, who name its members.
-//! The Owner stores each credential; a credential is one person's, or
-//! group addresses', and one no source names yet is named by an Owner or
-//! an Admin, for themselves or for the person it belongs to. A
+//! The Owner stores each credential and names whom it is for in its binding
+//! scopes (`actor:<PERSON>`, or `group-address`; none names the Owner's
+//! own): a source takes only a credential stored for its own person, or
+//! for group addresses (fix list rows 15423, 16312). A
 //! source someone may not see answers as an unknown source: a list shows a
 //! reader the personal mailboxes they read, the group addresses they read
 //! or manage, and every calendar (busy and free are the vault's), never the
@@ -41,7 +42,10 @@ pub struct MailSourceConnectRequest {
     /// same account and address resumes the same source.
     pub provider_account: String,
     /// The custody record the credential is stored under, through the owner
-    /// secrets form. Never the credential itself.
+    /// secrets form. Never the credential itself. The Owner stored it for
+    /// this source's person (its bindings' `actor:<PERSON>` scope, or no
+    /// holder scope for the Owner's own), or for group addresses (the
+    /// `group-address` scope).
     pub custody_ref: String,
     /// A group address only: the PERSONs who read it, 32-hex. A personal
     /// mailbox and a calendar read to the person who connects them.
@@ -405,21 +409,16 @@ impl Memory<'_> {
             let open = input.kind == MailSourceKind::Calendar
                 && input.calendar_details == Some(CalendarDetailSetting::Shared);
             let resumed = SOURCE_INDEX.get(&vault.store, txn, &key)?;
-            // The credential is the holder's: a member names only one their
-            // own sources name already (REVIEW-5883).
+            // The credential is the holder's: the Owner stored it for this
+            // source's person, or for group addresses, and no source of
+            // another holder names it (REVIEW-5883, rows 15423, 16312).
             let holder = match owner {
                 None => CredentialHolder::Group,
                 Some(person) => CredentialHolder::Person(person),
             };
-            let manages = self.mail_caller_manages_in(txn)?;
-            if let Some(refusal) = credential_refusal_in(
-                vault,
-                txn,
-                &input.custody_ref,
-                holder,
-                resumed.as_ref(),
-                manages,
-            )? {
+            if let Some(refusal) =
+                credential_refusal_in(vault, txn, &input.custody_ref, holder, resumed.as_ref())?
+            {
                 return Err(MemoryError::bad_request(refusal));
             }
             if let Some(id) = resumed
