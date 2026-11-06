@@ -120,10 +120,9 @@ existing Gate. Speaker labels grant no PERSON, biometric, or send authority.
 
 These doors use ordinary blob version, ASSET, high-water, erase, hold and archive
 machinery. They add no separate lifetime system or global-erasure guarantee.
-Storage alone does not import a SESSION or NOTE; the owner-bound import door
-below performs that step. The owner HTTP storage routes below do not expose
-that import door. No text-flattening adapter or duplicate SESSION lifecycle is
-installed, and no voiceprint consent is implied.
+Storage alone does not import a SESSION or NOTE; the separate owner import
+action below performs that step. No text-flattening adapter or duplicate
+SESSION lifecycle is installed, and no voiceprint consent is implied.
 
 ### Owner HTTP storage and selected reads
 
@@ -137,9 +136,10 @@ All three actions are POSTs under `/v1/owner/meeting-transcripts`:
 - `/label` takes `stored` and `labels`, a speaker-cluster-to-source-label map.
   It returns the native unchanged, appended or forked selection; it does not
   relabel an unrelated newer revision or identify a PERSON.
-- `/read` takes `stored` and returns `stored`, the exact `artifact_json` string
-  and its `recording_id`. The native read validates both selected versions and
-  their ledger relationship, not a caller-supplied association.
+- `/read` takes `stored` and returns `stored`, the exact `artifact_json` string,
+  its `recording_id` and the complete `import_binding`. The native read validates
+  both selected versions and their ledger relationship, not a caller-supplied
+  association. The binding describes the artifact; reading it approves nothing.
 
 `source_audio` is a pin with `artifact` (32 hex characters), `version` (u64)
 and `content_hash` (64 hex characters of BLAKE3). `stored` contains both
@@ -148,7 +148,8 @@ pins use lowercase hex. Persist and label return this same `stored` shape.
 Pins are selections, never owner credentials or bulk import consent. Bodies
 use the existing owner JSON spool and listener policy, with no new length cap.
 These storage actions do not start ASR, import observations, answer hooks or
-consume bulk consent. The caller-bound SESSION/NOTE import remains unserved.
+consume bulk consent. The separate import actions below use an explicit owner
+approval of the complete binding.
 
 ## Typed SESSION input and selected-artifact reads
 
@@ -213,8 +214,9 @@ CHAT keeps the imported floor and unknown meeting speaker behavior above.
 An already-open sitting returns the native `RetryOpenSession` result. The door
 does not mint another SESSION or silently reuse this receipt for a later call.
 The exact stored artifact and bulk receipt remain in the returned outcome.
-Served caller routes remain unconnected; no host-only MACHINE take or
-owner-authored truth is substituted for them.
+The served import actions use the caller-bound continuation below, not this
+hookless direct API. No host-only MACHINE take or owner-authored truth is
+substituted for the actual caller.
 
 ## Native Imported NOTE fallback
 
@@ -246,9 +248,9 @@ source, identities, births, title and secret handling.
 
 The SESSION and new NOTE commit together, or the native write error rolls back
 both. A busy SESSION outcome can still accompany a landed or retained NOTE.
-These SESSION and NOTE import doors remain library APIs; no served import
-route, physical ASR execution, end-to-end runtime result or global-erasure
-guarantee is claimed here.
+These SESSION and NOTE import doors remain library APIs beneath the served
+adapter below. No physical ASR execution, end-to-end runtime result or
+global-erasure guarantee is claimed here.
 
 ## Caller-bound prepared SESSION import
 
@@ -291,3 +293,47 @@ result rearms both pre-hooks. Posts run only after commit with the actual native
 attempt is complete, including a busy SESSION result, and cannot be resumed to
 mint another SESSION. This source API does not prove ASR execution, caller-route
 activation, hook runtime behavior, privacy or global erasure.
+
+## Served owner import and continuation
+
+After reviewing `/read`'s artifact and full `import_binding`, the owner explicitly
+POSTs `/v1/owner/meeting-transcripts/import` with `stored` and that `binding`.
+The existing owner door authenticates the action before reading its body. This
+is approval of the whole selected artifact, not a boolean inside a transcript,
+voiceprint enrollment, a pin used as a grant or a second per-turn prompt.
+
+The host authorizer supplies the actual vault-key id as its scope and allocates
+a receipt reference from the vault's native id source. The native callback
+independently derives the complete binding, including the exact artifact SHA-256
+and every source record id, and requires full equality with what the owner
+reviewed. A mismatched version, artifact or scope grants nothing. The existing
+native owner, read-lane, source-audio, hash and committing-writer checks remain.
+The receipt records the authenticated import act; this contract does not add a
+separate receipt signature requirement or a persisted consent ledger.
+
+`Vault::prepare_owned_meeting_transcript_import_as_owner` keeps the actual
+`AuthorizedMeetingImport`, projected input, source pins, receipt, arrival, hint
+and saved ask in one private execution state shared with the borrowed API.
+Its opaque, nonserialized `OwnedMeetingTranscriptImportAttempt` keeps an
+`Arc<Vault>` and the original retained reader and owner actor. Every resume
+needs a current live proof of that same owner. It restores the original reader
+and its live guards, never replacing it with the later request's wider reader.
+Held room narrowing is kept even after a pending result or an error. Only the
+current operation's task-work turn is shared; no turn is kept between requests.
+This is the reader and author context this import consumes, not a full clone
+of every request field on `Memory`.
+
+`hook_pending` returns the native `session_ref` and `ask`. Answer the actual
+hook ask, then POST `/v1/owner/meeting-transcripts/import/resume` with that
+`session_ref`. The per-server runtime retains the same native attempt; resume
+does not repeat bulk consent or mint a fresh hook identity. `imported` returns
+the native SESSION result, NOTE result, selected pins and original bulk receipt.
+An empty-turn NOTE completes without a synthetic SESSION or map entry. A
+committed busy-session result is complete, as on the borrowed API.
+
+POST `/v1/owner/meeting-transcripts/import/discard` with `session_ref` to forget
+a retained continuation. It does not undo committed work, revoke an ask or
+cancel a resume already running. The runtime is per server, not global; dropping
+the server drops its pending objects. There is no background worker, durable
+retry, new timer or new numeric cap. These are served source paths, not proof
+of a successful runtime import, physical ASR, privacy or global erasure.

@@ -28,7 +28,7 @@ pub use alignment::align_words_to_speakers;
 pub use artifact::{AuthorizedMeetingImport, ProducedMeetingTranscript};
 pub use caller_import::{
     MeetingTranscriptCallerImportError, MeetingTranscriptCallerImportOutcome,
-    MeetingTranscriptImportAttempt,
+    MeetingTranscriptImportAttempt, OwnedMeetingTranscriptImportAttempt,
 };
 pub use cleanup::validate_cleanup;
 pub use command::{
