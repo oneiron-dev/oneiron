@@ -19,7 +19,7 @@
 //! stands apart from "erase completed" (C4, row 04).
 
 #[cfg(unix)]
-pub mod clone;
+pub(super) mod clone;
 mod confirmation;
 mod held_scrubs;
 mod pending_delete;
