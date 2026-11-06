@@ -27,6 +27,10 @@ pub struct CodeRunRawOutput {
     /// Every row this occurrence's bytes were produced from; `None` when
     /// any constituent is unknown (FIX 7104).
     pub input_rows: Option<Vec<EntityId>>,
+    /// The bridge sequence where the producing executor step began. This
+    /// is occurrence metadata, not authority; non-executor producers carry
+    /// no coordinate.
+    pub producing_step_start: Option<u64>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -70,6 +74,7 @@ impl CodeRunRawOutput {
             lines: facts.lines,
             complete,
             input_rows: None,
+            producing_step_start: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -98,6 +103,7 @@ impl CodeRunRawOutput {
             lines: 0,
             complete: true,
             input_rows: None,
+            producing_step_start: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
