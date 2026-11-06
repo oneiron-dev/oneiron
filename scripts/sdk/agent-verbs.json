@@ -14642,7 +14642,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.audio",
@@ -14654,7 +14658,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.events",
@@ -14665,7 +14673,11 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "section": false
+      "section": false,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.ack",
@@ -14677,7 +14689,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.usage",
@@ -14689,7 +14705,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.tool",
@@ -14701,7 +14721,11 @@
       "scope": "Write",
       "section": false,
       "host_door_caller": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.end",
@@ -14713,7 +14737,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.phone.voice.close",
@@ -14725,7 +14753,11 @@
       "host_door_lists": true,
       "scope": "Write",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.anonymous_chat",
