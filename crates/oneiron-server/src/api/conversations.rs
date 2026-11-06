@@ -14,7 +14,6 @@ use super::SearchResponse;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_list_limit;
-use super::core_private_threads_admit;
 use super::core_write_text;
 use super::encode_core_body;
 use super::facade::ROOM_TURN_HEADER;
@@ -598,48 +597,42 @@ fn turn_read_query(
     Ok(params)
 }
 
-/// Whether the TURN routes serve `read`'s caller as the vault owner
-/// (`Vault::turn_doors_owner`, FIX 5938).
-fn core_turn_doors_owner(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-) -> Result<bool, ApiError> {
-    vault.turn_doors_owner(read).map_err(|error| {
-        tracing::error!(error = %error, "core TURN owner check failed");
-        core_engine_error("core TURN owner check failed", error)
-    })
-}
-
-/// Whether the TURN routes serve the row `id` to `read`'s caller: the
-/// owner's own read (`owner`) under each private thread alone, as before
-/// (FIX 5652); any other under its lane's whole row admission, private
-/// threads included (FIX 5938).
-fn core_turn_admits(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    owner: bool,
-    id: &oneiron::EntityId,
-) -> Result<bool, ApiError> {
-    if owner {
-        return core_private_threads_admit(vault, read, id);
-    }
-    read.is_entity_readable(id).map_err(|error| {
-        tracing::error!(error = %error, id = %id.to_hex(), "core TURN admission failed");
-        core_engine_error("core TURN admission failed", error)
-    })
-}
-
 /// Whether the TURN routes serve the turn `id` to `read`'s caller at all, as
-/// [`get_core_turn`] decides it (FIX 5652, 5938). A route that reads beside a
-/// TURN, its VAD annotation or its sub-sessions, answers one this does not
-/// serve as missing (FIX 5868, 5869).
+/// [`get_core_turn`] decides it (FIX 5652, 5938), judged in the route's own
+/// snapshot `txn` (FIX 10782): the owner's own read
+/// (`Vault::turn_doors_owner`) under each private thread alone, any other
+/// under its lane's whole row admission, private threads included. A route
+/// that reads beside a TURN, its VAD annotation or its sub-sessions, answers
+/// one this does not serve as missing (FIX 5868, 5869), and reads what it
+/// serves in this same `txn`, opened by `ScopedRead::with_grant_read_snapshot`.
 pub(crate) fn core_turn_served(
     vault: &oneiron::Vault,
     read: &oneiron::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &oneiron::EntityId,
 ) -> Result<bool, ApiError> {
-    let owner = core_turn_doors_owner(vault, read)?;
-    core_turn_admits(vault, read, owner, id)
+    let owner = vault.turn_doors_owner_in_txn(read, txn).map_err(|error| {
+        tracing::error!(error = %error, "core TURN owner check failed");
+        core_engine_error("core TURN owner check failed", error)
+    })?;
+    let failed = if owner {
+        "core private-thread check failed"
+    } else {
+        "core TURN admission failed"
+    };
+    let admitted = vault.turn_door_admits_in_txn(read, txn, owner, id);
+    admitted.map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "{failed}");
+        core_engine_error(failed, error)
+    })
+}
+
+/// The failure to open the snapshot a route judges a turn in with
+/// [`core_turn_served`], its lane's grant time persisted first: answered as
+/// that lane's own admission read answers it.
+pub(crate) fn core_turn_snapshot_error(error: oneiron::Error) -> ApiError {
+    tracing::error!(error = %error, "core TURN admission failed");
+    core_engine_error("core TURN admission failed", error)
 }
 
 #[cfg(test)]
