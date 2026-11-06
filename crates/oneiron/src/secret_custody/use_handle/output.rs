@@ -145,6 +145,34 @@ impl SentValue<'_> {
         }
     }
 
+    /// Where each copy of the value sits in `data`, as held and with its
+    /// surrounding whitespace trimmed, beside the text it becomes (fix list
+    /// row 10550): what a pass that clears this value and others at once
+    /// replaces together, so one value's replacement never cuts another
+    /// that contains it.
+    #[must_use]
+    pub fn spans(&self, data: &[u8]) -> Vec<(std::ops::Range<usize>, &str)> {
+        let Ok(value) = std::str::from_utf8(self.value) else {
+            return Vec::new();
+        };
+        let mut spans = Vec::new();
+        for form in [value, value.trim()] {
+            let form = form.as_bytes();
+            if form.is_empty() {
+                continue;
+            }
+            let mut at = 0;
+            while let Some(found) = data
+                .get(at..)
+                .and_then(|rest| rest.windows(form.len()).position(|window| window == form))
+            {
+                spans.push((at + found..at + found + form.len(), self.text));
+                at += found + 1;
+            }
+        }
+        spans
+    }
+
     /// A copy a live exchange's worker keeps to clear what the connector
     /// says after its send returned, as its session keeps the credential
     /// header; scrubbed when the worker drops it.

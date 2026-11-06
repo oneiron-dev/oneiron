@@ -9,7 +9,9 @@
 //! handed over with that one request. No key is read once into a long-lived
 //! bearer or a default header. The built-in Google Sheets connector sends
 //! through it too (`sheets`), its OAuth access token read at its own
-//! custody door by the engine.
+//! custody door by the engine. An outside import's git exchanges go through
+//! the same broker (OSH-3, `git`).
+mod git;
 mod secret_use;
 mod sheets;
 
@@ -63,15 +65,19 @@ pub(crate) struct BrokerAnswer {
 }
 
 impl BrokerContext {
-    /// The context serve builds from the opened `vault`, when anything
-    /// `config` names takes its key from a vault secret (a `[models]`
-    /// provider, the System One seat, the endpoint embedder, its remote rung
-    /// or the GPU pods); `None` when nothing does. Its broker is the one
-    /// `[models.broker]` names, by default the same-user child beside this
-    /// binary, which gives each send the longest of those consumers'
-    /// timeouts. Built inside the serve runtime.
+    /// The context serve builds from the opened `vault`. Its broker is the
+    /// one `[models.broker]` names, by default the same-user child beside
+    /// this binary, which gives each send the longest timeout of the
+    /// consumers `config` gives a vault-secret key (a `[models]` provider,
+    /// the System One seat, the endpoint embedder, its remote rung or the
+    /// GPU pods). A vault where none does still sends its outside imports'
+    /// git exchanges through it (OSH-3), each waiting the transfer idle
+    /// limit without progress. `None` outside the serve runtime.
     pub(crate) fn for_serve(vault: &Arc<Vault>, config: &ServeConfig) -> Option<Self> {
-        let timeout = vault_secret_sends(config).into_iter().max()?;
+        let timeout = vault_secret_sends(config)
+            .into_iter()
+            .max()
+            .unwrap_or_else(|| Duration::from_millis(config.limits.transfer_idle_timeout_ms));
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             tracing::warn!("the credential broker context is built inside the serve runtime");
             return None;
@@ -273,8 +279,13 @@ impl BrokerContext {
         if tokio::runtime::Handle::try_current().is_err() {
             return run();
         }
-        std::thread::scope(|scope| scope.spawn(run).join())
-            .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
+        std::thread::scope(|scope| {
+            crate::engine_thread("model-broker-send".into())
+                .spawn_scoped(scope, run)
+                .expect("failed to spawn thread")
+                .join()
+        })
+        .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
     }
 
     /// The System One seat's transport over this broker, its key the vault
