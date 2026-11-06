@@ -62308,7 +62308,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/room_codec/offer_parts.rs",
-     "purpose": "Large Offer wording rides as parts; its actor fields stay editable inline",
+     "purpose": "Large Offer text rides as parts; its actor fields stay editable inline",
      "surface": {
       "crate-vis": 8
      }
@@ -77749,7 +77749,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_parts.rs",
@@ -87700,7 +87700,7 @@
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -99867,6 +99867,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 9,
       "fn": 3,
       "struct": 16
@@ -99880,6 +99881,16 @@
      "purpose": "SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/raster.rs",
+     "purpose": "A PNG compatibility image for held SVG geometry the native compiler already understands",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -100697,7 +100708,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/svg_fallback.rs",
@@ -101473,7 +101484,7 @@
      "purpose": "Real font metrics for fit estimates (ARCH-0077, \"Fit estimate\"): a bounded sfnt reader for TrueType and CFF…"
     },
     "graphic": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101587,7 +101598,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 174,
+   "source_files": 175,
    "test_files": 14
   },
   "oneiron-driver": {

@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 64 | 1 | 2 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 23 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 174 | 14 | 6 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 175 | 14 | 6 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 36 | 10 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
@@ -522,7 +522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit` | dir | 26 | m | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `emit` | dir | 4 | m | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
 | `fonts` | file | 1 | m | Real font metrics for fit estimates (ARCH-0077, "Fit estimate"): a bounded sfnt reader for TrueType and CFF… |
-| `graphic` | dir | 7 | m | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
+| `graphic` | dir | 8 | m | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
 | `hex_digest` | file | 1 | s | A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its… |
 | `live` | dir | 66 | XL | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
 | `native_patch` | dir | 9 | m | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
