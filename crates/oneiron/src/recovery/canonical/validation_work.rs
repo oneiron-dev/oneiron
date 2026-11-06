@@ -6,6 +6,7 @@ use crate::error::Result;
 #[derive(Default)]
 pub(crate) struct CanonicalValidation {
     stage: ValidationStage,
+    manifest: validation::ManifestValidation,
     window_rows: validation::WindowRows,
     document_rows: validation::DocumentRows,
     entity_document_rows: validation::EntityDocumentRows,
@@ -34,7 +35,10 @@ impl CanonicalValidation {
     ) -> Result<bool> {
         self.stage = match self.stage {
             ValidationStage::Manifest => {
-                validation::validate_manifest_and_order(snapshot)?;
+                if !self.manifest.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.manifest = validation::ManifestValidation::default();
                 ValidationStage::WindowRows
             }
             ValidationStage::WindowRows => {
@@ -79,6 +83,10 @@ impl CanonicalValidation {
     }
 
     pub(crate) fn position(&self) -> String {
+        if matches!(self.stage, ValidationStage::Manifest) {
+            let (stage, next) = self.manifest.position();
+            return format!("manifest {stage} {next}");
+        }
         if matches!(self.stage, ValidationStage::WindowRows) {
             let (stage, next) = self.window_rows.position();
             return format!("window rows {stage} {next}");
