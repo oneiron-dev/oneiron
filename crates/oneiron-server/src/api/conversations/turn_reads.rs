@@ -34,10 +34,15 @@ pub(super) fn require_core_turn_type(
 ) -> Result<(), ApiError> {
     let kind = vault.with_read_snapshot(|txn| {
         let owner = vault.turn_doors_owner_in_txn(read, txn)?;
-        if (!owner || expected_type == ENTITY_TYPE_TURN)
-            && !vault.turn_door_admits_in_txn(read, txn, owner, id)?
-        {
-            return Ok(None);
+        if !owner || expected_type == ENTITY_TYPE_TURN {
+            let admitted = match vault.turn_door_admits_in_txn(read, txn, owner, id) {
+                Ok(admitted) => admitted,
+                Err(error) if error.kind() == oneiron::ErrorKind::InvalidSecretCustodyBody => false,
+                Err(error) => return Err(error),
+            };
+            if !admitted {
+                return Ok(None);
+            }
         }
         vault.entity_type_in_txn(txn, id)
     });
