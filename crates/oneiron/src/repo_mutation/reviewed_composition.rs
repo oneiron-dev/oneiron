@@ -276,7 +276,7 @@ impl StepApplication {
             return Err(prefix_changed());
         }
         super::git::validate_relative_repo_path(path)?;
-        let staged = std::fs::read(repo_root.join(path))?;
+        let staged = std::fs::read(super::git::repo_path_on_disk(repo_root, path)?)?;
         if blake3::hash(&staged).as_bytes() != &self.proof.staged {
             return Err(prefix_changed());
         }
