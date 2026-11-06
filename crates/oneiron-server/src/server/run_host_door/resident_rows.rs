@@ -22,7 +22,8 @@ impl RunHostDoor {
     /// the read key it admits on this door, and its comm reach. An ordinary
     /// pumped run holds no slip, so neither credential value; a read key
     /// that does not resolve leaves the credential ceiling unavailable,
-    /// logged.
+    /// logged. The door binds no scratchpad session, so it holds no
+    /// scratchpad.
     pub(super) fn brief_host_facts(&self) -> BriefHostFacts {
         let run_ceiling = self
             .run_ceiling
@@ -45,6 +46,9 @@ impl RunHostDoor {
             run_ceiling,
             credential_ceiling,
             communication_credential_ceiling: self.proof.as_ref().map(VerifiedSlip::comm),
+            // The door binds no scratchpad session (FIX 2340), so its board
+            // renders no SCRATCHPAD and its brief has no session to look in.
+            scratchpad: None,
         }
     }
 }
