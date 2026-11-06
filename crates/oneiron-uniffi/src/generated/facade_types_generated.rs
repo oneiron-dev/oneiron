@@ -39135,6 +39135,12 @@ pub struct GraphFsLinkView {
     pub path: String,
     #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    #[serde(
+        rename = "read_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_receipt: Option<ScopedReadReceipt>,
 }
 
 /// `oneiron::memory::graph_fs_doors::types::GraphFsLsRequest`.

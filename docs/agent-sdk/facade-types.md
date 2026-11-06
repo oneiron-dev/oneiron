@@ -4996,7 +4996,7 @@ export type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: 
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkRequest` */
 export type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkView` */
-export type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null }
+export type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null; read_receipt?: ScopedReadReceipt | null }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLsRequest` */
 export type GraphFsLsRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; by_time?: boolean }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsFindRequest` */
