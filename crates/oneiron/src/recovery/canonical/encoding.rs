@@ -23,6 +23,7 @@ pub(crate) struct CanonicalEncoding {
 struct RowCursor {
     next: usize,
     bytes: Option<usize>,
+    suffix: bool,
 }
 
 impl CanonicalEncoding {
@@ -174,7 +175,7 @@ impl<T: Serialize> Field for Rows<'_, T> {
 trait TextRow {
     fn text(&self) -> &str;
     fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()>;
-    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()>;
+    fn write_suffix(&self, out: &mut BoundedWriter, cursor: &mut RowCursor) -> Result<bool>;
 }
 
 impl TextRow for CanonicalDocument {
@@ -200,7 +201,7 @@ impl TextRow for CanonicalDocument {
         write_named(out, "text")
     }
 
-    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()> {
+    fn write_suffix(&self, out: &mut BoundedWriter, cursor: &mut RowCursor) -> Result<bool> {
         let CanonicalDocument {
             entity_id: _,
             head: _,
@@ -210,14 +211,34 @@ impl TextRow for CanonicalDocument {
             birth_at,
             authorship,
         } = self;
+        if let Some(next) = cursor.bytes.as_mut() {
+            if let Some(title) = title {
+                if *next < title.len() {
+                    let end = next.saturating_add(blake3::CHUNK_LEN).min(title.len());
+                    out.bytes.extend_from_slice(&title.as_bytes()[*next..end]);
+                    *next = end;
+                    return Ok(false);
+                }
+            }
+            write_named(out, "birth_actor")?;
+            write_named(out, birth_actor)?;
+            write_named(out, "birth_at")?;
+            write_named(out, birth_at)?;
+            write_named(out, "authorship")?;
+            write_named(out, authorship)?;
+            return Ok(true);
+        }
         write_named(out, "title")?;
-        write_named(out, title)?;
-        write_named(out, "birth_actor")?;
-        write_named(out, birth_actor)?;
-        write_named(out, "birth_at")?;
-        write_named(out, birth_at)?;
-        write_named(out, "authorship")?;
-        write_named(out, authorship)
+        if let Some(title) = title {
+            rmp::encode::write_str_len(&mut *out, title.len() as u32).map_err(|_| out.refusal())?;
+            if !title.is_empty() {
+                out.reserve_write(title.len()).map_err(|_| out.refusal())?;
+            }
+        } else {
+            write_named(out, title)?;
+        }
+        cursor.bytes = Some(0);
+        Ok(false)
     }
 }
 
@@ -251,7 +272,7 @@ impl TextRow for CanonicalEntityDocument {
         write_named(out, "text")
     }
 
-    fn write_suffix(&self, out: &mut BoundedWriter) -> Result<()> {
+    fn write_suffix(&self, out: &mut BoundedWriter, _cursor: &mut RowCursor) -> Result<bool> {
         let CanonicalEntityDocument {
             entity_id: _,
             document_id: _,
@@ -283,7 +304,7 @@ impl TextRow for CanonicalEntityDocument {
             write_named(out, "history")?;
             write_named(out, history)?;
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -302,26 +323,35 @@ impl<T: TextRow> Field for TextRows<'_, T> {
         };
         let value = &self.0[cursor.next];
         let text = value.text();
-        if let Some(next) = cursor.bytes.as_mut() {
-            if *next < text.len() {
-                let end = next.saturating_add(blake3::CHUNK_LEN).min(text.len());
-                // The prefix reserved this complete string's output capacity.
-                out.bytes.extend_from_slice(&text.as_bytes()[*next..end]);
-                *next = end;
+        if !cursor.suffix {
+            if let Some(next) = cursor.bytes.as_mut() {
+                if *next < text.len() {
+                    let end = next.saturating_add(blake3::CHUNK_LEN).min(text.len());
+                    // The prefix reserved this complete string's output capacity.
+                    out.bytes.extend_from_slice(&text.as_bytes()[*next..end]);
+                    *next = end;
+                    return Ok(false);
+                }
+                cursor.suffix = true;
+                cursor.bytes = None;
+            } else {
+                value.write_prefix(out)?;
+                rmp::encode::write_str_len(&mut *out, text.len() as u32)
+                    .map_err(|_| out.refusal())?;
+                if !text.is_empty() {
+                    out.reserve_write(text.len()).map_err(|_| out.refusal())?;
+                }
+                cursor.bytes = Some(0);
                 return Ok(false);
             }
-            value.write_suffix(out)?;
-            cursor.next += 1;
-            cursor.bytes = None;
-            return Ok(cursor.next == self.0.len());
         }
-        value.write_prefix(out)?;
-        rmp::encode::write_str_len(&mut *out, text.len() as u32).map_err(|_| out.refusal())?;
-        if !text.is_empty() {
-            out.reserve_write(text.len()).map_err(|_| out.refusal())?;
+        if !value.write_suffix(out, cursor)? {
+            return Ok(false);
         }
-        cursor.bytes = Some(0);
-        Ok(false)
+        cursor.next += 1;
+        cursor.bytes = None;
+        cursor.suffix = false;
+        Ok(cursor.next == self.0.len())
     }
 }
 
