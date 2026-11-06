@@ -18,14 +18,19 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
-use crate::error::ErrorKind;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::error::{ErrorKind, GateError};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_PACED_HOLD, Memory, MemoryError, MemoryResult,
+};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
+use crate::runtime_hooks::verb::{
+    hold_paced_verb_call, land_paced_verb_call_in_txn, runs_paced_turn,
+};
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
+use crate::{EntityId, Error};
 
 /// `vault.shares.create`'s input: the brief, its recipient, the most the view
 /// may show, and what born-with text travels.
@@ -76,11 +81,21 @@ pub struct ShareCreated {
     pub travel: TravelChoice,
 }
 
+/// The verb a paced share's call is held under (FIX 8753).
+const SHARE_CREATE: &str = crate::task_verb::sdk::AgentVerb::VaultSharesCreate.as_str();
+
 /// `vault.shares.create` on a handle: the handle's actor issues the share.
+/// A count-bound budget window that paces it holds the call in its caller's
+/// fair line, its id and travel fixed, when its host can run it again
+/// through the door it came in by (FIX 8753): the caller gets `PACED_HOLD`,
+/// and the call runs on its turn, its Gate run again then. A caller whose
+/// shares wait in that line joins it behind them. A call no host can run
+/// again answers its window's pace as before.
 pub fn create_share_as_caller(
     memory: &Memory<'_>,
     input: ShareCreateRequest,
 ) -> MemoryResult<ShareCreated> {
+    let request = input.clone();
     let id = |field: &str, value: &str| {
         EntityId::from_hex(value)
             .map_err(|_| MemoryError::bad_request(format!("{field} must be a 32-hex entity id")))
@@ -110,17 +125,64 @@ pub fn create_share_as_caller(
     let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Brief);
     // FIX 11921: the issuer carries the run it writes for, if any.
     let issuer = memory.write_actor();
-    memory
-        .vault()
-        .create_share_travelling(&share_id, &issuer, &share, &travel)?;
-    Ok(ShareCreated {
+    let vault = memory.vault();
+    let turn = memory
+        .invocation()
+        .filter(|invocation| runs_paced_turn(*invocation));
+    // The args a held call runs with on its turn: its id and travel fixed.
+    let fixed = || {
+        serde_json::to_value(ShareCreateRequest {
+            share_id: Some(share_id.to_hex()),
+            travel: Some(travel.clone()),
+            ..request.clone()
+        })
+        .map_err(|_| MemoryError::from(Error::InvariantViolation("share create args encode")))
+    };
+    if turn.is_none()
+        && let Some(next) = vault.paced_verb_line_waits(memory.actor(), SHARE_CREATE)?
+        && let Some(held) = hold_paced_verb_call(memory, SHARE_CREATE, &fixed()?, next)?
+    {
+        return Err(held);
+    }
+    let created = ShareCreated {
         share_id: share_id.to_hex(),
         recipient: share.recipient_ref.to_hex(),
-        brief_ref: share.brief_ref,
+        brief_ref: share.brief_ref.clone(),
         created_at: share.created_at,
         expires_at: share.expires_at,
-        travel,
-    })
+        travel: travel.clone(),
+    };
+    let landed = match turn {
+        Some(invocation) => {
+            vault.create_share_travelling_then(&share_id, &issuer, &share, &travel, &|txn| {
+                land_paced_verb_call_in_txn(vault, txn, invocation)
+            })
+        }
+        None => vault.create_share_travelling(&share_id, &issuer, &share, &travel),
+    };
+    match landed {
+        Ok(()) => Ok(created),
+        // Its window paced it again on its turn: back in line.
+        Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) if turn.is_some() => {
+            Err(MemoryError {
+                resets_at: vec![next_eligible_at],
+                ..MemoryError::new(
+                    MEMORY_CODE_PACED_HOLD,
+                    format!(
+                        "a budget window paced this call's turn; it runs at {next_eligible_at} or later"
+                    ),
+                    &["Send nothing again: the call runs on its next turn."],
+                )
+            })
+        }
+        Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) => {
+            match hold_paced_verb_call(memory, SHARE_CREATE, &fixed()?, next_eligible_at)? {
+                Some(held) => Err(held),
+                None => Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at }).into()),
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// `vault.shares.revoke`'s input: the share to stop.
