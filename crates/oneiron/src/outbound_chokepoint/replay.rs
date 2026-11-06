@@ -1,6 +1,7 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
+use super::authority_standing::{frozen_grant_stop, withdrawn_owner};
 use super::types::{
     OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
     PreparedEffect,
@@ -13,11 +14,12 @@ use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::{FrozenCallValidation, OutboundBindingAuthority};
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
-    IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
-    RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
-    complete_record_bridged, defer_record, keep_reported_cost, provider_wait_edge,
-    record_definite_non_delivery, record_possible_delivery, record_provider_refusal,
+    DeliveryReadBack, FrozenOutboundCall, IntentDispatchResult, IntentEscalation,
+    IntentEscalationReason, IntentId, IntentLedgerError, IntentState, OutboundCallClass,
+    OutboundSendOutcome, RecordedOutboundOutcome, abandon_record,
+    begin_definite_non_delivery_retry, complete_record_bridged, defer_record, keep_reported_cost,
+    provider_wait_edge, record_definite_non_delivery, record_possible_delivery,
+    record_provider_refusal,
 };
 
 /// The receipt reason a send held by its provider's stated wait carries
@@ -88,9 +90,24 @@ pub(super) fn replay_record<T: OutboundTransport>(
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // FIX 9379: a transport whose own record proves this call
             // reached no provider retries it as a definite non-delivery.
-            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
-                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
-                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            // FIX 8814 follow-up: so does one whose provider's own record
+            // reads back that it never sent; one that reads back the send
+            // completes it, never sending it twice.
+            let call = FrozenOutboundCall::from_record(&record);
+            let read_back = if transport.known_non_delivery(&call) {
+                DeliveryReadBack::NotDelivered
+            } else {
+                transport.read_back_delivery(&call)
+            };
+            match read_back {
+                DeliveryReadBack::NotDelivered => {
+                    let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                    return replay_record(vault, authority, proven, prepared, now_ms, transport);
+                }
+                DeliveryReadBack::Delivered => {
+                    return complete_read_back(vault, &record, now_ms, true, transport);
+                }
+                DeliveryReadBack::Unknown => {}
             }
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
@@ -115,10 +132,24 @@ pub(super) fn replay_record<T: OutboundTransport>(
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
                 verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
             }
-            // FIX 9379: as above, a proven non-delivery is retried as one.
-            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
-                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
-                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            // FIX 9379 and the FIX 8814 follow-up: as above, a proven or
+            // read-back non-delivery is retried as one, and a read-back
+            // delivery completes.
+            let call = FrozenOutboundCall::from_record(&record);
+            let read_back = if transport.known_non_delivery(&call) {
+                DeliveryReadBack::NotDelivered
+            } else {
+                transport.read_back_delivery(&call)
+            };
+            match read_back {
+                DeliveryReadBack::NotDelivered => {
+                    let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                    return replay_record(vault, authority, proven, prepared, now_ms, transport);
+                }
+                DeliveryReadBack::Delivered => {
+                    return complete_read_back(vault, &record, now_ms, true, transport);
+                }
+                DeliveryReadBack::Unknown => {}
             }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
@@ -132,6 +163,35 @@ pub(super) fn replay_record<T: OutboundTransport>(
             "outbound state has no canonical recorded outcome",
         )),
     }
+}
+
+/// Completes `record` as a delivered send: its provider's own record read
+/// back that the send went (FIX 8814 follow-up), so it is never sent again.
+/// It settles as an acknowledged send does, a turn program's step with the
+/// body its transport hands on (none, when no send ran here).
+fn complete_read_back<T: OutboundTransport>(
+    vault: &Vault,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+    replayed: bool,
+    transport: &T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    let body = transport.settled_result();
+    let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
+        crate::dreamer_runner::settle_program_outbound_in_txn(
+            vault,
+            wtxn,
+            done,
+            body,
+            now_ms / 1_000,
+        );
+    })?;
+    Ok(effect_result(
+        &done,
+        Some(OutboundSendOutcome::Acked),
+        replayed,
+        None,
+    ))
 }
 
 #[cfg(test)]
@@ -189,13 +249,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // validation behavior; connector text never opts a row into this branch.
     let requires_frozen_call_validation =
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    // A grant no longer active stops the send as a grant that no longer
+    // stands (FIX 11591); every other rejection stays the binding's own.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -344,14 +404,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
         enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
+    // FIX 11591: the owner whose word admitted this send is asked again at
+    // the last in-process boundary. One no longer a live owner stops it,
+    // keeping what it knew of its delivery; a read that fails keeps the path.
+    if let Some(reason) = withdrawn_owner(vault, &record) {
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+    }
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -437,6 +502,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
+            // FIX 8814 follow-up: a provider whose own record reads back the
+            // send settles the ambiguous reply as delivered. Read right after
+            // the reply, a "not sent" is not trusted: the send may still be
+            // landing, so anything but a delivery escalates as before.
+            if transport.read_back_delivery(&call) == DeliveryReadBack::Delivered {
+                return complete_read_back(vault, &record, now_ms, replayed, transport);
+            }
             record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,

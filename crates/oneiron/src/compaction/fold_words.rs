@@ -12,7 +12,10 @@
 //! at close; until then, and for a fold the walk passed past its batch with
 //! the stale mark alone, every read withholds the words once any source is
 //! withdrawn ([`fence_withdrawn_folds_in`]). The fold keeps its span and its
-//! references either way.
+//! references either way. A self-written fold's words go the same way once
+//! a home part it wore reads at another revision (FIX 4817): it lands
+//! without them, every read withholds them, and the publishing write
+//! withdraws its dependent.
 
 use super::{FoldLedger, FoldRecord};
 use crate::entity_id::EntityId;
@@ -90,8 +93,23 @@ fn source_withdrawn(dbs: &impl ManifestDbs, txn: &heed::RoTxn<'_>, id: &EntityId
     Ok(dbs.port_entity_record(txn, id)?.is_none() || crate::ports::withdrawn_in_txn(dbs, txn, id)?)
 }
 
+/// Whether a home part self-written fold `record` wore whole reads at
+/// another revision now (FIX 4817): an edit, as an erasure, takes the words
+/// it shaped.
+fn home_changed(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    record: &FoldRecord,
+) -> Result<bool> {
+    match &record.execution {
+        Some(execution) => Ok(!super::home_pins::home_pins_stand_in(dbs, txn, execution)?),
+        None => Ok(false),
+    }
+}
+
 /// Whether fold `record` of run `run` may not keep its words: a record they
-/// came from is withdrawn, or the walk from one already reached the fold.
+/// came from is withdrawn, the walk from one already reached the fold, or a
+/// home part it wore was edited since.
 fn words_withdrawn(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -106,7 +124,7 @@ fn words_withdrawn(
             return Ok(true);
         }
     }
-    Ok(false)
+    home_changed(dbs, txn, record)
 }
 
 /// Takes the summary from every fold of run `run`'s `ledger` whose words
@@ -144,7 +162,7 @@ pub(crate) fn land_folds_in_base(
         if ledger.fold(record.fold).is_some() {
             continue;
         }
-        let mut withdrawn = false;
+        let mut withdrawn = home_changed(store, txn, &record)?;
         for source in &record.sources {
             withdrawn |= source_withdrawn(store, txn, source)?;
         }
@@ -186,6 +204,9 @@ pub(crate) fn land_folds_in_overlay(
         if ledger.fold(record.fold).is_some() {
             continue;
         }
+        if home_changed(dbs, txn, &record)? {
+            record.summary = None;
+        }
         for source in &record.sources {
             if source_withdrawn(dbs, txn, source)? {
                 record.summary = None;
@@ -196,6 +217,22 @@ pub(crate) fn land_folds_in_overlay(
     }
     ledger.land(records, failed);
     Ok(())
+}
+
+/// The receipt of the self-written fold whose words `id` stands for in the
+/// dependency index (FIX 4817): its record in its run's base ledger. `None`
+/// for any other id, and for a fold no self writer wrote.
+pub(super) fn fold_execution_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<super::CompactionExecution>> {
+    let Some(owner) = OWNERS.get(store, txn, id)? else {
+        return Ok(None);
+    };
+    Ok(FOLD_LEDGERS
+        .get(store, txn, &owner.run)?
+        .and_then(|ledger| ledger.fold(owner.fold)?.execution.clone()))
 }
 
 /// Drops the words of withdrawn fold-words dependent `id` from its run's

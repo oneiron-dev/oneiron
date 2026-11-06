@@ -305,22 +305,27 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
     }
 }
 
+/// An authenticated OCSP response: only `good` targets supply revocation
+/// coverage; an authenticated `unknown` remains unresolved, not invalid.
+pub(crate) struct OcspEvidence<'a> {
+    pub(crate) good_targets: Vec<&'a [u8]>,
+    pub(crate) unknown: bool,
+}
+
 /// One DSS OCSP entry: successful basic response whose signature verifies
 /// under an authorized responder, with every SingleResponse bound to an
-/// embedded/anchored cert serial, fresh at the applicable time, and
-/// asserting `good`. A `revoked` status invalidates the evidence; `unknown`
-/// fails closed (the blueprint leaves it unpinned, §7.5/§7.7). On success
-/// returns the DERs of the target certificates the SingleResponses bind
-/// to, read in place, so the coverage rule can match them against the
-/// covered chain. The response's own certificates are held on `memory`
-/// as responder candidates (FIX 12260); memory refused is `Err`.
+/// embedded/anchored cert serial and fresh at the applicable time. A
+/// `revoked` status invalidates the evidence. An `unknown` is returned only
+/// after all bindings, authorization, freshness and the signature validate.
+/// The response's own certificates are held on `memory` as responder
+/// candidates (FIX 12260); memory refused is `Err`.
 pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-) -> Result<Option<Vec<&'a [u8]>>, SealMemoryRefusal> {
+) -> Result<Option<OcspEvidence<'a>>, SealMemoryRefusal> {
     use const_oid::AssociatedOid;
     use der::Decode;
     let Ok(resp) = x509_ocsp::OcspResponse::from_der(data) else {
@@ -383,7 +388,7 @@ fn ocsp_basic_valid<'a>(
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
     at_unix: u64,
-) -> Option<Vec<&'a [u8]>> {
+) -> Option<OcspEvidence<'a>> {
     use der::Encode;
     let responder = candidates
         .iter()
@@ -395,6 +400,7 @@ fn ocsp_basic_valid<'a>(
                 .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
         })?;
     let mut targets: Vec<&[u8]> = Vec::with_capacity(basic.tbs_response_data.responses.len());
+    let mut unknown = false;
     for single in &basic.tbs_response_data.responses {
         let (target, issuer) = ocsp_cert_binding(&single.cert_id, embedded, anchors)?;
         if !ocsp_responder_authorized(responder, issuer, at_unix) {
@@ -409,11 +415,13 @@ fn ocsp_basic_valid<'a>(
         ) {
             return None;
         }
-        // Evaluate the asserted status: only `good` supports validity.
-        if !matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
+        if matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
+            targets.push(target.der.as_slice());
+        } else if matches!(single.cert_status, x509_ocsp::CertStatus::Unknown(_)) {
+            unknown = true;
+        } else {
             return None;
         }
-        targets.push(target.der.as_slice());
     }
     let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
         return None;
@@ -427,5 +435,8 @@ fn ocsp_basic_valid<'a>(
     };
     cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes())
         .is_ok()
-        .then_some(targets)
+        .then_some(OcspEvidence {
+            good_targets: targets,
+            unknown,
+        })
 }

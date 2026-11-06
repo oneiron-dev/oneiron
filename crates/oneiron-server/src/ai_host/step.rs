@@ -317,9 +317,10 @@ impl StepRunner {
                 objectives,
             });
         }
-        // FIX 6290: the memory and chat rows the step's context selected, as
-        // text read on its run's own lanes. A row that no longer reads is
-        // counted left out, never refused.
+        // FIX 6290: the memory and chat rows the step's context selected, and
+        // the results of the sibling tasks it names (FIX 7742), as text read
+        // on its run's own lanes. A row that no longer reads is counted left
+        // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
         if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
@@ -381,6 +382,11 @@ impl StepRunner {
         }
         if let Some(chat) = selected.chat_text() {
             messages.push(message(LlmMessageRole::User, chat));
+        }
+        // The results of the sibling tasks the step names (`context_from`),
+        // read on its run's own lanes (FIX 7742): context, never a request.
+        if let Some(siblings) = selected.sibling_results_text() {
+            messages.push(message(LlmMessageRole::User, siblings));
         }
         let has_earlier = !earlier.is_empty();
         messages.extend(earlier);

@@ -274,7 +274,7 @@ fn tracked(view: &BlockView) -> bool {
         })
 }
 
-/// One body-to-file change against the imported blocks, applied in order.
+/// One body-to-file change against the imported blocks and stories, applied in order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum DocxChange {
@@ -310,6 +310,23 @@ pub enum DocxChange {
     },
     Delete {
         block: String,
+    },
+    /// Replace one story paragraph's plain text: an authored header/footer
+    /// paragraph via its native tracked edit, or a footnote/endnote body via
+    /// its native note edit. `scope` names the story and `block` its local id.
+    /// Comment stories have no native text verb and refuse.
+    SetStoryText {
+        scope: DocxStoryScope,
+        block: String,
+        text: String,
+    },
+    /// Replace one authored header/footer story paragraph's text and inline
+    /// marks as one whole-paragraph tracked redline, not the body's granular
+    /// formatting pass. Notes and comments refuse instead of dropping marks.
+    SetStoryRuns {
+        scope: DocxStoryScope,
+        block: String,
+        runs: Vec<DocxRun>,
     },
 }
 
@@ -371,7 +388,7 @@ fn project_within(
     preflight_with_limits(source, limits)?;
     let document = Document::parse(source)?;
     let view = document.read();
-    let (patches, ops) = group_ops(&view, changes)?;
+    let (patches, ops) = group_ops(&view, &document.snapshot().canonical, changes)?;
     if patches.is_empty() && ops.is_empty() {
         return Ok(source.to_vec());
     }
