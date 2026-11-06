@@ -122,6 +122,10 @@ its native element size. These are separate buffers created by the record
 clone, not the original pipeline's vectors. The slot charge applies even when
 the cloned record has no replay inputs, provided the caller supplied the line.
 The score-breakdown entries' inner component buffers remain outside this charge.
+The same clone also records the actual capacities of its optional query-expander
+ID and empty-reason strings. These are outer record fields, separate from the
+two nested replay references and config strings. Absent fields and strings with zero capacity add no string backing; no length
+estimate or extra copy is used.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full

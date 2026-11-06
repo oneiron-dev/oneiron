@@ -272,6 +272,15 @@ impl Store {
                 .saturating_add((record.score_breakdown.capacity() as u64).saturating_mul(
                     std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64,
                 ));
+            let bytes = [
+                record.query_expander_id.as_ref(),
+                record.empty_reason.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(bytes, |bytes, value| {
+                bytes.saturating_add(value.capacity() as u64)
+            });
             memory.materialized(0, bytes);
         }
         let record = ProvisionalRetrievalRun {
