@@ -114,13 +114,13 @@ impl SentValue<'_> {
 
     /// Clears `json` and reports whether its final parsed value changed.
     pub(crate) fn clear_json_changed(&self, json: &mut Value) -> bool {
-        let two_passes = std::str::from_utf8(self.value).is_ok_and(|value| {
+        let needs_comparison = std::str::from_utf8(self.value).is_ok_and(|value| {
             let trimmed = value.trim();
-            !trimmed.is_empty() && trimmed != value
+            !trimmed.is_empty() && trimmed.len() < self.text.len() && self.text.len() < value.len()
         });
-        if !two_passes {
-            // One replacement moves every changed key in the same shortlex
-            // direction, so a changed key cannot permute an unchanged key set.
+        if !needs_comparison {
+            // Lengths move in one direction. At equal lengths, only one pass
+            // can change a key, so the final key set cannot be permuted.
             return clear_value(json, self.value, self.text);
         }
         let before = json.clone();
