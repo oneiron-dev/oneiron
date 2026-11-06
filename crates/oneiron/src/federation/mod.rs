@@ -61,6 +61,7 @@ mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
     guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+    witness_grant_rulings_in_txn,
 };
 mod own_device;
 mod pending_act;

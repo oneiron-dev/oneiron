@@ -36,7 +36,7 @@ enum DenseChannel<'q> {
     },
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
@@ -166,13 +166,16 @@ impl<'v> ScopedRead<'v> {
             }
             _ => None,
         };
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -237,13 +240,16 @@ impl<'v> ScopedRead<'v> {
             pipeline = pipeline.with_temporal_now(as_of);
         }
         let results = pipeline.run_for_pack()?;
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -364,7 +370,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<AdmittedRevision>> {
         let Some(raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
@@ -417,7 +423,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<Vec<u8>>> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
@@ -474,7 +480,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let mode = entity
             .source_revision_ref

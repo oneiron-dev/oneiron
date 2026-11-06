@@ -12,8 +12,9 @@ use oneiron_crypto::backup::{
 
 use super::watermark::SnapshotMark;
 use super::{
-    ArtifactKind, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT,
-    RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment, payload, rebuild,
+    ArtifactKind, BackupSelection, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC,
+    INDEX_SOURCE_TEXT, RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment,
+    payload, rebuild,
 };
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::store::DB_MANIFEST;
@@ -26,6 +27,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        selection: BackupSelection,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<BackupSnapshotReceipt> {
@@ -73,7 +75,9 @@ impl Vault {
             // outside any writer (KS-2A). A body written since is bound by
             // the next pass, and the snapshot taken again.
             self.bind_carried_bodies()?;
-            if let Some(id) = self.snapshot_once(path, created_at, owner, kind, registry, budget)? {
+            if let Some(id) =
+                self.snapshot_once(path, created_at, owner, kind, selection, registry, budget)?
+            {
                 tracing::info!(
                     stage = "done",
                     pass,
@@ -101,6 +105,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        selection: BackupSelection,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<Option<BackupSnapshotReceipt>> {
@@ -145,7 +150,7 @@ impl Vault {
         // runtime-only. Other explicit vectors must not silently disappear.
         self.validate_checkpoint_rebuild_sources(&txn)?;
         // What the image takes, the payload projection's rule too (FIX 6377).
-        let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
+        let filter = payload::ImageFilter::of_snapshot(self, &txn, selection)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
         let mut credential_source_keys = Vec::new();
@@ -287,6 +292,10 @@ impl Vault {
                 .is_some_and(|rows| observed.matches_rows(rows))
         });
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // Each window the payload split rides as its carrier (FIX 10277).
+        let window_carriers = payload
+            .as_ref()
+            .map_or_else(Vec::new, |payload| payload.window_carriers.clone());
         // The artifact's snapshot id, minted before anything is sealed to
         // it: the host-order member binds it, never the image's digest.
         let mut snapshot = [0u8; 32];
@@ -304,6 +313,7 @@ impl Vault {
             checkpoint_sequence: None,
             host_holds,
             snapshot: None,
+            window_carriers,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         tracing::info!(
@@ -408,7 +418,7 @@ impl Vault {
             .unwrap_or_default();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
-            covered: mark.covered(),
+            covered: mark.covered(selection),
             evidence,
             checkpoint_fact,
             host_holds: host_holds_availability,
