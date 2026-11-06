@@ -381,6 +381,7 @@ pub enum AgentVerb {
     VaultFederationBurstReviewRelease,
     VaultFederationBurstReviewReject,
     VaultFederationBurstReplay,
+    VaultFederationStatus,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -1668,6 +1669,7 @@ impl AgentVerb {
         Self::VaultFederationBurstReviewRelease,
         Self::VaultFederationBurstReviewReject,
         Self::VaultFederationBurstReplay,
+        Self::VaultFederationStatus,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -2962,6 +2964,7 @@ impl AgentVerb {
             Self::VaultFederationBurstReviewRelease => "vault.federation.burst.review.release",
             Self::VaultFederationBurstReviewReject => "vault.federation.burst.review.reject",
             Self::VaultFederationBurstReplay => "vault.federation.burst.replay",
+            Self::VaultFederationStatus => "vault.federation.status",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -4281,6 +4284,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstReviewRelease
                 | Self::VaultFederationBurstReviewReject
                 | Self::VaultFederationBurstReplay
+                | Self::VaultFederationStatus
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -5597,6 +5601,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstReviewRelease
                 | Self::VaultFederationBurstReviewReject
                 | Self::VaultFederationBurstReplay
+                | Self::VaultFederationStatus
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -7063,6 +7068,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstReviewRelease
                 | Self::VaultFederationBurstReviewReject
                 | Self::VaultFederationBurstReplay
+                | Self::VaultFederationStatus
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -9080,6 +9086,7 @@ impl AgentVerb {
             Self::VaultFederationBurstReviewRelease => &["spec"],
             Self::VaultFederationBurstReviewReject => &["spec"],
             Self::VaultFederationBurstReplay => &["spec"],
+            Self::VaultFederationStatus => &[],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -10368,6 +10375,7 @@ impl AgentVerb {
             Self::VaultFederationBurstReviewRelease => &["spec"],
             Self::VaultFederationBurstReviewReject => &["spec"],
             Self::VaultFederationBurstReplay => &["spec"],
+            Self::VaultFederationStatus => &[],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -12396,6 +12404,9 @@ impl AgentVerb {
             }
             Self::VaultFederationBurstReplay => {
                 "The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."
+            }
+            Self::VaultFederationStatus => {
+                "The owner reads this install's pact activation, consent epoch and local inactivity reason."
             }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."

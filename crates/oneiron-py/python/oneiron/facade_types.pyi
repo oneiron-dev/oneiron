@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4580 declarations.
-Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1263 facade rows, 4583 declarations.
+Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7501,6 +7501,15 @@ class FederationBurstReviewRequest(TypedDict):
 class FederationBurstReviewReceipt(TypedDict):
     bundle_ref: str
     batches: list[FederationBurstReceipt]
+FederationPactStatus = Literal["Active", "Suspended", "Promoted", "Disconnected", "Dissolved"]
+FederationPactInactiveReason = Literal["scope_commitment_mismatch"]
+class FederationPactStatusRow(TypedDict):
+    pact: str
+    status: FederationPactStatus
+    epoch: int
+    inactive_reason: NotRequired[FederationPactInactiveReason | None]
+class FederationStatus(TypedDict):
+    pacts: list[FederationPactStatusRow]
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str
@@ -7534,7 +7543,6 @@ class NarrowConnect(TypedDict):
     pact: str
     epoch: int
     outbound: FederationDirectionScope
-FederationPactStatus = Literal["Active", "Suspended", "Promoted", "Disconnected", "Dissolved"]
 class ConnectPactReceipt(TypedDict):
     pact: str
     status: FederationPactStatus

@@ -3249,6 +3249,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_connect_identity(
         &self,
         input: serde_json::Value,
