@@ -332,6 +332,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -480,6 +481,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -909,6 +911,34 @@ impl Vault {
                 self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
+        }
+    }
+
+    /// Unloads `key`'s window when it is registered and no handle but the
+    /// manager's holds it: persisted, then deregistered, so a sweep may hold
+    /// it closed (FIX 14534). `false` when it is not registered, a handle
+    /// holds it, or no manager is attached.
+    ///
+    /// # Errors
+    ///
+    /// A persist the unload refused; a poisoned attachment.
+    #[cfg(feature = "sync")]
+    pub(crate) fn unload_idle_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::Result<bool> {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("document manager attachment poisoned"))?
+            .upgrade();
+        let Some(manager) = manager else {
+            return Ok(false);
+        };
+        match manager.unload_window(key) {
+            Ok(unloaded) => Ok(unloaded),
+            Err(crate::Error::Sync(crate::error::SyncError::WindowBusy { .. })) => Ok(false),
+            Err(error) => Err(error),
         }
     }
 

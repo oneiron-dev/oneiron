@@ -259,7 +259,7 @@ impl Vault {
     ) -> Result<()> {
         if matches!(
             reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;

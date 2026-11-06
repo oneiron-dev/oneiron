@@ -326,6 +326,7 @@ pub(super) fn record_from_parts(header: EntityMetadataHeader, body: Vec<u8>) -> 
             end: header.occurred_end,
         },
         learned_at: header.learned_at,
+        row_version: header.row_version,
         body,
     }
 }
