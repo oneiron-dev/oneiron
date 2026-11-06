@@ -674,7 +674,7 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
-        Ok(ClaimView {
+        let view = ClaimView {
             claim: Some(claim),
             claim_ref: id.to_hex(),
             short_ref,
@@ -697,6 +697,24 @@ impl Memory<'_> {
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
+        };
+        // A lifted key its value or scope holds reads as its handle for every
+        // reader but the owner, in the label made from the value too, as a
+        // recall hit's body does (FIX 13735).
+        self.lifted_view(view, || {
+            if secret {
+                return Ok(crate::batch::secret_scan::LiftedKeys::default());
+            }
+            let txn = self.vault.store.env.read_txn()?;
+            let texts = std::iter::once(&body.value)
+                .chain(body.scope.as_ref())
+                .map(served_value_json)
+                .collect();
+            crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                &self.vault.store,
+                &txn,
+                &serde_json::Value::Array(texts),
+            )
         })
     }
 
