@@ -3199,6 +3199,15 @@ class Oneiron:
         def record(self, spec):
             """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
             return json.loads(_translate(lambda: self._client.vault_evals_repair_record(json.dumps(spec))))
+        @property
+        def cohorts(self) -> "Oneiron._VaultEvalsRepairCohortsVerbs":
+            return Oneiron._VaultEvalsRepairCohortsVerbs(self._client)
+    class _VaultEvalsRepairCohortsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def setup(self, spec):
+            """The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_cohorts_setup(json.dumps(spec))))
     class _VaultEvalsMeasurementsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

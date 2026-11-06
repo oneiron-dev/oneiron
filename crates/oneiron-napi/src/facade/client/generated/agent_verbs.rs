@@ -3942,6 +3942,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_evals_repair_cohorts_setup(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.evals.repair.cohorts.setup", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_evals_measurements_request(
         &self,
         input: serde_json::Value,

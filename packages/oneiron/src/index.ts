@@ -1749,6 +1749,10 @@ export class Oneiron {
         prepare: (input: Facade.EvalRepairTaskSource): Facade.EvalRepairCasePreparation => this.#call(() => this.#client.vaultEvalsRepairPrepare(input) as Facade.EvalRepairCasePreparation),
         /** The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger. */
         record: (input: Facade.EvalRepairCaseRequest): Facade.EvalRepairCaseReference => this.#call(() => this.#client.vaultEvalsRepairRecord(input) as Facade.EvalRepairCaseReference),
+        cohorts: {
+          /** The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses. */
+          setup: (input: Facade.EvalRepairCohortSetup): Facade.EvalRepairCohortReport => this.#call(() => this.#client.vaultEvalsRepairCohortsSetup(input) as Facade.EvalRepairCohortReport),
+        },
       },
       measurements: {
         /** The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response. */

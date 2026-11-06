@@ -458,6 +458,7 @@ pub enum AgentVerb {
     VaultEvalsInventory,
     VaultEvalsRepairPrepare,
     VaultEvalsRepairRecord,
+    VaultEvalsRepairCohortsSetup,
     VaultEvalsMeasurementsRequest,
     VaultEvalsCohortsSetup,
     VaultEvalsAuthorNow,
@@ -1748,6 +1749,7 @@ impl AgentVerb {
         Self::VaultEvalsInventory,
         Self::VaultEvalsRepairPrepare,
         Self::VaultEvalsRepairRecord,
+        Self::VaultEvalsRepairCohortsSetup,
         Self::VaultEvalsMeasurementsRequest,
         Self::VaultEvalsCohortsSetup,
         Self::VaultEvalsAuthorNow,
@@ -3051,6 +3053,7 @@ impl AgentVerb {
             Self::VaultEvalsInventory => "vault.evals.inventory",
             Self::VaultEvalsRepairPrepare => "vault.evals.repair.prepare",
             Self::VaultEvalsRepairRecord => "vault.evals.repair.record",
+            Self::VaultEvalsRepairCohortsSetup => "vault.evals.repair.cohorts.setup",
             Self::VaultEvalsMeasurementsRequest => "vault.evals.measurements.request",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
             Self::VaultEvalsAuthorNow => "vault.evals.author_now",
@@ -4367,6 +4370,7 @@ impl AgentVerb {
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
@@ -5686,6 +5690,7 @@ impl AgentVerb {
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
@@ -7154,6 +7159,7 @@ impl AgentVerb {
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
@@ -8188,6 +8194,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
@@ -9177,6 +9184,7 @@ impl AgentVerb {
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
+            Self::VaultEvalsRepairCohortsSetup => &["spec"],
             Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultEvalsAuthorNow => &["spec"],
@@ -10468,6 +10476,7 @@ impl AgentVerb {
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
+            Self::VaultEvalsRepairCohortsSetup => &["spec"],
             Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultEvalsAuthorNow => &["spec"],
@@ -12651,6 +12660,9 @@ impl AgentVerb {
             }
             Self::VaultEvalsRepairRecord => {
                 "The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."
+            }
+            Self::VaultEvalsRepairCohortsSetup => {
+                "The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses."
             }
             Self::VaultEvalsMeasurementsRequest => {
                 "The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."

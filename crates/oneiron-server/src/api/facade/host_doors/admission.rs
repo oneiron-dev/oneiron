@@ -529,6 +529,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultEvalsCases
         | Row::VaultEvalsCasesRecord
         | Row::VaultEvalsRepairRecord
+        | Row::VaultEvalsRepairCohortsSetup
         | Row::VaultEvalsCohorts
         | Row::VaultEvalsCohortsOpen
         | Row::VaultEvalsExposure
