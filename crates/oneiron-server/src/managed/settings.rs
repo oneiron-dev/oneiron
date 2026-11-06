@@ -38,6 +38,10 @@ use super::listener::init_managed_tracing;
 /// socket to listen on (FIX 5017).
 const VOICE_SOCKET_MISSING: &str = "voice_socket_missing";
 
+/// The reason token of the notice that a hosted vault keeps the supervisor's
+/// keystore although its settings file turns it off (FIX 14532).
+const HOSTED_KEYSTORE_KEPT: &str = "hosted_keystore_kept";
+
 /// The cause of a model directory refused because its bundle's manifest
 /// states another stack than the settings pin, or does not read (FIX 6874).
 const BUNDLE_STACK_MISMATCH: &str = "bundle_stack_mismatch";
@@ -164,8 +168,9 @@ pub(super) fn prepare(
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     // The supervisor's leaves are refused first: an argv-only binding the
     // schema has no key for (the training outbox, OF-420; a guest's
-    // container CLI, the organ directory and the mesh) reads as the
-    // supervisor's, never as unknown.
+    // container CLI, the organ directory, the container CLI's HOME and
+    // runtime directory, and the mesh) reads as the supervisor's, never as
+    // unknown.
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned, None));
@@ -188,6 +193,26 @@ pub(super) fn prepare(
         }
         _ => Ok(()),
     })?;
+    // `[[shared_env]]` paths are supervisor-selected inputs too, but the
+    // contract's older OWNER_PATHS list does not name them yet. Check both
+    // path leaves against the same vault/config roots here (FIX 2051).
+    if let Some(entries) = table.get("shared_env").and_then(toml::Value::as_array) {
+        for entry in entries {
+            let Some(entry) = entry.as_table() else {
+                continue;
+            };
+            for key in ["path", "credential_file"] {
+                if let Some(path) = entry.get(key).and_then(toml::Value::as_str) {
+                    admit_owner_path(
+                        &table,
+                        &["shared_env".to_owned(), key.to_owned()],
+                        Path::new(path),
+                        &roots,
+                    )?;
+                }
+            }
+        }
+    }
 
     for (key, given) in [
         ("dimensions", args.dimensions.is_some()),
@@ -336,10 +361,23 @@ pub(super) fn settle(
 /// looked for under HOME, so none is opened, and the vault serves on without
 /// it. Where the owner's file did not turn the keystore off itself
 /// (`keystore_off`), the facility is named missing, never a stopped start.
+///
+/// On a hosted vault the keystore holds our host's keys, the root and
+/// checkpoint signer among them, which a hosted start needs before it serves
+/// (QUORUM-HOST-ROOT = C, FIX 13708). The owner's `backend = "off"` there
+/// would only stop the start, so the supervisor's keystore stays on and the
+/// file's choice is named once (FIX 14532). Opting out of our host key is
+/// the operator's enterprise/advanced capability, never a keystore switch.
 fn settle_keystore(config: &mut ServeConfig, keystore_off: bool) -> Settled {
     let unbound = config.keystore.dir.is_none();
     if unbound {
         config.keystore.backend = KeystoreBackend::Off;
+    } else if keystore_off && config.privacy_posture == oneiron::HostingPrivacyPosture::Hosted {
+        tracing::warn!(
+            reason = HOSTED_KEYSTORE_KEPT,
+            "the settings file turns the keystore off, but a hosted vault's keystore holds our host's keys, which it needs to serve; the supervisor's keystore stays on"
+        );
+        config.keystore.backend = KeystoreBackend::default();
     }
     Settled {
         keystore_unbound: unbound && !keystore_off,

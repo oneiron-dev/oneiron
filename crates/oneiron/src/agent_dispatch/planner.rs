@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
     PLANNER_BIG_PLAN_WIDTH, PLANNER_SOLO_MARGIN, PLANNER_SOLO_SUCCESS_FLOOR, setting_value,
 };
@@ -343,7 +343,11 @@ fn seatable_models<'a>(
             .iter()
             .find(|model| &model.model == pinned)
             .map(|model| vec![model])
-            .ok_or_else(|| invalid("pinned spawn model is not available")),
+            .ok_or_else(|| {
+                Error::Artifact(ArtifactError::ModelPinUnavailable {
+                    model: pinned.as_str().to_owned(),
+                })
+            }),
         None => Ok(models.iter().collect()),
     }
 }
@@ -437,11 +441,11 @@ pub(super) fn ranked_quotes(
     need: &SpawnNeed,
     evidence: &PlannerEvidence,
 ) -> Result<Vec<ShapeQuote>> {
+    let seatable = seatable_models(need, &evidence.models)?;
     if evidence.models.is_empty() {
         return Err(invalid("planner has no available models"));
     }
     let budget = evidence.budget;
-    let seatable = seatable_models(need, &evidence.models)?;
     let pinned_pattern = need.pinned_pattern();
     let mut quotes = Vec::new();
     if pinned_pattern.is_none_or(|pattern| pattern == CoordinationPattern::Solo)
@@ -623,6 +627,7 @@ fn plan_from_quotes(
         .collect();
     let receipt = SpawnPlanReceipt {
         asked: need.clone(),
+        owner_choices: Vec::new(),
         plan,
         alternatives,
         why,
@@ -630,6 +635,7 @@ fn plan_from_quotes(
         rung_skill: None,
         rung_providers: Vec::new(),
         asker_ref: None,
+        type_tree_root_lookup: None,
     };
     receipt.validate()?;
     Ok(receipt)
