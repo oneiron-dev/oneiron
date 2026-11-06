@@ -307,3 +307,16 @@ with any actual DrawingML field keeps the previous gap behavior, so field
 flattening and its cut receipts do not change. Edited, leading, trailing and
 nonconsecutive gaps still use the previous fallback behavior. This does not
 claim full paragraph fidelity or change retained-mapping selection.
+
+## Attributes of actual reused table-cell paragraphs
+
+The native fallback's styled path now carries every original attribute of
+its actual reused paragraph, not just namespace declarations. Raw attribute
+spans keep qualified names, quotes and entity spellings under the same
+paragraph and ancestor namespace context. The reconstructed open/close tag
+also handles an originally self-closing paragraph. Each actual paragraph is
+selected at most once across the same-count, outer and paired paths.
+The generic first-paragraph template renderer is unchanged: newly added
+paragraphs do not acquire arbitrary identity attributes from that template.
+Run serialization, retained text mapping and field-cut receipts are unchanged.
+This is source preservation, not full native or PowerPoint fidelity proof.

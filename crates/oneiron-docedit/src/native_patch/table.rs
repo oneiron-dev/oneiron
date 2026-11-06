@@ -551,7 +551,11 @@ fn rebuilt(
         let p_pr = piece(tree.child(para, DML, "pPr").ok()?);
         let end = piece(tree.child(para, DML, "endParaRPr").ok()?);
         let p = para_node.qualified.as_str();
-        let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
+        let p_attributes: String = para_node
+            .attr_spans
+            .values()
+            .map(|span| format!(" {}", String::from_utf8_lossy(&bytes[span.clone()])))
+            .collect();
         let segments: Vec<(usize, usize, &Node, Vec<char>)> = tree
             .children(para)
             .enumerate()
@@ -675,7 +679,7 @@ fn rebuilt(
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
         Some(format!(
-            "<{p}{p_bindings}>{p_pr}{head}{middle}{tail}{end}</{p}>"
+            "<{p}{p_attributes}>{p_pr}{head}{middle}{tail}{end}</{p}>"
         ))
     };
     let paragraph_run = |para: usize| {
