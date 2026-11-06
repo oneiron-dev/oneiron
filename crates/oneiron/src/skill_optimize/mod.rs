@@ -227,9 +227,10 @@ pub(crate) use self::labels::{
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerAuthority, OfferAnswerRecord,
     OfferCandidate, OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence,
-    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    eval_authoring_skill_id, offer_skill_cell, pending_training_offers, record_offer_check,
-    record_training_offer, training_offer, training_offer_checks, training_offer_skill_id,
+    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, StockDownloadCard, StockDownloadFile,
+    TrainingOffer, TrainingOfferDraft, eval_authoring_skill_id, offer_skill_cell,
+    pending_training_offers, record_offer_check, record_stock_download_card, record_training_offer,
+    stock_download_card_seen, training_offer, training_offer_checks, training_offer_skill_id,
     training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
