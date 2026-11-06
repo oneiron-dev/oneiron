@@ -1,6 +1,7 @@
 //! Validation of synthetic lexical query hint CLAIMs at the shared write door.
 
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, lexical_query_hint_claim_id};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
@@ -46,6 +47,18 @@ pub(super) fn validate_lexical_query_hint(
     if target == id {
         return Err(Error::InvalidClaimBody(
             "lexical query hint target must not be self",
+        ));
+    }
+    // A hard-deleted or deleted target keeps no hint, whenever the hint
+    // arrives: its purge removed the hints it held, and a hint delayed past
+    // it would store the query text again after erasure (FIX 9601; ARCH-0038
+    // hard-once-seen deletion). Only a target not arrived yet takes a
+    // replayed hint out of order.
+    if store.port_deletion_marked(wtxn, DeletionMarker::HardDelete, &target)?
+        || store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &target)?
+    {
+        return Err(Error::InvalidClaimBody(
+            "lexical query hint target is deleted",
         ));
     }
     if let Some(target_raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &target)?

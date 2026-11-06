@@ -568,6 +568,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
             entity_type: ENTITY_TYPE_MACHINE,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
