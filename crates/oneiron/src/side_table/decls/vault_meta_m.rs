@@ -59,6 +59,10 @@ side_tables! {
     /// Where one mail source's import stands: its change anchor, its newest-first copy and its
     /// counts (FIX 12559). Key: id16(source).
     MAIL_PACK_SYNC: VaultMeta b"mail_pack:sync:v1:" Named;
+    /// How many times a mail thread's CONVERSATION was forgotten whole (fix list row 18084): a
+    /// message landing in the thread afterwards opens a new CONVERSATION. Key: id16(source) +
+    /// blake3 (32) of the thread key.
+    MAIL_PACK_THREAD_EPOCH: VaultMeta b"mail_pack:thread_epoch:v1:" Named;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
     /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in
