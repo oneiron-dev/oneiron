@@ -98,7 +98,7 @@ impl PreparedSubjectHead {
         txn: &mut heed::RwTxn<'_>,
         owner: Option<crate::agent_def::PreparedSetupOwner>,
     ) -> Result<()> {
-        super::write_captured_head_with_setup_owner_in_txn(
+        write_captured_head_with_setup_owner_in_txn(
             vault,
             txn,
             &self.fact.id,
@@ -112,6 +112,32 @@ impl PreparedSubjectHead {
             owner,
         )
     }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the captured head retains its native row, supersessions, time and optional setup owner"
+)]
+pub(super) fn write_captured_head_with_setup_owner_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    occurred: crate::TimeRange,
+    at: u64,
+    superseded: impl IntoIterator<Item = EntityId>,
+    owner: Option<crate::agent_def::PreparedSetupOwner>,
+) -> Result<()> {
+    match owner {
+        Some(owner) => vault.put_reserved_claim_with_setup_owner_in_txn(
+            wtxn, claim_id, body, occurred, at, owner,
+        )?,
+        None => vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
+    }
+    for head_id in superseded {
+        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, at)?;
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_subject_head_in_txn(
