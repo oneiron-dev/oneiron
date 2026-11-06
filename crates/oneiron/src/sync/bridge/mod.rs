@@ -49,7 +49,6 @@ mod tombstones;
 pub(in crate::sync) use tombstones::{TombstoneEffects, stage_tombstones_in_txn};
 
 // it resolves through this import, so the moved body stays byte-identical.
-
 #[cfg(test)]
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;

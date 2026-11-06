@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 /// none, the parent aborts too.
 /// The source is the same immutable snapshot whose canonical validation groups
 /// completed before rebuild. The rebuilt document is checked independently below.
+
 pub(crate) fn preflight_validated_canonical_recovery_with_source(
     vault: &Vault,
     materializer: &Materializer,

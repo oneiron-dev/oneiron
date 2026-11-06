@@ -1079,10 +1079,13 @@ impl OneironClient {
                     oneiron::task_verb::sdk::MemberProjection,
                 >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::SharedMemberInvited,
+                    oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
                 "vault.members.invitation_slip" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::InvitationSlip,
+                >(client, verb, &input),
+                "vault.members.invitation_code" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::InvitationCode,
                 >(client, verb, &input),
                 "vault.members.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -1098,6 +1101,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.members.accept" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.accept_with_credential" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedInvitationAcceptedWithCredential,
                 >(client, verb, &input),
                 "vault.members.decline" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -8186,7 +8192,7 @@ impl OneironClient {
     pub fn vault_members_add(
         &self,
         input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
-    ) -> Result<oneiron::task_verb::sdk::SharedMemberInvited, MemoryError> {
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -8206,6 +8212,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.invitation_slip", value)
+    }
+    pub fn vault_members_invitation_code(
+        &self,
+        input: &oneiron::task_verb::sdk::InvitationCodeRequest,
+    ) -> Result<oneiron::task_verb::sdk::InvitationCode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.invitation_code", value)
     }
     pub fn vault_members_change(
         &self,
@@ -8266,6 +8284,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.accept", value)
+    }
+    pub fn vault_members_accept_with_credential(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedInvitationAcceptedWithCredential, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.accept_with_credential", value)
     }
     pub fn vault_members_decline(
         &self,
