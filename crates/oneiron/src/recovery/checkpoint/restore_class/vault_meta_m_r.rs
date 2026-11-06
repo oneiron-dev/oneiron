@@ -119,6 +119,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_ATTEMPT_FORMAT, LIVE),
     (&t::OUTBOUND_INTENT_LEDGER_RECORD, LIVE),
     (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
+    // A parked task question stands with the live send and its live custody
+    // key (FIX 16029): live state replaces the image's; absent stays absent.
+    (&t::OUTBOUND_REMOTE_TASK_INPUT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_SESSION_END, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),

@@ -267,6 +267,12 @@ side_tables! {
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).
     OUTBOUND_PINNED_APPROVAL: VaultMeta b"outbound:pinned_approval:v1:" Raw;
+    /// A Deferred send's remote task form question, parked for the owner (FIX 16029): its round's
+    /// generation, phase, question digest, owner Ask, field names, connector and tool, and the
+    /// request and answer sealed under the intent's own ConnectorResume subject; no plaintext.
+    /// The ledger's erase of the call, its actor or its recipient forgets it. Key: hash32 (intent
+    /// id).
+    OUTBOUND_REMOTE_TASK_INPUT: VaultMeta b"outbound:remote_task_input:v1:" Named;
     /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
     /// status word; the session and credential choice stay in the settlement's handle. Key:
     /// hash32 (intent id).

@@ -337,6 +337,11 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         if let Some(custody_ref) = custody_ref {
             retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
         }
+        // The form question its remote task parked for the owner goes with
+        // the request: its row, its sealed carrier and its Ask (FIX 16029).
+        vault
+            .forget_remote_task_input_in_txn(wtxn, &id)
+            .map_err(erase_error)?;
         let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
             continue;
         };
