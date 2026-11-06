@@ -204,6 +204,11 @@ impl<'a> StepCalls<'a> {
         })
     }
 
+    /// The original invocation, not an execution grant or a paid fact.
+    pub(crate) fn original_invocation(&self) -> Option<crate::dreamer_runner::AdmittedCallId> {
+        self.origin
+    }
+
     /// Binds a call `guard` just admitted under `lease` to its wake: live
     /// first, then its row in one short write, before anything is sent.
     /// Best-effort: outside an observed pass, or when either fails (logged),

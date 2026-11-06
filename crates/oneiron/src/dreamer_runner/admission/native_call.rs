@@ -6,7 +6,8 @@ use super::budget_line::AdmittedCallId;
 use super::{DreamerRunnerStore, invalid_dreamer_runner, validate_budget_id};
 use crate::Vault;
 use crate::dreamer_wake::owed::WakeOwedCall;
-use crate::error::Result;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
 
 const CALLS: SideTable<AdmittedCallId, NativeCallObligation, Named> =
@@ -22,6 +23,7 @@ struct NativeCallObligation {
     reserved_units: u64,
     admitted_at: u64,
     invoice: NativeCallInvoice,
+    terminal_claims: Vec<EntityId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,10 +84,12 @@ pub(crate) fn retain_native_call_in_txn(
         reserved_units: admitted.reserved_units,
         admitted_at: admitted.at,
         invoice: NativeCallInvoice::Admitted,
+        terminal_claims: Vec::new(),
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
         original.invoice = NativeCallInvoice::Admitted;
+        original.terminal_claims.clear();
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -149,5 +153,44 @@ impl DreamerRunnerStore<'_> {
         row.invoice = NativeCallInvoice::Paid { units, at: now };
         CALLS.put(&self.vault.store, wtxn, &origin, &row)?;
         Ok(NativeCallPayment::Paid { units })
+    }
+}
+
+/// Bind every original physical call of an invocation to this actual terminal
+/// claim. Recovery may emit another claim; it never replaces earlier aliases.
+/// This optional record uses a child transaction, not the mutable memo index.
+pub(crate) fn bind_native_call_terminal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: AdmittedCallId,
+    attempt_id: crate::attempt_queue::AttemptId,
+    step_hash: [u8; 32],
+    claim: EntityId,
+) {
+    let written = (|| -> Result<()> {
+        if origin.attempt_id != attempt_id || origin.ordinal != 0 {
+            return Err(invalid_dreamer_runner(
+                "native call terminal origin differs",
+            ));
+        }
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        let mut prefix = Vec::new();
+        origin.encode_into(&mut prefix);
+        // The last four bytes are the corrective ordinal, not a new invocation.
+        prefix.truncate(28);
+        let calls = CALLS.scan_from(&vault.store, &savepoint, &prefix)?;
+        for (call, mut row) in calls {
+            if row.step_hash != step_hash {
+                return Err(invalid_dreamer_runner("native call terminal step differs"));
+            }
+            if !row.terminal_claims.contains(&claim) {
+                row.terminal_claims.push(claim);
+                CALLS.put(&vault.store, &mut savepoint, &call, &row)?;
+            }
+        }
+        savepoint.commit().map_err(Error::from)
+    })();
+    if let Err(error) = written {
+        tracing::warn!(kind = ?error.kind(), %error, "native call terminal binding skipped");
     }
 }

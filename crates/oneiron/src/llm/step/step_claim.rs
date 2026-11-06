@@ -248,6 +248,16 @@ pub(super) fn log_terminal_step(
                 terminal,
             };
             record_call_terminal_in_txn(ctx.vault, wtxn, &claimed);
+            if let Some(origin) = source.native_invocation {
+                crate::dreamer_runner::bind_native_call_terminal_in_txn(
+                    ctx.vault,
+                    wtxn,
+                    origin,
+                    binding.attempt_id,
+                    *step_hash,
+                    claim_id,
+                );
+            }
             Ok(Some(claim_id))
         })
         .map_err(DurableStepError::from)

@@ -25,7 +25,8 @@ A new step, a Started-only checkpoint, an unavailable saved lookup or a
 consumed budget trap with no saved response follows the existing inference
 admission path. Exact-model selection, keyless/paid work attribution, the
 physical run meter, logical allowance and retry policy are unchanged. No
-current-format storage field, migration, default, cap or configuration is added.
+migration, default, cap or configuration is added. The native financial source
+association below changes only its private saved-state format.
 
 ## Exact terminal response identity
 
@@ -113,3 +114,28 @@ These intervals are data for an eventual exact GROSS inclusion join, not credits
 Callers still need the actual included native lease tokens, a coherent baseline and
 current snapshot, and the paid facts checked with the money in one writer. Neither
 this data nor the native NET invoices activate aggregate charge subtraction.
+
+### Native invoice terminal associations
+
+The private saved response now pairs its original source facts with the original
+native invocation coordinate, when that invocation came from a native admission.
+The source is captured before the call constructor; only that constructor's
+coordinate is attached afterward. Recovery does not recapture the actor, run,
+frontier, subject or time from a later receiver. The private STATE format is
+version 3, with a mandatory nil-or-binary invocation field; no older format is
+accepted. The canonical `dreamer.step` claim format is unchanged.
+
+After inserting the actual terminal claim, the same writer binds every retained
+physical call of that original attempt, generation and invocation to that claim.
+The original logical request hash must match too. Saved-response recovery can
+emit another claim for the same physical invoices, so all emitted claim aliases
+are retained without replacing earlier ones. The invoice's quantity and paid
+state are unchanged. A memo read creates no invocation or association.
+
+This optional association uses a nested savepoint. A binding failure rolls back
+only that association and is logged; it never refuses the existing terminal
+claim. A failed parent write also rolls back its child association. Missing
+original admissions remain missing, not guessed from the latest memo, observed
+call, public lease id or response totals. The association is financial correlation
+data, not permission or proof of payment. It does not activate the payment
+primitive or settle the remaining NET/GROSS coverage and reconciliation work.
