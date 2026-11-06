@@ -160,20 +160,10 @@ pub(crate) struct RpcReply {
 
 impl RpcReply {
     /// The served reap pause, without running a call or writing a receipt.
-    pub(crate) fn paused(
-        request_id: u64,
-        pause: &crate::managed::CarrierPaused,
-    ) -> Result<Self, ProtocolError> {
+    pub(crate) fn paused(request_id: u64, body: Value) -> Result<Self, ProtocolError> {
         Ok(Self {
             request_id,
-            frames: vec![wire::frame(
-                TAG_RPC,
-                "rpc.err",
-                request_id,
-                0,
-                true,
-                pause.body(),
-            )?],
+            frames: vec![wire::frame(TAG_RPC, "rpc.err", request_id, 0, true, body)?],
             rows: None,
         })
     }

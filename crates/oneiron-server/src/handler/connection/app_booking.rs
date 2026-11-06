@@ -199,7 +199,7 @@ async fn serve(
                     .map(|frame| vec![frame])
             };
             let frames = caller.managed.admit_receipt(reply).unwrap_or_else(|pause| {
-                RpcReply::paused(request_id, &pause).map(|reply| reply.queued(conn_id))
+                RpcReply::paused(request_id, pause.body()).map(|reply| reply.queued(conn_id))
             });
             let Ok(frames) = frames else { break };
             for frame in frames {
@@ -257,7 +257,7 @@ async fn serve(
                 });
             }
             Err(pause) => {
-                let Ok(reply) = RpcReply::paused(request_id, &pause) else {
+                let Ok(reply) = RpcReply::paused(request_id, pause.body()) else {
                     break;
                 };
                 for frame in reply.queued(conn_id) {
