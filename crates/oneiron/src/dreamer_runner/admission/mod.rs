@@ -10,7 +10,7 @@ mod requester;
 mod settlement;
 mod spend;
 mod validation;
-pub(crate) use self::budget_line::AdmittedBudgetLine;
+pub(crate) use self::budget_line::{AdmittedBudgetLine, AdmittedCallId};
 use self::validation::validate_admission_input;
 
 use std::ops::Bound;
@@ -614,8 +614,11 @@ impl DreamerRunnerStore<'_> {
         crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
 
         let status = decode_dreamer_attempt_status(attempt)?;
-        let admitted_budget_line =
-            AdmittedBudgetLine::new(status.attempt.id, reservation.budget_id.clone());
+        let admitted_budget_line = AdmittedBudgetLine::new(
+            status.attempt.id,
+            status.attempt.attempt_count,
+            reservation.budget_id.clone(),
+        );
 
         Ok(DreamerKindAdmissionResult {
             outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedAttempt {

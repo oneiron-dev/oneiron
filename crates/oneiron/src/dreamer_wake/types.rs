@@ -260,7 +260,10 @@ impl WakeAttemptMeter {
 
     fn line_units(&self) -> u64 {
         self.line.get().map_or(0, |(line, start)| {
-            line.read().used_units.saturating_sub(*start)
+            line.accounting_snapshot(&[])
+                .read
+                .used_units
+                .saturating_sub(*start)
         })
     }
 

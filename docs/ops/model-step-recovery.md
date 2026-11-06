@@ -46,3 +46,23 @@ A receipt is correlation data, not permission or proof of payment. A fallback
 publication still checks the exact claim's trusted source and actor, active
 status, response hash, current policy and stage in the governing transaction.
 Pre-terminal outbound effect bindings and their existing checks stay separate.
+
+### Original admitted-call coordinates
+
+A successful native Dreamer admission freezes its original attempt id, native
+`attempt_count` and budget line. Its cloned deadlines share one checked invocation
+sequence. A fresh durable-step invocation takes its coordinate before requesting a
+model lease; schema corrections keep that invocation and use their existing call
+ordinal. Transport retries keep the same coordinate. A fresh guard's public lease
+id is not a substitute for this original coordinate.
+
+The existing owed-call row retains this coordinate beside the original line and
+lease. It still coalesces by attempt and logical step, and ordinary settlement
+still retires the attempt's rows. This extra provenance does not make that row an
+irreversible paid fact or close the late-call accounting gap.
+
+`BudgetGuard::accounting_snapshot` captures its total and selected native lease
+contributions under one lock. A foreign lease with a matching public id has no
+entry on that guard. The snapshot is accounting data, not a grant or proof that a
+vault budget charge committed. Callers release the guard lock before any vault
+writer runs; no caller callback runs inside it.

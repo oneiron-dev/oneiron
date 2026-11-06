@@ -390,6 +390,7 @@ async fn durable_step(
         return Err(erased_step());
     }
 
+    let calls = StepCalls::new(ctx.vault, ctx.deadline, ctx.attempt_id, step_hash)?;
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
@@ -423,12 +424,6 @@ async fn durable_step(
     // The admitted call binds to its wake in one short write before it is
     // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
     // Declared before the settlement guard, it closes after the lease does.
-    let calls = StepCalls {
-        vault: ctx.vault,
-        deadline: ctx.deadline,
-        attempt_id: ctx.attempt_id,
-        step_hash,
-    };
     let mut observed = calls.admitted(guard, &admission.lease, 0);
 
     // The deadline only gates admission. Once admitted, the provider (and any

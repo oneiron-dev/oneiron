@@ -181,9 +181,29 @@ pub(crate) struct StepCalls<'a> {
     pub(crate) deadline: Option<&'a WakePassDeadline>,
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
+    origin: Option<crate::dreamer_runner::AdmittedCallId>,
 }
 
 impl<'a> StepCalls<'a> {
+    pub(crate) fn new(
+        vault: &'a Vault,
+        deadline: Option<&'a WakePassDeadline>,
+        attempt_id: AttemptId,
+        step_hash: [u8; 32],
+    ) -> crate::Result<Self> {
+        let origin = deadline
+            .map(|deadline| deadline.admitted_call_id(attempt_id))
+            .transpose()?
+            .flatten();
+        Ok(Self {
+            vault,
+            deadline,
+            attempt_id,
+            step_hash,
+            origin,
+        })
+    }
+
     /// Binds a call `guard` just admitted under `lease` to its wake: live
     /// first, then its row in one short write, before anything is sent.
     /// Best-effort: outside an observed pass, or when either fails (logged),
@@ -194,7 +214,7 @@ impl<'a> StepCalls<'a> {
         lease: &BudgetLease,
         ordinal: u32,
     ) -> ObservedCall<'a> {
-        self.record_owed(guard, lease);
+        self.record_owed(guard, lease, ordinal);
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
@@ -202,18 +222,24 @@ impl<'a> StepCalls<'a> {
         }
     }
 
-    fn record_owed(&self, guard: &BudgetGuard, lease: &BudgetLease) {
+    fn record_owed(&self, guard: &BudgetGuard, lease: &BudgetLease, ordinal: u32) {
+        let Some(mut origin) = self.origin else {
+            return;
+        };
+        origin.ordinal = ordinal;
         let Some(line) = self
             .deadline
             .and_then(|deadline| deadline.admitted_budget_line(self.attempt_id))
         else {
             return;
         };
-        let reserved_units = match guard.lease_observation(lease.id()) {
+        let snapshot = guard.accounting_snapshot(&[lease]);
+        let reserved_units = match snapshot.leases[0] {
             Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
             Some(BudgetLeaseState::Settled { .. }) | Some(BudgetLeaseState::Aborted) | None => 0,
         };
         let owed = crate::dreamer_wake::owed::WakeOwedCall {
+            origin,
             boot: self.vault.active_wakes.boot(),
             line: line.to_owned(),
             lease: lease.id().to_owned(),

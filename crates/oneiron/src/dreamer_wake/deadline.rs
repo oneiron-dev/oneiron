@@ -7,7 +7,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use oneiron_model::llm::WorkCancel;
 
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::{AdmittedBudgetLine, DreamerAdmittedAttempt};
+use crate::dreamer_runner::{AdmittedBudgetLine, AdmittedCallId, DreamerAdmittedAttempt};
 
 use super::observation::{WakeBinding, WakeRef};
 
@@ -86,6 +86,15 @@ impl WakePassDeadline {
 
     pub(super) fn admitted_budget_line(&self, attempt_id: AttemptId) -> Option<&str> {
         self.admitted_budget_line.as_ref()?.for_attempt(attempt_id)
+    }
+
+    pub(super) fn admitted_call_id(
+        &self,
+        attempt_id: AttemptId,
+    ) -> crate::Result<Option<AdmittedCallId>> {
+        self.admitted_budget_line
+            .as_ref()
+            .map_or(Ok(None), |line| line.next_call(attempt_id))
     }
 
     fn elapsed(&self) -> u64 {
