@@ -13,6 +13,7 @@ pub(super) struct HistoryValidation {
     next: usize,
     texts: Vec<String>,
     text_builder: Option<CanonicalDocumentTexts>,
+    head_byte: usize,
     reached: Vec<bool>,
     metadata: MetadataRows,
     parent_next: usize,
@@ -29,6 +30,8 @@ enum Stage {
     HistoryHeader,
     Texts,
     Head,
+    HeadMetadata,
+    HeadSkillState,
     Versions,
     VersionSummary,
     VersionParents,
@@ -138,18 +141,51 @@ impl HistoryValidation {
                     continue;
                 }
                 Stage::Head => {
-                    let history = history();
                     let head = self
                         .texts
                         .len()
                         .checked_sub(1)
                         .ok_or(invalid("entity document history has no head"))?;
-                    if self.texts[head] != row.text
-                        || history.versions[head].metadata != row.metadata
-                        || history.versions[head].native_skill_state != row.native_skill_state
-                    {
-                        return Err(invalid("entity document head version"));
+                    if !advance_head_bytes(
+                        self.texts[head].as_bytes(),
+                        row.text.as_bytes(),
+                        &mut self.head_byte,
+                    )? {
+                        return Ok(false);
                     }
+                    self.head_byte = 0;
+                    self.stage = Stage::HeadMetadata;
+                    return Ok(false);
+                }
+                Stage::HeadMetadata => {
+                    let history = history();
+                    let head = self.texts.len() - 1;
+                    if !self.metadata.compare_head(
+                        &history.versions[head].metadata,
+                        &row.metadata,
+                        &mut self.head_byte,
+                    )? {
+                        return Ok(false);
+                    }
+                    self.stage = Stage::HeadSkillState;
+                    return Ok(false);
+                }
+                Stage::HeadSkillState => {
+                    let history = history();
+                    let head = self.texts.len() - 1;
+                    match (
+                        history.versions[head].native_skill_state.as_deref(),
+                        row.native_skill_state.as_deref(),
+                    ) {
+                        (Some(actual), Some(expected)) => {
+                            if !advance_head_bytes(actual, expected, &mut self.head_byte)? {
+                                return Ok(false);
+                            }
+                        }
+                        (None, None) => {}
+                        _ => return Err(invalid("entity document head version")),
+                    }
+                    self.head_byte = 0;
                     self.reached = vec![false; self.texts.len()];
                     self.reached[head] = true;
 
@@ -255,13 +291,14 @@ impl HistoryValidation {
                     let pin = &history().pins[self.next];
                     let text = &self.texts[pin.version as usize];
                     let (start, end) = (pin.start as usize, pin.end as usize);
-                    if !self.pin_quote.advance(text, start, end) {
+                    if !self.pin_quote.advance(text, start, end, &pin.quote) {
                         return Ok(false);
                     }
                     if start > end
                         || end > self.pin_quote.chars
-                        || self.pin_quote.quote != pin.quote
-                        || blake3::hash(self.pin_quote.quote.as_bytes()).as_bytes() != &pin.hash
+                        || self.pin_quote.quote_mismatch
+                        || self.pin_quote.quote_byte != pin.quote.len()
+                        || self.pin_quote.hasher.finalize().as_bytes() != &pin.hash
                     {
                         return Err(invalid("entity document pin quote"));
                     }
@@ -398,6 +435,18 @@ impl HistoryValidation {
     }
 }
 
+fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Result<bool> {
+    if actual.len() != expected.len() {
+        return Err(invalid("entity document head version"));
+    }
+    let end = next.saturating_add(blake3::CHUNK_LEN).min(actual.len());
+    if actual[*next..end] != expected[*next..end] {
+        return Err(invalid("entity document head version"));
+    }
+    *next = end;
+    Ok(end == actual.len())
+}
+
 /// A single sorted resume key; values stay in the frozen source map.
 #[derive(Default)]
 struct MetadataRows {
@@ -419,24 +468,67 @@ impl MetadataRows {
         self.after = Some(field.clone());
         Ok(false)
     }
+
+    fn compare_head(
+        &mut self,
+        actual: &BTreeMap<String, Vec<u8>>,
+        expected: &BTreeMap<String, Vec<u8>>,
+        next: &mut usize,
+    ) -> Result<bool> {
+        if actual.len() != expected.len() {
+            return Err(invalid("entity document head version"));
+        }
+        let bounds = (self.after.as_deref().map_or(Unbounded, Excluded), Unbounded);
+        let Some((field, bytes)) = actual.range::<str, _>(bounds).next() else {
+            self.after = None;
+            return Ok(true);
+        };
+        let expected = expected
+            .get(field)
+            .ok_or(invalid("entity document head version"))?;
+        if !advance_head_bytes(bytes, expected, next)? {
+            return Ok(false);
+        }
+        *next = 0;
+        self.after = Some(field.clone());
+        Ok(false)
+    }
 }
 
-#[derive(Default)]
 struct PinQuote {
     byte: usize,
     chars: usize,
-    quote: String,
+    quote_byte: usize,
+    quote_mismatch: bool,
+    hasher: blake3::Hasher,
+}
+
+impl Default for PinQuote {
+    fn default() -> Self {
+        Self {
+            byte: 0,
+            chars: 0,
+            quote_byte: 0,
+            quote_mismatch: false,
+            hasher: blake3::Hasher::new(),
+        }
+    }
 }
 
 impl PinQuote {
-    fn advance(&mut self, text: &str, start: usize, end: usize) -> bool {
+    fn advance(&mut self, text: &str, start: usize, end: usize, quote: &str) -> bool {
         let Some(ch) = text[self.byte..].chars().next() else {
             return true;
         };
+        let next_byte = self.byte + ch.len_utf8();
         if self.chars >= start && self.chars < end {
-            self.quote.push(ch);
+            let bytes = &text.as_bytes()[self.byte..next_byte];
+            let quote_end = self.quote_byte + bytes.len();
+            self.quote_mismatch |= quote.as_bytes().get(self.quote_byte..quote_end) != Some(bytes);
+            self.quote_byte = quote_end;
+            self.hasher.update(bytes);
         }
-        self.byte += ch.len_utf8();
+        self.byte = next_byte;
         self.chars += 1;
         false
     }
