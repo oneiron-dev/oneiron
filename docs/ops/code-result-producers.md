@@ -113,7 +113,7 @@ This applies to finished, waiting and unfinished observations; it does not
 claim that a failed call succeeded. The observation text, path, byte checks,
 source rows, binding, checkpoint, replay commit and error ordering are unchanged.
 The observation's completed-step ordinal is not used as its producer coordinate.
-Generic and failed-step text outputs and resumed wait replies keep `None`.
+Generic text outputs and resumed wait replies keep `None`.
 No effect, media declaration, grant or fence is inferred.
 
 ## Checkpointed implicit-speech intents
@@ -129,3 +129,15 @@ written after the bubble. Terminal recovery reads and decodes the existing
 intent without republishing or relabelling its producer metadata.
 Terminal and fallback-speech control markers keep `None`; no effect, media
 declaration, grant or fence is inferred for the intent.
+
+
+## Failed-step observations
+
+An observation persisted after a step fails carries the same `bridge_start`
+already supplied to that step's `RecordingJsHost`. The existing sweeping sink
+and publisher set `producing_step_start` before the occurrence is written.
+This names the producing step, not a successful result or its completed-step
+ordinal. The original failure text, no-bridge-call guards, result binding,
+terminal marker, checkpoint, receipt commit, retry and wait parking order stay
+unchanged. Resumed wait replies and terminal control markers keep `None`.
+No effect, media declaration, grant or fence is inferred.

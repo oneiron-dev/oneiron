@@ -152,11 +152,14 @@ impl EngineNativeExecutor<'_> {
                 None => record.bindings.push(binding),
             }
         }
-        record_text_output(
+        let mut sink = self.storage.code_run_output_sink()?;
+        sink.write(observation.as_bytes())?;
+        publish_output(
             &self.storage,
             record,
             observation_output_path(completed_steps),
-            &observation,
+            sink,
+            Some(bridge_start as u64),
         )?;
         // The failed step's observation is a result by path (FIX 828), so it
         // takes its fresh `r<n>` here like the success path's, or no card
