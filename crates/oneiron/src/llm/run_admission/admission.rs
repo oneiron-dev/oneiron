@@ -22,9 +22,11 @@ use super::work_context::WorkContext;
 mod denied;
 mod media;
 mod origin;
+mod raw;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub use raw::RawDispatch;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
