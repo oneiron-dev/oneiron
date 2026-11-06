@@ -421,7 +421,7 @@ fn request_for(
     .counterparty_ref(row.to.clone())
 }
 
-impl Memory {
+impl Memory<'_> {
     /// Drafts a reply to a mail thread the caller reads, or its next
     /// revision under the same request key. It sends nothing: the draft
     /// waits for the owner's approval of this exact revision.
