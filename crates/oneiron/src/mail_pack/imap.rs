@@ -21,7 +21,14 @@
 //!     it.
 //!   - Where it announces `OBJECTID` (RFC 8474), the id is `emailid.` and
 //!     the server's `EMAILID`, which it keeps for every copy of a message
-//!     and never gives another message.
+//!     and never gives another message; but a message whose header block
+//!     proposes a header id (below) the vault holds a copy under (an mbox
+//!     import's, or one a sync named before the server announced
+//!     `OBJECTID`) is read whole once, and named by that header id when its
+//!     digest is the copy's, or by the digest id of the copy of its own
+//!     digest when the vault holds one. A forgotten copy nothing proves it
+//!     apart from (no digest kept, or its bytes unreadable) holds its fence:
+//!     it is named by that header id too, and lands no more.
 //!   - Elsewhere the header block proposes the id, as an mbox import names
 //!     a message: `mbox` and the first 32 hex of the BLAKE3 of its
 //!     `Message-ID`, the SHA-256 of its unfolded header block and its
@@ -35,15 +42,22 @@
 //!     whole for this only on such a collision, and the UID map keeps the
 //!     id each UID was given, and each place it gives a header id, so a
 //!     place is never named two ways and no session gives one id to two
-//!     messages.
+//!     messages. Where the vault's copy is forgotten and no digest of it is
+//!     left (it was forgotten by its headers only), nothing proves the new
+//!     one another message: the fence holds, and it is named by the header
+//!     id and lands no more.
 //!   - One with no `Message-ID`, or whose bytes cannot be read for that
 //!     proof, is named by where it is:
-//!     `imapuid.<folder digest>.<UIDVALIDITY>.<UID>`.
+//!     `imapuid.<folder digest>.<UIDVALIDITY>.<UID>` (but a forgotten copy
+//!     under its header id holds, as above).
+//!   - On every server a UID the UID map holds keeps the id it was given,
+//!     and every read names a UID alike: the listing, the change feed, the
+//!     expunge scan, a search, and a message looked for.
 //!   - A message a header id names (an mbox import's, on any server) is
 //!     read whole only where its whole digest is the one the vault keeps of
-//!     it: with none kept, a server that names messages itself finds no
-//!     message by that id, and another message's bytes never come back
-//!     under it.
+//!     it, or where the UID map gives it that id: with neither, a server
+//!     that names messages itself refuses to look for it (never read as
+//!     deleted), and another message's bytes never come back under it.
 //! - **Folders are labels.** Every selectable folder is read but drafts and
 //!   the flagged and important views; trash and junk are looked in only to
 //!   see that a message went there. The all-mail view (`\All`, Gmail's All
@@ -106,8 +120,7 @@ const NEW_PER_FOLDER: usize = 200;
 /// The most folders one mailbox is read through; a mailbox with more is
 /// refused whole rather than read in part.
 const MAX_FOLDERS: usize = 1_000;
-/// The UIDs one read of the server's own ids of them (`X-GM-MSGID`,
-/// `EMAILID`) covers.
+/// The UIDs one read of Gmail's own ids of them (`X-GM-MSGID`) covers.
 const SERVER_ID_BATCH: u64 = 2_000;
 /// The UIDs one read of their header blocks covers: each answer carries a
 /// whole block.
@@ -300,7 +313,9 @@ enum Naming {
     /// `X-GM-EXT-1`.
     Gmail,
     /// By the server's own id of it (`EMAILID`, RFC 8474), where the server
-    /// announces `OBJECTID`.
+    /// announces `OBJECTID`; or by the id a header block gives, where the
+    /// vault holds a copy under it that its whole digest proves, or a
+    /// forgotten copy nothing proves it apart from.
     ServerId,
     /// By its `Message-ID`, its header block and its size, proved by its
     /// whole digest on a collision.
@@ -318,11 +333,13 @@ impl Naming {
         }
     }
 
-    /// The fetch items that name a message.
+    /// The fetch items that name a message: under `EMAILID` its header
+    /// block and size too, which may name it in the vault already
+    /// ([`ImapMailWire::server_named_id`]).
     const fn item(self) -> &'static str {
         match self {
             Self::Gmail => "X-GM-MSGID",
-            Self::ServerId => "EMAILID",
+            Self::ServerId => "EMAILID RFC822.SIZE BODY.PEEK[HEADER]",
             Self::HeaderBlock => "RFC822.SIZE BODY.PEEK[HEADER]",
         }
     }
@@ -330,8 +347,8 @@ impl Naming {
     /// The most UIDs one read of what names them covers.
     const fn batch(self) -> u64 {
         match self {
-            Self::Gmail | Self::ServerId => SERVER_ID_BATCH,
-            Self::HeaderBlock => HEADER_BLOCK_BATCH,
+            Self::Gmail => SERVER_ID_BATCH,
+            Self::ServerId | Self::HeaderBlock => HEADER_BLOCK_BATCH,
         }
     }
 }
@@ -710,8 +727,9 @@ fn header_name(message: &Fetched, folder: &Folder, uid_validity: u64) -> Option<
 
 /// The id of a message fetched with what names it under `naming`; `None`
 /// for an answer that carries none of it, as an unsolicited update (its
-/// flags) does. Under the header block it is the id proposed, before any
-/// proof ([`ImapMailWire::resolved_ids`]).
+/// flags) does. Under the header block it is the id proposed, and under
+/// `EMAILID` the server's id, before the vault's copies and any proof are
+/// read ([`ImapMailWire::resolved_ids`]).
 fn fetched_id(
     message: &Fetched,
     naming: Naming,
@@ -821,12 +839,12 @@ fn digest_at(
 }
 
 /// Of `fetched`, header blocks of the open `folder`, the UIDs whose message
-/// `provider_id` names on a session that names messages another way (an mbox
-/// import's id where the server names each message itself): by its place,
-/// or by its whole digest (fix list row 19145). A header id proposes a UID
-/// whose header block gives that id, a digest id one whose header id and
-/// `kept` hash to it; either names it only when the digest of its whole
-/// message, read once, is `kept`, the one the vault keeps of `provider_id`.
+/// `provider_id` names on a session that names messages by Gmail's id (an
+/// mbox import's id there): by its place, or by its whole digest (fix list
+/// row 19145). A header id proposes a UID whose header block gives that id,
+/// a digest id one whose header id and `kept` hash to it; either names it
+/// only when the digest of its whole message, read once, is `kept`, the one
+/// the vault keeps of `provider_id`.
 /// With no digest kept, or no message left to read, no UID is named:
 /// another message with the same header block and size never comes back
 /// under its id.
@@ -867,8 +885,8 @@ fn header_hits(
 }
 
 /// Which message each UID of a fetch for what names them under `naming`
-/// holds, as the fetch alone says it: under the header block, the ids
-/// proposed ([`ImapMailWire::resolved_ids`] proves them).
+/// holds, as the fetch alone says it ([`fetched_id`]):
+/// [`ImapMailWire::resolved_ids`] proves them.
 fn learned_ids(
     fetched: &[Fetched],
     naming: Naming,
@@ -1227,7 +1245,10 @@ impl ImapMailWire<'_> {
     /// each message itself (Gmail, `OBJECTID`), one id read names each
     /// message first, and one this session read already, or whose live copy
     /// the vault holds, is never read for its headers again: the labelled
-    /// folders landed it, and the view adds no label.
+    /// folders landed it, and the view adds no label. Under `EMAILID` a UID
+    /// the UID map holds is named by the id it was given, which may be a
+    /// header id ([`Self::server_named_id`]), and a UID left to be read is
+    /// named by that read alone.
     fn unread_in(
         &self,
         open: &mut OpenSession,
@@ -1243,42 +1264,62 @@ impl ImapMailWire<'_> {
             return Ok((uids.to_vec(), Vec::new()));
         }
         let place = open.folders[folder].clone();
+        let folder_key = uid_map_folder_key(&place);
+        let item = if naming == Naming::Gmail {
+            "X-GM-MSGID"
+        } else {
+            "EMAILID"
+        };
         let fetched = open
             .session
-            .uid_fetch(&uid_set(uids), &format!("UID {}", naming.item()))?;
+            .uid_fetch(&uid_set(uids), &format!("UID {item}"))?;
         let mut learned = learned_ids(&fetched, naming, &place, status.uid_validity);
         learned.retain(|(uid, _)| uids.contains(uid));
         let mut unread = Vec::new();
         let mut named = Vec::new();
+        let mut remember = Vec::new();
         {
             let txn = self.vault.store.env.read_txn()?;
             let seen = self.seen.borrow();
             let mut by_id = self.named_by_all_mail.borrow_mut();
-            for (uid, provider_id) in &learned {
+            for (uid, server_named) in learned {
+                let mapped = if naming == Naming::ServerId {
+                    UIDS.get(&self.vault.store, &txn, &(open.source, folder_key, uid))?
+                        .filter(|row| row.uid_validity == status.uid_validity)
+                        .map(|row| row.provider_id)
+                } else {
+                    None
+                };
+                let from_map = mapped.is_some();
+                let provider_id = mapped.unwrap_or(server_named);
                 let live = OCCURRENCES
                     .get(
                         &self.vault.store,
                         &txn,
-                        &occurrence_key(open.source, provider_id),
+                        &occurrence_key(open.source, &provider_id),
                     )?
                     .is_some_and(|occurrence| matches!(occurrence.presence, MailPresence::Present));
-                if seen.contains_key(provider_id) {
+                let read = if seen.contains_key(&provider_id) {
                     named.push(provider_id.clone());
+                    false
                 } else if live {
                     // Named here alone, as far as this session read.
                     by_id.insert(provider_id.clone());
                     named.push(provider_id.clone());
+                    false
                 } else {
-                    unread.push(*uid);
+                    unread.push(uid);
+                    true
+                };
+                // Gmail's id names its message outright. Under `EMAILID` the
+                // header read names a UID left to it, and the map keeps its
+                // own rows.
+                if naming == Naming::Gmail || !(read || from_map) {
+                    remember.push((uid, provider_id));
                 }
             }
         }
-        self.remember_uids(
-            open.source,
-            uid_map_folder_key(&place),
-            status.uid_validity,
-            learned,
-        )?;
+        self.remember_uids(open.source, folder_key, status.uid_validity, remember)?;
         Ok((unread, named))
     }
 
@@ -1479,11 +1520,12 @@ impl ImapMailWire<'_> {
 
     /// The highest of `uids` in the open `folder` whose message
     /// `provider_id`, named under `naming`, names. Under the session's own
-    /// naming each UID is named as every other read names it
-    /// ([`Self::resolved_ids`]) and the UID map learns it; an id of another
-    /// naming (an mbox import's, where the server names each message
-    /// itself) is checked against each header block and proved by the
-    /// whole digest the vault keeps of it ([`header_hits`]).
+    /// naming, and for an id a header block gives where the server names
+    /// messages by `EMAILID`, each UID is named as every other read names it
+    /// ([`Self::resolved_ids`]) and the UID map learns it. On Gmail an id a
+    /// header block gives (an mbox import's) is checked against each header
+    /// block and proved by the whole digest the vault keeps of it
+    /// ([`header_hits`]).
     fn exact_hit(
         &self,
         open: &mut OpenSession,
@@ -1496,23 +1538,29 @@ impl ImapMailWire<'_> {
         // Every hit is checked, a bounded batch at a time: an unchecked
         // hit is no evidence that the message is gone.
         let place = open.folders[folder].clone();
-        let items = format!("UID {}", naming.item());
-        let kept = if naming == open.naming {
-            None
+        let cross = naming != open.naming;
+        // Under `EMAILID` every read names a UID by a header id the vault's
+        // copy proves (fix list rows 19145, 20917), so a lookup of one finds
+        // the UID the listing names by it.
+        let resolved = !cross || open.naming == Naming::ServerId;
+        // A message named in another naming is proved by its kept
+        // whole-message digest. With none kept, and no UID named by it, it
+        // cannot be located, which is no evidence that it is gone: refused,
+        // never read as deleted at the provider.
+        let kept = if cross {
+            self.kept_digest(open.source, provider_id)?
         } else {
-            // A message named in another naming is found here only by its
-            // kept whole-message digest. With none kept it cannot be located,
-            // which is no evidence that it is gone: refused, never read as
-            // deleted at the provider.
-            Some(
-                self.kept_digest(open.source, provider_id)?
-                    .ok_or_else(|| refused("imap_message_not_locatable"))?,
-            )
+            None
         };
+        if cross && !resolved && kept.is_none() {
+            return Err(refused("imap_message_not_locatable"));
+        }
+        let read_as = if resolved { open.naming } else { naming };
+        let items = format!("UID {}", read_as.item());
         let mut best = None;
         for batch in uids.chunks(HIT_BATCH) {
             let fetched = open.session.uid_fetch(&uid_set(batch), &items)?;
-            if naming != open.naming {
+            if !resolved {
                 let hits = header_hits(
                     &mut open.session,
                     &place,
@@ -1536,6 +1584,9 @@ impl ImapMailWire<'_> {
                 status.uid_validity,
                 learned,
             )?;
+        }
+        if cross && best.is_none() && kept.is_none() {
+            return Err(refused("imap_message_not_locatable"));
         }
         Ok(best)
     }
@@ -1914,14 +1965,20 @@ impl ImapMailWire<'_> {
     /// The whole digest the vault keeps of its copy of `provider_id` in
     /// `source`, of any presence; `None` when it keeps none.
     fn kept_digest(&self, source: EntityId, provider_id: &str) -> Result<Option<[u8; 32]>> {
-        let txn = self.vault.store.env.read_txn()?;
-        Ok(OCCURRENCES
-            .get(
-                &self.vault.store,
-                &txn,
-                &occurrence_key(source, provider_id),
-            )?
+        Ok(self
+            .vault_copy(source, provider_id)?
             .and_then(|occurrence| occurrence.content_digest))
+    }
+
+    /// The vault's copy of `provider_id` in `source`, of any presence: a
+    /// forgotten one is a fence.
+    fn vault_copy(&self, source: EntityId, provider_id: &str) -> Result<Option<MailOccurrence>> {
+        let txn = self.vault.store.env.read_txn()?;
+        OCCURRENCES.get(
+            &self.vault.store,
+            &txn,
+            &occurrence_key(source, provider_id),
+        )
     }
 
     /// The UID map's row of one UID of one folder of `source`.
@@ -1944,16 +2001,21 @@ struct KnownCopy {
     digest: Option<[u8; 32]>,
     /// The folders the vault last saw it under.
     labels: Vec<String>,
+    /// Whether the vault's copy is forgotten: a fence that holds against
+    /// any copy no digest proves another message.
+    forgotten: bool,
 }
 
 impl ImapMailWire<'_> {
     /// Which message each UID of `fetched`, a read of the open `folder` for
     /// what names its messages, holds (fix list rows 19145, 20917). Gmail's
-    /// id and the server's `EMAILID` name a message outright. Under the
-    /// header block each header id is proved first ([`Self::proved_id`]),
-    /// so every read names a UID alike: the header listing, the change
-    /// feed, the expunge scan, a search, a message looked for, and the
-    /// importer's own reads through them.
+    /// id names a message outright. Under `EMAILID` the vault's copy under
+    /// the header id a header block proposes is consulted first
+    /// ([`Self::server_named_id`]), and under the header block each header
+    /// id is proved first ([`Self::proved_id`]), so every read names a UID
+    /// alike: the header listing, the change feed, the expunge scan, a
+    /// search, a message looked for, and the importer's own reads through
+    /// them.
     fn resolved_ids(
         &self,
         open: &mut OpenSession,
@@ -1962,7 +2024,7 @@ impl ImapMailWire<'_> {
         fetched: &[Fetched],
     ) -> Result<Vec<(u64, String)>> {
         let place = open.folders[folder].clone();
-        if open.naming != Naming::HeaderBlock {
+        if open.naming == Naming::Gmail {
             return Ok(learned_ids(
                 fetched,
                 open.naming,
@@ -1979,24 +2041,86 @@ impl ImapMailWire<'_> {
             if named.contains(&uid) {
                 continue;
             }
-            let Some(name) = header_name(message, &place, status.uid_validity) else {
-                continue;
+            let at = Location {
+                folder,
+                uid_validity: status.uid_validity,
+                uid,
             };
-            let id = match name {
-                HeaderName::Place(id) => id,
-                HeaderName::Proposed(proposed) => {
-                    let at = Location {
-                        folder,
-                        uid_validity: status.uid_validity,
-                        uid,
-                    };
-                    self.proved_id(open, at, status, proposed)?
+            let id = if open.naming == Naming::ServerId {
+                let Some(id) = self.server_named_id(open, &place, at, message)? else {
+                    continue;
+                };
+                id
+            } else {
+                let Some(name) = header_name(message, &place, status.uid_validity) else {
+                    continue;
+                };
+                match name {
+                    HeaderName::Place(id) => id,
+                    HeaderName::Proposed(proposed) => self.proved_id(open, at, status, proposed)?,
                 }
             };
             named.insert(uid);
             resolved.push((uid, id));
         }
         Ok(resolved)
+    }
+
+    /// The id of the message at `at`, in the open folder `place`, fetched as
+    /// `message` with its `EMAILID`, its header block and its size, on a
+    /// session that names messages by `EMAILID` (fix list rows 19145,
+    /// 20917); `None` for an answer that carries no `EMAILID`:
+    /// - a UID the UID map holds keeps the id it was given, as under the
+    ///   header block ([`Self::proved_id`]);
+    /// - one whose header block proposes a header id the vault holds a copy
+    ///   under in this source (an mbox import's, or one a sync named before
+    ///   the server announced `OBJECTID`), of any presence, is read whole
+    ///   once: the copy's digest, it is that message; another, it is the
+    ///   copy the vault holds under the id of that digest
+    ///   ([`digest_variant_id`]), when it holds one. With no digest kept, or
+    ///   its bytes unreadable, nothing proves it another message than a
+    ///   forgotten copy, whose fence holds: it is that message;
+    /// - else it is `emailid.` and its `EMAILID`. A message the vault holds
+    ///   no copy under its header id costs one vault read and no other.
+    fn server_named_id(
+        &self,
+        open: &mut OpenSession,
+        place: &Folder,
+        at: Location,
+        message: &Fetched,
+    ) -> Result<Option<String>> {
+        let Some(server_id) = fetched_id(message, Naming::ServerId, place, at.uid_validity) else {
+            return Ok(None);
+        };
+        if let Some(row) = self.uid_row(open.source, uid_map_folder_key(place), at.uid)?
+            && row.uid_validity == at.uid_validity
+        {
+            return Ok(Some(row.provider_id));
+        }
+        let Some(HeaderName::Proposed(proposed)) = header_name(message, place, at.uid_validity)
+        else {
+            return Ok(Some(server_id));
+        };
+        let Some(copy) = self.vault_copy(open.source, &proposed.header_id)? else {
+            return Ok(Some(server_id));
+        };
+        let digest = whole_digest_of(&mut open.session, at.uid, proposed.size)?;
+        if let Some(digest) = digest {
+            if copy.content_digest == Some(digest) {
+                return Ok(Some(proposed.header_id));
+            }
+            let variant = digest_variant_id(&proposed.header_id, &digest);
+            if self.vault_copy(open.source, &variant)?.is_some() {
+                return Ok(Some(variant));
+            }
+        }
+        let forgotten = matches!(copy.presence, MailPresence::Forgotten { .. });
+        let unproved = digest.is_none() || copy.content_digest.is_none();
+        Ok(Some(if forgotten && unproved {
+            proposed.header_id
+        } else {
+            server_id
+        }))
     }
 
     /// The id of the message at `at`, in the open folder (`status`), whose
@@ -2010,7 +2134,13 @@ impl ImapMailWire<'_> {
     /// - else the digests of the two whole messages decide: equal, it is
     ///   that message; different, or with no copy of the other left to read,
     ///   it is its own message, named by its digest ([`digest_variant_id`]).
-    ///   One whose bytes cannot be read is named by its place.
+    ///   One whose bytes cannot be read is named by its place;
+    /// - but where the vault's copy is forgotten and no digest proves this
+    ///   one another message (none of the forgotten copy kept, read this
+    ///   session or left to read, or none of this one), the forgotten copy's
+    ///   fence holds: it is that message, and lands no more. Another message
+    ///   with the same header block and size, whose twin was forgotten by
+    ///   its headers only, lands no more either.
     ///
     /// The other copy's digest is the vault's or this session's, else read
     /// where it is ([`Self::known_digest`]).
@@ -2039,6 +2169,13 @@ impl ImapMailWire<'_> {
             return Ok(proposed.header_id);
         };
         let Some(digest) = whole_digest_of(&mut open.session, at.uid, proposed.size)? else {
+            if known.forgotten {
+                self.first_places
+                    .borrow_mut()
+                    .entry(proposed.header_id.clone())
+                    .or_insert(at);
+                return Ok(proposed.header_id);
+            }
             return Ok(place_id(&open.folders[at.folder], at.uid_validity, at.uid));
         };
         let held = match known.digest {
@@ -2049,7 +2186,7 @@ impl ImapMailWire<'_> {
         if let Some(held) = held {
             digests.entry(proposed.header_id.clone()).or_insert(held);
         }
-        let id = if held == Some(digest) {
+        let id = if held == Some(digest) || (held.is_none() && known.forgotten) {
             proposed.header_id
         } else {
             digest_variant_id(&proposed.header_id, &digest)
@@ -2105,6 +2242,9 @@ impl ImapMailWire<'_> {
                 .as_ref()
                 .and_then(|copy| copy.content_digest)
                 .or(read),
+            forgotten: landed
+                .as_ref()
+                .is_some_and(|copy| matches!(copy.presence, MailPresence::Forgotten { .. })),
             labels: landed.map(|copy| copy.labels).unwrap_or_default(),
         }))
     }

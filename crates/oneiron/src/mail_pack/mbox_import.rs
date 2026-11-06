@@ -21,9 +21,12 @@
 //!   as that copy's, it is that message; another, or not known (a copy the
 //!   live sync landed by its headers only, or a place it named by that id
 //!   whose message never landed), it is its own message, named by its
-//!   digest. One with no `Message-ID` is named by the hash of its bytes.
+//!   digest. A forgotten copy whose digest is not known is a fence nothing
+//!   proves the entry apart from: the entry is that message, and lands no
+//!   more. One with no `Message-ID` is named by the hash of its bytes.
 //!   Every message landed keeps its digest, so a copy the live sync finds
-//!   later is proved against it.
+//!   later is proved against it; where the server names messages by
+//!   `EMAILID`, the live sync names a copy proved so by the import's id.
 //!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
@@ -359,12 +362,17 @@ impl Intake<'_> {
         let mut held = self.occurrence(&headers.provider_id)?;
         // A header id is proved as the IMAP wire proves it (fix list row
         // 19145): a copy under it whose digest is another, or not known, is
-        // another message, and this one is named by its own digest. A place
-        // the live wire named by that id, whose message never landed, is a
-        // copy whose digest an import cannot read.
+        // another message, and this one is named by its own digest; but a
+        // forgotten copy whose digest is not known is a fence nothing
+        // proves this one apart from, and it holds. A place the live wire
+        // named by that id, whose message never landed, is a copy whose
+        // digest an import cannot read.
         if self.naming == ImportNaming::HeaderBlock && headers.rfc_message_id.is_some() {
             let proved = match held.as_ref() {
-                Some(held) => held.content_digest == Some(digest),
+                Some(held) => match held.content_digest {
+                    Some(kept) => kept == digest,
+                    None => matches!(held.presence, MailPresence::Forgotten { .. }),
+                },
                 None => !imap_id_mapped(self.vault, self.source, &headers.provider_id)?,
             };
             if !proved {
