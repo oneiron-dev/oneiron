@@ -320,10 +320,4 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     settled
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms as now_ms;
