@@ -309,7 +309,7 @@ pub use outbound::{
     CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, OutboundDraftInput,
     OutboundIntentReceipt, OutboundScheduleContext,
 };
-pub(crate) use queued_identity_hint::OnDeviceIdentityHintReader;
+pub(crate) use queued_identity_hint::QueuedIdentityHintReader;
 pub use read_selection::RecallWorlds;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,

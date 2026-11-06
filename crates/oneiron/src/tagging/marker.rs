@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::hint_read::QueuedHintRead;
-use crate::memory::OnDeviceIdentityHintReader;
+use crate::memory::QueuedIdentityHintReader;
 
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome, RetryAttempt,
@@ -349,7 +349,7 @@ pub(crate) fn mark_turn_scoped_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     turn: EntityId,
     work: ExtractionWork,
-    read: Option<OnDeviceIdentityHintReader>,
+    read: Option<QueuedIdentityHintReader>,
 ) -> Result<()> {
     let marker = vault.tagging_marker_config();
     let Some(tagging) = marker.as_ref() else {
