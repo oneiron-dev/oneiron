@@ -83,11 +83,11 @@ impl McpCallEffect {
     /// and read by default for none. A run row's effect is judged by its
     /// generated rows (`RunVerb::effect`, `RunVerb::writes`). A verb-table
     /// call is judged by its own row at the door's call (`mcp_verb_gate`).
-    /// The run's recorded output, its descriptor round trip and its speech
-    /// are the run's own record: the native host keeps each run on canonical
-    /// storage, where its speech lands in the run's own derived conversation
-    /// (ONE-1686), never a room. Every other effect writes at once. No call
-    /// here waits for review, so none proposes.
+    /// The run's recorded output and its descriptor round trip are the run's
+    /// own record. Speech is judged where it lands (`of_run_speech`); a
+    /// speech call that reaches here names no destination, so it writes.
+    /// Every other effect writes at once. No call here waits for review, so
+    /// none proposes.
     fn of_run_call(call: oneiron::code_run::RunCall) -> Self {
         use oneiron::code_run::{RunCall, SelfEffect as Effect};
         let effect = match call {
@@ -129,13 +129,11 @@ impl McpCallEffect {
             | Effect::ReaderSpawn
             | Effect::TasksWaitSet
             | Effect::Summarize => Self::of_run_rows(effect),
-            Effect::AgentVerb
-            | Effect::Context
-            | Effect::InferenceDefaultsRead
-            | Effect::Speak
+            Effect::AgentVerb | Effect::Context | Effect::InferenceDefaultsRead => Self::Reads,
+            Effect::Speak
             | Effect::Think
-            | Effect::Express => Self::Reads,
-            Effect::TasksAsk
+            | Effect::Express
+            | Effect::TasksAsk
             | Effect::TasksWait
             | Effect::MemoryWriteFixture
             | Effect::Ask
@@ -146,6 +144,18 @@ impl McpCallEffect {
             | Effect::InferenceDefaultsReplace
             | Effect::WakePolicyWrite
             | Effect::ReaderReport => Self::Commits,
+        }
+    }
+
+    /// A run's speech (`self.speak`, `self.think`, `self.express`, its
+    /// trailing bubble), where its storage lands it: in the run's own
+    /// derived conversation it is the run's record; in a room it is a room
+    /// write.
+    fn of_run_speech(destination: oneiron::code_run::RunSpeechDestination) -> Self {
+        use oneiron::code_run::RunSpeechDestination;
+        match destination {
+            RunSpeechDestination::OwnRunConversation => Self::Reads,
+            RunSpeechDestination::SessionRoom => Self::Commits,
         }
     }
 

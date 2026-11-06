@@ -298,9 +298,9 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfAgentVerbCall,
-    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
-    SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, RunSpeechDestination,
+    SelfAgentVerbCall, SessionHookDisposition, SessionHookNotKept, SessionHookPhase,
+    SessionHookReceipt, SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

@@ -151,6 +151,17 @@ pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_call(call))
 }
 
+/// One speech call of a run, at `destination`, where its storage lands it:
+/// the live session, then Read in the run's own derived conversation and
+/// Write anywhere else (`McpCallEffect::of_run_speech`).
+pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    destination: oneiron::code_run::RunSpeechDestination,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::of_run_speech(destination))
+}
+
 /// One row a run's door serves itself, not through a tool: a browser or
 /// desktop row, a session-bound run's room read or write, or a program
 /// admission job's call. The live session, then the row's own effect
