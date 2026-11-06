@@ -2170,6 +2170,33 @@ UNIFFI_RESULTS = {
     'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
     'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
 }
+# Generated records with an owned codec for a nested opaque JSON result.
+# `types.root()` still emits their public records before this codec is selected.
+UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
+    'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
+    'crate::memory::KeyValueItem': 'KeyValueItem',
+    'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
+    'crate::skill::helper::CallableCardView': 'CallableCardView',
+    'crate::task_verb::sdk::AiOptions': 'AiOptions',
+    'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
+    'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
+    'crate::policy_setting_doors::PolicyActionOutcome': 'PolicyActionOutcome',
+    'crate::lens::LensResultSetActionResult': 'LensResultSetActionResult',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>': 'ScopedReadResultDiagnosticEventViewList',
+    'crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>': 'ScopedReadResultOptionalDiagnosticEventView',
+    'crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>': 'ScopedReadResultCoachInspectionView',
+    'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
+    'crate::office_body::DeckExportView': 'DeckExportView',
+    'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
+    'crate::task_verb::sdk::ConnectorCallStatus': 'ConnectorCallStatus',
+    'crate::task_verb::sdk::ConnectorSchemaReply': 'ConnectorSchemaReply',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
+}
+
 # A typed binding argument the client takes as is: its foreign type and how it
 # is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
 UNIFFI_ARGUMENTS = {
@@ -2277,10 +2304,51 @@ def uniffi_export(row, types, census):
             output, result = record, 'Lift::lift(output)'
             sides.append('typed')
         elif mirror := types.root(row['output']):
-            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            owned = uniffi_record(row['output'], UNIFFI_GENERATED_RESULT_LIFTS)
+            if owned and owned != mirror:
+                raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
+            output = mirror
+            if owned:
+                result = 'Lift::lift(output)'
+            elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                nested_voice = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    nested_voice = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
+                    )
+                owned_done = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(reply) => '
+                        f'Ok({mirror}::Done(crate::ConnectorCallReply::lift(reply)?)), '
+                    )
+                elif row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), '
+                    )
+                # Other variants keep the existing whole-record conversion.
+                result = (
+                    f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
+                    f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'{nested_voice}{owned_done}'
+                    f'other => crate::codec::lift_record({name}, &other) }}'
+                )
+            else:
+                result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
-            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            output = 'WireJson'
+            result = 'Lift::lift(output)' if row['output'] == 'serde_json::Value' else f'crate::codec::encode({name}, &output)'
             sides.append('wire')
         census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
