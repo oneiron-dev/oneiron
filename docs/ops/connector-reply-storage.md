@@ -3,12 +3,14 @@
 The first JSON `tools/call` response keeps its raw bytes in an anonymous
 vault-owned spool. The complete response is still accepted without a new
 size cap. A batch keeps the first response that answers the call and keeps
-the original whole-batch bytes for the terminal bridge. The typed batch
-reader parses one message at a time. It retains the first answer, wipes
-other complete messages, and still validates every remaining element and
-trailing byte before returning. A malformed later element or trailing data
-still makes the reply unreadable. Each message can still be arbitrarily
-large; the credential-clearing pass still parses the whole raw batch.
+the original whole-batch bytes for the terminal bridge. For a top-level
+JSON array, the typed reader parses one message at a time. It retains the
+first answer, wipes other complete messages, and still validates every
+remaining element and trailing byte before returning. A malformed later
+element or trailing data still makes the reply unreadable. Special-map
+decoding keeps the native whole-Value parser, including maps that decode
+to an array. Each message can still be arbitrarily large; the
+credential-clearing pass still parses the whole raw batch.
 
 `RawOutboundBody` owns either an existing byte allocation or that spool.
 Clones and ranges retain the same owner. Each reader has a separate logical
