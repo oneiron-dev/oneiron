@@ -605,6 +605,8 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
+        @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs": ...
@@ -1362,6 +1364,9 @@ class Oneiron:
             """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
         def resolve(self, spec: Facade.InboxGroupResolveRequest) -> Facade.InboxGroupResolution:
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
+    class _VaultProactivityVerbs:
+        def digest(self, spec: Facade.ProactivityDigestRequest) -> Facade.ProactivityDigestView | None:
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
     class _VaultSkillsVerbs:
         def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
             """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""

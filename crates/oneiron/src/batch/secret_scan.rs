@@ -34,7 +34,7 @@ pub(crate) use self::mask::admit::{
     predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(super) use self::mask::{mask_batch_ops, mask_batch_ops_for_record_document};
