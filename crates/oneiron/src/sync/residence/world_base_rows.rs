@@ -133,7 +133,13 @@ fn base_rows_of_world(
 ) -> Result<HashMap<WindowKey, Vec<EntityId>>> {
     let mut by_window: HashMap<WindowKey, Vec<EntityId>> = HashMap::new();
     let mut notes = Vec::new();
-    for row in store.port_edges(txn, &world, EdgeDirection::In, Some(EdgeKind::InWorld), None)? {
+    for row in store.port_edges(
+        txn,
+        &world,
+        EdgeDirection::In,
+        Some(EdgeKind::InWorld),
+        None,
+    )? {
         notes.push(row?.target);
     }
     for id in notes {
