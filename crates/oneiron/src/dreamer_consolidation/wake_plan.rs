@@ -302,15 +302,7 @@ impl PreparedWake {
         let read = vault.scoped_read(key);
         let source_ids: Vec<_> = ids.into_iter().collect();
         let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;
-        // The receipt is resolved in the SAME snapshot and counts every
-        // existing row withheld from the Dreamer actor, retry peers and
-        // witnessed TURN messages included.
-        let mut withheld = 0;
-        for (id, row) in source_ids.iter().zip(&rows) {
-            if row.is_none() && vault.get_entity_type_in_txn(&txn, id)?.is_some() {
-                withheld += 1;
-            }
-        }
+        // Rows denied by this reader's own floor add no receipt count.
         let mut sources: BTreeMap<_, _> = source_ids
             .into_iter()
             .zip(rows)
@@ -345,7 +337,7 @@ impl PreparedWake {
                 if texts.contains_key(turn) || refused_texts.contains_key(turn) {
                     continue;
                 }
-                match super::turn_text::collect_in(&read, &txn, turn, body, &mut withheld) {
+                match super::turn_text::collect_in(&read, &txn, turn, body, &mut 0) {
                     Ok(text) => {
                         texts.insert(*turn, text);
                     }
@@ -356,7 +348,7 @@ impl PreparedWake {
                 }
             }
         }
-        let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
+        let read_receipt = read.read_receipt_in(&txn, None, 0)?;
         finish_preparations(
             vault,
             &txn,

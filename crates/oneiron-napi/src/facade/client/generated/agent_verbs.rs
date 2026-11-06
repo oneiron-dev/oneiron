@@ -827,7 +827,7 @@ impl NativeClient {
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
-        let scope = recall_scope_to_engine(scope);
+        let scope = recall_scope_to_engine(scope).map_err(facade_error)?;
         let limit = limit
             .map(limit_to_engine)
             .transpose()
@@ -9070,6 +9070,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.productivity.tree", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_ingest_ag_ui_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_ingest_ag_ui_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.read", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
