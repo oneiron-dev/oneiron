@@ -980,8 +980,8 @@ pub(crate) async fn describe_self_for_auth(
         // run line binds a credential's call) named on one unavailable
         // line, never stated as a value.
         None => {
-            let (state, unavailable) = run_self::resolved_state(server, actor, None, &read_set)
-                .map_err(|error| {
+            let state =
+                run_self::resolved_state(server, actor, None, &read_set).map_err(|error| {
                     tracing::warn!(code = %error.code, "a credential's self brief did not resolve");
                     crate::error::ApiError::internal_server_error("self brief failed")
                 })?;
@@ -991,7 +991,7 @@ pub(crate) async fn describe_self_for_auth(
             let sources = brief
                 .sources(&server.vault, Some(&people))
                 .map_err(|error| super::core_engine_error("self brief failed", error))?;
-            (run_self::render_resolved(&brief, &unavailable), sources)
+            (brief.render(), sources)
         }
     };
     let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
