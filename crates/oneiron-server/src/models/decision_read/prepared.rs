@@ -124,9 +124,7 @@ impl DecisionReader {
             }),
             "forced_end": {"token": self.recipe.eos(), "bias": super::EOS_BIAS},
         });
-        let text = serde_json::to_string(&plan).map_err(|_| {
-            oneiron::Error::InvalidConfig("decision read: native input plan encoding failed".into())
-        })?;
+        let text = plan.to_string();
         let input_plan_hash = *blake3::hash(text.as_bytes()).as_bytes();
         let admission = oneiron::LlmRequest {
             model: self.engine.clone(),
