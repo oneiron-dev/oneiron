@@ -60,12 +60,12 @@ impl SessionReadSet {
         self.observe_rows_with_read_capacity(read, ids, |_| {})
     }
 
-    /// Observe the temporary point-read vector's backing before reading its rows.
+    /// Observe temporary point-read and returned-row storage before it is consumed.
     pub fn observe_rows_with_read_capacity(
         &mut self,
         read: &ScopedRead<'_>,
         ids: &[EntityId],
-        observe: impl FnOnce(u64),
+        mut observe: impl FnMut(u64),
     ) -> Result<ScopedReadReceipt> {
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         observe(
@@ -75,6 +75,7 @@ impl SessionReadSet {
             value: rows,
             mut receipt,
         } = read.read(&reads, None)?;
+        observe(observed_row_storage_bytes(&rows));
         for row in rows.into_iter().flatten() {
             if let ReadRow {
                 id,
@@ -126,6 +127,14 @@ impl SessionReadSet {
         }
         Ok(changed)
     }
+}
+
+fn observed_row_storage_bytes(rows: &Vec<Option<ReadRow>>) -> u64 {
+    let slots =
+        (rows.capacity() as u64).saturating_mul(std::mem::size_of::<Option<ReadRow>>() as u64);
+    rows.iter().flatten().fold(slots, |bytes, row| {
+        bytes.saturating_add(row.body.as_ref().map_or(0, |body| body.capacity() as u64))
+    })
 }
 
 /// The served lifecycle, plus the successor read's receipt when one was made.
