@@ -30,7 +30,7 @@ pub mod compilation_target;
 mod list;
 mod model;
 mod notification;
-pub mod notification_recipient;
+pub use oneiron_store::inbox::notification_recipient;
 mod outbox_ask;
 mod projection;
 mod resolve;
@@ -89,4 +89,4 @@ use crate::store::GateDecisionRecord;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 
-pub mod view_values;
+pub use oneiron_store::inbox::view_values;

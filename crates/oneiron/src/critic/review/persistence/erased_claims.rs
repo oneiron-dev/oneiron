@@ -172,9 +172,17 @@ fn tear_review_claim_in_txn(
         return Ok(false);
     }
     CLAIM_TRUST.delete(&vault.store, wtxn, id)?;
-    crate::provenance::erase_row_provenance_in_txn(&vault.store, wtxn, id, true)?;
-    let (existed, vector, graph, neighbors) =
-        crate::batch::deindex_entity_with_machine_history(&vault.store, wtxn, id)?;
+    crate::provenance::erase_row_provenance_in_txn(
+        &crate::secret_custody::CustodyWrite::of(&vault),
+        wtxn,
+        id,
+        true,
+    )?;
+    let (existed, vector, graph, neighbors) = crate::batch::deindex_entity_with_machine_history(
+        &crate::secret_custody::CustodyWrite::of(&vault),
+        wtxn,
+        id,
+    )?;
     if !existed {
         return Ok(true);
     }

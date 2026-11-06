@@ -23,6 +23,7 @@ pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSe
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
+mod reminder_route_args;
 mod secret_control_args;
 mod vault_unlock_args;
 mod vm_args;
@@ -69,7 +70,13 @@ pub use recovery_kit_args::{
     RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
     RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
-pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use reminder_route_args::{
+    ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,
+};
+pub use seat_args::{
+    SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs, SiwcCredentialArgs, SiwcLoginArgs,
+    SiwcRevokeArgs,
+};
 pub use secret_control_args::{
     SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs,
     SecretShowSupplementArgs, SecretUnbindArgs,
@@ -179,6 +186,10 @@ pub enum Command {
     /// vault, a project or a task type; put or clear one.
     #[command(subcommand)]
     LearningSettings(LearningSettingsCommand),
+    /// Your commitment reminder route: where your own promise reminders go;
+    /// read it, set the full route, or clear it.
+    #[command(subcommand)]
+    ReminderRoute(ReminderRouteCommand),
     /// Context-widen proposals your agents raised: list them, or approve or
     /// decline one as the board above.
     #[command(subcommand)]
@@ -1026,6 +1037,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),
+        Command::ReminderRoute(command) => commands::reminder_route(command),
         Command::WidenProposals(command) => commands::widen_proposals(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
@@ -1070,6 +1082,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
         Command::Oneironer(command) => commands::oneironer(command),
+        Command::Seat(SeatCommand::SiwcLogin(args)) => commands::seat_siwc_login(*args).await,
+        Command::Seat(SeatCommand::SiwcClear(args)) => commands::seat_siwc_clear(*args),
+        Command::Seat(SeatCommand::SiwcRevoke(args)) => commands::seat_siwc_revoke(*args).await,
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
         Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
