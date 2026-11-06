@@ -642,6 +642,17 @@ pub(crate) fn recall_media_to_engine(
     clippy::cast_possible_truncation,
     reason = "f64→f32 affect narrowing at the N-API boundary is intentional"
 )]
+/// A recall's caller retrieval filter, as the JS boundary passes it, onto the
+/// engine's `ReadFilterInput` (FIX 3977): the same JSON a request body's
+/// `filter` carries, refused as a bad request when it is not that shape.
+pub(super) fn read_filter_to_engine(
+    filter: serde_json::Value,
+) -> Result<oneiron::memory::ReadFilterInput, oneiron::memory::MemoryError> {
+    serde_json::from_value(filter).map_err(|error| {
+        oneiron::memory::MemoryError::bad_request(format!("invalid recall filter: {error}"))
+    })
+}
+
 pub(super) fn query_affect_to_engine(
     affect: super::dtos::NapiQueryAffect,
 ) -> oneiron::task_verb::sdk::QueryAffect {

@@ -168,6 +168,65 @@ impl Vault {
         Ok(self.text_search_telemetry(results, limit).value)
     }
 
+    /// [`Self::search_text_observed`] whose every posting `lane`'s plan
+    /// admits inside the scan, before the rank and the cut (FIX 3977): a row
+    /// the lane's key or its bound caller filter refuses takes no place a
+    /// readable match could fill. `observe` runs over the hits in the read
+    /// that scored them; the caller still admits each hit again in a fresh
+    /// read.
+    pub(crate) fn search_text_scoped_observed(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+    ) -> Result<Vec<ScoredEntity>> {
+        let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
+        // A key that reads nothing by itself still searches the rows its own
+        // live Grants read (FIX 7528).
+        if candidates.deny_all {
+            lane.end_recall_plan()?;
+            return Ok(Vec::new());
+        }
+        let started_at = self.store.clock.now_recorded_at();
+        let started = Instant::now();
+        // The count this search serves, asked before the read opens. Best
+        // effort: the search serves its rows either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
+        let scores = (|| {
+            let txn = self.store.env.read_txn()?;
+            let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
+            let mut admits = |id: &crate::EntityId| admit(id);
+            let scores = self.text_scoped_in_txn(
+                &self.store,
+                &txn,
+                crate::ports::TextQuery {
+                    query,
+                    limit,
+                    rank: &config,
+                    filter_all: true,
+                    matches_scope: &mut admits,
+                    private_note_ids: None,
+                    recency: None,
+                },
+            )?;
+            observe(&txn, scores.as_slice());
+            Ok::<_, Error>(scores)
+        })();
+        lane.end_recall_plan()?;
+        let results = TimedSearch {
+            scores: scores?,
+            started_at,
+            started,
+        };
+        Ok(self.text_search_telemetry(results, limit).value)
+    }
+
     /// One BM25 search under the contract-default rank profile, `observe`
     /// run over its hits in the read that scored them.
     fn default_text_search(

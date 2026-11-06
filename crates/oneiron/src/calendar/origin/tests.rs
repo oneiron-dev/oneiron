@@ -48,7 +48,7 @@ fn origin_field_matrix_and_atomic_admission() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: native.to_hex()
+                event_ref: native.to_hex(),
                 filter: None,
             }
         )
@@ -143,7 +143,7 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: dreamer.to_hex()
+                event_ref: dreamer.to_hex(),
                 filter: None,
             }
         )
@@ -161,7 +161,7 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: dreamer.to_hex()
+                event_ref: dreamer.to_hex(),
                 filter: None,
             }
         )
@@ -172,7 +172,7 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: native.to_hex()
+                event_ref: native.to_hex(),
                 filter: None,
             }
         )
@@ -211,7 +211,7 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: event.to_hex()
+                event_ref: event.to_hex(),
                 filter: None,
             }
         )
