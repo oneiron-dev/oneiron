@@ -15237,6 +15237,198 @@ async fn vault_coach_training_offers_sources(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_drafters_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.list", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_list(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_list_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.list_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.list_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.list_as", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_list_as(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.status", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.status", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_status(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.policy.set", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.policy.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_drafters_policy_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_revert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.revert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.revert", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.revert", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_revert(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_revert_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.revert_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.revert_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.revert_as", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_drafters_revert_as(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_research_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40920,6 +41112,14 @@ async fn call_verb_row(
         "vault.coach.training_offers.sources" => {
             Box::pin(vault_coach_training_offers_sources(server, call, input)).await
         }
+        "vault.drafters.list" => Box::pin(vault_drafters_list(server, call, input)).await,
+        "vault.drafters.list_as" => Box::pin(vault_drafters_list_as(server, call, input)).await,
+        "vault.drafters.status" => Box::pin(vault_drafters_status(server, call, input)).await,
+        "vault.drafters.policy.set" => {
+            Box::pin(vault_drafters_policy_set(server, call, input)).await
+        }
+        "vault.drafters.revert" => Box::pin(vault_drafters_revert(server, call, input)).await,
+        "vault.drafters.revert_as" => Box::pin(vault_drafters_revert_as(server, call, input)).await,
         "vault.research.bind" => Box::pin(vault_research_bind(server, call, input)).await,
         "vault.research.fork" => Box::pin(vault_research_fork(server, call, input)).await,
         "vault.research.weave" => Box::pin(vault_research_weave(server, call, input)).await,

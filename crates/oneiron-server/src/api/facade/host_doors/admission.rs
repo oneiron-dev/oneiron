@@ -548,6 +548,10 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCoachTrainingOffersPilotsComplete
         | Row::VaultCoachTrainingOffersPilotsGet
         | Row::VaultCoachTrainingOffersSources
+        | Row::VaultDraftersList
+        | Row::VaultDraftersStatus
+        | Row::VaultDraftersPolicySet
+        | Row::VaultDraftersRevert
         | Row::VaultCodeSymbolsDeclare
         | Row::VaultCodeSymbolsRenew
         | Row::VaultCodeSymbolsRelease
