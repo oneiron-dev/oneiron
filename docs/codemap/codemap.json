@@ -14245,7 +14245,7 @@
      "path": "src/claim/history_projection/pin.rs",
      "purpose": "The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -17920,13 +17920,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -25290,7 +25290,7 @@
      "surface": {
       "const": 7,
       "enum": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -34469,6 +34469,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/engine_executor/store/reply_evidence.rs",
+     "purpose": "PERSON substitution only in the typed text of a model reply's evidence copy",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/engine_executor/store/script_context.rs",
      "purpose": "The model-only view of a stored program; execution always reads its original bytes",
      "surface": {
@@ -37865,13 +37875,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/doors/dreamer_run.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40877,7 +40887,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -41097,6 +41107,43 @@
      "surface": {
       "const": 1,
       "fn": 9,
+      "re-export": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgUiFileImport",
+      "AgUiFileRead",
+      "AgUiFileReadInput",
+      "AgUiFileReceipt",
+      "AgUiFileView"
+     ],
+     "path": "src/ingest/ag_ui/file.rs",
+     "purpose": "File-only AG-UI capture and exact, scoped source observations",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgUiAppObservation",
+      "AgUiCustomMapping",
+      "AgUiObservationKind",
+      "AgUiRepairLink",
+      "AgUiRepairLinkStatus"
+     ],
+     "path": "src/ingest/ag_ui/observations.rs",
+     "purpose": "Owner-registered CUSTOM field projections",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
       "struct": 3
      }
     },
@@ -43527,7 +43574,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/llm/decision/generated/score.rs",
+     "path": "src/llm/decision/generated_read/score.rs",
      "purpose": "A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure…",
      "surface": {
       "crate-vis": 3
@@ -43539,7 +43586,7 @@
      "notable": [
       "DecisionWireLabels"
      ],
-     "path": "src/llm/decision/generated/wire.rs",
+     "path": "src/llm/decision/generated_read/wire.rs",
      "purpose": "A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each…",
      "surface": {
       "crate-vis": 3,
@@ -48514,7 +48561,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 4
      }
     },
@@ -63426,7 +63473,7 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -63459,7 +63506,7 @@
      "path": "src/scope_summary/request/requester_lane.rs",
      "purpose": "FIX 2194 (OF-506): a queued summary keeps the read lane its requester declared it under",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -72357,7 +72404,7 @@
      "path": "src/store/known_value_index/run.rs",
      "purpose": "Run-local PERSON prints alongside the custody matcher (FIX 4974)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -75446,11 +75493,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/machine_history.rs",
      "purpose": "The machine-claim history this machine is owed, from the home (FIX 3820)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/machine_history/freshness.rs",
+     "purpose": "Freshness for local pins whose history is no longer owed",
      "surface": {
       "crate-vis": 1
      }
@@ -76490,7 +76547,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 12,
       "struct": 1
      }
@@ -76523,7 +76580,7 @@
      "path": "src/sync/manager/pending_mirror.rs",
      "purpose": "Durable pending-mirror markers (FIX 7957, FIX 9599)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -83736,7 +83793,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1280
+      "fn": 1282
      }
     },
     {
@@ -90046,7 +90103,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90235,7 +90292,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90844,7 +90901,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 354,
+     "files": 355,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91056,7 +91113,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6397,
+   "source_files": 6401,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105546,7 +105603,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1248
+      "fn": 1250
      }
     },
     {
@@ -107339,7 +107396,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1249
+      "fn": 1251
      }
     },
     {
@@ -111809,6 +111866,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/ag_ui_file_doors.rs",
+     "purpose": "Owner-selected AG-UI file capture; shared by served facade transports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -111925,7 +111992,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -112655,7 +112722,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 166
+      "crate-vis": 167
      }
     },
     {
@@ -121451,7 +121518,7 @@
      "path": "src/livequery/rpc.rs",
      "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -127793,7 +127860,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 674,
+     "files": 675,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128306,7 +128373,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1600,
+   "source_files": 1601,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -138945,6 +139012,16 @@
       "AffectClaimConsolidation",
       "AffectTurnEvidence",
       "AffectedTests",
+      "AgUiAppObservation",
+      "AgUiCustomMapping",
+      "AgUiFileImport",
+      "AgUiFileRead",
+      "AgUiFileReadInput",
+      "AgUiFileReceipt",
+      "AgUiFileView",
+      "AgUiObservationKind",
+      "AgUiRepairLink",
+      "AgUiRepairLinkStatus",
       "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
@@ -143435,8 +143512,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1121,
-      "struct": 3402
+      "enum": 1123,
+      "struct": 3410
      }
     },
     {

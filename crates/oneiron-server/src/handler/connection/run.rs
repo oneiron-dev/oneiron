@@ -49,6 +49,7 @@ pub(super) async fn handle_connection(
     telemetry_actor: String,
     locality: oneiron::claim::CallerLocality,
     machine: oneiron::authority::PeerMachine,
+    signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -120,6 +121,7 @@ pub(super) async fn handle_connection(
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
+    conn_state.signing_request_transport = signing_request_transport;
     conn_state.bound_auth.clone_from(&owner);
     tracing::debug!(
         conn_id,
