@@ -26,6 +26,7 @@ mod recall_scope;
 mod sealed_updates;
 mod search;
 mod window_index;
+mod world_base_rows;
 mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
@@ -134,8 +135,11 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub(crate) use world_base_rows::{discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
-pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
+pub(crate) use world_eviction::{
+    put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
+};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -556,6 +560,9 @@ pub fn promotion_covers_full_window_for(
     }
     // A body reference stands beside each owner the grant kept (FIX 5532).
     super::asset_body::references::copy_refs_within(source, &selected)?;
+    if own_machine {
+        super::origin_positions::copy_for_own_machines(source, &selected)?;
+    }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }
