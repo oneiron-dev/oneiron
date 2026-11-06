@@ -109,7 +109,8 @@ impl Memory<'_> {
                 )
             })
             .collect();
-        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, entries)?;
+        let commit_hash = repo_ref.commit_hash().map(str::to_owned);
+        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, commit_hash, entries)?;
         Ok((snapshot, contents, documents))
     }
 

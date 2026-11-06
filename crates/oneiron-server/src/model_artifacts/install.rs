@@ -11,7 +11,9 @@
 //!   [`RECORD_FILE`], renamed into place whole;
 //! - `<id>/.staging-<revision>/`: an install in progress, each file fetched
 //!   to `<path>.partial` and renamed to `<path>` once it checks;
-//! - `<id>/.staging-<revision>.lock`: held by the install in progress.
+//! - `<id>/.staging-<revision>.lock`: held by the install in progress;
+//! - `<id>/.quarantine-<revision>-<suffix>/installed`: a mismatched install,
+//!   renamed aside and retained, even if its replacement fails.
 //!
 //! A crash at any point leaves no `<revision>/` directory, or a complete one
 //! whose every file was verified and synced before the rename.
@@ -30,6 +32,8 @@ use super::ArtifactError;
 use super::licence::admit_download;
 use super::manifest::{ArtifactFile, ArtifactManifest, PARTIAL_SUFFIX, RECORD_FILE};
 use crate::embedder::model_manager::{self, PinnedArtifact, ResumableFetch};
+
+mod quarantine;
 
 /// The directory under the models root the artifacts live in, beside the
 /// embedder's `<org>/<name>/<revision>/` trees.
@@ -185,8 +189,10 @@ impl ArtifactStore {
     ///
     /// The manifest is checked and its licence admitted before any byte is
     /// fetched. An installed directory is reused once its record and files
-    /// check, and is never removed or repaired here. Otherwise each file is
-    /// fetched to its partial in the staging directory, resuming what an
+    /// check. A mismatched install is renamed into a retained quarantine
+    /// under the same revision lock before reinstalling; its bytes are never
+    /// deleted. Otherwise each file is fetched to its partial in the staging
+    /// directory, resuming what an
     /// earlier run left; checked for exact size, then SHA-256; synced; and
     /// renamed to its own name. The record goes in last, the staging
     /// directory is synced and renamed into place whole, and its parent is
@@ -205,7 +211,10 @@ impl ArtifactStore {
         admit_download(manifest)?;
         let dir = self.final_dir(manifest);
         if dir.symlink_metadata().is_ok() {
-            return self.reuse(manifest, &dir);
+            match self.reuse(manifest, &dir) {
+                Err(ArtifactError::InstalledMismatch { .. }) => {}
+                result => return result,
+            }
         }
         let parent = self.root.join(&*manifest.id);
         if let Some(models_root) = self.root.parent() {
@@ -218,7 +227,12 @@ impl ArtifactStore {
         let _lock = lock(manifest, &parent.join(format!(".staging-{revision}.lock")))?;
         // An install that held the lock first may have placed it meanwhile.
         if dir.symlink_metadata().is_ok() {
-            return self.reuse(manifest, &dir);
+            match self.reuse(manifest, &dir) {
+                Err(error @ ArtifactError::InstalledMismatch { .. }) => {
+                    quarantine::quarantine_installation(manifest, &parent, &dir, &error)?;
+                }
+                result => return result,
+            }
         }
         let staging = self.staging_dir(manifest);
         ensure_dir(manifest, &staging)?;

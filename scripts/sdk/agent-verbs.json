@@ -17056,6 +17056,37 @@
       "openapi": true
     },
     {
+      "name": "vault.ingest.ag_ui.import",
+      "description": "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent.",
+      "input": "crate::ingest::AgUiFileImport",
+      "output": "crate::ingest::AgUiFileReceipt",
+      "call": "memory.vault().ingest_ag_ui_file(&memory.embedded_owner(\"vault.ingest.ag_ui.import\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.ingest.ag_ui.read",
+      "description": "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission.",
+      "input": "crate::ingest::AgUiFileReadInput",
+      "output": "crate::ingest::AgUiFileRead",
+      "call": "memory.read_ag_ui_file(&input)?",
+      "scope": "Read",
+      "refs": [
+        "/claim_ref"
+      ],
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
+    },
+    {
       "name": "vault.claims.admit",
       "description": "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.",
       "refs": [

@@ -6,6 +6,7 @@
 mod batch_index;
 mod candidate_intake;
 mod check_execute;
+mod check_exhaust;
 mod check_inputs;
 mod check_requests;
 mod check_store;
@@ -49,13 +50,18 @@ use crate::{
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
     QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
-    QueueCheckLimits, QueueCheckNeed, QueueCheckReceipt, QueueCheckRun, QueueCheckTarget,
-    QueueCheckTreeSource, QueueCommandReceipt,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt, QueueCheckRun,
+    QueueCheckTarget, QueueCheckTreeSource, QueueCommandReceipt, StoredQueueCheckReceipt,
 };
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
     QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork,
 };
+// FIX 7227: the unforgeable completion token (private fields, no pub ctor),
+// minted only in finish after SAME plus closed-approval validation; the BLOB
+// child and the versions authority name it via this parent alias, never via
+// the private child path. Child modules stay PRIVATE (no pub(crate) mod).
+pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{

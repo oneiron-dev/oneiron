@@ -54,3 +54,24 @@ no qualified project carrier here and keep their unprojected state. The
 native routed-verdict request door accepts this context, but its existing
 verdict caller still supplies none; no project-aware verdict caller is
 claimed.
+
+## Launch USD estimates
+
+An agent launch with a resolved plan prices that exact engine model. Without
+one, the quote uses the vault manifest's role binding in the launch statement's
+own read transaction. A missing model row or unreadable binding stays unknown;
+it never falls back to another model's price.
+
+When that transaction has no manifest, an unregistered role-seat id can be
+priced through the same runtime seat only if all its rungs and every possible
+owner-selectable fallback use one distinct engine model. Repeated offers for
+that same model are allowed. The fallback inventory uses the existing wire and
+on-device rules, not today's health, rest state or selected fallback. Multiple
+possible models stay unknown rather than pricing only the first or cheapest.
+An explicit manifest pin, including a literal seat id, is never normalized this
+way. A changed runtime seat does not relabel an older quote's seat id.
+
+The estimate still needs that engine's catalog USD rate, or an explicitly free
+catalog price. Non-token units also need the exact serving offer's native-unit
+rate. Missing or ambiguous prices stay unknown, never zero. This changes only
+the quote: it does not choose a model, restrict a fallback, or change admission.

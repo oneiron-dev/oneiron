@@ -66,9 +66,9 @@ pub use owner_args::{
     SubscriptionRevokeArgs, SubscriptionsCommand,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
-    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
-    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
+    RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
+    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use reminder_route_args::{
     ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,

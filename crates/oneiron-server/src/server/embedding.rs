@@ -259,6 +259,7 @@ impl SyncServer {
                 tokio::time::sleep(idle).await;
                 continue;
             };
+            let runtime = tokio::runtime::Handle::current();
             let pass = Arc::clone(&reconciler);
             let server = Arc::clone(self);
             let outcome = if self.text_index_fill_paused() {
@@ -268,7 +269,7 @@ impl SyncServer {
                 tokio::task::spawn_blocking(move || {
                     let _admission = admission;
                     let mut report = PendingEmbeddingReconcileReport::default();
-                    let result = pass.reconcile_once_into(&mut report);
+                    let result = pass.reconcile_once_into_with_home(&runtime, &mut report);
                     server.record_embedding_meters(&report);
                     result?;
                     Ok::<_, oneiron::Error>(report)

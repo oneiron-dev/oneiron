@@ -3,15 +3,16 @@
 //! in its `asvg:svgBlip` extension. Where a picture of the deck already
 //! shows the held SVG part over a raster fallback, a picture the export
 //! points at that part shows the same raster, the SVG in the extension and
-//! both through the slide's image relationships. An SVG part no picture
-//! shows over a raster is written as before, the blip naming the SVG alone:
-//! drawing a raster for it needs an SVG renderer the deck does not carry.
+//! both through the slide's image relationships. For an SVG-only part, the
+//! existing closed geometry can supply a derived PNG with its own receipt.
+//! Unsupported or unavailable optional rasters keep the old plain SVG blip.
 //! A picture shown with other media drops the extension ([`drop_svg`]), so
 //! PowerPoint draws what it now shows (FIX 5728).
 
-use super::LiveError;
 use super::convert::{HELD_MEDIA, element_of};
 use super::held::children;
+use super::{Conversion, LiveError};
+use crate::edit::Digest;
 use crate::edit::xml::{self, A, P, R};
 use crate::ooxml::{Node, XmlTree};
 use crate::retained_opc::Package;
@@ -21,14 +22,16 @@ const ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 /// The extension URI Office writes `asvg:svgBlip` under.
 const SVG_EXT: &str = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}";
 
+fn is_svg(part: &str) -> bool {
+    part.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
+}
+
 /// The raster part a picture of the deck shows for the SVG part `svg`: the
 /// `a:blip` embed of a blip whose `asvg:svgBlip` extension names `svg`.
 /// None for a part that is not an SVG, or one no picture shows so.
 fn fallback(package: &Package, svg: &str) -> Option<String> {
-    if !svg
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("svg"))
-    {
+    if !is_svg(svg) {
         return None;
     }
     for name in package.names().filter(|name| name.ends_with(".xml")) {
@@ -174,18 +177,35 @@ pub(super) fn born_blip(
     package: &mut Package,
     slide: &str,
     media: &str,
-) -> Result<String, LiveError> {
+) -> Result<(String, Option<Conversion>), LiveError> {
     let shown = image_rel(package, slide, media)?;
-    Ok(match fallback(package, media) {
-        Some(raster) => {
-            let raster = image_rel(package, slide, &raster)?;
+    if let Some(raster) = fallback(package, media) {
+        let raster = image_rel(package, slide, &raster)?;
+        return Ok((
             format!(
                 r#"<a:blip r:embed="{raster}">{}</a:blip>"#,
                 extension_list(&shown)
-            )
-        }
-        None => format!(r#"<a:blip r:embed="{shown}"/>"#),
-    })
+            ),
+            None,
+        ));
+    }
+    if !is_svg(media) {
+        return Ok((format!(r#"<a:blip r:embed="{shown}"/>"#), None));
+    }
+    // Optional materialization is isolated: a failed render or package edit
+    // cannot leave a PNG, content type or relationship behind on the old path.
+    let mut candidate = package.clone();
+    if let Some((raster, done)) = rendered(&mut candidate, media)
+        && let Ok(raster) = image_rel(&mut candidate, slide, &raster)
+    {
+        let blip = format!(
+            r#"<a:blip r:embed="{raster}">{}</a:blip>"#,
+            extension_list(&shown)
+        );
+        *package = candidate;
+        return Ok((blip, Some(done)));
+    }
+    Ok((format!(r#"<a:blip r:embed="{shown}"/>"#), None))
 }
 
 /// Point the picture `native` on `slide` at the raster a picture of the
@@ -197,10 +217,56 @@ pub(super) fn show(
     slide: &str,
     native: u32,
     media: &str,
-) -> Result<Option<bool>, LiveError> {
-    let Some(raster) = fallback(package, media) else {
+) -> Result<Option<(bool, Option<Conversion>)>, LiveError> {
+    if let Some(raster) = fallback(package, media) {
+        return show_raster(package, slide, native, media, &raster)
+            .map(|changed| Some((changed, None)));
+    }
+    if !is_svg(media) {
         return Ok(None);
+    }
+    let mut candidate = package.clone();
+    if let Some((raster, done)) = rendered(&mut candidate, media)
+        && let Ok(true) = show_raster(&mut candidate, slide, native, media, &raster)
+    {
+        *package = candidate;
+        return Ok(Some((true, Some(done))));
+    }
+    Ok(None)
+}
+
+fn rendered(package: &mut Package, media: &str) -> Option<(String, Conversion)> {
+    if !is_svg(media) {
+        return None;
+    }
+    let svg = package.part(media).ok()??;
+    let (bytes, pixels) = crate::graphic::held_svg_png(
+        &svg,
+        crate::graphic::GraphicLimits::default(),
+        package.resources(),
+    )?;
+    let output_part = xml::next_part(package, "ppt/media/image", ".png").ok()?;
+    let done = Conversion::SvgFallbackDerived {
+        input_part: media.to_owned(),
+        input_hash: Digest::of(&svg),
+        output_part: output_part.clone(),
+        output_hash: Digest::of(&bytes),
+        pixels,
+        emu_per_px: crate::graphic::EMU_PER_PX,
+        process: "oneiron-held-svg-closed-geometry".to_owned(),
+        process_version: "1/tiny-skia-0.12.0/png-0.18.1".to_owned(),
     };
+    package.add_part(&output_part, "image/png", bytes).ok()?;
+    Some((output_part, done))
+}
+
+fn show_raster(
+    package: &mut Package,
+    slide: &str,
+    native: u32,
+    media: &str,
+    raster: &str,
+) -> Result<bool, LiveError> {
     let blip_of = |tree: &XmlTree| -> Result<usize, LiveError> {
         let picture = element_of(tree, native, "pic").ok_or(LiveError::UnknownNode)?;
         xml::path(tree, picture, &[(P, "blipFill"), (A, "blip")])
@@ -216,7 +282,7 @@ pub(super) fn show(
             .any(|rel| !rel.external && Some(rel.id.as_str()) == id && rel.target == media)
     };
     if svg_at.is_some_and(names_media) {
-        return Ok(Some(false));
+        return Ok(false);
     }
     let svg = image_rel(package, slide, media)?;
     let raster = image_rel(package, slide, &raster)?;
@@ -233,5 +299,5 @@ pub(super) fn show(
     let node = &tree.nodes[blip_of(&tree)?];
     let edit = xml::set_attribute(&bytes, node, &embed_name(node), &raster);
     package.replace_xml_part(slide, xml::splice(&bytes, vec![edit])?)?;
-    Ok(Some(true))
+    Ok(true)
 }

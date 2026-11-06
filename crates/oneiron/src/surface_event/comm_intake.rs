@@ -17,7 +17,7 @@ pub(super) fn record_comm_inbound_in_txn(
 ) -> Result<()> {
     let party = event.counterparty.reference_key();
     match &event.action {
-        SurfaceEventAction::Message => crate::comm::record_comm_inbound_reply_in_txn(
+        SurfaceEventAction::Message => vault.store.record_hooks.record_comm_inbound_reply_in_txn(
             vault,
             wtxn,
             &party,
@@ -27,7 +27,7 @@ pub(super) fn record_comm_inbound_in_txn(
         SurfaceEventAction::Interaction {
             interaction: SurfaceInteractionKind::OptOut,
             ..
-        } => crate::comm::record_comm_inbound_stop_in_txn(
+        } => vault.store.record_hooks.record_comm_inbound_stop_in_txn(
             vault,
             wtxn,
             &party,
