@@ -2767,3 +2767,22 @@ evidence question's bound. The value must be a positive integer. The default rem
 - Host-order legal holds cross a restore over a vault, a rehearsal and `--activate` from the live
   vault. A restore where no vault is cannot read them; the hosting side carries them
   (`Vault::carried_host_order_holds`, `Vault::install_carried_host_order_holds`).
+
+
+### Failure-card diagnosis from a settled Coach proposal
+
+When `surfaced_failure_card` receives `FailureDiagnosisState::NotRun`, it can
+now recover the typed repair route from the Coach's settled case proposal.
+The read uses one snapshot for the original durable case, settled pointer,
+and live Generated Coach claim. It matches the case, failed attempt, agent,
+evidence, checkpoint and Q&A thread, and ignores rejected or inactive claims.
+An approved claim can still supply its diagnosis; this does not apply its repair.
+
+Missing, changed, malformed or unreadable optional records leave `NotRun`.
+The recovered route must also pass the existing canonical-reference and
+failed-agent validation. An explicit `ReservedHealerSlot` or caller-supplied
+`Diagnosed` is unchanged, including the existing error for an invalid supplied
+route. The card's run-tree, lineage, blocked-report and witnessed Q&A checks
+are unchanged. The diagnosis stays reference-backed: this read does not load
+a diagnostic body, create Q&A messages, authorize a repair or resume an attempt.
+A receipt-only blocked-report proposal is not turned into a failure-ladder case.
