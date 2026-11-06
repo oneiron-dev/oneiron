@@ -272,6 +272,27 @@ impl Vault {
         Ok((files, source))
     }
 
+    /// Converts an attached notes folder to this install's Files world.
+    /// The old notes and their history stay; the old rescan ledger is cleared,
+    /// as on detach. A Files rescan then reads the folder under its Files identity.
+    /// Existing include patterns, note kind and source attribution stay unchanged.
+    /// `exclude` replaces [`DEFAULT_FILES_EXCLUDE`] when given.
+    ///
+    /// # Errors
+    /// As [`Self::open_files_world`], or the folder is not an attached notes source.
+    pub fn convert_folder_source_to_files(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        folder: &str,
+        exclude: Option<Vec<String>>,
+    ) -> Result<(FilesWorld, FolderSource)> {
+        let files = self.open_files_world(owner, surface)?;
+        let placement = files_placement(files, folder, exclude)?;
+        let source = self.convert_notes_source_to_files(owner, folder, placement)?;
+        Ok((files, source))
+    }
+
     /// Every folder attached to a Files world.
     ///
     /// # Errors
@@ -296,4 +317,29 @@ impl Vault {
                 .is_some_and(|files| files.source == source)
         }))
     }
+}
+
+fn files_placement(
+    files: FilesWorld,
+    folder: &str,
+    exclude: Option<Vec<String>>,
+) -> Result<FilesPlacement> {
+    Ok(FilesPlacement {
+        source: EntityId::derive(
+            derived_domains::FILES_SOURCE,
+            &[
+                files.machine.as_bytes(),
+                files.world.as_bytes(),
+                folder.as_bytes(),
+            ],
+        )?,
+        world: files.world,
+        machine: files.machine,
+        exclude: exclude.unwrap_or_else(|| {
+            DEFAULT_FILES_EXCLUDE
+                .iter()
+                .map(|pattern| (*pattern).to_owned())
+                .collect()
+        }),
+    })
 }
