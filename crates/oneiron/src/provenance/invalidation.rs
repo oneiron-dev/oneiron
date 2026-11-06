@@ -74,6 +74,14 @@ pub(crate) fn refresh_stale_wrapper_in_txn(
         return Ok(());
     };
     let subject = EdgeRef::new(source, kind, target);
+    // A structural subject carries no hot flags: its 12-byte value is never
+    // restamped, so a stale structural wrapper moves no cohort (blind-review
+    // P1b, REVIEW-4389). Without this the stamp below fails with
+    // ProvenanceOnStructuralEdge, aborting the evidence deletion or
+    // stranding its dependency walk.
+    if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural {
+        return Ok(());
+    }
     let mut winner: Option<(ProvenancePrecedence, EdgeProvenanceFlags)> = None;
     walk_edge_provenance_cohort_in_txn(
         store,

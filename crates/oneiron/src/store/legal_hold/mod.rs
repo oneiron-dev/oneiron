@@ -1,9 +1,16 @@
 //! The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold).
 //!
 //! A hold is a typed row naming records or gate-decision partitions. The
-//! target index beside it is what every byte-destroying path reads, inside
-//! the transaction that destroys ([`Store::reject_legal_holds_in_txn`]).
-//! Several holds may name one record; each lifts on its own.
+//! target index beside a standing customer hold is what every
+//! byte-destroying path reads, inside the transaction that destroys
+//! ([`Store::reject_legal_holds_in_txn`]). Several holds may name one
+//! record; each lifts on its own.
+//!
+//! A host order indexes nothing here (LEGAL-HOLD-USE = B as a clone, owner
+//! 2026-11-05): what it covers is copied into the host's separate
+//! legal-hold store (`deletion::legal_hold::clone`), so it refuses, defers
+//! and use-limits nothing in the vault, and keeps no backup or body key
+//! ([`LegalHold::keeps_vault_data`]).
 //!
 //! Customer holds, their log, confirmed-erase links and use limits are
 //! canonical rows a restore keeps live. Host-order holds and their log sit
@@ -16,6 +23,14 @@ mod events;
 mod notice;
 mod pending;
 mod settlement;
+mod use_limit;
+
+pub(crate) use use_limit::{
+    CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
+    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
+    use_limit_in_txn,
+};
+use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -36,7 +51,7 @@ pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
+    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -52,12 +67,11 @@ type Targets = SideTable<(HeldKey, EntityId), (), Raw>;
 
 /// Customer holds. Key: id16 (hold).
 const ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_ROW);
-/// What each standing customer hold holds. Key: held key (17) + id16 (hold).
+/// What each standing customer hold keeps in the vault. Key: held key (17) +
+/// id16 (hold).
 const TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_TARGET);
 /// Host-order holds. Key: id16 (hold).
 const HOST_ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_HOST_ROW);
-/// What each standing host-order hold holds. Key: held key (17) + id16 (hold).
-const HOST_TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_HOST_TARGET);
 /// The customer holds an owner's confirm lifted from a record, until its
 /// deletion receipt completes. Key: id16 (record).
 const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
@@ -65,20 +79,16 @@ const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
 /// The host orders an owner's confirmed erase met. Key: id16 (record).
 const HOST_ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_HOST_ERASE_LINK);
-/// Records kept after a refused privacy erasure (C6). Key: id16 (record).
-const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_USE_LIMIT);
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EraseLink {
     holds: Vec<EntityId>,
 }
 
-const fn tables(kind: LegalHoldKind) -> (Rows, Targets) {
+const fn rows_of(kind: LegalHoldKind) -> Rows {
     match kind {
-        LegalHoldKind::Customer => (ROWS, TARGETS),
-        LegalHoldKind::HostOrder => (HOST_ROWS, HOST_TARGETS),
+        LegalHoldKind::Customer => ROWS,
+        LegalHoldKind::HostOrder => HOST_ROWS,
     }
 }
 
@@ -192,24 +202,18 @@ impl LegalHoldRefusals {
     }
 }
 
-/// The ids of the standing holds on `key`, customer then host-order.
+/// The ids of the holds that keep `key` in the vault: the standing customer
+/// holds on it. A host order keeps nothing here ([`LegalHold::keeps_vault_data`]).
 fn standing_on_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     key: &HeldKey,
 ) -> Result<Vec<EntityId>> {
-    let mut holds: Vec<EntityId> = TARGETS
+    Ok(TARGETS
         .scan_keys(dbs, txn, key)?
         .into_iter()
         .map(|(_, hold)| hold)
-        .collect();
-    holds.extend(
-        HOST_TARGETS
-            .scan_keys(dbs, txn, key)?
-            .into_iter()
-            .map(|(_, hold)| hold),
-    );
-    Ok(holds)
+        .collect())
 }
 
 /// The hold row `id`, customer or host-order.
@@ -235,7 +239,8 @@ pub(crate) fn holds_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<V
     Ok(holds)
 }
 
-/// The standing holds that name `target`.
+/// The holds that keep `target` in the vault: the standing customer holds
+/// that name it.
 pub(crate) fn holds_on_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -258,33 +263,17 @@ fn standing_row_in_txn(
     Ok(hold)
 }
 
-/// Whether a standing hold names the record or claim partition `id`, for a
-/// door with no store handle. Read inside the destroying transaction.
-pub(crate) fn held_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<bool> {
-    Ok(!standing_on_in_txn(dbs, txn, &id_key(id))?.is_empty())
-}
-
-/// Whether a standing hold names the gate-decision partition `claim`
-/// (`None`: the claim-free one).
-pub(crate) fn partition_held_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    claim: Option<&[u8; 16]>,
-) -> Result<bool> {
-    let key = claim.map_or([0; 17], id_key);
-    Ok(!standing_on_in_txn(dbs, txn, &key)?.is_empty())
-}
-
-/// Writes `hold`, keeping its target index exact: a standing hold indexes
-/// every target it names, a lifted one none.
+/// Writes `hold`, keeping its target index exact: a hold that keeps its
+/// records in the vault (a standing customer hold) indexes every target it
+/// names; a lifted one, or any host order, none.
 pub(crate) fn put_hold_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     hold: &LegalHold,
 ) -> Result<()> {
-    let (rows, targets) = tables(hold.kind);
+    let (rows, targets) = (rows_of(hold.kind), TARGETS);
     let keys = |hold: &LegalHold| -> BTreeSet<HeldKey> {
-        if hold.stands() {
+        if hold.keeps_vault_data() {
             hold.targets.iter().map(held_key).collect()
         } else {
             BTreeSet::new()
@@ -307,12 +296,10 @@ pub(crate) fn put_hold_in_txn(
 impl Store {
     /// THE legal-hold check (C7). Every byte-destroying path calls it inside
     /// the transaction that destroys, for every id it destroys, whoever acts:
-    /// agent, timer, member or owner. A held id fails with
-    /// `Error::LegalHold` (`retained_for_law`, naming the law bound) when a
-    /// host order the owner may see holds it; else with the named refusal
-    /// [`crate::deletion::LEGAL_HOLD_REFUSAL`], or with
-    /// [`crate::deletion::LEGAL_HOLD_DEFERRAL`] when only a secret order holds
-    /// it (WILL-PLAN L01 row 01). The owner lifts a customer hold only
+    /// agent, timer, member or owner. An id a standing customer hold keeps
+    /// fails with the named refusal [`crate::deletion::LEGAL_HOLD_REFUSAL`]
+    /// (WILL-PLAN L01 row 01). A host order refuses nothing: its clone in
+    /// the host's legal-hold store keeps what it covers. The owner lifts a customer hold only
     /// through `Vault::confirm_lift_legal_hold_and_erase`. The refusal is
     /// queued for the hold log, since the refusing transaction rolls back.
     pub(crate) fn reject_legal_holds_in_txn(
@@ -348,12 +335,16 @@ impl Store {
     ) -> Result<()> {
         let holds = standing_on_in_txn(self, txn, key)?;
         if holds.is_empty() {
+            if let Some(LegalHoldTarget::Record(record)) = target
+                && cooperative_restriction_active_in_txn(self, txn, &record)?
+            {
+                return Err(Error::EntityNotFound);
+            }
             return Ok(());
         }
         let now = self.clock.now_recorded_at();
-        let mut rows = Vec::with_capacity(holds.len());
         for id in holds {
-            rows.push(standing_row_in_txn(self, txn, &id)?);
+            standing_row_in_txn(self, txn, &id)?;
             if let Some(target) = target {
                 let note = RefusalNote {
                     hold: id,
@@ -364,7 +355,7 @@ impl Store {
                 settlement::note(self, note);
             }
         }
-        Err(notice::held_refusal(&rows, now))
+        Err(notice::held_refusal())
     }
 
     /// Writes the queued refusals to their hold logs in one raw write of its
@@ -416,11 +407,12 @@ fn hosts_bytes(store: &Store) -> bool {
 }
 
 /// Writes queued refusals to their hold logs. A refused privacy erasure keeps
-/// the held record for that legal reason only: where Oneiron hosts the bytes
-/// it gets a use limit under every standing hold, a customer hold or a host
-/// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
-/// 8849), and the PEOPLE `about` lines of a fact it kept hide (FIX 3196).
-/// Returns how many were written.
+/// the held record for that reason only: where Oneiron hosts the bytes it
+/// gets a use limit under the standing customer holds that keep it (C5, C6,
+/// WILL-PLAN L01 row 03, FIX 8849), and the PEOPLE `about` lines of a fact
+/// it kept hide (FIX 3196). A host order refuses nothing, so it limits no
+/// record's use here: its use limits are its clone's, in the host's
+/// legal-hold store. Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -461,33 +453,11 @@ pub(crate) fn flush_refusals_in_txn(
     Ok(written)
 }
 
-fn keep_use_limited_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    record: EntityId,
-    at: u64,
-) -> Result<()> {
-    if USE_LIMITS.contains(store, txn, &record)? {
-        return Ok(());
-    }
-    // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).
-    crate::dreamer_consolidation::mark_person_about_dropped_in_txn(store, txn, &record)?;
-    USE_LIMITS.put(
-        store,
-        txn,
-        &record,
-        &LegalHoldUseLimit {
-            record,
-            since: at,
-            reason: LegalHoldReason::PrivacyEraseKept,
-        },
-    )
-}
-
 /// A privacy erasure request over `records` (C5): returns the records no
-/// hold names, for the caller to erase, and the held ones it keeps. Each
-/// held record logs a refusal with its reason; where Oneiron hosts the bytes
-/// it is kept under a use limit (C6). It never lifts or skips a hold.
+/// customer hold keeps, for the caller to erase, and the held ones it keeps.
+/// Each held record logs a refusal with its reason; where Oneiron hosts the
+/// bytes it is kept under a use limit (C6). It never lifts or skips a hold.
+/// A host order keeps nothing here, so a record only it names is erased.
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -518,25 +488,6 @@ pub(crate) fn split_privacy_erase_in_txn(
         kept.push(*record);
     }
     Ok((erase, kept))
-}
-
-/// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing hold, customer or host order, still keeps it
-/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
-/// last hold lifts, narrows or lapses. A marker no standing hold backs
-/// restricts nothing.
-pub(crate) fn use_limit_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    record: &EntityId,
-) -> Result<Option<LegalHoldUseLimit>> {
-    let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
-        return Ok(None);
-    };
-    if notice::retaining_holds_in_txn(dbs, txn, record)?.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(limit))
 }
 
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase
@@ -741,10 +692,10 @@ pub(crate) fn log_timer_refusal_in_txn(
     Ok(())
 }
 
-/// The `vault_meta` prefixes of the two target indexes, for the checkpoint
-/// custody reader.
-pub(crate) fn target_prefixes() -> [&'static [u8]; 2] {
-    [TARGETS.decl().prefix, HOST_TARGETS.decl().prefix]
+/// The `vault_meta` prefix of the target index, for the checkpoint custody
+/// reader. Only customer holds index targets.
+pub(crate) fn target_prefixes() -> [&'static [u8]; 1] {
+    [TARGETS.decl().prefix]
 }
 
 /// Whether `rows` (a checkpoint's, or a live vault's custody rows) hold a

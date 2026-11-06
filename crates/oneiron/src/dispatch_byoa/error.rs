@@ -232,6 +232,10 @@ pub enum ByoaError {
     /// job is not stored and no attempt lands.
     #[error("byoa staged input names an erased task: nothing was stored")]
     StagedInputErased,
+    /// A valid running capture commits byte-free terminal settlement before
+    /// returning this error when its task inputs were permanently erased.
+    #[error("byoa task inputs have been erased")]
+    TaskErased,
     /// Any crate-level refusal raised beneath this module — a queue door, a
     /// vault write, or a connector validator.
     #[error(transparent)]

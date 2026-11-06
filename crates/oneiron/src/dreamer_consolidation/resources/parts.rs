@@ -139,6 +139,17 @@ impl<'a> BranchResources<'a> {
             granted.readable.insert(version.clone());
             granted.writable.insert(version.clone());
         }
+        // New membership context is read-only, not an additional prior.
+        let mut context_only = BTreeSet::new();
+        for (id, version) in known
+            .into_iter()
+            .flat_map(Neighbourhood::membership_versions)
+        {
+            if requested.is_none() && !granted.readable.contains(version) {
+                context_only.insert(id);
+            }
+            granted.readable.insert(version.clone());
+        }
         // Never replace explicit missing rights with generated defaults. Extra
         // exact documents are the caller's graph/project slice, not source TURNs.
         // A supplied scope is authority, not a request to infer more authority.
@@ -171,7 +182,7 @@ impl<'a> BranchResources<'a> {
         for turn in &turn_ids {
             resources.turn(&resources.scope, turn)?;
         }
-        resources.admit_priors()?;
+        resources.admit_priors(&context_only)?;
         Ok(resources)
     }
 

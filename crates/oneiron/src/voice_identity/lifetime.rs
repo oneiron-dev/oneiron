@@ -20,6 +20,19 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::store::Store;
 
+/// Removes the recognition prints enrolled for `subject`, with their
+/// samples and active pointer, for the owner's discard of a world copy that
+/// takes the subject (FIX 14534). The consent log, the render-reference bank
+/// and every other subject's prints stay.
+pub(crate) fn discard_print_payload_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    subject: &EntityId,
+) -> Result<()> {
+    delete_voice_prints_in_txn(store, wtxn, subject)?;
+    Ok(())
+}
+
 /// The deletion eraser for recognition material and render refs: run in the
 /// delete or erase transaction of `id`, before its row goes. A row that is
 /// no subject and no enrolled contact holds nothing here.
@@ -38,7 +51,7 @@ pub(crate) fn erase_recognition_for_subject_in_txn(
     }
     for subject in active_print_subjects(store, wtxn)? {
         if read_active_print(store, wtxn, &subject)?
-            .is_some_and(|print| print.contact_ref == Some(*id))
+            .is_some_and(|print| print.metadata.contact_ref == Some(*id))
         {
             delete_voice_prints_in_txn(store, wtxn, &subject)?;
         }

@@ -37,7 +37,7 @@ use serde::Deserialize;
 use super::CHAT_ROLE;
 use super::coach_heal::{coach_dial, coach_ladder};
 use super::coach_health::coach_role;
-use crate::models::ModelRuntime;
+use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
 /// The purpose the Coach's code-fix calls are metered and routed under.
@@ -75,7 +75,11 @@ pub(super) fn run(
     let vault = server.vault();
     let host = server.decision_host();
     let coach = coach_ladder(server);
+    let wording = server.ai.dreamer_wording();
     let decisions = CodeFixDecisions {
+        reproduced_wording: wording.code_fix_reproduced().to_owned(),
+        fixed_wording: wording.code_fix_fixed().to_owned(),
+        export_safe_wording: wording.code_fix_export_safe().to_owned(),
         ladder: coach
             .as_ref()
             .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),
@@ -268,6 +272,17 @@ impl<'a> HostModels<'a> {
         role: ModelRole,
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<(String, String)>> {
+        Ok(self.generate_recorded(role, messages)?.map(served_model))
+    }
+
+    /// [`Self::generate`], with the binding of the rung that answered,
+    /// fallback included (FIX 3611): its model, where it ran, and the
+    /// route it went out on, which names its route prompt by digest.
+    pub(super) fn generate_recorded(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>> {
         self.served_on(&self.run, role, messages)
     }
 
@@ -280,17 +295,19 @@ impl<'a> HostModels<'a> {
         messages: Vec<LlmMessage>,
         rows: Option<Vec<EntityId>>,
     ) -> oneiron::Result<Option<(String, String)>> {
-        self.served_on(&self.run.sourced(rows), role, messages)
+        Ok(self
+            .served_on(&self.run.sourced(rows), role, messages)?
+            .map(served_model))
     }
 
-    /// [`Self::generate_served`] admitted through `run`, this run or a
+    /// [`Self::generate_recorded`] admitted through `run`, this run or a
     /// sourced handle on it.
     fn served_on(
         &self,
         run: &RunAdmission,
         role: ModelRole,
         messages: Vec<LlmMessage>,
-    ) -> oneiron::Result<Option<(String, String)>> {
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>> {
         self.served_on_recorded(run, role, messages, None)
     }
 
@@ -300,7 +317,7 @@ impl<'a> HostModels<'a> {
         role: ModelRole,
         messages: Vec<LlmMessage>,
         caller: Option<EntityId>,
-    ) -> oneiron::Result<Option<(String, String)>> {
+    ) -> oneiron::Result<Option<(String, ModelCallBinding)>> {
         let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
@@ -356,7 +373,6 @@ impl<'a> HostModels<'a> {
                 no_record,
             );
         }
-        let served = binding.rung.model;
         let text = response
             .message
             .content
@@ -366,7 +382,7 @@ impl<'a> HostModels<'a> {
                 _ => None,
             })
             .collect();
-        Ok(Some((text, served.as_str().to_owned())))
+        Ok(Some((text, binding)))
     }
 
     /// The code-fix draft keeps its caller only when its actual attempt
@@ -414,31 +430,57 @@ impl<'a> HostModels<'a> {
     /// The kept request of a failing call sent again (FIX 1662), whole and
     /// with its tool declarations, to its own model by its own route: the
     /// rung that answered it, when one did, under the route prompt it
-    /// answered under. Its answer's text, and each tool call it names as
-    /// data; no tool runs. `None` when that model or prompt is not served
-    /// now, or the call fails: the replay then rebuilds the call.
+    /// answered under. That prompt is the one its capsule's body holds,
+    /// each secret in it its custody handle, sent on this call alone once
+    /// the configured prompt is the one first sent, by its digest (FIX 6255,
+    /// 6356). Its answer's text, and each tool call it names as data; no
+    /// tool runs. A captured rung's call is admitted on the role whose
+    /// admission sent it (FIX 6359), and sent on that role's rung, else on
+    /// the model's raw rung (FIX 18546). A kept request with no rung is
+    /// admitted on the chat role. `None` when that model or prompt is not
+    /// served now, or the call fails: the replay then rebuilds the call.
     fn send_exact(&self, exact: &ExactReplayRequest) -> Option<String> {
         let mut request = exact.request.clone();
-        if let Some(rung) = &exact.rung {
-            request.model = rung.model.clone();
-            request.envelope.locality = rung.locality;
-        }
         // Its answer is compared with the kept call's: it runs alone on an
         // own server that batches (INF 1). The kept request stays as it was.
         mark_solo(&mut request);
-        let call = self
-            .runtime
-            .admit_seat_bound(self.vault, CHAT_ROLE, request)
-            .ok()?;
-        if let Some(rung) = &exact.rung
-            && call.ladder.exact_prompt() != Some(rung.prompt.as_deref())
-        {
-            return None;
-        }
-        match self
-            .handle
-            .block_on(call.ladder.generate_exact(&self.run, call.request, None))
-        {
+        let sent = match &exact.rung {
+            Some(rung) => {
+                request.model = rung.binding.model.clone();
+                request.envelope.locality = rung.binding.locality;
+                let admission = self
+                    .runtime
+                    .admit_replay(self.vault, rung.role, request)
+                    .ok()?;
+                let (request, routes) = (admission.request, admission.routes);
+                let (ladder, replay) = routes
+                    .exact_rung(
+                        &rung.binding.model,
+                        rung.binding.locality,
+                        rung.prompt_digest,
+                    )
+                    .filter(|(_, replay)| replay.exact_prompt_digest() == rung.prompt_digest)?;
+                let prompt = rung.binding.prompt.as_deref();
+                let wait = ladder.exact_replay_wait();
+                self.handle.block_on(replay.generate_exact_within(
+                    &self.run,
+                    request,
+                    None,
+                    prompt,
+                    &|| true,
+                    wait,
+                ))
+            }
+            None => {
+                let call = self
+                    .runtime
+                    .admit_seat_bound(self.vault, CHAT_ROLE, request)
+                    .ok()?;
+                self.handle
+                    .block_on(call.ladder.generate_exact(&self.run, call.request, None))
+            }
+        };
+        match sent {
             Ok(response) => Some(answer_text(&response)),
             // Unquoted: a provider's error can quote the request.
             Err(_) => {
@@ -447,6 +489,11 @@ impl<'a> HostModels<'a> {
             }
         }
     }
+}
+
+/// A call's text, with the model of the rung that answered it.
+fn served_model((text, binding): (String, ModelCallBinding)) -> (String, String) {
+    (text, binding.rung.model.as_str().to_owned())
 }
 
 /// A replayed answer as the judge reads it: its text, then each tool call it

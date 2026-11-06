@@ -118,9 +118,9 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
-    let [holds, host_holds] = legal_hold::target_prefixes();
-    [retirement_prefix(), holds, host_holds]
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
+    let [holds] = legal_hold::target_prefixes();
+    [retirement_prefix(), holds]
 }
 
 /// Each claim, body instance and known-value history key-retirement intent
@@ -234,17 +234,17 @@ impl Vault {
         // A narrow edit MUST NOT authenticate any unrelated peer-authored
         // permissions carried at this ID. Prove the exact amended body is
         // trusted and not quarantined under this same LMDB writer snapshot.
-        if !crate::gate::manifest_authenticity::manifest_is_trusted(
-            &self.store,
-            &txn,
-            &id,
-            manifest_body,
-        )? || crate::gate::manifest_authenticity::manifest_is_quarantined(
-            &self.store,
-            &txn,
-            &id,
-            manifest_body,
-        )? {
+        if !self
+            .store
+            .gate_hooks
+            .manifest_is_trusted(&self.store, &txn, &id, manifest_body)?
+            || self.store.gate_hooks.manifest_is_quarantined(
+                &self.store,
+                &txn,
+                &id,
+                manifest_body,
+            )?
+        {
             return Err(Error::InvalidConfig(
                 "retention edit target is not trusted".into(),
             ));

@@ -479,11 +479,20 @@ pub(super) fn prepare_call(
         auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
     let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
-    let actor = auth
-        .principal_ref()
-        .and_then(|principal| EntityId::from_hex(principal).ok())
-        .ok_or_else(|| refused(Refusal::Principal))?;
-    let payer = WriteActor::new(actor, EdgeActorClass::Human);
+    let host_action = crate::api::host_action::host_action_of(vault, auth)
+        .transpose()
+        .map_err(|_| refused(Refusal::Owner))?;
+    let payer = match &host_action {
+        Some(action) => action.actor(),
+        None => {
+            let actor = auth
+                .principal_ref()
+                .and_then(|principal| EntityId::from_hex(principal).ok())
+                .ok_or_else(|| refused(Refusal::Principal))?;
+            WriteActor::new(actor, EdgeActorClass::Human)
+        }
+    };
+    let actor = payer.entity_ref();
     let (agent, instructions) = instructions(auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
@@ -534,6 +543,7 @@ pub(super) fn prepare_call(
     );
     session.policy_caller_ref = auth.principal_ref().map(str::to_owned);
     session.policy_person = Some(owner);
+    session.host_action = host_action;
     let brain_room = container.as_ref().map(|bound| bound.container);
     session.container = container;
 
@@ -574,6 +584,7 @@ pub(super) fn prepare_call(
             extraction_prompt: settings.extraction_prompt.clone().unwrap_or_default(),
             session,
             shutdown: shutdown.clone(),
+            speculative_auth: Some(auth.clone()),
             // Each sentence's safeguard runs under the host's policy config,
             // its ladder's paired question lent (FIX 1201).
             owner_policy: server

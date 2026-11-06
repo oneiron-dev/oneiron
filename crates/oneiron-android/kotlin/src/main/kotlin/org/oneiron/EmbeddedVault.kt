@@ -173,6 +173,19 @@ class EmbeddedVault private constructor() : AutoCloseable {
         return ancestorsNative(node)
     }
 
+    /**
+     * The latest engine-limit questions this raw-opened vault asked, as a JSON array string:
+     * `null` on a bound vault or an engine-shared vault, which carry none, `[]` when no row
+     * has been crossed yet. Each element is exactly `{"row", "bound", "measured"}` with full
+     * `u64` digits; the caller's JSON parser chooses its own number precision. The read does
+     * not clear.
+     */
+    @Synchronized
+    fun nativeLimitQuestions(): String? {
+        check(!closed) { "vault is closed" }
+        return nativeLimitQuestionsNative()
+    }
+
     @Synchronized
     override fun close() {
         if (!closed) { closeNative(); closed = true }
@@ -194,6 +207,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
     private external fun sourcesNative(target: String, kind: Int, hasType: Boolean, sourceType: Int): Array<String>
     private external fun subtreeNative(root: String, maxDepth: Int): Array<SubtreeEntry>
     private external fun ancestorsNative(node: String): Array<String>
+    private external fun nativeLimitQuestionsNative(): String?
     private external fun closeNative()
 
     companion object {

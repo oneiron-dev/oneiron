@@ -149,6 +149,34 @@ carries the slip, a holder proof with its key, and this machine's own proof.
   stands until serve starts again. Pair the machine again: with the vault stopped, remove both
   device-sync files and run `oneiron device enrol` with a new link.
 
+## Publication diagnostics
+
+For a pending sealed-bundle publication, the executor's
+`GET /v1/owner/owner-work/{request}/diagnostics` reply includes
+`device_sync_start` once a device-sync start outcome was observed on this open
+vault session. Clones of that session share the observation. Closing it loses the
+observation; it is not restored or synced. An absent field means no outcome was
+recorded, not that device sync is unconfigured.
+
+Its `state` is one of:
+
+- `not_configured`: neither a device-sync section nor an enrolled home was found.
+- `configuration_failed`: resolving the configuration or enrolment failed.
+- `frozen_for_reap`: reap preparation did not admit that managed start.
+- `open_failed`: opening the sync connection failed. Its
+  `archive_receiver_running` boolean says only whether the archive receiver had
+  started before that failure; it does not report current receiver health.
+- `started`: opening succeeded then. It does not prove that the connection still
+  runs, is connected, or has reached this publication's home.
+
+The existing `relay` field separately reports what each pass observed for this
+request. `relay.state: "unknown"` still means no pass has observed it on this
+session. A recorded start outcome now distinguishes that from a start which found
+no home, was not admitted, or failed. Neither field changes publication admission,
+the named executor, pending work, or relay behavior. Full failure details stay in
+the existing operator logs; this reply carries only closed reasons, not paths,
+URLs or credentials.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).
@@ -200,6 +228,44 @@ deleted when a node stops offering a model.
 The rows feed the own-server backend. The configured model router is built from `[models]` at
 start, so serve does not route a discovered model by itself yet.
 
+## Shared environments
+
+A host can retain dedicated shared-vault environments beside its personal vault. Declare each
+one explicitly; serve does not scan directories or discover them through `HOME` or XDG paths:
+
+```toml
+[[shared_env]]
+path = "/absolute/path/to/the/shared-env"
+vault_id = 1234567890123456789
+member = "<the membership's 32-hex person id>"
+home_url = "wss://home.example/ws"
+credential_file = "/absolute/path/to/the/membership.cred"
+```
+
+`path` is the environment's own existing vault directory; serve does not create a new vault there.
+`vault_id` and `member` name the membership the leave check verifies, and `home_url` plus
+`credential_file` give its own sync lane the same inputs as a personal `[device_sync]` connection.
+As with direct sync, `ws://` is allowed only to a loopback host; any other network home uses
+`wss://`. On plain serve the section is file-only. On managed
+serve it arrives in the supervisor-selected settings file, and both paths must pass the same
+vault/configuration-root containment check as other owner paths. No environment variable or flag
+sets it.
+
+At start, serve opens every entry and keeps its handle. Each active membership gets its own
+window manager and sync connection; one bad environment is logged and skipped without stopping
+the others. Once an hour, the lifecycle tick asks the engine's verified leave door for each
+active membership. A refusal or failed check is not a leave. Only a verified notice detaches the
+lane. The environment's own durable leave receipt is the record; there is no second registry in
+the vault and no new side table.
+
+The handle stays open after a confirmed leave. The person can still read retained removal
+archives, and the deferred orphan-body collection written by the leave purge can finish. The
+ordinary housekeeping tick and the owner's "run now" cover every retained environment, active or
+left, sequentially with an independent budget per handle. A managed wake takes the earliest wake
+of the personal vault and all retained environments, so a left environment's collection does not
+sleep past its deadline. At stop, lanes drop before handles; in-flight checks and passes finish
+first.
+
 ## How it fits
 
 - The connection runs on the server's own window manager. Its outbound channel sits beside the
@@ -210,5 +276,4 @@ start, so serve does not route a discovered model by itself yet.
     machine dials the home at `home_url`;
   - bootstrapping a fresh vault from the home, rather than a copy of it;
   - moving to a new home when the election changes;
-  - managed (Hypnos) serve;
   - the apps.

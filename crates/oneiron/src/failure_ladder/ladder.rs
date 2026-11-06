@@ -155,7 +155,12 @@ impl<'a> FailureLadder<'a> {
         }
 
         // 4. Exactly one bounded lineage walk, for every class.
-        let walk = retry_lineage_walk(&queue, &current, policy.max_consecutive_transients)?;
+        let walk = retry_lineage_walk(
+            self.vault,
+            &queue,
+            &current,
+            policy.max_consecutive_transients,
+        )?;
         // Rule 5: the one transition's TASK report runs on its runner's
         // task-work turn, taken before any writer and held until the routing
         // below returns, past its commit and any healer dispatch.

@@ -30,10 +30,10 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Vault;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(feature = "sync")]
-use crate::error::Error;
-use crate::error::Result;
+use crate::authority::OriginCutStanding;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
@@ -42,8 +42,12 @@ use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// The manifest version this build writes and reads.
-pub const REPO_MANIFEST_VERSION: u16 = 1;
+/// The manifest version this build writes and reads: 2 adds the refs
+/// writer's signature (FIX 12765).
+pub const REPO_MANIFEST_VERSION: u16 = 2;
+
+/// The domain a manifest's writer signature is made in.
+const WRITER_SIGNATURE_DOMAIN: &[u8] = b"oneiron/repo-manifest/writer/v2\0";
 
 /// Every manifest held here, an alias's too. Key: the portable id's bytes.
 const MANIFESTS: SideTable<[u8; 32], RepoManifest, Named> =
@@ -138,10 +142,29 @@ pub struct RepoManifest {
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
     pub lfs_pointers: Vec<LfsOid>,
-    /// The epoch of the origin authority the refs writer holds, else 0.
+    /// The epoch of the owner's origin cut in force that names the refs
+    /// writer (FIX 15740), else 0.
     pub epoch: u64,
     /// When the refs writer last changed the manifest.
     pub updated_at: u64,
+    /// The refs writer's signature over every other field, where the
+    /// machine that wrote the manifest held a signer; `None` otherwise. A
+    /// carried copy replaces the one held under its id only from a writer
+    /// proven here (FIX 12765).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer: Option<RepoManifestWriter>,
+}
+
+/// The refs writer's signature on a manifest (FIX 12765): the machine that
+/// wrote it, and its Ed25519 signature over
+/// [`RepoManifest::writer_signing_bytes`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoManifestWriter {
+    /// The machine whose key signed.
+    pub machine: EntityId,
+    /// The 64-byte signature.
+    pub signature: Vec<u8>,
 }
 
 /// An LFS object id list as hex text.
@@ -168,6 +191,18 @@ mod lfs_oids {
 }
 
 impl RepoManifest {
+    /// What the refs writer signs: every field but its signature, in the
+    /// manifest's one spelling, in the signature's own domain.
+    fn writer_signing_bytes(&self) -> Result<Vec<u8>> {
+        let unsigned = Self {
+            writer: None,
+            ..self.clone()
+        };
+        let body = rmp_serde::to_vec_named(&unsigned)
+            .map_err(|_| Error::InvalidConfig("a repo manifest does not encode".to_owned()))?;
+        Ok([WRITER_SIGNATURE_DOMAIN, body.as_slice()].concat())
+    }
+
     /// The bytes a window carries the manifest as, which rule 7's last tie
     /// compares.
     #[cfg(feature = "sync")]
@@ -227,6 +262,10 @@ pub(crate) enum RepoManifestMerge {
     /// It names another CODE entity or mint than the copy held under its id,
     /// which stands; it stays aside in the window.
     Conflict,
+    /// It would replace the copy held under its id, but its writer is not
+    /// proven here (FIX 12765): the held copy stands and it waits in the
+    /// window.
+    Unproven,
 }
 
 /// Whether `code` is a live CODE entity in `txn`.
@@ -238,6 +277,49 @@ fn code_anchor_live(vault: &Vault, txn: &heed::RoTxn<'_>, code: &EntityId) -> Re
             ..
         }
     ))
+}
+
+/// The portable id that stands for the repository at `repo` in `txn`
+/// (FIX 12761): the one standing id among the live CODE entities whose
+/// stored locator names the same repository (`RepoRef::same_repository`,
+/// commit ignored). `None` when none stands for it, or when two distinct
+/// standing ids do (two PROJECT anchors of one location): no first row is
+/// picked. A CODE row that is not live or whose locator does not parse
+/// names nothing. It reads only; it never mints or repairs.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn standing_portable_id_for_location_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    repo: &crate::codebase::RepoRef,
+) -> Result<Option<RepoPortableId>> {
+    let mut found: Option<[u8; 32]> = None;
+    for row in BY_CODE.iter_from(&vault.store, txn, &[])? {
+        let (code, portable) = row?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CODE_ARTIFACT,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &code)?
+        else {
+            continue;
+        };
+        let Some(located) = crate::code_artifact::decode_code_artifact_body(&body)
+            .ok()
+            .and_then(|artifact| crate::codebase::RepoRef::parse(&artifact.repo_ref).ok())
+        else {
+            continue;
+        };
+        if !located.same_repository(repo) {
+            continue;
+        }
+        match found {
+            None => found = Some(portable),
+            Some(seen) if seen == portable => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    Ok(found.map(RepoPortableId))
 }
 
 /// Removes every repo manifest anchored at erased CODE entity `id`: the
@@ -374,7 +456,7 @@ impl Vault {
             }
             let portable = RepoPortableId::mint();
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let manifest = RepoManifest {
+            let mut manifest = RepoManifest {
                 portable,
                 version: REPO_MANIFEST_VERSION,
                 code,
@@ -384,7 +466,9 @@ impl Vault {
                 lfs_pointers: Vec::new(),
                 epoch: 0,
                 updated_at: now,
+                writer: None,
             };
+            self.sign_repo_manifest_in_txn(txn, &mut manifest)?;
             MANIFESTS.put(&self.store, txn, &portable.0, &manifest)?;
             BY_CODE.put(&self.store, txn, &code, &portable.0)?;
             MINTED.put(&self.store, txn, &portable.0, &())?;
@@ -407,47 +491,213 @@ impl Vault {
     /// Merges `carried`, a manifest a window brought, here: rule 7 against
     /// the copy held under its id, then rule 3 against the manifest that
     /// stands for its CODE entity. A copy already held is found by a read.
+    /// A copy that would replace the one held under its id must come from a
+    /// proven writer (FIX 12765, [`Self::repo_manifest_writer_proven_in_txn`]),
+    /// else it waits in the window.
     #[cfg(feature = "sync")]
     pub(crate) fn merge_carried_repo_manifest(
         &self,
         carried: &RepoManifest,
     ) -> Result<RepoManifestMerge> {
-        {
+        let held = {
             let txn = self.store.env.read_txn()?;
-            if MANIFESTS
-                .get(&self.store, &txn, &carried.portable.0)?
-                .as_ref()
-                == Some(carried)
-            {
+            MANIFESTS.get(&self.store, &txn, &carried.portable.0)?
+        };
+        if held.as_ref() == Some(carried) {
+            return Ok(RepoManifestMerge::Held);
+        }
+        // Which repo this host serves for the copy held here (never what the
+        // carried one says) is resolved outside the writer: it reads the
+        // object store. Its origin authority row is read inside the writer,
+        // so an owner cutover is never judged from a stale row.
+        let resolved_for = held
+            .as_ref()
+            .map(|held| (held.origin_name.clone(), held.code));
+        let served = match &held {
+            Some(held) => self.served_origin_repo_id(held)?,
+            None => None,
+        };
+        self.with_write_txn_grouped(|txn| {
+            self.merge_carried_repo_manifest_in_txn(txn, carried, &resolved_for, served)
+        })
+    }
+
+    /// Merges a carried manifest in the caller's writer, with the held repo's
+    /// origin identity resolved before that writer opened.
+    #[cfg(feature = "sync")]
+    pub(crate) fn merge_carried_repo_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        carried: &RepoManifest,
+        resolved_for: &Option<(Option<String>, EntityId)>,
+        served: Option<EntityId>,
+    ) -> Result<RepoManifestMerge> {
+        if !code_anchor_live(self, txn, &carried.code)? {
+            return Ok(RepoManifestMerge::Waiting);
+        }
+        let key = carried.portable.0;
+        if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
+            if held.code != carried.code || held.minted_at != carried.minted_at {
+                return Ok(RepoManifestMerge::Conflict);
+            }
+            if !carried.replaces(&held)? {
                 return Ok(RepoManifestMerge::Held);
             }
-        }
-        self.with_write_txn_grouped(|txn| {
-            if !code_anchor_live(self, txn, &carried.code)? {
-                return Ok(RepoManifestMerge::Waiting);
+            // The held copy moved since the repo was resolved: wait for
+            // the next pass to resolve it again.
+            if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
+                return Ok(RepoManifestMerge::Unproven);
             }
-            let key = carried.portable.0;
-            if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
-                if held.code != carried.code || held.minted_at != carried.minted_at {
-                    return Ok(RepoManifestMerge::Conflict);
-                }
-                if !carried.replaces(&held)? {
-                    return Ok(RepoManifestMerge::Held);
-                }
+            // Where this host serves the repo, a copy keeps the served
+            // name, so refresh and later merges still judge it here.
+            if served.is_some() && carried.origin_name != held.origin_name {
+                return Ok(RepoManifestMerge::Unproven);
             }
-            MANIFESTS.put(&self.store, txn, &key, carried)?;
-            let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
-                Some(standing) if standing == key => false,
-                Some(standing) => MANIFESTS
-                    .get(&self.store, txn, &standing)?
-                    .is_none_or(|other| carried.mints_before(&other)),
-                None => true,
+            let origin = match served {
+                Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
+                None => None,
             };
-            if stands {
-                BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+            if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
+                return Ok(RepoManifestMerge::Unproven);
             }
-            Ok(RepoManifestMerge::Adopted)
-        })
+        } else if self
+            .authority_view_readonly_in_txn(txn)?
+            .origin_cut_standing(carried.portable.as_bytes())?
+            != OriginCutStanding::NoCut
+            && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
+        {
+            // Once the owner cut the repo, a first copy is proven as a
+            // replacement is (FIX 15740); before any cut it is adopted.
+            return Ok(RepoManifestMerge::Unproven);
+        }
+        MANIFESTS.put(&self.store, txn, &key, carried)?;
+        let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
+            Some(standing) if standing == key => false,
+            Some(standing) => MANIFESTS
+                .get(&self.store, txn, &standing)?
+                .is_none_or(|other| carried.mints_before(&other)),
+            None => true,
+        };
+        if stands {
+            BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+        }
+        Ok(RepoManifestMerge::Adopted)
+    }
+
+    /// Signs `manifest` as this machine, the refs writer that writes it, in
+    /// the writer's transaction (FIX 12765). A machine with no signer loaded
+    /// leaves it unsigned, warned: no copy of it replaces another.
+    pub(super) fn sign_repo_manifest_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        manifest: &mut RepoManifest,
+    ) -> Result<()> {
+        manifest.writer = None;
+        let (machine, key) = match crate::store::install_identity::machine_signer_in_txn(self, txn)
+        {
+            Ok(signer) => signer,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "repo manifest written unsigned: no signer here");
+                return Ok(());
+            }
+        };
+        let signature = ed25519_dalek::Signer::sign(&key, &manifest.writer_signing_bytes()?);
+        manifest.writer = Some(RepoManifestWriter {
+            machine,
+            signature: signature.to_bytes().to_vec(),
+        });
+        Ok(())
+    }
+
+    /// Whether `manifest`'s writer is proven here (FIX 12765, Engine 02:54
+    /// A3; FIX 15740, A2): its signature verifies under the key of a machine
+    /// this vault's own authority fold trusts now, and that machine writes
+    /// the repo at exactly the manifest's epoch. Where the owner's cut of the
+    /// repo is in force, on every device, it names the machine and the epoch.
+    /// Where his cuts conflict or the newest does not count here, no writer
+    /// is proven. Before any cut only the bootstrap epoch 0 is proven, which
+    /// refresh then writes; where this host serves the repo (`origin`, its
+    /// authority row in `txn`), the row must also name the machine. A foreign
+    /// or unsigned writer is not proven, and its copy waits.
+    #[cfg(feature = "sync")]
+    fn repo_manifest_writer_proven_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        manifest: &RepoManifest,
+        origin: Option<&crate::origin::residence::OriginAuthority>,
+    ) -> Result<bool> {
+        let Some(writer) = &manifest.writer else {
+            return Ok(false);
+        };
+        let Ok(signature) = <[u8; 64]>::try_from(writer.signature.as_slice()) else {
+            return Ok(false);
+        };
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let Some(machine_key) = fold
+            .trusted_machine(writer.machine)
+            .map(|trusted| trusted.profile.machine_key)
+        else {
+            return Ok(false);
+        };
+        if fold.machine_proof_key(writer.machine) != Some(machine_key) {
+            return Ok(false);
+        }
+        let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&machine_key) else {
+            return Ok(false);
+        };
+        let signed = manifest.writer_signing_bytes()?;
+        if key
+            .verify_strict(&signed, &ed25519_dalek::Signature::from_bytes(&signature))
+            .is_err()
+        {
+            return Ok(false);
+        }
+        Ok(
+            match fold.origin_cut_standing(manifest.portable.as_bytes())? {
+                OriginCutStanding::InForce(cut) => {
+                    cut.writer == writer.machine && cut.epoch == manifest.epoch
+                }
+                OriginCutStanding::Unresolved => false,
+                OriginCutStanding::NoCut => {
+                    manifest.epoch == 0
+                        && origin.is_none_or(|row| row.writer == writer.machine.to_hex())
+                }
+            },
+        )
+    }
+
+    /// The raw manifest held under `portable` when it actually conflicts with
+    /// `carried` in `txn` (FIX 12763): both name `portable`, both CODE anchors
+    /// are live and their CODE or `minted_at` differs. `None` for a missing,
+    /// unbound or non-conflicting row; store faults propagate. Reads the raw
+    /// id row, never the alias redirect, so the window door reviews exactly
+    /// what the merge would judge as `Conflict` while both anchors are live.
+    #[cfg(feature = "sync")]
+    pub(crate) fn repo_manifest_conflict_held_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        portable: &RepoPortableId,
+        carried: &RepoManifest,
+    ) -> Result<Option<RepoManifest>> {
+        if carried.portable != *portable {
+            return Ok(None);
+        }
+        let Some(held) = MANIFESTS.get(&self.store, txn, &portable.0)? else {
+            return Ok(None);
+        };
+        if held.portable != *portable {
+            return Ok(None);
+        }
+        if !code_anchor_live(self, txn, &held.code)? {
+            return Ok(None);
+        }
+        if !code_anchor_live(self, txn, &carried.code)? {
+            return Ok(None);
+        }
+        if held.code == carried.code && held.minted_at == carried.minted_at {
+            return Ok(None);
+        }
+        Ok(Some(held))
     }
 
     /// Hands CODE entity `code` to the live mirror as an import's row, so
