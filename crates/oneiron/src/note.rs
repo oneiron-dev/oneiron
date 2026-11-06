@@ -110,6 +110,27 @@ pub(crate) fn note_body_readable(
     })
 }
 
+/// Whether a NOTE reads to every reader the vault's other gates admit: its
+/// kind's context, or its override, is vault-readable. An owner-only,
+/// explicit-only or relationship-scoped NOTE carries a read restriction of
+/// its own (its author, importer, consent or relationship scope), which a
+/// record that only copies its scope position cannot hold (FIX 2783).
+pub(crate) fn note_vault_readable_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    // A migrated NOTE keeps its markdown on its document plane: judge the
+    // logical body, as a scoped NOTE read does.
+    let resolved = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
+    let Ok(body) = decode_note_body_using(&resolved, NoteKind::wire) else {
+        return Ok(false);
+    };
+    let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
+    Ok(matches!(context, ContextDefault::VaultReadable))
+}
+
 /// Whether `body` came in through an import for `reader`: its author is a
 /// folder's import MACHINE that imports for that reader. Such a note reads
 /// as its importer's own, though the importer did not write it (OF-554). An
@@ -203,6 +224,8 @@ mod tests;
 pub(crate) mod checkpoint;
 mod citation_erase;
 mod delete;
+#[cfg(feature = "sync")]
+mod local_discard;
 mod pin_index;
 mod side_keys;
 mod sync_rows;
@@ -233,6 +256,8 @@ mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;
 pub(crate) use delete::delete_document_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use local_discard::discard_workflow_in_txn;
 mod id_codec;
 pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
