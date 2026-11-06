@@ -88,8 +88,9 @@ impl ShadowAdmission {
 
 /// The prompt and wait copies `result` publishes inline, admitted by the
 /// side-row wall under `vault`'s custody in one writer (FIX 5718 part 3):
-/// each model receipt's expected route prompt and a waiting arm's wait
-/// prompt. Each is a copy of a row its source admitted, so the wall mostly
+/// each model receipt's expected rung, which names its route prompt by ref
+/// only (FIX 6255), and a waiting arm's wait prompt. Each is a copy of a
+/// row its source admitted, so the wall mostly
 /// finds nothing. A copy the wall cannot place is published as it was, as
 /// before (an Ask-first stop). The type feedback of the program the arm
 /// ran takes the same writer (FIX 10389).

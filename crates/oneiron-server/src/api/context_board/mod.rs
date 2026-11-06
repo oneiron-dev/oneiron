@@ -829,7 +829,8 @@ async fn hydrate_inner(
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
     // named or stamped contact, named reader definition and discovered
-    // capability, and what each INBOX row rests on (FIX 8145).
+    // capability, what each INBOX row rests on (FIX 8145), and what the
+    // MEMORIES filter chose its rows by (BOARD-LAYOUT).
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -840,6 +841,7 @@ async fn hydrate_inner(
     admit.extend(named_refs);
     admit.extend(parts.named);
     admit.extend(parts.inbox);
+    admit.extend(parts.memories_filter);
     admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
