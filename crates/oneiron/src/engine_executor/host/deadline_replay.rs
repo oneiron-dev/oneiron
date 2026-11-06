@@ -16,6 +16,7 @@ const PENDING_STEP_HELD: &str = "pending_step_held";
 const DIVERGED: &str = "the resumed program made another call where its pending step recorded one";
 const HOOK_VIEW: &str = "a recorded call's guest read a verb hook's view, which no row keeps";
 const ROWS_MISSING: &str = "a recorded call's row is not where its pending step lists it";
+const WITHHELD: &str = "the bound door no longer releases a recorded call's answer to its caller";
 
 /// The calls one pending step's program already made (FIX 7703), each row
 /// as the record kept it, answered in the order the program makes them.
@@ -36,6 +37,26 @@ struct RecordedCall {
     row: CodeRunBridgeCall,
     nested: Vec<CodeRunBridgeCall>,
     outcome: SelfDispatchOutcome,
+}
+
+impl RecordedCall {
+    /// The rows the run was served producing this call's answer (DEC-0005):
+    /// its own row's and those of the rows a callable it called made. A
+    /// callable's answer also adds the rows the run's callables answered
+    /// from (`callable`, joined as `RecordingJsHost::result_rows` joins
+    /// them). `None` when one of them kept no set.
+    fn served_rows(
+        &self,
+        (skills, read): &(Vec<EntityId>, Option<Vec<EntityId>>),
+    ) -> Option<Vec<EntityId>> {
+        let own = agent_verb_rows_of(std::slice::from_ref(&self.row))?;
+        let made = agent_verb_rows_of(&self.nested)?;
+        if !matches!(self.row.effect, SelfEffect::SkillsCall) {
+            return Some([own.as_slice(), made.as_slice()].concat());
+        }
+        let read = read.as_deref()?;
+        Some([own.as_slice(), made.as_slice(), read, skills.as_slice()].concat())
+    }
 }
 
 impl DeadlineReplay {
@@ -133,6 +154,12 @@ impl RecordingJsHost<'_, '_> {
     /// step: it and every call after it are refused, nothing runs live, and
     /// the step commits nothing. `None` once every recorded call is
     /// answered: the call runs live, at the step's frontier.
+    ///
+    /// A recorded answer reaches the guest only as the bound door rules
+    /// now (FIX 7703). The door admits the read, as at a write's kept
+    /// answer. The rows the answer was served from must not stay on this
+    /// device for the door's caller. A refusal of either holds the step in
+    /// the same way.
     pub(super) fn answer_from_pending_prefix(
         &mut self,
         call: &SelfCall,
@@ -141,11 +168,21 @@ impl RecordingJsHost<'_, '_> {
         if replay.held.is_none() && !replay.unreached() {
             return None;
         }
+        let taken = match replay.take(self.next_seq, call) {
+            Ok(recorded)
+                if !self.gated_write.releases_recorded_answer(
+                    recorded.served_rows(&self.callable_rows).as_deref(),
+                ) =>
+            {
+                Err(replay.hold(WITHHELD))
+            }
+            taken => taken,
+        };
         let RecordedCall {
             row,
             nested,
             outcome,
-        } = match replay.take(self.next_seq, call) {
+        } = match taken {
             Ok(recorded) => recorded,
             Err(_) => {
                 if self.hard_failure.is_none() {
