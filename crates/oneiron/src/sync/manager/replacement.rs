@@ -66,6 +66,64 @@ impl WindowManager {
         bound: ReplacementByteBound,
         own_device: Option<&OwnDeviceImport>,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
+        self.replace_window_bounded_with_copies(
+            key,
+            snapshot,
+            evidence,
+            admitted,
+            bound,
+            own_device,
+            crate::authority::PeerMachine::Unknown,
+            None,
+        )
+    }
+
+    /// Keeps copies opened for this exact original sender and snapshot through
+    /// the native replacement. The association grants no source admission.
+    pub(in crate::sync) fn replace_window_bounded_with_copies(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        snapshot: &[u8],
+        evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+        admitted: impl FnOnce() -> bool,
+        bound: ReplacementByteBound,
+        own_device: Option<&OwnDeviceImport>,
+        from: crate::authority::PeerMachine,
+        prepared: Option<crate::embed::home_vectors::PreparedHomeClaimDelivery>,
+    ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
+        let copies = prepared
+            .map(|prepared| {
+                prepared.into_copies_for(
+                    &self.vault,
+                    from,
+                    &crate::embed::home_vectors::HomeClaimDelivery {
+                        window: key.as_str(),
+                        payload: snapshot,
+                    },
+                )
+            })
+            .unwrap_or_default();
+        crate::embed::home_vectors::copy_scope::with_home_claim_copies(
+            &self.vault,
+            key,
+            &copies,
+            || {
+                self.land_window_replacement_bounded(
+                    key, snapshot, evidence, admitted, bound, own_device,
+                )
+            },
+        )
+    }
+
+    fn land_window_replacement_bounded(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        snapshot: &[u8],
+        evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+        admitted: impl FnOnce() -> bool,
+        bound: ReplacementByteBound,
+        own_device: Option<&OwnDeviceImport>,
+    ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
         // A window a sweep holds closed is replaced once the sweep is done.

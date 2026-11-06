@@ -108,6 +108,24 @@ pub(crate) fn with_copies<T>(
     (landed, attempts)
 }
 
+pub(crate) fn with_home_claim_copies<T>(
+    vault: &Vault,
+    key: &WindowKey,
+    copies: &[Arc<PreparedHomeClaimResponse>],
+    land: impl FnOnce() -> T,
+) -> T {
+    let (landed, attempts) = with_copies(vault, key, copies, land);
+    for attempt in attempts {
+        tracing::debug!(
+            entity = %attempt.entity_id.to_hex(),
+            error = ?attempt.result.as_ref().err().map(|error| error.kind()),
+            writer_result = ?attempt.writer_result,
+            "derived home CLAIM copy attempt; not a durable receipt"
+        );
+    }
+    landed
+}
+
 /// Selects the actual in-memory holders, not a permission or a serialized
 /// instance id. Their retainer still checks the current peer, exact canonical
 /// source and native response obligations in the real writer.
