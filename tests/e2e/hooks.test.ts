@@ -200,7 +200,7 @@ suite.test(test, "HOOKS-01", "Fact hook commit and restart catchup should work",
     const committed = await writer.client.call("vault.claims.upsert", {
       id: row.id, subject_ref: owner,
       predicate: row.axis === "predicate" ? spec.otherPredicate : spec.triggerPredicate,
-      value: row.value, confidence: 1, source: "user_stated", world_ref: world,
+      value: row.value, confidence: 1, source: "user_stated",
       scope: { ...baseScope, world_id: world },
     });
     const page = await engine.client.call("vault.receipts", { limit: data.pageBound });
