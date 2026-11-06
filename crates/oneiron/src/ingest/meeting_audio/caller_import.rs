@@ -25,6 +25,9 @@ pub enum MeetingTranscriptCallerImportError {
     Caller(#[from] MemoryError),
 }
 
+mod owned;
+pub use owned::OwnedMeetingTranscriptImportAttempt;
+
 type Result<T> = std::result::Result<T, MeetingTranscriptCallerImportError>;
 
 /// A pending hook has not landed either the SESSION or the NOTE. Resume the
@@ -45,6 +48,10 @@ pub enum MeetingTranscriptCallerImportOutcome {
 pub struct MeetingTranscriptImportAttempt<'caller, 'vault> {
     memory: &'caller Memory<'vault>,
     owner: &'caller AuthenticatedOwner,
+    state: MeetingTranscriptImportState,
+}
+
+struct MeetingTranscriptImportState {
     authorized: AuthorizedMeetingImport,
     input: MeetingTranscriptSessionInput,
     source: MeetingImportProvenance,
@@ -65,12 +72,36 @@ impl<'vault> Memory<'vault> {
         stored: &StoredMeetingTranscript,
         authorizer: &mut A,
     ) -> Result<MeetingTranscriptImportAttempt<'caller, 'vault>> {
-        let vault = self.vault();
+        Ok(MeetingTranscriptImportAttempt {
+            memory: self,
+            owner,
+            state: MeetingTranscriptImportState::prepare(self, owner, stored, authorizer)?,
+        })
+    }
+}
+
+impl MeetingTranscriptImportAttempt<'_, '_> {
+    /// Run native pre-hooks, then land the selected SESSION and NOTE in one
+    /// writer. Native storage failures rearm consumed hook answers. Posts run
+    /// only after commit, with the actual native EndedSession.
+    pub fn resume(&mut self) -> Result<MeetingTranscriptCallerImportOutcome> {
+        self.state.resume(self.memory, self.owner)
+    }
+}
+
+impl MeetingTranscriptImportState {
+    fn prepare<A: BulkImportAuthorizer + ?Sized>(
+        memory: &Memory<'_>,
+        owner: &AuthenticatedOwner,
+        stored: &StoredMeetingTranscript,
+        authorizer: &mut A,
+    ) -> Result<Self> {
+        let vault = memory.vault();
         {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            check_owner(self, owner, &txn)?;
+            check_owner(memory, owner, &txn)?;
         }
-        check_read_versions(self, stored)?;
+        check_read_versions(memory, stored)?;
         let artifact = vault.read_meeting_transcript_as_owner(owner, stored)?;
         let authorized = artifact.authorize_import(authorizer)?;
         let input = authorized.artifact().session_input()?;
@@ -78,12 +109,12 @@ impl<'vault> Memory<'vault> {
             stored: stored.clone(),
             receipt: authorized.receipt().clone(),
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
         let (arrived_at_ms, hint) =
             vault.write_txn_door(crate::store::Callback::Audited, |txn| {
-                self.verify_actor_write_in_txn(txn)?;
-                check_owner(self, owner, txn)?;
-                check_read_versions_in_txn(self, &lane, txn, stored)?;
+                memory.verify_actor_write_in_txn(txn)?;
+                check_owner(memory, owner, txn)?;
+                check_read_versions_in_txn(memory, &lane, txn, stored)?;
                 let arrived_at_ms = vault
                     .instant_in_write_txn(txn)?
                     .secs()
@@ -95,7 +126,7 @@ impl<'vault> Memory<'vault> {
                     let machine = crate::identity::load_or_mint_machine_id_in_txn(vault, txn)?;
                     Some(vault.prepare_session_import_hint(
                         SessionKey {
-                            actor: self.actor(),
+                            actor: memory.actor(),
                             machine,
                         },
                         SessionHintTimestamp {
@@ -112,9 +143,7 @@ impl<'vault> Memory<'vault> {
                 };
                 Ok::<_, MeetingTranscriptCallerImportError>((arrived_at_ms, hint))
             })?;
-        Ok(MeetingTranscriptImportAttempt {
-            memory: self,
-            owner,
+        Ok(Self {
             authorized,
             input,
             source,
@@ -124,23 +153,21 @@ impl<'vault> Memory<'vault> {
             completed: false,
         })
     }
-}
 
-impl MeetingTranscriptImportAttempt<'_, '_> {
-    /// Run native pre-hooks, then land the selected SESSION and NOTE in one
-    /// writer. Native storage failures rearm consumed hook answers. Posts run
-    /// only after commit, with the actual native EndedSession.
-    pub fn resume(&mut self) -> Result<MeetingTranscriptCallerImportOutcome> {
+    fn resume(
+        &mut self,
+        memory: &Memory<'_>,
+        owner: &AuthenticatedOwner,
+    ) -> Result<MeetingTranscriptCallerImportOutcome> {
         if self.completed {
             return Err(
                 MemoryError::bad_request("meeting import attempt already completed").into(),
             );
         }
-        let memory = self.memory;
         let vault = memory.vault();
         {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            check_owner(memory, self.owner, &txn)?;
+            check_owner(memory, owner, &txn)?;
         }
         check_read_versions(memory, &self.source.stored)?;
         let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
@@ -179,7 +206,7 @@ impl MeetingTranscriptImportAttempt<'_, '_> {
         };
         let landed = vault.write_txn_door(crate::store::Callback::Audited, |txn| {
             memory.verify_actor_write_in_txn(txn)?;
-            check_owner(memory, self.owner, txn)?;
+            check_owner(memory, owner, txn)?;
             check_read_versions_in_txn(memory, &lane, txn, &self.source.stored)?;
             let (version, _, current) =
                 super::persistence::stored_transcript(vault, txn, &self.source.stored)?;

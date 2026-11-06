@@ -8,7 +8,8 @@ use axum::response::Json;
 use axum::routing::post;
 use oneiron::blob_artifact::BLOB_ARTIFACT_CONTENT_HASH_LEN;
 use oneiron::ingest::meeting_audio::{
-    MeetingTranscriptVersionPin, ProducedMeetingTranscript, StoredMeetingTranscript,
+    BulkImportBinding, MeetingTranscriptVersionPin, ProducedMeetingTranscript,
+    StoredMeetingTranscript,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +19,10 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod import;
+
 pub(super) fn owner_table() -> OwnerTable {
-    vec![
+    let mut routes = vec![
         (
             OwnerRoute {
                 method: "post",
@@ -50,7 +53,9 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(read),
         ),
-    ]
+    ];
+    routes.extend(import::owner_table());
+    routes
 }
 
 /// A native blob version selection, not an owner credential or import consent.
@@ -99,6 +104,7 @@ struct ReadReply {
     stored: StoredTranscript,
     artifact_json: String,
     recording_id: String,
+    import_binding: BulkImportBinding,
 }
 
 fn persist_schema() -> serde_json::Value {
@@ -231,8 +237,17 @@ async fn read(
             stored: StoredTranscript::from(&stored),
             artifact_json: transcript.json().to_owned(),
             recording_id: transcript.recording_id().to_owned(),
+            import_binding: transcript
+                .bulk_import_binding(&import_scope(server.vault()))
+                .map_err(|error| OwnerError::Invalid(error.to_string()))?,
         })
     })
     .await?;
     Ok(Json(reply))
+}
+
+fn import_scope(vault: &oneiron::Vault) -> String {
+    blake3::Hash::from_bytes(vault.vault_key_vault_id())
+        .to_hex()
+        .to_string()
 }
