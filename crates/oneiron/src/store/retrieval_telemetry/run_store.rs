@@ -779,6 +779,43 @@ fn stage_retrieval_run_with_visibility(
                         >() as u64),
                 )
             });
+            let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+                entries.iter().fold(
+                    (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                        super::types::RetrievalScoreBreakdown,
+                    >() as u64),
+                    |bytes, entry| {
+                        bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                            std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                        ))
+                    },
+                )
+            };
+            let bytes = bytes
+                .saturating_add(
+                    (existing.result_ids.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+                )
+                .saturating_add(score_breakdown_bytes(&existing.score_breakdown));
+            let bytes = existing.trace.as_ref().map_or(bytes, |trace| {
+                let bytes =
+                    bytes.saturating_add((trace.per_channel.capacity() as u64).saturating_mul(
+                        std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
+                    ));
+                let bytes = trace.per_channel.iter().fold(bytes, |bytes, channel| {
+                    bytes.saturating_add(score_breakdown_bytes(&channel.candidates))
+                });
+                [
+                    &trace.fused,
+                    &trace.blended,
+                    &trace.reranked,
+                    &trace.final_stage,
+                ]
+                .into_iter()
+                .fold(bytes, |bytes, stage| {
+                    bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
+                })
+            });
             memory.materialized(0, bytes);
         }
         super::turn_index::delete_with_memory(target, wtxn, &existing, memory.as_deref_mut())?;

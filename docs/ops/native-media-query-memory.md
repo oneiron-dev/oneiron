@@ -191,9 +191,25 @@ These four buffers stay unchanged through the original cleanup and drop at the
 end of the existing-row scope, before the caller lease, including errors and
 unwind. Their known charge stays conservative until that same lease drops.
 The lookup's error propagation, validation, cleanup order and later puts are
-unchanged. All other fields of this decoded row, the fork helper's separate
-decode, raw value copies, allocation peaks and a full working-set bound remain
-outside this charge.
+unchanged. Raw value copies, allocation peaks and a full working-set bound
+remain outside this charge.
+
+That same existing-row measurement also includes its result-ID vector's actual
+slot capacity, its score-breakdown vector's actual slots and each entry's
+component-vector backing. A present trace adds its per-channel vector's slots,
+each channel's candidate vector, and the fused, blended, reranked and final-stage
+candidate vectors, including each candidate's component-vector backing. Each
+outer buffer uses its native element size; inner component backing is counted
+separately, once. Matching results do not make these distinct vectors share
+storage. No vector is copied or changed for this measurement.
+
+These buffers are part of this same owned decode and stay unchanged through
+cleanup until the existing-row scope drops before the caller lease. Their known
+capacities join the same materialized observation and stay conservative until
+that lease drops, including errors and unwind. An unbound stage adds no walk.
+Replay inputs, the empty-reason string, remaining decoded backing and the fork
+helper's separate decode remain outside this charge, along with raw-read and
+overlay copies, database pages, transaction scratch and allocation peaks.
 
 At that bound provisional stage's original false-branch marker put, the same
 caller lease separately records the typed staged row's actual encoded key and
