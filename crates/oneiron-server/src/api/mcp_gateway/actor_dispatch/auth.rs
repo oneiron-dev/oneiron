@@ -156,6 +156,7 @@ pub(super) async fn registered_actor(
         drain: None,
         forwarded: None,
         client_surface: None,
+        signing_request_transport: None,
     })
 }
 

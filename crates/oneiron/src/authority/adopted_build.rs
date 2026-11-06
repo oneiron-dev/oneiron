@@ -123,7 +123,7 @@ impl Vault {
     /// covered row held, the held log builds the image whole. It inherits the
     /// adopted image's residence overflow mark, and its residence bodies fall
     /// back for [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`]
-    /// as a held-only build's do (FIX 11400).
+    /// past the optional-compaction trigger as a held-only build's do (FIX 11400).
     pub(super) fn build_authority_checkpoint_from_adopted_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -303,7 +303,7 @@ impl Vault {
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
         .map_err(|_| refused("checkpoint image does not decode"))?
-        .within_cap()?;
+        .compact_optional_evidence()?;
         normalized.encode()?;
         Ok(normalized)
     }
