@@ -1,6 +1,7 @@
 //! Caller-requested output placement for one queued skill-discovery pass.
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use super::{COACH_HOST_QUEUE_KIND, COACH_SKILL_DISCOVERY_FACET, invalid};
 use crate::Result;
@@ -9,6 +10,18 @@ use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::skill_attribution::AttributionOutputReadRequests;
+use crate::skill_reliability::CallableOutcomeReadRequests;
+
+/// Independent placement requests for one queued skill-discovery pass.
+/// Attribution and callable outcomes use different maps. A callable entry is
+/// keyed by (persisted judgment sequence, actual invoker executor), not by a
+/// judgment's read position or the attempt's advertised executor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillDiscoveryOutputReadRequests {
+    pub attribution: AttributionOutputReadRequests,
+    pub callable_outcomes: CallableOutcomeReadRequests,
+}
 
 impl DreamerRunnerStore<'_> {
     /// Queues a skill-discovery pass with the caller's independent per-output
@@ -17,6 +30,28 @@ impl DreamerRunnerStore<'_> {
     pub fn enqueue_coach_skill_discovery(
         &self,
         requests: &AttributionOutputReadRequests,
+        parent_attempt: Option<AttemptId>,
+        dedupe_key: Option<String>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_coach_skill_discovery_with_requests(
+            &SkillDiscoveryOutputReadRequests {
+                attribution: requests.clone(),
+                callable_outcomes: CallableOutcomeReadRequests::new(),
+            },
+            parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        )
+    }
+
+    /// Queues the original pass with separate per-invoker callable outcome
+    /// requests as well as judgment/proposal placement. No entry grants a read.
+    pub fn enqueue_coach_skill_discovery_with_requests(
+        &self,
+        requests: &SkillDiscoveryOutputReadRequests,
         parent_attempt: Option<AttemptId>,
         dedupe_key: Option<String>,
         run_id: Option<String>,
@@ -42,6 +77,6 @@ impl DreamerRunnerStore<'_> {
 
 /// Nil is the ordinary nightly job. An unknown optional request never refuses
 /// the pass or supplies placement to a row.
-pub(super) fn output_requests(input: &Value) -> Option<AttributionOutputReadRequests> {
+pub(super) fn output_requests(input: &Value) -> Option<SkillDiscoveryOutputReadRequests> {
     rmpv::ext::from_value(input.clone()).ok()
 }

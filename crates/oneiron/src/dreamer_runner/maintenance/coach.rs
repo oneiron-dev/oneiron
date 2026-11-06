@@ -25,7 +25,7 @@ use crate::model_decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,
-    run_task_attribution_sweep_with_output_requests,
+    run_task_attribution_sweep_with_callable_requests,
 };
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
@@ -33,6 +33,7 @@ use rmpv::Value;
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
 mod skill_discovery;
+pub use skill_discovery::SkillDiscoveryOutputReadRequests;
 mod type_tree_outcomes;
 pub use type_tree_outcomes::TypeTreeOutcomeReadRequests;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
@@ -361,12 +362,15 @@ impl Vault {
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
         let requests = skill_discovery::output_requests(&attempt.status.payload.input);
-        run_task_attribution_sweep_with_output_requests(
+        run_task_attribution_sweep_with_callable_requests(
             self,
             limit,
             source,
             decisions,
-            requests.as_ref(),
+            requests.as_ref().map(|requests| &requests.attribution),
+            requests
+                .as_ref()
+                .map(|requests| &requests.callable_outcomes),
         )
     }
 
