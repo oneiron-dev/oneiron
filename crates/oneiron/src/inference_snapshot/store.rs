@@ -479,10 +479,15 @@ impl Vault {
     /// Storage and allocation errors.
     pub fn inference_snapshot_records(&self) -> Result<Vec<SnapshotRecord>> {
         let txn = self.store.env.read_txn()?;
-        Ok(catalog::rows(&self.store, &txn)?
+        let mut out = Vec::new();
+        for record in catalog::rows(&self.store, &txn)?
             .into_iter()
             .filter_map(|(_, record)| record.filter(SnapshotRecord::reusable))
-            .collect())
+        {
+            out.try_reserve(1).map_err(std::io::Error::from)?;
+            out.push(record);
+        }
+        Ok(out)
     }
 
     /// Every kept snapshot's row of `conversation` that decodes and may
@@ -490,7 +495,7 @@ impl Vault {
     /// candidates for one conversation, with no other row read.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn inference_snapshot_records_for(
         &self,
         conversation: &crate::entity_id::EntityId,
