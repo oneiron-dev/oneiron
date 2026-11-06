@@ -102,6 +102,7 @@ pub(super) fn copy_companions(
         && matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_))
     {
         crate::sync::ingest::copy_peer_origins(source, out)?;
+        crate::sync::ingest::copy_writer_proofs(source, out)?;
         crate::sync::origin_positions::copy_for_own_machines(source, out)?;
     }
     crate::sync::note::copy_selected(source, out, notes)?;

@@ -293,6 +293,12 @@ side_tables! {
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
+    /// Which machine wrote the MESSAGE row this install stores (FIX 12113): the row's BLAKE3
+    /// (32 bytes) when this install's local put wrote it, or the writer's whole proof (the row's
+    /// BLAKE3, the writer machine and its Ed25519 signature, 112 bytes) when the own-device lane
+    /// admitted it. The reverse scan vouches for a row beside it only while its bytes are the
+    /// ones named here. Runtime: never imaged, a restore drops it. Key: hex32 (MESSAGE id).
+    SYNC_MESSAGE_WRITER: SyncState b"mw:" Raw;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
