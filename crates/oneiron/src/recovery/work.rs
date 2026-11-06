@@ -18,9 +18,9 @@
 //! yields between whole packs and within each chunk hash.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
-//! completion turn; pure snapshot equality resumes between rows and within
-//! entity blobs, current document text, titles, field names, receipt bytes and
-//! fork and proposal payloads.
+//! completion turn; pure snapshot equality resumes between rows, within native
+//! strings and byte payloads, and between nested EntityDoc history items.
+//! EntityDoc metadata maps still compare whole at their native field positions.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.

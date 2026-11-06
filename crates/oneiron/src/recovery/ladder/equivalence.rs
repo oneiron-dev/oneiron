@@ -1,10 +1,20 @@
 //! Pure equality of one owned recapture after native pad normalization.
-//! Payload bytes, titles and fields resume one byte per existing work unit.
+//! Payload bytes and strings resume one byte per existing work unit.
+
+mod carriers;
+mod history;
+
+use carriers::{
+    compare_container_manifests, compare_named_rows, compare_payload_rows, compare_schema_manifest,
+};
+use history::HistoryComparison;
 
 use crate::error::Result;
 use crate::note::{NoteFork, NoteReviewBundle};
 use crate::recovery::canonical::{
-    CanonicalEntity, CanonicalEntityDocument, CanonicalSnapshot, invalid,
+    CanonicalAssetBodyRef, CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalEntity,
+    CanonicalEntityDocument, CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn,
+    CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone, invalid,
 };
 use crate::recovery::{CanonicalDocument, CanonicalHeadMove};
 
@@ -14,6 +24,8 @@ pub(in crate::recovery) struct CanonicalComparison {
     next: usize,
     byte: usize,
     payload: PayloadPart,
+    record_field: usize,
+    history: HistoryComparison,
     bundle: BundleComparison,
 }
 
@@ -72,6 +84,8 @@ impl CanonicalComparison {
             next: 0,
             byte: 0,
             payload: PayloadPart::First,
+            record_field: 0,
+            history: HistoryComparison::default(),
             bundle: BundleComparison::default(),
         }
     }
@@ -112,10 +126,10 @@ impl CanonicalComparison {
             asset_body_refs,
         } = &self.actual;
         let (done, next_group) = match self.group {
-            Group::Window => {
-                compare_value(window, &wanted.window)?;
-                (true, Group::EntityBlobs)
-            }
+            Group::Window => (
+                compare_bytes(window.as_bytes(), wanted.window.as_bytes(), &mut self.byte)?,
+                Group::EntityBlobs,
+            ),
             Group::EntityBlobs => (
                 compare_entities(
                     entity_blobs,
@@ -134,11 +148,32 @@ impl CanonicalComparison {
                 Group::BaseEdges,
             ),
             Group::BaseEdges => (
-                compare_rows(base_edges, &wanted.base_edges, &mut self.next)?,
+                compare_payload_rows(
+                    base_edges,
+                    &wanted.base_edges,
+                    &mut self.next,
+                    &mut self.byte,
+                    |CanonicalBaseEdge {
+                         source,
+                         kind,
+                         target,
+                         value,
+                     }| { ((*source, *kind, *target), value.as_slice()) },
+                )?,
                 Group::Tombstones,
             ),
             Group::Tombstones => (
-                compare_rows(tombstones, &wanted.tombstones, &mut self.next)?,
+                compare_payload_rows(
+                    tombstones,
+                    &wanted.tombstones,
+                    &mut self.next,
+                    &mut self.byte,
+                    |CanonicalTombstone {
+                         id,
+                         deleted_at,
+                         value,
+                     }| { ((*id, *deleted_at), value.as_slice()) },
+                )?,
                 Group::DocSnapshots,
             ),
             Group::DocSnapshots => (
@@ -158,6 +193,8 @@ impl CanonicalComparison {
                     &mut self.next,
                     &mut self.byte,
                     &mut self.payload,
+                    &mut self.record_field,
+                    &mut self.history,
                 )?,
                 Group::DocumentHeads,
             ),
@@ -196,39 +233,66 @@ impl CanonicalComparison {
                 Group::ContainerManifests,
             ),
             Group::ContainerManifests => (
-                compare_rows(
+                compare_container_manifests(
                     container_manifests,
                     &wanted.container_manifests,
                     &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
                 )?,
                 Group::SchemaManifest,
             ),
-            Group::SchemaManifest => {
-                compare_value(schema_manifest, &wanted.schema_manifest)?;
-                (true, Group::SuppressedTasks)
-            }
+            Group::SchemaManifest => (
+                compare_schema_manifest(schema_manifest, &wanted.schema_manifest, &mut self.byte)?,
+                Group::SuppressedTasks,
+            ),
             Group::SuppressedTasks => (
                 compare_rows(suppressed_tasks, &wanted.suppressed_tasks, &mut self.next)?,
                 Group::CustodyTransitions,
             ),
             Group::CustodyTransitions => (
-                compare_rows(
+                compare_payload_rows(
                     custody_transitions,
                     &wanted.custody_transitions,
                     &mut self.next,
+                    &mut self.byte,
+                    |CanonicalCustodyTransition { id, piece, carrier }| {
+                        ((*id, *piece), carrier.as_slice())
+                    },
                 )?,
                 Group::RoomTurns,
             ),
             Group::RoomTurns => (
-                compare_rows(room_turns, &wanted.room_turns, &mut self.next)?,
+                compare_named_rows(
+                    room_turns,
+                    &wanted.room_turns,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                    |CanonicalRoomTurn { key, row }| (key.as_str(), row.as_slice()),
+                )?,
                 Group::RoomFacts,
             ),
             Group::RoomFacts => (
-                compare_rows(room_facts, &wanted.room_facts, &mut self.next)?,
+                compare_named_rows(
+                    room_facts,
+                    &wanted.room_facts,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                    |CanonicalRoomFact { key, row }| (key.as_str(), row.as_slice()),
+                )?,
                 Group::DocumentPins,
             ),
             Group::DocumentPins => (
-                compare_rows(document_pins, &wanted.document_pins, &mut self.next)?,
+                compare_named_rows(
+                    document_pins,
+                    &wanted.document_pins,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                    |CanonicalPinCarrier { key, row }| (key.as_str(), row.as_slice()),
+                )?,
                 Group::PeerOrigins,
             ),
             Group::PeerOrigins => (
@@ -236,7 +300,13 @@ impl CanonicalComparison {
                 Group::RowBirths,
             ),
             Group::RowBirths => (
-                compare_rows(row_births, &wanted.row_births, &mut self.next)?,
+                compare_payload_rows(
+                    row_births,
+                    &wanted.row_births,
+                    &mut self.next,
+                    &mut self.byte,
+                    |CanonicalRowBirth { id, value }| (*id, value.as_slice()),
+                )?,
                 Group::WithdrawnCutoffs,
             ),
             Group::WithdrawnCutoffs => (
@@ -244,7 +314,13 @@ impl CanonicalComparison {
                 Group::AssetBodyRefs,
             ),
             Group::AssetBodyRefs => (
-                compare_rows(asset_body_refs, &wanted.asset_body_refs, &mut self.next)?,
+                compare_payload_rows(
+                    asset_body_refs,
+                    &wanted.asset_body_refs,
+                    &mut self.next,
+                    &mut self.byte,
+                    |CanonicalAssetBodyRef { id, value }| (*id, value.as_slice()),
+                )?,
                 Group::Complete,
             ),
             Group::Complete => return Ok(true),
@@ -254,6 +330,8 @@ impl CanonicalComparison {
             self.next = 0;
             self.byte = 0;
             self.payload = PayloadPart::First;
+            self.record_field = 0;
+            self.history = HistoryComparison::default();
             self.bundle = BundleComparison::default();
         }
         Ok(matches!(self.group, Group::Complete))
@@ -341,6 +419,8 @@ fn compare_entity_documents(
     next: &mut usize,
     byte: &mut usize,
     payload: &mut PayloadPart,
+    record_field: &mut usize,
+    history_state: &mut HistoryComparison,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalEntityDocument {
@@ -381,16 +461,35 @@ fn compare_entity_documents(
         }
         return Ok(false);
     }
-    if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
-        compare_value(metadata, expected_metadata)?;
-        compare_value(summary_meta, expected_summary_meta)?;
-        compare_value(record_fields, expected_record_fields)?;
-        compare_value(birth_actor, expected_birth_actor)?;
-        compare_value(birth_at, expected_birth_at)?;
-        compare_value(history, expected_history)?;
+    if *payload == PayloadPart::Second {
+        if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
+            compare_value(metadata, expected_metadata)?;
+            compare_value(summary_meta, expected_summary_meta)?;
+            *payload = PayloadPart::Third;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    compare_value(&record_fields.len(), &expected_record_fields.len())?;
+    if let Some(field) = record_fields.get(*record_field) {
+        if compare_bytes(
+            field.as_bytes(),
+            expected_record_fields[*record_field].as_bytes(),
+            byte,
+        )? {
+            *record_field += 1;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    compare_value(birth_actor, expected_birth_actor)?;
+    compare_value(birth_at, expected_birth_at)?;
+    if history_state.advance(history, expected_history)? {
         *next += 1;
         *byte = 0;
         *payload = PayloadPart::First;
+        *record_field = 0;
+        *history_state = HistoryComparison::default();
     }
     Ok(false)
 }
