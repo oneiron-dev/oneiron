@@ -295,8 +295,17 @@ export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 
+/** Caller-selected worlds, within the caller's existing read authority. */
+export type RecallWorlds =
+  | { kind: "all" }
+  | { kind: "base" }
+  | { kind: "world"; worldRef: string; includeBase: boolean }
+  | { kind: "worlds"; worldRefs: string[]; includeBase: boolean }
+
 /** Recall scoping: narrowing only; unset is the vault floor. */
 export type RecallScope = {
+  /** Explicit world selection; mutually exclusive with `worldRef`. */
+  worlds?: RecallWorlds
   worldRef?: string
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
@@ -393,6 +402,8 @@ export type MemoryItem = {
   stale?: MemoryStaleStamp
   world?: string
   facet?: string
+  /** The claim's explicit project audience, not a topic or a WORLD. */
+  projectRef?: string
   salience?: number
   /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
   reactions: string[]
@@ -755,6 +766,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
@@ -1230,6 +1242,8 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def drafters(self) -> "Oneiron._VaultDraftersVerbs": ...
+        @property
         def roots(self) -> "Oneiron._VaultRootsVerbs": ...
         @property
         def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs": ...
@@ -1343,6 +1357,8 @@ class Oneiron:
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
         @property
         def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
+        @property
+        def ingest(self) -> "Oneiron._VaultIngestVerbs": ...
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
@@ -2708,6 +2724,22 @@ class Oneiron:
             """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
         def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+    class _VaultDraftersVerbs:
+        def list(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."""
+        def list_as(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."""
+        def status(self, spec: Facade.DrafterStatusRequest) -> Facade.DrafterStatus:
+            """The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."""
+        @property
+        def policy(self) -> "Oneiron._VaultDraftersPolicyVerbs": ...
+        def revert(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."""
+        def revert_as(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."""
+    class _VaultDraftersPolicyVerbs:
+        def set(self, spec: Facade.DrafterPolicySetRequest) -> Facade.DrafterPolicy:
+            """The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."""
     class _VaultRootsVerbs:
         @property
         def requests(self) -> "Oneiron._VaultRootsRequestsVerbs": ...
@@ -3902,6 +3934,14 @@ class Oneiron:
             """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
         def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
             """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+    class _VaultIngestVerbs:
+        @property
+        def ag_ui(self) -> "Oneiron._VaultIngestAgUiVerbs": ...
+    class _VaultIngestAgUiVerbs:
+        def import_(self, spec: Facade.AgUiFileImport) -> Facade.AgUiFileReceipt:
+            """The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."""
+        def read(self, input: Facade.AgUiFileReadInput) -> Facade.AgUiFileRead:
+            """Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
@@ -4236,6 +4276,8 @@ class Oneiron:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...
         @property
+        def board(self) -> "Oneiron._SelfBoardVerbs": ...
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
         def standing(self) -> "Oneiron._SelfStandingVerbs": ...
@@ -4309,6 +4351,19 @@ class Oneiron:
             """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
         def seal(self, spec: Facade.ScratchpadSealRequest) -> Facade.ScratchpadWriteReply:
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+    class _SelfBoardVerbs:
+        def layout(self, spec: Facade.EmptyRequest) -> Facade.BoardLayoutState:
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+        def fold(self, spec: Facade.BoardFoldRequest) -> Facade.BoardLayoutState:
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+        def unfold(self, spec: Facade.BoardSectionRequest) -> Facade.BoardLayoutState:
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+        def size(self, spec: Facade.BoardSizeRequest) -> Facade.BoardLayoutState:
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+        def filter(self, spec: Facade.BoardFilterRequest) -> Facade.BoardLayoutState:
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+        def replace(self, spec: Facade.BoardReplaceRequest) -> Facade.BoardLayoutState:
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
