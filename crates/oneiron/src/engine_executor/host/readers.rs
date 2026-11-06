@@ -5,18 +5,19 @@
 use super::*;
 
 impl RecordingJsHost<'_, '_> {
-    /// The source of a `self.spawn`: one of this run's own results, read as
-    /// every read of it is, its range the ref's or the whole body. A source
-    /// the run may not read now is refused as that read would be.
+    /// The source of a `self.spawn`: this run's own result or a Read child's
+    /// inherited source, checked as a read of it is. An inherited source
+    /// keeps its original owner, narrowed range and checked row witnesses.
     pub(super) fn delegate_source(
         &mut self,
         source: &str,
     ) -> Result<std::result::Result<DelegatedSource, String>> {
         let target = JsResultTarget::parse(source);
-        if self.resolve_result(&target.reference).is_none() {
+        let own = self.resolve_result(&target.reference).is_some();
+        if !own && !self.is_inherited_reader_source(&target.reference) {
             return Ok(Err("unknown_handle".to_owned()));
         }
-        let read = match self.checked_read(&target)?.map(|(read, _)| read) {
+        let (read, rows) = match self.checked_read(&target)? {
             Ok(read) => read,
             Err(refused) => {
                 let code = refused
@@ -31,17 +32,37 @@ impl RecordingJsHost<'_, '_> {
         }
         let output = read.output();
         Ok(Ok(DelegatedSource {
-            owner: self.run_id,
+            owner: read.owner(),
             path: output.path.clone(),
             handle: output.handle.clone(),
             range: read.range().unwrap_or((0, output.raw_len)),
-            rows: self.result_rows(),
+            rows: if own { self.result_rows() } else { rows },
         }))
+    }
+
+    /// Whether `reference` names the one source lent to a native Read child.
+    /// Scoped inputs and child findings are not sources for this path.
+    pub(super) fn is_inherited_reader_source(&self, reference: &JsResultRef) -> bool {
+        let Some(child) = self.gated_write.reader_child() else {
+            return false;
+        };
+        if child.scoped.is_some() {
+            return false;
+        }
+        match reference {
+            JsResultRef::Name(name) => child.delegated(true, name).is_some(),
+            JsResultRef::Handle(handle) => {
+                child.delegated(false, handle).is_some()
+                    || handle
+                        .strip_prefix("occurrence:")
+                        .is_some_and(|wanted| child.delegated_occurrence(wanted).is_some())
+            }
+        }
     }
 
     /// `self.spawn(...)`: the source resolved in this run, then the spawn
     /// dispatched with it bound; the run's record keeps the guest's call. A
-    /// reader child may delegate only its own results, never its inherited input.
+    /// Read child with a seat may also delegate its inherited source.
     pub(super) fn spawn_reader(
         &mut self,
         seq: u64,
