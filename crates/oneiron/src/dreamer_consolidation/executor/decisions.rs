@@ -291,9 +291,18 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
         // step that traps or fails leaves the prefix on the tally.
-        for (_, usage, binding) in &spent {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
             if let Some(binding) = binding {
-                charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
+                {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
+                    return Err(error.into());
+                }
             } else {
                 charges.record_usage(usage);
             }

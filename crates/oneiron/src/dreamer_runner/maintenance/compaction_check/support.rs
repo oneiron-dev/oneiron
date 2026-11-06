@@ -83,14 +83,27 @@ impl Spend {
     fn book(
         &mut self,
         vault: &Vault,
-        spent: &[([u8; 32], LlmUsage, Option<StepEffectBinding>)],
+        spent: &[([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)],
     ) -> Result<()> {
         let store = DreamerRunnerStore::new(vault);
-        for (_, usage, binding) in spent {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
             if let Some(binding) = binding {
-                if self.step_bindings.contains(binding)
-                    || store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash)?
-                {
+                if self.step_bindings.contains(binding) {
+                    continue;
+                }
+                let charged =
+                    match store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash) {
+                        Ok(charged) => charged,
+                        Err(error) => {
+                            for (_, usage, _, memoized) in &spent[index..] {
+                                if !*memoized {
+                                    self.units = self.units.saturating_add(units(usage));
+                                }
+                            }
+                            return Err(error);
+                        }
+                    };
+                if charged {
                     continue;
                 }
                 self.step_bindings.push(*binding);
