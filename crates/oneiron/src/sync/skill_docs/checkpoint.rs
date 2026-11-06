@@ -5,6 +5,8 @@
 //! entity-row getter places that kind. Neither content holds the snapshot's
 //! original part digests: rejoining derives each leg's manifest anew.
 
+pub(crate) mod capture;
+
 use serde::{Deserialize, Serialize};
 
 use super::{CarriedHead, RefinementOriginParts, decode, encode};
