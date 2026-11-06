@@ -8,8 +8,11 @@
 //! `completed` settles the send Done; `failed` and `cancelled`, and a task
 //! the connector no longer knows (`-32602`), stop it with its delivery
 //! uncertain; `working` and `input_required` poll again later (this host
-//! answers no task input). The session ends only after the ledger holds the
-//! settlement. Only the status word is kept: the reply's other text never
+//! answers no task input). A `tasks/get` answered HTTP 404 in its session is
+//! the connector ending that session: the poll opens a new one under the
+//! same endpoint, revision and credential, the ledger keeps its id, and the
+//! poll asks again in it (FIX 16028). The session ends only after the ledger
+//! holds the settlement. Only the status word is kept: the reply's other text never
 //! leaves this pass, so nothing it echoes of the credential is stored.
 
 use oneiron::outbound_consent::{OutboundBindingAuthority, OutboundBindingValidation};
@@ -68,7 +71,10 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
     };
     for task in due {
         // The intent id's first bytes name the row in the log.
-        let intent: String = task.intent[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+        let intent: String = task.intent[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let recorded = match host.poll_remote_task(&task) {
             Ok(Polled::Running {
                 status,
@@ -166,6 +172,32 @@ impl ServedConnectorCallHost {
             .post(&request, Some(CALL_TIMEOUT))
             .send()
             .map_err(|_| "poll_unsent")?;
+        // MCP (Streamable HTTP): a 404 to a request that carries a session id
+        // is the server ending that session, and the client starts a new
+        // one. A task binds to its authorization context, not its session
+        // (MCP 2025-11-25 tasks), so its poll goes on in a new session under
+        // the row's own endpoint and credential.
+        let (live, response) =
+            if response.status() == reqwest::StatusCode::NOT_FOUND && live.session.is_some() {
+                drop(response);
+                let renewed = renew_session(&live, &task.poll.protocol)?;
+                let session = renewed
+                    .session
+                    .as_ref()
+                    .map(|value| value.to_str().map(str::to_owned))
+                    .transpose()
+                    .map_err(|_| "session_unreadable")?;
+                self.vault
+                    .remote_task_session_renewed(&task.intent, &task.task_id, session)
+                    .map_err(|_| "session_unrecorded")?;
+                let response = renewed
+                    .post(&request, Some(CALL_TIMEOUT))
+                    .send()
+                    .map_err(|_| "poll_unsent")?;
+                (renewed, response)
+            } else {
+                (live, response)
+            };
         if !response.status().is_success() {
             return Err("poll_http_refused");
         }
@@ -184,6 +216,63 @@ impl ServedConnectorCallHost {
             },
             Read::Ended(end) => Polled::Ended(end, live),
         })
+    }
+}
+
+/// A new MCP session in place of the one the connector ended, under
+/// `live`'s endpoint, protocol revision and credential (FIX 16028):
+/// `initialize` with no session, declaring no capabilities (a poll answers
+/// no task input), its revision checked as the send checked it, then
+/// `notifications/initialized` in the new session.
+fn renew_session(live: &LiveSession, revision: &str) -> Result<LiveSession, &'static str> {
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": INITIALIZE_ID,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": revision,
+            "capabilities": {},
+            "clientInfo": { "name": "oneiron", "version": env!("CARGO_PKG_VERSION") },
+        },
+    });
+    let response = post_json(
+        &live.client,
+        &live.endpoint,
+        &initialize,
+        live.auth.as_ref(),
+        None,
+        Some(HANDSHAKE_TIMEOUT),
+    )
+    .send()
+    .map_err(|_| "session_renewal_unsent")?;
+    if !response.status().is_success() {
+        return Err("session_renewal_refused");
+    }
+    let session = response.headers().get(SESSION_HEADER).cloned();
+    let Ok(Some((initialized, _))) = read_reply(response, INITIALIZE_ID) else {
+        return Err("session_renewal_unreadable");
+    };
+    // The key pinned one revision; a server that answers another is not
+    // the connector the owner approved.
+    if initialized.get("error").is_some()
+        || initialized
+            .pointer("/result/protocolVersion")
+            .and_then(Value::as_str)
+            != Some(revision)
+    {
+        return Err("session_renewal_rejected");
+    }
+    let renewed = LiveSession {
+        client: live.client.clone(),
+        endpoint: live.endpoint.clone(),
+        protocol: live.protocol.clone(),
+        session,
+        auth: live.auth.clone(),
+    };
+    let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+    match renewed.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
+        Ok(response) if response.status().is_success() => Ok(renewed),
+        _ => Err("session_renewal_unconfirmed"),
     }
 }
 
