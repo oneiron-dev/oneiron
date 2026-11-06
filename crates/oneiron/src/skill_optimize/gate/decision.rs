@@ -6,6 +6,10 @@ use crate::limit_ask::EngineLimit;
 use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 
 mod commit;
+mod prepare;
+mod sources;
+
+use self::sources::{accepted_in_cycle_sourced_in_txn, judge_revision_due_sourced_in_txn};
 
 use self::commit::decide_in_txn;
 
@@ -198,62 +202,17 @@ fn rule_on_proposal(
                 }
                 Ok(Prepared::Ruled(Box::new(verdict)))
             }
-            (None, None) => {
-                let current = current.ok_or(Error::InvariantViolation(
-                    "a non-terminal pre-score snapshot has a readable target",
-                ))?;
-                let held_out = held_out_receipts_in_txn(vault, &*wtxn, &target)?;
-                // An empty reserve is not an answer ABOUT the proposal, so it
-                // does not close one. The gate scores against reserved
-                // evidence; a skill whose split has reserved none yet cannot be
-                // scored at all, and the drafting door already refuses to spend
-                // an author on one ([`super::super::optimize_candidates`]).
-                // What is left here is the race and the direct call, and for
-                // both the honest outcome is the retryable abort: nothing is
-                // scored, nothing is written, and the question stays open for
-                // the wake that finds a reserve.
-                if held_out.is_empty() {
-                    return Err(retry(
-                        "no evidence is reserved for this skill, so there is nothing to score",
-                    ));
-                }
-                let outcomes = held_out_outcome_results_in_txn(vault, &*wtxn, &target)?;
-                let basis = ScoredBasis::of(
-                    &staged,
-                    &current,
-                    &held_out,
-                    &outcomes,
-                    tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
-                    goal_definition_in_txn(vault, wtxn, &target)?.revision,
-                    goal_definition_in_txn(vault, wtxn, &target)?.goal_id,
-                )?;
-                // Idempotence, before the LLM tier rather than after it. A gate
-                // call is a DELIVERY, and deliveries are retried; asking the
-                // judge the same question twice would not only pay twice, it
-                // would answer differently, because the first ruling has by
-                // then moved the cap the second call is measured against.
-                let standing =
-                    standing_ruling_in_txn(vault, &*wtxn, proposal, &basis, cycle, judge_revision)?;
-                if let Some(standing) = standing {
-                    return Ok(Prepared::Ruled(Box::new(standing)));
-                }
-                Ok(Prepared::Score(Box::new(ScoreInputs {
-                    judge_rubric_digest: judge_rubric_digest_in_txn(vault, &*wtxn)?,
-                    outcomes,
-                    proposal_instructions: super::rule_policy::gate_instructions_in_txn(
-                        vault, &*wtxn, proposal, &staged,
-                    ),
-                    target_instructions: super::rule_policy::gate_instructions_in_txn(
-                        vault, &*wtxn, &target, &current,
-                    ),
-                    proposal: staged,
-                    target,
-                    target_record: current,
-                    held_out,
-                    basis,
-                    goal_definition: goal_definition_in_txn(vault, wtxn, &target)?,
-                })))
-            }
+            (None, None) => prepare::score_inputs_sourced_in_txn(
+                vault,
+                &*wtxn,
+                proposal,
+                staged,
+                current,
+                target,
+                cycle,
+                judge_revision,
+            )
+            .map(|(prepared, _)| prepared),
             _ => Err(retry(
                 "the reason the gate was about to rule on no longer holds in the committing snapshot",
             )),
@@ -577,17 +536,7 @@ pub(super) fn accepted_in_cycle_in_txn(
     cycle: &SkillEditCycle,
     spending: &EntityId,
 ) -> Result<u32> {
-    let mut accepted: BTreeSet<EntityId> = BTreeSet::new();
-    for verdict in verdict_rows_in_txn(vault, rtxn)? {
-        if verdict.disposition.admits()
-            && verdict.cycle == cycle.as_str()
-            && verdict.proposal != *spending
-            && verdict.displaced_by_revision.is_none()
-        {
-            accepted.insert(verdict.proposal);
-        }
-    }
-    Ok(u32::try_from(accepted.len()).unwrap_or(u32::MAX))
+    accepted_in_cycle_sourced_in_txn(vault, rtxn, cycle, spending).map(|(count, _)| count)
 }
 
 /// k: the fresh anchored labels a judge rubric revision needs since the last
@@ -611,27 +560,8 @@ fn judge_revision_due_in_txn(
     target: &EntityId,
     world_outcomes: usize,
 ) -> Result<bool> {
-    let mut since = 0_u64;
-    for verdict in verdict_rows_in_txn(vault, rtxn)? {
-        if !verdict.disposition.admits()
-            || verdict.displaced_by_revision.is_some()
-            || verdict.proposal == *spending
-        {
-            continue;
-        }
-        // The ruling that made `target` the judge, or another edit of it.
-        if verdict.proposal == *target || verdict.skill == *target {
-            if verdict.cycle == cycle.as_str() {
-                return Ok(false);
-            }
-            if verdict.proposal == *target {
-                since = since.max(verdict.at);
-            }
-        }
-    }
-    let picks = crate::skill_optimize::labels::anchor_labels_since_in_txn(vault, rtxn, since)?;
-    let outcomes = u64::try_from(world_outcomes).unwrap_or(u64::MAX);
-    Ok(picks.saturating_add(outcomes) >= JUDGE_REVISION_FRESH_LABELS)
+    judge_revision_due_sourced_in_txn(vault, rtxn, cycle, spending, target, world_outcomes)
+        .map(|(due, _)| due)
 }
 
 /// Whether an approval of an edit to `target` may admit in `cycle`: always,
@@ -702,28 +632,15 @@ fn standing_ruling_in_txn(
     cycle: &SkillEditCycle,
     judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
-    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
-        basis.matches(verdict)
-            && verdict.displaced_by_revision.is_none()
-            && verdict.judge_revision.as_deref() == Some(judge_revision)
-            && (verdict.disposition.admits()
-                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                || (matches!(
-                    verdict.disposition,
-                    SkillEditDisposition::DeferredCycleCap
-                        | SkillEditDisposition::DeferredJudgeCadence
-                        | SkillEditDisposition::DeferredInconclusive
-                ) && verdict.cycle == cycle.as_str()))
-    });
-    match standing {
-        Some(pending)
-            if pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                && !tradeoff::pending_waits_in_txn(vault, rtxn, &pending)? =>
-        {
-            Ok(None)
-        }
-        standing => Ok(standing),
-    }
+    Ok(sources::standing_ruling_sourced_in_txn(
+        vault,
+        rtxn,
+        proposal,
+        basis,
+        cycle,
+        judge_revision,
+    )?
+    .0)
 }
 
 /// The most recent ruling on one proposal, whatever it said.
