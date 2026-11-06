@@ -114,6 +114,10 @@ async fn ws_upgrade_handler(
     let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
     // The binding door proved the machine with the upgrade's own slip proof.
     let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
+    // FIX 4748: a device serving another machine of this vault while their
+    // home is down serves it as a peer: only one marked mine, never while
+    // this machine's authority fold is unsettled, state only.
+    let peer_serve = super::peer_serve::admit(&server, &headers, &extensions, machine)?;
     // The home answers with its own machine over that same proof, so the
     // device judges its sends for this machine (OF-534 G6/G7).
     let home_proof = home_proof_header(&headers, server.vault().as_ref());
@@ -162,7 +166,7 @@ async fn ws_upgrade_handler(
                         (session_jti, owner),
                         telemetry_actor,
                         locality,
-                        machine,
+                        (machine, peer_serve),
                         signing_request_transport,
                     ),
                 )
