@@ -34,6 +34,10 @@ side_tables! {
     /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
     /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
     MAIL_PACK_FORGET_OWED: VaultMeta b"mail_pack:forget_owed:v1:" Named;
+    /// Which message each UID of an IMAP folder the mail pack read holds (fix list row 17871),
+    /// with the folder's UIDVALIDITY. Key: id16(source) + blake3 (32) of the folder digest +
+    /// u64be UID.
+    MAIL_PACK_IMAP_UID: VaultMeta b"mail_pack:imap_uid:v1:" Named;
     /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
     /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
     /// of the path.
