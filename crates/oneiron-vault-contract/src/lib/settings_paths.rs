@@ -84,6 +84,8 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.code_mode.check.microsoft_tsc",
     "models.decision_read.recipe",
     "models.voice.extraction_prompt_file",
+    "models.dreamer.wording.coach_heal_route_prompt_file",
+    "models.dreamer.wording.coach_health_draft_prompt_file",
 ];
 
 /// The import queue's source roots, as leaves of `[import]`. A queue that is
