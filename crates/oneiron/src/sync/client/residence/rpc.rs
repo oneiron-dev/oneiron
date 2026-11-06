@@ -103,7 +103,8 @@ impl ResidenceRpc {
         .map_err(|_| refused())?;
         // A future server may send an ephemeral snapshot before the bind ack.
         // Only the exact fixed-ID null reply opens the RPC lane.
-        for _ in 0..16 {
+        let mut opening_messages = 0;
+        while opening_messages < 16 {
             let msg = tokio::time::timeout_at(deadline, socket.next())
                 .await
                 .map_err(|_| refused())?
@@ -112,6 +113,14 @@ impl ResidenceRpc {
             let Message::Binary(frame) = msg else {
                 return Err(refused());
             };
+            if frame.first() == Some(&transport::TAG_ROOT_PART) {
+                let part = transport::decode_root_update_part(&frame[1..])?;
+                if part.offset + part.bytes.len() == part.total {
+                    opening_messages += 1;
+                }
+                continue;
+            }
+            opening_messages += 1;
             match frame.first() {
                 Some(&TAG_RPC) => {
                     super::super::note_session::accept_bind_reply(&frame[1..])?;
@@ -275,7 +284,9 @@ impl ResidenceRpc {
                 // home opens each socket with; a bound lane takes none.
                 let opening = matches!(
                     frame.first(),
-                    Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE)
+                    Some(&transport::TAG_EPHEMERAL)
+                        | Some(&transport::TAG_SYNC_UPDATE)
+                        | Some(&transport::TAG_ROOT_PART)
                 );
                 if !(self.unbound && opening) {
                     break frame;

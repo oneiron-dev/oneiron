@@ -55,6 +55,7 @@ mod note_session;
 mod own_device;
 mod repo_projection;
 mod residence;
+mod root_updates;
 mod sealed_updates;
 mod sync_frames;
 mod types;

@@ -58,6 +58,7 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(super) root_parts: Mutex<super::root_updates::RootUpdateAssembly>,
     pub(crate) note_session_bound: bool,
     /// FIX 11111: the main socket already logged that it withholds this
     /// machine's credentials from a cleartext server.
@@ -207,6 +208,7 @@ impl SyncClient {
             vault,
             manager,
             root_doc,
+            root_parts: Mutex::default(),
             client_id,
             config,
             server_vvs: HashMap::new(),
