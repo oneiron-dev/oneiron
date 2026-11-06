@@ -79,6 +79,19 @@ enum GuestFrame<'a> {
         from: &'a str,
         to: &'a str,
     },
+    OutputText {
+        target: &'a str,
+        start: bool,
+        frame: &'a str,
+    },
+    OutputBytes {
+        path: &'a str,
+        frame: &'a [u8],
+    },
+    StoreBytes {
+        start: bool,
+        frame: &'a [u8],
+    },
     StepResult {
         result_json: &'a str,
     },
@@ -280,6 +293,54 @@ impl<T: Read + Write> Session<T> {
             return Err(Error::Protocol("host refused rename proposal"));
         }
         Ok(())
+    }
+
+    pub(crate) fn output_text(
+        &mut self,
+        target: &str,
+        start: bool,
+        frame: &str,
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(
+            &GuestFrame::OutputText {
+                target,
+                start,
+                frame,
+            },
+            frame.len(),
+        )
+    }
+
+    pub(crate) fn output_bytes(
+        &mut self,
+        path: &str,
+        frame: &[u8],
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(&GuestFrame::OutputBytes { path, frame }, frame.len())
+    }
+
+    pub(crate) fn store_bytes(
+        &mut self,
+        start: bool,
+        frame: &[u8],
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(&GuestFrame::StoreBytes { start, frame }, frame.len())
+    }
+
+    fn output_frame(
+        &mut self,
+        frame: &GuestFrame<'_>,
+        len: usize,
+    ) -> Result<std::result::Result<u64, String>> {
+        if self.finished || len > MAX_CHUNK {
+            return Err(Error::Protocol("output frame bounds"));
+        }
+        self.send(frame)?;
+        match self.read()? {
+            HostFrame::Receipt { accepted: true } => Ok(Ok(len as u64)),
+            HostFrame::Failure { code, detail } => Ok(Err(format!("{code}: {detail}"))),
+            _ => Err(Error::Protocol("expected output frame receipt")),
+        }
     }
 
     pub(crate) fn result(&mut self, result_json: &str) -> Result<()> {
