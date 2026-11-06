@@ -1130,6 +1130,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.admin.report",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminReportRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLensRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.digest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminDigestRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.link.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLinkWrongRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.item.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminItemWrongRequest,
+                >(),
+            ),
+            (
+                "vault.step_up.passkeys.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpPasskeysResetRequest,
+                >(),
+            ),
+            (
                 "vault.weave.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WeaveEnqueueRequest,
@@ -7385,6 +7421,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.saved_query.archive",
     "self.saved_query.members",
     "self.saved_query.evaluate",
+    "vault.step_up.passkeys.reset",
     "vault.weave.enqueue",
     "vault.weave.schedules.list",
     "vault.weave.schedules.put",
@@ -8515,6 +8552,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.saved_query.evaluate" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::SavedQueryEvaluationReceipt,
         >(),
+        "vault.step_up.passkeys.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpPasskeysReset>()
+        }
         "vault.weave.enqueue" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
         }
@@ -12334,6 +12374,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.passkeys.reset" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20396,6 +20478,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.owner.item.wrong" => {
             let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
         }
+        "vault.weave.admin.report" => {
+            let _input: crate::authority::WeaveAdminReportRequest = decode(value.clone())?;
+        }
+        "vault.weave.admin.lens" => {
+            let _input: crate::authority::WeaveAdminLensRequest = decode(value.clone())?;
+        }
+        "vault.weave.admin.digest" => {
+            let _input: crate::authority::WeaveAdminDigestRequest = decode(value.clone())?;
+        }
+        "vault.weave.admin.link.wrong" => {
+            let _input: crate::authority::WeaveAdminLinkWrongRequest = decode(value.clone())?;
+        }
+        "vault.weave.admin.item.wrong" => {
+            let _input: crate::authority::WeaveAdminItemWrongRequest = decode(value.clone())?;
+        }
+        "vault.step_up.passkeys.reset" => {
+            let _input: crate::authority::StepUpPasskeysResetRequest = decode(value.clone())?;
+        }
         "vault.weave.enqueue" => {
             let _input: crate::task_verb::sdk::WeaveEnqueueRequest = decode(value.clone())?;
         }
@@ -24440,6 +24540,18 @@ pub fn invoke(
         "vault.weave.owner.item.wrong" => {
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
+        "vault.weave.admin.report" => encode(vault_weave_admin_report(memory, decode(value)?)?),
+        "vault.weave.admin.lens" => encode(vault_weave_admin_lens(memory, decode(value)?)?),
+        "vault.weave.admin.digest" => encode(vault_weave_admin_digest(memory, decode(value)?)?),
+        "vault.weave.admin.link.wrong" => {
+            encode(vault_weave_admin_link_wrong(memory, decode(value)?)?)
+        }
+        "vault.weave.admin.item.wrong" => {
+            encode(vault_weave_admin_item_wrong(memory, decode(value)?)?)
+        }
+        "vault.step_up.passkeys.reset" => {
+            encode(vault_step_up_passkeys_reset(memory, decode(value)?)?)
+        }
         "vault.weave.enqueue" => encode(vault_weave_enqueue(memory, decode(value)?)?),
         "vault.weave.schedules.list" => encode(vault_weave_schedules_list(memory, decode(value)?)?),
         "vault.weave.schedules.put" => encode(vault_weave_schedules_put(memory, decode(value)?)?),
@@ -28475,6 +28587,46 @@ pub fn vault_weave_owner_item_wrong(
     memory.weave_owner_wrong_item(
         &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
+    )
+}
+pub fn vault_weave_admin_report(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminReportRequest,
+) -> MemoryResult<crate::claim::WeaveReportView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.report", &input)
+}
+pub fn vault_weave_admin_lens(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLensRequest,
+) -> MemoryResult<crate::lens::LensFrameCard> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.lens", &input)
+}
+pub fn vault_weave_admin_digest(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminDigestRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.digest", &input)
+}
+pub fn vault_weave_admin_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLinkWrongRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.link.wrong", &input)
+}
+pub fn vault_weave_admin_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminItemWrongRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.item.wrong", &input)
+}
+pub fn vault_step_up_passkeys_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpPasskeysResetRequest,
+) -> MemoryResult<crate::authority::StepUpPasskeysReset> {
+    crate::task_verb::sdk::reset_step_up_passkeys_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.passkeys.reset")?,
+        input,
     )
 }
 pub fn vault_weave_enqueue(
