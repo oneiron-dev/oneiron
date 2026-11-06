@@ -205,6 +205,7 @@ impl WidenIntent {
                 direct_spawn: None,
                 // A widened spawn is a child: it keeps its parent's requester.
                 requester: None,
+                caller_origin: None,
             },
         ))
     }
