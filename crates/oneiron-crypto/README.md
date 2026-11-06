@@ -128,6 +128,11 @@ twice: into the key and into the AAD. Any failure to open is the single
 with the same `X`. An empty `X` gives `aad = H`: the same inputs and randomness seal
 the same bytes as `seal`, and `open` is `open_with_aad` with empty `X`.
 
+`Envelope::open_with_aad_into` checks the same policy and AAD while decrypting
+straight into a caller-owned slice of exactly the plaintext length. It wipes that
+slice on any error. It avoids a separate plaintext Vec; parsing, AAD construction
+and key derivation may still allocate.
+
 ### Passphrase stretch outside envelopes
 
 `stretch_passphrase(passphrase, cost, salt)` returns the same Argon2id v0x13 output a
