@@ -21,12 +21,6 @@ use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
-const REPRODUCED_WORDING: &str = "Does the reply fail the way the failure describes?";
-const FIXED_WORDING: &str = "The reply before failed the way the failure describes. Does the \
-    reply after no longer fail that way?";
-const SAFE_WORDING: &str = "Is this text plainly made up, with no real person's name, contact \
-    detail, account, address, private fact or secret in it?";
-
 /// The Coach's in-vault replay of one job: the failing agent's call as the
 /// vault kept it, or rebuilt from the real failure, run with no tool run,
 /// judged on the ladder.
@@ -96,8 +90,12 @@ impl CoachReplay<'_> {
             "conversation": conversation_state(conversation),
             "reply": reply,
         });
-        self.decisions
-            .yes("reproduced", REPRODUCED_WORDING, self.evidence, &state)
+        self.decisions.yes(
+            "reproduced",
+            &self.decisions.reproduced_wording,
+            self.evidence,
+            &state,
+        )
     }
 
     /// The real failing call: what the agent was briefed on and asked.
@@ -270,10 +268,12 @@ impl CoachReplay<'_> {
             "before": before,
             "after": after,
         });
-        match self
-            .decisions
-            .yes("fixed", FIXED_WORDING, self.evidence, &state)
-        {
+        match self.decisions.yes(
+            "fixed",
+            &self.decisions.fixed_wording,
+            self.evidence,
+            &state,
+        ) {
             Some(true) => ShadowRun::Fixed,
             Some(false) => ShadowRun::NotFixed,
             None => ShadowRun::Unavailable,
@@ -380,10 +380,12 @@ impl ExportScrubber for CoachScrubber<'_> {
             .measure_limit(EngineLimit::MaintenanceTextBytes, text.len() as u64);
         let state = json!({ "text": text });
         Ok(
-            match self
-                .decisions
-                .yes("export_safe", SAFE_WORDING, self.evidence, &state)
-            {
+            match self.decisions.yes(
+                "export_safe",
+                &self.decisions.export_safe_wording,
+                self.evidence,
+                &state,
+            ) {
                 Some(true) => ScrubRun::Clean,
                 Some(false) => ScrubRun::Flagged,
                 None => ScrubRun::Unavailable,
