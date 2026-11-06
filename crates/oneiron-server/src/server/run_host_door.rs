@@ -475,6 +475,10 @@ impl AgentVerbDoor for RunHostDoor {
         self.admitting_memory().read_key().ok()
     }
 
+    fn host_turn_memory(&self) -> Option<Memory<'_>> {
+        Some(self.admitting_memory())
+    }
+
     /// Its keyed search drops only rows the agent's lane may not read.
     fn keyed_search_surfaceable_only(&self) -> bool {
         false

@@ -263,6 +263,7 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let parent = self.agent_parent.ok_or_else(invalid)?;
+        let source_memory = selected.and_then(|_| self.agent_verbs.as_ref()?.host_turn_memory());
         let mut host_parent_read = None;
         let store = DreamerRunnerStore::new(vault);
         let live = if selected.is_some() {
@@ -338,11 +339,16 @@ impl<'a> HostSelfDispatcher<'a> {
         let capture = &self.spawn_capture;
         let observe = move |seat| capture.observe(seat);
         let source_capture = selected.and_then(|selected| {
+            let envelope = self.write_envelope(SelfEffect::AgentsSpawn, None).ok()?;
+            let reader = match source_memory.as_ref() {
+                Some(memory) => memory.read_lane(ClaimReadStatus::Surfaceable).ok()?,
+                None => vault.scoped_read(self.host_turn_read_key()),
+            };
             crate::team::run::TeamAttemptCapture::new(
                 vault,
                 selected,
-                self.write_envelope(SelfEffect::AgentsSpawn, None).ok()?,
-                self.host_turn_read_key(),
+                envelope,
+                reader,
                 context.team.as_ref()?,
                 host_parent_read.as_ref()?,
             )
