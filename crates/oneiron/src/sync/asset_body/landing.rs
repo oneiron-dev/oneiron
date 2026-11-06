@@ -83,9 +83,11 @@ pub(super) fn land(
         let mut change = None;
         if landed {
             note_delivered_in_txn(vault, wtxn, body.id, &carrier)?;
-            // The client's proven home served these bytes: the owner's
-            // discard of a world copy may let this one go (FIX 14534).
-            if let Some(home) = peer.home {
+            let revision = revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
+            // The client's proven home served these bytes for this revision
+            // of the row: the owner's discard of a world copy may let this
+            // one go while the row stays at it (FIX 14534).
+            if let (Some(home), Some(revision)) = (peer.home, revision) {
                 super::home_proof::record_in_txn(
                     &vault.store,
                     wtxn,
@@ -95,10 +97,10 @@ pub(super) fn land(
                         carrier_blake3: body.carrier_blake3,
                         body_blake3: body.body_blake3,
                         len: body.len,
+                        revision,
                     },
                 )?;
             }
-            let revision = revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
             if previous_revision != revision {
                 change = Some(EntityRevisionChange {
                     entity: body.id,
