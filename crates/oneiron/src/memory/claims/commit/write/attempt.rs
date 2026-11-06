@@ -18,42 +18,9 @@ impl Memory<'_> {
         skip_exact_hook_replay: bool,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<Option<EntityId>, Error> {
-        let ClaimWrite {
-            input,
-            subject,
-            ref value,
-            world,
-            ref relationship,
-            ref scope_rmpv,
-            source,
-            occurred_at,
-            ..
-        } = *write;
-        let mut candidate = ClaimCandidate::new(
-            input.predicate.clone(),
-            ClaimSubject::Entity(subject),
-            value.clone(),
-            input.confidence,
-        )
-        .with_validity(input.valid_from, input.valid_to);
-        if let Some(details) = input.confidence_details {
-            candidate = candidate.with_confidence_details(details);
-        }
-        if let Some(salience) = input.salience {
-            candidate = candidate.with_salience(salience);
-        }
-        if let Some(world) = world {
-            candidate = candidate.with_world(world);
-        }
-        candidate = candidate.with_relationships(relationship.clone());
-        if let Some(scope) = scope_rmpv.clone() {
-            candidate = candidate.with_scope(scope);
-        }
-        let envelope = self.claim_envelope(source, "vault.commit", approval)?;
-        let occurred = TimeRange {
-            start: occurred_at,
-            end: occurred_at,
-        };
+        let candidate = claim_candidate(write);
+        let envelope = self.claim_envelope(write.source, "vault.commit", approval)?;
+        let occurred = claim_occurred(write);
         self.vault
             .try_with_actor_content_write_txn(envelope.actor(), lane, |content| {
                 self.write_claim_in_txn(
@@ -68,8 +35,9 @@ impl Memory<'_> {
     }
 
     /// The write transaction's body; returns the identity refused by a
-    /// hard-delete marker, or `None` when admitted.
-    fn write_claim_in_txn(
+    /// hard-delete marker, or `None` when admitted. An atomic batch runs it
+    /// once per element in one transaction (FIX 9403).
+    pub(super) fn write_claim_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
         write: &ClaimWrite<'_>,
@@ -128,5 +96,47 @@ impl Memory<'_> {
         // though no candidate will reach the batch effect checks.
         content.require_claim(write.id)?;
         Ok(true)
+    }
+}
+
+/// The candidate one write of `write` applies through the Gate.
+pub(super) fn claim_candidate(write: &ClaimWrite<'_>) -> ClaimCandidate {
+    let ClaimWrite {
+        input,
+        subject,
+        ref value,
+        world,
+        ref relationship,
+        ref scope_rmpv,
+        ..
+    } = *write;
+    let mut candidate = ClaimCandidate::new(
+        input.predicate.clone(),
+        ClaimSubject::Entity(subject),
+        value.clone(),
+        input.confidence,
+    )
+    .with_validity(input.valid_from, input.valid_to);
+    if let Some(details) = input.confidence_details {
+        candidate = candidate.with_confidence_details(details);
+    }
+    if let Some(salience) = input.salience {
+        candidate = candidate.with_salience(salience);
+    }
+    if let Some(world) = world {
+        candidate = candidate.with_world(world);
+    }
+    candidate = candidate.with_relationships(relationship.clone());
+    if let Some(scope) = scope_rmpv.clone() {
+        candidate = candidate.with_scope(scope);
+    }
+    candidate
+}
+
+/// The occurred range one write of `write` stamps.
+pub(super) fn claim_occurred(write: &ClaimWrite<'_>) -> TimeRange {
+    TimeRange {
+        start: write.occurred_at,
+        end: write.occurred_at,
     }
 }
