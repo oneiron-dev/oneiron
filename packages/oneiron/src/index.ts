@@ -2012,6 +2012,14 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
+      models: {
+        responses_store: {
+          /** Reads the owner's Responses store switch from the serving vault. */
+          read: (input: Facade.EmptyRequest): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreRead(input) as Facade.ModelResponsesStoreSettings),
+          /** Sets the owner's Responses store switch, persisting it before updating this server's live providers. */
+          set: (input: Facade.ModelResponsesStoreSettings): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreSet(input) as Facade.ModelResponsesStoreSettings),
+        },
+      },
       /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
       web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */

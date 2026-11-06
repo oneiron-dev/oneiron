@@ -737,6 +737,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultModelsOneironerBind,
@@ -1484,6 +1486,12 @@ impl HostDoorRow {
             "vault.skills.pack_receipt" => Self::VaultSkillsPackReceipt,
             "vault.skills.outcomes.project" => Self::VaultSkillsOutcomesProject,
             "vault.skills.outcomes.get" => Self::VaultSkillsOutcomesGet,
+            "vault.settings.models.responses_store.read" => {
+                Self::VaultSettingsModelsResponsesStoreRead
+            }
+            "vault.settings.models.responses_store.set" => {
+                Self::VaultSettingsModelsResponsesStoreSet
+            }
             "vault.models.manifest.read" => Self::VaultModelsManifestRead,
             "vault.models.manifest.replace" => Self::VaultModelsManifestReplace,
             "vault.models.oneironer.bind" => Self::VaultModelsOneironerBind,

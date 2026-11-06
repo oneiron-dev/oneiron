@@ -893,6 +893,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`
+- `vault.settings.models.responses_store.read`
+- `vault.settings.models.responses_store.set`
 - `vault.models.manifest.read`
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`

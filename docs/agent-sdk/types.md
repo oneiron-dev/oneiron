@@ -2949,6 +2949,8 @@ class Oneiron:
         @property
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
         @property
+        def models(self) -> "Oneiron._VaultSettingsModelsVerbs": ...
+        @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
@@ -2965,6 +2967,14 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSettingsModelsVerbs:
+        @property
+        def responses_store(self) -> "Oneiron._VaultSettingsModelsResponsesStoreVerbs": ...
+    class _VaultSettingsModelsResponsesStoreVerbs:
+        def read(self, spec: Facade.EmptyRequest) -> Facade.ModelResponsesStoreSettings:
+            """Reads the owner's Responses store switch from the serving vault."""
+        def set(self, spec: Facade.ModelResponsesStoreSettings) -> Facade.ModelResponsesStoreSettings:
+            """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
     class _VaultSettingsWebConnectorVerbs:
         def __call__(self, spec: Facade.EmptyRequest) -> Facade.WebConnectorSetting:
             """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""

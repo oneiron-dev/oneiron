@@ -4436,6 +4436,16 @@ export_facade! {
     let output = client.vault_skills_outcomes_get(&input)?;
     crate::codec::lift_record("vault.skills.outcomes.get", &output)
 };
+"vault.settings.models.responses_store.read" => fn vault_settings_models_responses_store_read(&self) -> ModelResponsesStoreSettings = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.settings.models.responses_store.read")?;
+    let output = client.vault_settings_models_responses_store_read(&input)?;
+    crate::codec::lift_record("vault.settings.models.responses_store.read", &output)
+};
+"vault.settings.models.responses_store.set" => fn vault_settings_models_responses_store_set(&self, input: ModelResponsesStoreSettings) -> ModelResponsesStoreSettings = |client| {
+    let input: oneiron::task_verb::sdk::ModelResponsesStoreSettings = crate::codec::lower_record("vault.settings.models.responses_store.set", input)?;
+    let output = client.vault_settings_models_responses_store_set(&input)?;
+    crate::codec::lift_record("vault.settings.models.responses_store.set", &output)
+};
 "vault.models.manifest.read" => fn vault_models_manifest_read(&self) -> Option<ModelManifest> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.models.manifest.read")?;
     let output = client.vault_models_manifest_read(&input)?;

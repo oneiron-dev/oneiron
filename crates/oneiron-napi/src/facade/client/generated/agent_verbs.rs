@@ -7909,6 +7909,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_settings_models_responses_store_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.models.responses_store.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_models_responses_store_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.models.responses_store.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_models_manifest_read(
         &self,
         input: serde_json::Value,

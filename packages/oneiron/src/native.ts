@@ -922,6 +922,8 @@ vaultSkillsCallableAmend(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultSettingsModelsResponsesStoreRead(input: unknown): unknown
+vaultSettingsModelsResponsesStoreSet(input: unknown): unknown
 vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown

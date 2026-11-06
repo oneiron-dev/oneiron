@@ -2752,6 +2752,16 @@ impl OneironClient {
                 "vault.skills.outcomes.get" => remote_agent_verb_output::<
                     Option<oneiron::skill_attribution::LateCreditReceipt>,
                 >(client, verb, &input),
+                "vault.settings.models.responses_store.read" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::ModelResponsesStoreSettings>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.settings.models.responses_store.set" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::ModelResponsesStoreSettings>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.models.manifest.read" => remote_agent_verb_output::<
                     Option<oneiron::llm::manifest::ModelManifest>,
                 >(client, verb, &input),
@@ -14813,6 +14823,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.outcomes.get", value)
+    }
+    pub fn vault_settings_models_responses_store_read(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::ModelResponsesStoreSettings, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.models.responses_store.read", value)
+    }
+    pub fn vault_settings_models_responses_store_set(
+        &self,
+        input: &oneiron::task_verb::sdk::ModelResponsesStoreSettings,
+    ) -> Result<oneiron::task_verb::sdk::ModelResponsesStoreSettings, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.models.responses_store.set", value)
     }
     pub fn vault_models_manifest_read(
         &self,

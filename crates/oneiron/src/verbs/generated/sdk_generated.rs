@@ -4926,6 +4926,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
             ),
             (
+                "vault.settings.models.responses_store.read",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.models.responses_store.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ModelResponsesStoreSettings,
+                >(),
+            ),
+            (
                 "vault.models.manifest.read",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -7860,6 +7871,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.create_deck",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
+    "vault.settings.models.responses_store.read",
+    "vault.settings.models.responses_store.set",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
     "vault.settings.web_connector",
@@ -9976,6 +9989,16 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckProposeOutcome,
         >(),
+        "vault.settings.models.responses_store.read" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::ModelResponsesStoreSettings,
+            >()
+        }
+        "vault.settings.models.responses_store.set" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::ModelResponsesStoreSettings,
+            >()
+        }
         "vault.models.manifest.read" => crate::code_run::vault_read::request_schema::<
             Option<crate::llm::manifest::ModelManifest>,
         >(),
@@ -17059,6 +17082,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.settings.models.responses_store.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.models.responses_store.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.manifest.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22649,6 +22686,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.outcomes.get" => {
             let _input: SkillPackCreditRequest = decode(value.clone())?;
         }
+        "vault.settings.models.responses_store.read" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.settings.models.responses_store.set" => {
+            let _input: crate::task_verb::sdk::ModelResponsesStoreSettings = decode(value.clone())?;
+        }
         "vault.models.manifest.read" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
@@ -25801,6 +25844,12 @@ pub fn invoke(
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
         }
         "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
+        "vault.settings.models.responses_store.read" => encode(
+            vault_settings_models_responses_store_read(memory, decode(value)?)?,
+        ),
+        "vault.settings.models.responses_store.set" => encode(
+            vault_settings_models_responses_store_set(memory, decode(value)?)?,
+        ),
         "vault.models.manifest.read" => encode(vault_models_manifest_read(memory, decode(value)?)?),
         "vault.models.manifest.replace" => {
             encode(vault_models_manifest_replace(memory, decode(value)?)?)
@@ -34108,6 +34157,18 @@ pub fn vault_skills_outcomes_get(
         &memory.embedded_owner("vault.skills.outcomes.get")?,
         &input,
     )
+}
+pub fn vault_settings_models_responses_store_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ModelResponsesStoreSettings> {
+    crate::task_verb::sdk::host_only(memory, "vault.settings.models.responses_store.read", &input)
+}
+pub fn vault_settings_models_responses_store_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ModelResponsesStoreSettings,
+) -> MemoryResult<crate::task_verb::sdk::ModelResponsesStoreSettings> {
+    crate::task_verb::sdk::host_only(memory, "vault.settings.models.responses_store.set", &input)
 }
 pub fn vault_models_manifest_read(
     memory: &Memory<'_>,
