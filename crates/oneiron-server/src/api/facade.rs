@@ -30,6 +30,7 @@ mod affect_doors;
 mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+mod agent_run_effect_doors;
 #[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;

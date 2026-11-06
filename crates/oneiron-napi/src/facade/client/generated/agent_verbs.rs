@@ -3861,6 +3861,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_agent_run_effect_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agent.run_effect.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_create_child(
         &self,
         input: serde_json::Value,

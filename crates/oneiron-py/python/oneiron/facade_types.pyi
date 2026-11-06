@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4598 declarations.
-Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4601 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8567,6 +8567,16 @@ class UncertainSendAnswered(TypedDict):
     task_ref: EntityId
     resend: bool
     outcome: UncertainSendAnswerOutcome
+class AgentRunEffectAnswer(TypedDict):
+    task_ref: EntityId
+    intent_ref: str
+    resend: bool
+AgentRunEffectAnswerOutcome = Literal["resend_released", "left", "already_settled"]
+class AgentRunEffectAnswered(TypedDict):
+    task_ref: EntityId
+    intent_ref: str
+    resend: bool
+    outcome: AgentRunEffectAnswerOutcome
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId

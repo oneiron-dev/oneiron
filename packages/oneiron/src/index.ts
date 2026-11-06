@@ -1696,6 +1696,12 @@ export class Oneiron {
         answer: (input: Facade.UncertainSendAnswer): Facade.UncertainSendAnswered => this.#call(() => this.#client.vaultOutboundUncertainSendAnswer(input) as Facade.UncertainSendAnswered),
       },
     },
+    agent: {
+      run_effect: {
+        /** The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it. */
+        answer: (input: Facade.AgentRunEffectAnswer): Facade.AgentRunEffectAnswered => this.#call(() => this.#client.vaultAgentRunEffectAnswer(input) as Facade.AgentRunEffectAnswered),
+      },
+    },
     research: {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
       create_child: (input: Facade.ResearchChildWire): Facade.ResearchChildReceipt => this.#call(() => this.#client.vaultResearchCreateChild(input) as Facade.ResearchChildReceipt),

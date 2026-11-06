@@ -14219,6 +14219,40 @@ async fn vault_outbound_uncertain_send_answer(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_agent_run_effect_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.agent.run_effect.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.agent.run_effect.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.agent.run_effect.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_agent_run_effect_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_research_create_child(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40911,6 +40945,9 @@ async fn call_verb_row(
         }
         "vault.outbound.uncertain_send.answer" => {
             Box::pin(vault_outbound_uncertain_send_answer(server, call, input)).await
+        }
+        "vault.agent.run_effect.answer" => {
+            Box::pin(vault_agent_run_effect_answer(server, call, input)).await
         }
         "vault.research.create_child" => {
             Box::pin(vault_research_create_child(server, call, input)).await

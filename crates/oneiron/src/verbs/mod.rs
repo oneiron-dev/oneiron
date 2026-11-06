@@ -1,6 +1,7 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
 mod act_answer;
 mod agent_grant;
+mod agent_run_effect;
 mod agents;
 mod anonymous_chat;
 mod asr;
@@ -428,6 +429,7 @@ pub use crate::memory::affect::QueryAffect;
 
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
+pub use self::agent_run_effect::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
 pub use self::asr::*;
