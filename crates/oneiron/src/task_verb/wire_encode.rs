@@ -359,6 +359,12 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
                 .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
         ),
     ];
+    if let Some(parents) = &body.type_parents {
+        entries.push((
+            Value::from("type_parents"),
+            Value::from(serde_json::to_string(parents).expect("typed task type parents encode")),
+        ));
+    }
     // Elided when absent, so a task nobody refused keeps its bytes.
     if let Some(refusal) = &body.refusal {
         entries.push((Value::from("refusal"), task_refusal_record_value(refusal)));

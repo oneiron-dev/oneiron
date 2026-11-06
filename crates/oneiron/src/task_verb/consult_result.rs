@@ -183,6 +183,9 @@ pub(super) struct TaskVerbBody {
     /// OF-543 ONE TASK TYPE stamp placed at creation. `None` only on rows
     /// written before OF-543, where it reads as the seeded root.
     pub(super) type_ref: Option<crate::task_type::TaskTypeRef>,
+    /// Nearest-parent-first capture from the birth placement tree; unknown
+    /// when no tree was captured, never reconstructed at receipt time.
+    pub(super) type_parents: Option<Vec<crate::learning::TypeRef>>,
     /// The assignee's one self-refusal (OF-533), written once by
     /// `Memory::land_task_refusal`. Absent on every task she did not refuse.
     pub(super) refusal: Option<super::refusal::TaskRefusalRecord>,
