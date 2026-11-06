@@ -201,14 +201,11 @@ impl AttemptQueue<'_> {
     /// Deletes every row of `kind`, in any state, with each index entry that
     /// still names it, its run's index row too, in the caller's transaction,
     /// and returns how many went: the drop of a kind no executor serves (FIX
-    /// 12327). A row a task names stays, as the prune keeps one: its task
-    /// reads it.
+    /// 12327). A row a task names goes too, with its task and archive
+    /// entries: no executor ever runs it, so its task reads no try of it.
     pub(crate) fn drop_kind_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, kind: &str) -> Result<usize> {
         let mut dropped = 0;
         for record in self.kind_rows_in_txn(wtxn, kind)? {
-            if record.task_ref.is_some() {
-                continue;
-            }
             self.delete_entries_naming(wtxn, &record)?;
             crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &record)?;
             self.store.delete_attempt_run_index_in_txn(
