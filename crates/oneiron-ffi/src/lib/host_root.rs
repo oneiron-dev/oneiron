@@ -90,7 +90,7 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
                     // Checked non-null above, so this write cannot fail after the handle exists.
                     write_out(out_wrong_host_root, u8::from(profile.wrong_root()))?;
                     let handle =
-                        Box::into_raw(Box::new(OneironVault::unbound(Arc::new(vault), dimensions)));
+                        Box::into_raw(Box::new(OneironVault::opened(Arc::new(vault), dimensions)));
                     write_out(out_vault, handle)
                 })
             });

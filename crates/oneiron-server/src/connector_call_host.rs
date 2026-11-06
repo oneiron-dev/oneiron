@@ -56,7 +56,7 @@ use oneiron::outbound_consent::{
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
-    RemoteTaskHandle,
+    ProviderWait, RemoteTaskHandle,
 };
 use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -157,6 +157,9 @@ pub struct ServedConnectorCallHost {
     remote_task: Option<RemoteTaskHandle>,
     /// The hold the last send met at its door, until taken (FIX 9303).
     held: Option<&'static str>,
+    /// The wait the last send's connector asked for when it refused that
+    /// send for rate (FIX 11025).
+    provider_wait: Option<ProviderWait>,
 }
 
 impl ServedConnectorCallHost {
@@ -208,6 +211,7 @@ impl ServedConnectorCallHost {
             resume: None,
             remote_task: None,
             held: None,
+            provider_wait: None,
         })
     }
 
@@ -323,6 +327,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.resume = sent.resume;
         self.remote_task = sent.remote_task;
         self.held = sent.held;
+        self.provider_wait = sent.provider_wait;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
@@ -331,6 +336,10 @@ impl OutboundResultSender for ServedConnectorCallHost {
 
     fn remote_task(&self) -> Option<RemoteTaskHandle> {
         self.remote_task.clone()
+    }
+
+    fn provider_wait(&self) -> Option<ProviderWait> {
+        self.provider_wait
     }
 }
 
@@ -382,14 +391,24 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     }
 
     fn abandon_awaiting_input(&mut self, handle: &str) {
+        self.resume = None;
         self.elicitations.finish(Some(&*self.vault), handle);
     }
 
     fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
-        let bound = self.elicitations.bind_call(&self.vault, handle, call_ref);
-        // The row kept the round; its resume state goes beside it (FIX 9157).
-        if let Some(resume) = self.resume.take().filter(|_| bound) {
-            resume.keep(&self.vault, handle, &call_ref);
+        self.elicitations.bind_call(handle, call_ref);
+    }
+
+    fn take_awaiting_resume(&mut self, handle: &str, call_ref: EntityId) -> Option<RoundResume> {
+        self.resume
+            .take()
+            .filter(|_| self.elicitations.call_ref(handle) == Some(call_ref))
+    }
+
+    fn awaiting_call_committed(&mut self, handle: &str, call_ref: EntityId) {
+        let bound = self.elicitations.call_ref(handle) == Some(call_ref);
+        if !bound && let Err(error) = self.vault.mark_connector_input_uncertain(&call_ref, handle) {
+            tracing::warn!(%error, "connector call questions not marked uncertain");
         }
     }
 }
@@ -630,10 +649,8 @@ impl<'a> Exchange<'a> {
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         };
         if !response.status().is_success() {
-            return Sent::not_sent(
-                OutboundFailureKind::Rejected,
-                Some(response.status().as_u16()),
-            );
+            // FIX 11025: a rate refusal keeps the provider's wait.
+            return Sent::refused_status(response.status(), response.headers());
         }
         let session = response.headers().get(SESSION_HEADER).cloned();
         let initialized = match read_reply(response, INITIALIZE_ID) {
@@ -663,12 +680,8 @@ impl<'a> Exchange<'a> {
         let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
-            Ok(response) => {
-                return Sent::not_sent(
-                    OutboundFailureKind::Rejected,
-                    Some(response.status().as_u16()),
-                );
-            }
+            // FIX 11025: a rate refusal keeps the provider's wait.
+            Ok(response) => return Sent::refused_status(response.status(), response.headers()),
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         }
 
@@ -728,8 +741,9 @@ impl<'a> Exchange<'a> {
             return Sent::ambiguous("connector_server_error");
         }
         if !status.is_success() {
-            // A refusal at the door: the tool never ran.
-            return Sent::not_sent(OutboundFailureKind::Rejected, Some(status.as_u16()));
+            // A refusal at the door: the tool never ran. A rate refusal
+            // keeps the provider's wait (FIX 11025).
+            return Sent::refused_status(status, response.headers());
         }
         let deadline = asks_on_stream.then(|| Instant::now() + CALL_TIMEOUT);
         let mut stream = match open_reply(response, CALL_ID, deadline) {

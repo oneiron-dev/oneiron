@@ -98,6 +98,11 @@ kit body, and the named target must prove to be this install and an allowed kit
 recipient before its kit is parsed. It does not change those rules or make kit
 issuance atomic with enrollment.
 
+Post-loss CLI and HTTP recovery remain separate from these pre-loss enrollment
+surfaces. The public Rust operations do not themselves claim those surfaces are
+implemented, nor do they change kit confirmation, piece-count options, kit
+replacement or ordinary key revocation.
+
 ## Post-loss CLI recovery
 
 On a stopped copy of the vault, open its data with the existing unlock inputs and

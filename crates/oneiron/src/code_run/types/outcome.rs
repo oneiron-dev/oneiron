@@ -51,6 +51,30 @@ pub enum SelfDispatchOutcome {
     Team(crate::team::TeamRunAnswer),
     /// A team output submitted for the owner's review (OF-540).
     TeamSubmitted(super::TeamSubmitAnswer),
+    /// A large typed reply already spilled pre-record (FIX449): the SAME
+    /// guest JSON card `store_reply` returned, not the original typed value.
+    StoredReply(SelfStoredReply),
+}
+
+/// A typed reply too large for one message, already spilled as a body of
+/// the run (FIX449): `output` is the SAME already-spilled guest JSON card
+/// `store_reply` returned (tainted, with facets), NOT a reconstructed
+/// original typed value. The guest reads `{"output": card}`; replay never
+/// rehydrates the original. Only reply-bearing sources are stored;
+/// `Changed`/`Pending` never become carriers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfStoredReply {
+    pub kind: SelfStoredReplyKind,
+    pub output: serde_json::Value,
+}
+
+/// Which typed reply a [`SelfStoredReply`] spilled (FIX449): the exact
+/// source kind, kept explicit so readers never guess from card text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfStoredReplyKind {
+    InferenceDefaults,
+    TaskAskSettled,
+    TaskAskWorldPrivacy,
 }
 
 /// What one callable skill returned: JSON its contract's `returns` shape
@@ -154,6 +178,14 @@ pub struct SelfDeniedResult {
     pub reason_codes: Vec<String>,
 }
 
+/// Measured facts from a native proposal-spool disk-floor failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfSandboxProposalDiskFloor {
+    pub needed: u64,
+    pub available: u64,
+    pub reserve: u64,
+}
+
 /// Result of a `self.*` trap that failed after crossing an audited write boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfFailedResult {
@@ -161,6 +193,8 @@ pub struct SelfFailedResult {
     pub error: String,
     /// The stable facade code recorded from a typed native failure, if any.
     pub code: Option<String>,
+    /// The original measured facts when `code` names the proposal-spool floor.
+    pub disk_floor: Option<SelfSandboxProposalDiskFloor>,
 }
 
 /// Durable wait produced for effects that need human/external resolution.

@@ -14,6 +14,7 @@
 //! that meets its probation request out passes it to the next rung, or waits
 //! for that request to end. A request error ends the call.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(super) mod cache_warmth;
@@ -1459,9 +1460,7 @@ impl OfferLadder {
         sources: Option<&dyn SourceAdmission>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
-        let rung = &self.rungs[index];
-        // An opted-in caller's sources, admitted for where this rung's offer
-        // sends them, the first and a picked rung's too (FIX 8714).
+        let mut rung = self.rungs[index].clone();
         let offered = match source_admission::offered(sources, call.request, &rung.offer) {
             Ok(offered) => offered,
             Err(reason) => {
@@ -1473,7 +1472,7 @@ impl OfferLadder {
             request: offered.as_ref().unwrap_or(call.request),
             ..call
         };
-        // Held through the call's settlement or cancellation (FIX 8315).
+        // Held through every admitted wire attempt and its settlement.
         let _lease = match self.hold_worker(index).await {
             Ok(lease) => lease,
             Err(error) => {
@@ -1486,66 +1485,82 @@ impl OfferLadder {
             context.physical = physical_for(&rung.offer.binding);
             context
         });
-        let (bound, permit) = self.admit(&rung_run, rung, call.request, call.selector, false)?;
-        if !may_send() {
-            // Unsent: only the gate starts a lease, so this pays nothing.
-            settle_failed(permit);
-            return Ok(Sent::Stopped);
-        }
-        // The world's order is judged again beside it (FIX 11768).
-        if !self.route_admitted(call.routes, index) {
-            settle_failed(permit);
-            self.refuse_route(call, index, walk);
-            return Ok(Sent::Held);
-        }
-        // Admission can wait on the run's receipts, and the world settings
-        // can change meanwhile: the world is judged again right before the
-        // rung is sent.
-        if let Some(reason) = self.kept_on_device(index, call.request) {
-            settle_failed(permit);
-            self.hold(call, index, walk, reason);
-            return Ok(Sent::Held);
-        }
-        // So are an opted-in caller's sources, for this rung's destination.
-        if let Some(reason) = source_admission::lapsed(sources, &rung.offer) {
-            settle_failed(permit);
-            self.hold(call, index, walk, reason);
-            return Ok(Sent::Held);
-        }
-        let Some(_probe) = self.probe_unless_managed(index, walk) else {
-            settle_failed(permit);
-            return Ok(Sent::Held);
-        };
-        let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-        let warmth = cache_warmth::Sending::of(rung, &bound);
-        // The caller's deadline ends the send too (FIX 7792): the rung is
-        // settled, its reservation spent once it went out. Its reply is read
-        // on the vault's chat-reply line (FIX 10626).
-        let sent = gate.generate(bound, permit.lease());
-        let Some(answered) = call
-            .deadline
-            .bound(super::http::holding_chat_replies(
-                self.rests.reply_budgets(),
-                sent,
-            ))
-            .await
-        else {
-            settle_failed(permit);
-            return Err(CallDeadline::expiry());
-        };
-        match answered {
-            Ok(mut response) => {
-                warmth.answered(&self.rests);
-                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
-                permit.settle(CallOutcome::Answered(&response.usage))?;
-                response.usage = self.answered(index, walk, response.usage);
-                rung.note_answered(call.request);
-                Ok(Sent::Answer(response))
+        loop {
+            if !may_send() {
+                return Ok(Sent::Stopped);
             }
-            Err(error) => {
-                let sent = settle_failed(permit);
-                self.failed(index, error, sent, walk)?;
-                Ok(Sent::Failed)
+            if call.deadline.expired() {
+                return Err(CallDeadline::expiry());
+            }
+            let (bound, permit) =
+                self.admit(&rung_run, &rung, call.request, call.selector, false)?;
+            if !may_send() {
+                settle_failed(permit);
+                return Ok(Sent::Stopped);
+            }
+            if !self.route_admitted(call.routes, index) {
+                settle_failed(permit);
+                self.refuse_route(call, index, walk);
+                return Ok(Sent::Held);
+            }
+            if let Some(reason) = self.kept_on_device(index, call.request) {
+                settle_failed(permit);
+                self.hold(call, index, walk, reason);
+                return Ok(Sent::Held);
+            }
+            if let Some(reason) = source_admission::lapsed(sources, &rung.offer) {
+                settle_failed(permit);
+                self.hold(call, index, walk, reason);
+                return Ok(Sent::Held);
+            }
+            let Some(_probe) = self.probe_unless_managed(index, walk) else {
+                settle_failed(permit);
+                return Ok(Sent::Held);
+            };
+            let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+            let warmth = cache_warmth::Sending::of(&rung, &bound);
+            let sent = gate.generate(bound, permit.lease());
+            let Some(answered) = call
+                .deadline
+                .bound(super::http::holding_chat_replies(
+                    self.rests.reply_budgets(),
+                    sent,
+                ))
+                .await
+            else {
+                settle_failed(permit);
+                return Err(CallDeadline::expiry());
+            };
+            match answered {
+                Ok(mut response) => {
+                    warmth.answered(&self.rests);
+                    self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                    permit.settle(CallOutcome::Answered(&response.usage))?;
+                    response.usage = self.answered(index, walk, response.usage);
+                    rung.note_answered(call.request);
+                    return Ok(Sent::Answer(response));
+                }
+                Err(error) => {
+                    let fallback = rung.offer.backend.fallback(&error);
+                    let sent = settle_failed(permit);
+                    if let Some(backend) = fallback {
+                        // The failed wire keeps its own truthful receipt. Its
+                        // alternate is the same offer, freshly admitted, not
+                        // another ladder rung or a provider-health failure.
+                        walk.passed.push((
+                            index,
+                            Passed::Failed {
+                                kind: failure_kind(&error),
+                                sent,
+                            },
+                        ));
+                        walk.last = Some(error);
+                        rung.offer.backend = backend;
+                        continue;
+                    }
+                    self.failed(index, error, sent, walk)?;
+                    return Ok(Sent::Failed);
+                }
             }
         }
     }
@@ -1569,7 +1584,7 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_released(run, request, selector, voices, None)
+        self.media_released(run, request, selector, voices, None, None)
             .await
     }
 
@@ -1580,9 +1595,18 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by_released(run, request, selector, voices, self.host_wait(), release)
-            .await
+        self.media_by_released(
+            run,
+            request,
+            selector,
+            voices,
+            self.host_wait(),
+            release,
+            admitted,
+        )
+        .await
     }
 
     /// [`Self::media`], on `deadline` across every rung, wait and fallback
@@ -1598,6 +1622,7 @@ impl OfferLadder {
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
         release: MediaDispatchRelease<'a>,
+        admitted: Option<&'a AtomicBool>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1630,6 +1655,7 @@ impl OfferLadder {
                                 false,
                                 voices,
                                 release.clone(),
+                                admitted,
                             )
                             .await;
                         if fell.is_err() {
@@ -1649,7 +1675,7 @@ impl OfferLadder {
                     }
                     sent[index] = true;
                     if let Some(answer) = self
-                        .send_media(call, index, &request, &mut walk, release.clone())
+                        .send_media(call, index, &request, &mut walk, release.clone(), admitted)
                         .await?
                     {
                         return Ok(answer);
@@ -1669,6 +1695,7 @@ impl OfferLadder {
         request: &MediaRequest,
         walk: &mut Walk,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1702,6 +1729,9 @@ impl OfferLadder {
         let permit = call
             .run
             .admit_media(selector, &bound, &rung.offer.binding)?;
+        if let Some(admitted) = admitted {
+            admitted.store(true, Ordering::Release);
+        }
         // The world's order is judged again beside it (FIX 11768).
         if !self.route_admitted(call.routes, index) {
             settle_failed(permit);
@@ -2130,7 +2160,7 @@ impl OfferLadder {
                 continue;
             }
             if let Flow::Ended = self
-                .stream_rung(run, index, next, walk, events, &mut *binding)
+                .stream_rung(call, index, next, walk, events, &mut *binding)
                 .await
             {
                 return Flow::Ended;
@@ -2145,14 +2175,14 @@ impl OfferLadder {
     /// event hands the call on.
     async fn stream_rung(
         &self,
-        run: &RunAdmission,
+        context: Call<'_>,
         index: usize,
-        (call, permit): (LlmRequest, RunPermit),
+        (mut call, mut permit): (LlmRequest, RunPermit),
         walk: &mut Walk,
         events: &Sender<LlmResult<LlmStreamEvent>>,
         binding: &mut Option<oneshot::Sender<ModelCallBinding>>,
     ) -> Flow {
-        let rung = &self.rungs[index];
+        let mut rung = self.rungs[index].clone();
         // A managed worker's lease, held as long as the probe (FIX 8315).
         let _lease = match self.hold_worker(index).await {
             Ok(lease) => lease,
@@ -2172,81 +2202,124 @@ impl OfferLadder {
             settle_failed(permit);
             return Flow::On;
         };
-        let rung_run = run.with_work_context({
-            let mut context = run.work_context();
+        let rung_run = context.run.with_work_context({
+            let mut context = context.run.work_context();
             context.physical = physical_for(&rung.offer.binding);
             context
         });
-        let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-        let warmth = cache_warmth::Sending::of(rung, &call);
-        let ended = match gate.stream(call, permit.lease()) {
-            Ok(stream) => {
-                let budgets = self.rests.reply_budgets();
-                super::http::holding_chat_replies(budgets, forward(stream, events)).await
-            }
-            Err(error) => Ended::Failed {
-                error,
-                spoken: false,
-            },
-        };
-        match ended {
-            Ended::Done {
-                message,
-                usage,
-                finish_reason,
-                reply_assertions,
-            } => {
-                warmth.answered(&self.rests);
-                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
-                let done = match permit.settle(CallOutcome::Answered(&usage)) {
-                    Ok(_) => {
-                        // The answering rung's binding, sent before its Done
-                        // on this same task, so a capture site that sees Done
-                        // already finds it (FIX 12743). A denied settle sends
-                        // no Done and resolves nothing.
-                        if let Some(tx) = binding.take() {
-                            let _ = tx.send(ModelCallBinding::for_rung(&self.rungs[index]));
+        loop {
+            let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+            let warmth = cache_warmth::Sending::of(&rung, &call);
+            let ended = match gate.stream(call, permit.lease()) {
+                Ok(stream) => {
+                    let budgets = self.rests.reply_budgets();
+                    super::http::holding_chat_replies(budgets, forward(stream, events)).await
+                }
+                Err(error) => Ended::Failed {
+                    error,
+                    spoken: false,
+                },
+            };
+            return match ended {
+                Ended::Done {
+                    message,
+                    usage,
+                    finish_reason,
+                    reply_assertions,
+                } => {
+                    warmth.answered(&self.rests);
+                    self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                    let done = match permit.settle(CallOutcome::Answered(&usage)) {
+                        Ok(_) => {
+                            // The answering rung's binding, sent before its Done
+                            // on this same task, so a capture site that sees Done
+                            // already finds it (FIX 12743). A denied settle sends
+                            // no Done and resolves nothing.
+                            if let Some(tx) = binding.take() {
+                                let _ = tx.send(ModelCallBinding::for_rung(&self.rungs[index]));
+                            }
+                            Ok(LlmStreamEvent::Done {
+                                message,
+                                usage: self.answered(index, walk, usage),
+                                finish_reason,
+                                reply_assertions,
+                            })
                         }
-                        Ok(LlmStreamEvent::Done {
-                            message,
-                            usage: self.answered(index, walk, usage),
-                            finish_reason,
-                            reply_assertions,
-                        })
-                    }
-                    Err(denied) => Err(denied.into()),
-                };
-                let _ = events.send(done).await;
-                Flow::Ended
-            }
-            Ended::Failed {
-                error,
-                spoken: true,
-            } => {
-                settle_failed(permit);
-                // Its stream was the answer, never sent again; a limit it
-                // met still rests it, as does an outage.
-                if self.rest_if_limited(index, &error).is_none() && provider_down(&error) {
-                    self.rests
-                        .failed_down(&rung.offer.binding, &rung.wire_model);
+                        Err(denied) => Err(denied.into()),
+                    };
+                    let _ = events.send(done).await;
+                    Flow::Ended
                 }
-                let _ = events.send(Err(error)).await;
-                Flow::Ended
-            }
-            Ended::Failed {
-                error,
-                spoken: false,
-            } => {
-                let sent = settle_failed(permit);
-                match self.failed(index, error, sent, walk) {
-                    Ok(()) => Flow::On,
-                    Err(error) => {
-                        let _ = events.send(Err(error)).await;
-                        Flow::Ended
+                Ended::Failed {
+                    error,
+                    spoken: true,
+                } => {
+                    settle_failed(permit);
+                    // Its stream was the answer, never sent again; a limit it
+                    // met still rests it, as does an outage.
+                    if self.rest_if_limited(index, &error).is_none() && provider_down(&error) {
+                        self.rests
+                            .failed_down(&rung.offer.binding, &rung.wire_model);
+                    }
+                    let _ = events.send(Err(error)).await;
+                    Flow::Ended
+                }
+                Ended::Failed {
+                    error,
+                    spoken: false,
+                } => {
+                    let fallback = rung.offer.backend.fallback(&error);
+                    let sent = settle_failed(permit);
+                    if let Some(backend) = fallback {
+                        walk.passed.push((
+                            index,
+                            Passed::Failed {
+                                kind: failure_kind(&error),
+                                sent,
+                            },
+                        ));
+                        walk.last = Some(error);
+                        rung.offer.backend = backend;
+                        (call, permit) = match self.admit(
+                            &rung_run,
+                            &rung,
+                            context.request,
+                            context.selector,
+                            true,
+                        ) {
+                            Ok(next) => next,
+                            Err(error) => {
+                                let _ = events.send(Err(error)).await;
+                                return Flow::Ended;
+                            }
+                        };
+                        if context.deadline.expired() {
+                            settle_failed(permit);
+                            let _ = events.send(Err(CallDeadline::expiry())).await;
+                            return Flow::Ended;
+                        }
+                        if !self.route_admitted(context.routes, index) {
+                            settle_failed(permit);
+                            self.refuse_route(context, index, walk);
+                            return Flow::On;
+                        }
+                        if let Some(reason) = self.kept_on_device(index, context.request) {
+                            settle_failed(permit);
+                            self.hold(context, index, walk, reason);
+                            return Flow::On;
+                        }
+                        continue;
+                    }
+                    match self.failed(index, error, sent, walk) {
+                        Ok(()) => Flow::On,
+                        Err(error) => {
+                            let _ = events.send(Err(error)).await;
+                            Flow::Ended
+                        }
                     }
                 }
-            }
-            Ended::Gone => Flow::Ended,
+                Ended::Gone => Flow::Ended,
+            };
         }
     }
 }

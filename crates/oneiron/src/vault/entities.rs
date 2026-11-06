@@ -51,7 +51,7 @@ pub struct HydratedShortId {
 /// What one entity id resolves to inside ONE transaction.
 ///
 /// "The row parses" and "the entity is live" are DIFFERENT questions: the
-/// ARCH-0038 soft delete keeps the 25-byte metadata header of the entity it
+/// ARCH-0038 soft delete keeps the metadata header of the entity it
 /// erases (`deletion/erase.rs`), so a deleted shell still parses and still
 /// carries its original entity-type byte. This enum is the one shared answer
 /// for callers that must not confuse the two — the GATE-12 evidence resolver
@@ -161,17 +161,9 @@ impl Vault {
         data: &[u8],
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            crate::ports::EntityStore::port_entity_put(
-                self,
-                txn,
-                id,
-                &crate::ports::EntityRecord {
-                    entity_type,
-                    occurred,
-                    learned_at,
-                    body: data.to_vec(),
-                },
-            )
+            self.batch_in()
+                .put(id, entity_type, occurred, learned_at, data)
+                .apply(txn)
         })?;
         if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             self.store.notify_proactivity_changes();
