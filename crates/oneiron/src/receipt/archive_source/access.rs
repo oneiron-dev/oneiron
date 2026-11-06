@@ -3,6 +3,7 @@ use super::{
     codec::{ReceiptArchive, decode, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
     prepared::ReceiptArchivePreparation,
+    reader::{decode_reader, id_of_reader},
 };
 use crate::{
     Vault,
@@ -114,28 +115,39 @@ impl Vault {
                 .as_mut()
                 .expect("receipt preparation opened")
                 .push(&archive)?;
-            let id = encoded.id;
+            prepared.push((None, encoded));
+            existing.insert(source.receipt_id().to_owned(), source);
+        }
+        let Some(preparation) = preparation else {
+            return Ok(0);
+        };
+        let bytes = preparation.finish()?;
+        let mut count = 0;
+        // Resolve every identity and existing row against the frozen bytes
+        // before admitting the first put. No encoder is replayed for an id.
+        for (id, encoded) in &mut prepared {
+            let actual = id_of_reader(bytes.reader(encoded))?;
             if let Some(raw) =
-                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &actual)?
             {
                 let head = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("receipt source existing header"))?;
-                if head.entity_type != ENTITY_TYPE_ASSET
-                    || decode(&raw[ENTITY_METADATA_HEADER_LEN..])? != Some(archive)
-                {
+                if head.entity_type != ENTITY_TYPE_ASSET {
+                    return Err(invalid());
+                }
+                let expected = decode_reader(bytes.reader(encoded))?.ok_or_else(invalid)?;
+                if decode(&raw[ENTITY_METADATA_HEADER_LEN..])? != Some(expected) {
                     return Err(invalid());
                 }
             } else {
-                prepared.push((id, encoded));
+                *id = Some(actual);
+                count += 1;
             }
-            existing.insert(source.receipt_id().to_owned(), source);
         }
-        let count = prepared.len();
-        let Some(preparation) = preparation else {
-            return Ok(count);
-        };
-        let bytes = preparation.finish()?;
         for (id, encoded) in prepared {
+            let Some(id) = id else {
+                continue;
+            };
             // Receipt archives remain owning-adapter rows. No file manifest
             // or persistent instance is introduced: the native stager reads
             // this one frozen archive back for the ordinary ASSET put.

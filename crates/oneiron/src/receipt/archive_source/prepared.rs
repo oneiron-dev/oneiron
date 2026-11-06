@@ -1,9 +1,8 @@
 //! Canonical receipt preparation in one native, unlinked temporary body.
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use super::{codec::ReceiptArchive, reader::framed_id};
+use super::codec::ReceiptArchive;
 use crate::{
-    entity_id::{ENTITY_ID_LEN, EntityId},
     error::{Error, Result},
     store::{AssetBodyFacts, BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES},
 };
@@ -19,7 +18,6 @@ pub(super) struct ReceiptArchivePreparation {
 }
 
 pub(super) struct PreparedReceiptArchive {
-    pub(super) id: EntityId,
     offset: u64,
     len: u64,
     digest: [u8; 32],
@@ -42,18 +40,11 @@ impl ReceiptArchivePreparation {
     }
 
     pub(super) fn push(&mut self, archive: &ReceiptArchive) -> Result<PreparedReceiptArchive> {
-        // The canonical serializer reads this owned, validated data tree,
-        // not an archive file. Count its frame before hashing that frame.
-        let mut count = CountBytes(0);
-        archive.write_canonical(&mut count)?;
-        let len = count.0;
-        let mut identity = framed_id(0, len);
         let mut out = ArchiveWriter {
             spill: self.spill.as_mut().ok_or(Error::InvariantViolation(
                 "receipt preparation already finished",
             ))?,
             whole: &mut self.hash,
-            identity: &mut identity,
             body: blake3::Hasher::new(),
             len: 0,
             error: None,
@@ -63,39 +54,17 @@ impl ReceiptArchivePreparation {
             return Err(error);
         }
         encoded?;
-        if out.len != len {
-            return Err(Error::CorruptedIndex("prepared receipt archive length"));
-        }
+        let len = out.len;
         let digest = *out.body.finalize().as_bytes();
         let offset = self.len;
         self.len = self.len.checked_add(len).ok_or(Error::ArithmeticOverflow(
             "receipt archive preparation length",
         ))?;
-        let mut first = Some(identity);
-        for salt in 0_u64..=u64::MAX {
-            let hash = match first.take() {
-                Some(hash) => hash,
-                None => {
-                    let mut hash = framed_id(salt, len);
-                    archive.write_canonical(&mut HashBytes(&mut hash))?;
-                    hash
-                }
-            };
-            let hash = hash.finalize();
-            let mut id = [0_u8; ENTITY_ID_LEN];
-            id.copy_from_slice(&hash.as_bytes()[..ENTITY_ID_LEN]);
-            if let Ok(id) = EntityId::from_bytes(id) {
-                return Ok(PreparedReceiptArchive {
-                    id,
-                    offset,
-                    len,
-                    digest,
-                });
-            }
-        }
-        Err(Error::InvariantViolation(
-            "codebase deterministic entity id exhausted salt space",
-        ))
+        Ok(PreparedReceiptArchive {
+            offset,
+            len,
+            digest,
+        })
     }
 
     pub(super) fn finish(mut self) -> Result<PreparedReceiptBytes> {
@@ -136,7 +105,10 @@ impl PreparedReceiptArchive {
 }
 
 impl PreparedReceiptBytes {
-    pub(super) fn reader<'a>(&'a self, archive: &'a PreparedReceiptArchive) -> impl Read + 'a {
+    pub(super) fn reader<'a>(
+        &'a self,
+        archive: &'a PreparedReceiptArchive,
+    ) -> impl Read + Seek + 'a {
         ArchiveReader {
             file: &self.file,
             archive,
@@ -145,39 +117,9 @@ impl PreparedReceiptBytes {
     }
 }
 
-struct CountBytes(u64);
-
-impl Write for CountBytes {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0 = self
-            .0
-            .checked_add(bytes.len() as u64)
-            .ok_or(io::ErrorKind::InvalidData)?;
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-struct HashBytes<'a>(&'a mut blake3::Hasher);
-
-impl Write for HashBytes<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 struct ArchiveWriter<'a> {
     spill: &'a mut BodySpill,
     whole: &'a mut blake3::Hasher,
-    identity: &'a mut blake3::Hasher,
     body: blake3::Hasher,
     len: u64,
     error: Option<Error>,
@@ -194,7 +136,6 @@ impl Write for ArchiveWriter<'_> {
             return Err(io::ErrorKind::Other.into());
         }
         self.whole.update(bytes);
-        self.identity.update(bytes);
         self.body.update(bytes);
         self.len = len;
         Ok(bytes.len())
@@ -226,5 +167,19 @@ impl Read for ArchiveReader<'_> {
         out[..take].copy_from_slice(&bytes);
         self.at += take as u64;
         Ok(take)
+    }
+}
+
+impl Seek for ArchiveReader<'_> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let at = match from {
+            SeekFrom::Start(at) => Some(at),
+            SeekFrom::Current(delta) => self.at.checked_add_signed(delta),
+            SeekFrom::End(delta) => self.archive.len.checked_add_signed(delta),
+        }
+        .filter(|at| *at <= self.archive.len)
+        .ok_or(io::ErrorKind::InvalidInput)?;
+        self.at = at;
+        Ok(at)
     }
 }

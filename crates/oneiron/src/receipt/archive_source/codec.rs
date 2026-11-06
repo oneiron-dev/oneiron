@@ -96,6 +96,9 @@ impl ReceiptArchive {
 }
 pub(crate) use crate::store::receipt_identity::is_receipt_archive_source;
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
+    if !is_receipt_archive_source(bytes) {
+        return Ok(None);
+    }
     super::reader::decode_reader(std::io::Cursor::new(bytes))
 }
 /// The id of the archived source whose canonical stored bytes are `bytes`.
