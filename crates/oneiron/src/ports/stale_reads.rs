@@ -79,3 +79,26 @@ pub(crate) fn stale_in_txn_observed(
 ) -> Result<bool> {
     super::integrity::stale_observed_in(dbs, txn, id, &mut observer)
 }
+
+/// The original entity-record read, observed before its native header/body decode.
+pub(super) fn entity_record(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    observer: &mut Option<&mut StaleReadObserver<'_>>,
+) -> Result<Option<super::EntityRecord>> {
+    if observer.is_none() {
+        return super::EntityStoreRead::port_entity_record(dbs, txn, id);
+    }
+    let raw = dbs.entities().get(txn, id.as_bytes())?;
+    observe(
+        observer,
+        StaleRead::Row {
+            table: StaleReadTable::Entities,
+            key: id.as_bytes(),
+            value: raw.as_deref(),
+        },
+    );
+    raw.map(|raw| super::lmdb_query::decode_record(&raw))
+        .transpose()
+}

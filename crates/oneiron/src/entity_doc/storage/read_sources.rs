@@ -81,3 +81,28 @@ pub(super) fn resolve_record_body(
     let doc = load(store, txn, &h, observe)?;
     body_with_document(&h.field, body, &doc)
 }
+
+/// The original pointer-field head read, before native decode and entity binding.
+pub(super) fn pointer_field_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    observe: Option<&mut DocumentReadObserver<'_>>,
+) -> Result<Option<super::TextField>> {
+    let head = match observe {
+        Some(observe) => {
+            let raw = ENTITY_DOC_HEAD.get_borrowed(dbs, txn, &HexId(*entity))?;
+            observe(DocumentRead::Row {
+                table: ENTITY_DOC_HEAD.decl(),
+                key: &ENTITY_DOC_HEAD.key_bytes(&HexId(*entity)),
+                value: raw.as_deref(),
+            });
+            raw.map(|raw| ENTITY_DOC_HEAD.decode_value(&raw))
+                .transpose()?
+        }
+        None => ENTITY_DOC_HEAD.get(dbs, txn, &HexId(*entity))?,
+    };
+    Ok(head
+        .filter(|head| head.entity == entity.to_hex())
+        .map(|head| head.field))
+}

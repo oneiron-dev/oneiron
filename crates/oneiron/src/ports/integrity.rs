@@ -504,12 +504,7 @@ pub(super) fn epoch_summary_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    match super::EntityStoreRead::port_entity_record(store, txn, id)? {
-        Some(row) if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY => {
-            Ok(crate::compaction::stored_epoch_in(store, txn, id, &row.body)?.may_be())
-        }
-        _ => Ok(false),
-    }
+    super::epoch_reads::epoch_summary_in(store, txn, id, &mut None)
 }
 /// Stages a stale mark for `id` at `revision` in `dbs`'s own `vault_meta`, so
 /// `id` reads withdrawn there: a room's epoch summary born from a source that

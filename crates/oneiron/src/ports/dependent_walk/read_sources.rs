@@ -1,9 +1,9 @@
 //! Original staleness walk reads with opt-in borrowed physical inputs.
-//! Calendar-origin and epoch-summary subcalls remain unobserved; these events
+//! Calendar-origin subcalls remain unobserved; these events
 //! alone never certify the complete staleness predicate or permission.
 use super::{
     BTreeSet, CarriedWorlds, EntityId, EntityMetadataHeader, ManifestDbs, Result, RoTxn, SETTLED,
-    SourceSpan, WALK, integrity, row_key,
+    SourceSpan, WALK, row_key,
 };
 
 pub(super) fn entity_type_in(
@@ -56,7 +56,7 @@ pub(super) fn pending_withdrawal_in(
                 .absorb(&worlds);
         }
         if entity_type == Some(crate::registry::ENTITY_TYPE_SUMMARY)
-            && integrity::epoch_summary_in(dbs, txn, &node)?
+            && crate::ports::epoch_reads::epoch_summary_in(dbs, txn, &node, observer)?
         {
             pending.extend(sources.iter().map(|source| source.document));
         }
@@ -125,20 +125,8 @@ pub(super) fn any_pending_walk(
                 },
             );
         }
-        Some(Err(_)) => observe(
-            observer,
-            StaleRead::ScanFailed {
-                table,
-                prefix,
-            },
-        ),
-        None => observe(
-            observer,
-            StaleRead::ScanComplete {
-                table,
-                prefix,
-            },
-        ),
+        Some(Err(_)) => observe(observer, StaleRead::ScanFailed { table, prefix }),
+        None => observe(observer, StaleRead::ScanComplete { table, prefix }),
     }
     Ok(next.is_some())
 }
