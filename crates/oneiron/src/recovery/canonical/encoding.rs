@@ -4,8 +4,9 @@ use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer as _};
 
 use super::{
-    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalEntity, CanonicalPinCarrier,
-    CanonicalRoomFact, CanonicalRoomTurn, CanonicalSnapshot,
+    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalBaseEdge,
+    CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier, CanonicalRoomFact,
+    CanonicalRoomTurn, CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -73,10 +74,10 @@ impl CanonicalEncoding {
         } = source;
         let fields: &[(&str, &dyn Field)] = &[
             ("window", &Scalar(window)),
-            ("entity_blobs", &Entities(entity_blobs)),
+            ("entity_blobs", &ByteRows(entity_blobs, false)),
             ("retained_claim_worlds", &Rows(retained_claim_worlds, false)),
-            ("base_edges", &Rows(base_edges, false)),
-            ("tombstones", &Rows(tombstones, false)),
+            ("base_edges", &ByteRows(base_edges, false)),
+            ("tombstones", &ByteRows(tombstones, false)),
             ("doc_snapshots", &Rows(doc_snapshots, false)),
             ("entity_documents", &Rows(entity_documents, false)),
             ("document_heads", &Rows(document_heads, false)),
@@ -86,10 +87,10 @@ impl CanonicalEncoding {
             ("container_manifests", &Rows(container_manifests, false)),
             ("schema_manifest", &Scalar(schema_manifest)),
             ("suppressed_tasks", &Rows(suppressed_tasks, true)),
-            ("custody_transitions", &Rows(custody_transitions, true)),
-            ("room_turns", &KeyedRows(room_turns)),
-            ("room_facts", &KeyedRows(room_facts)),
-            ("document_pins", &KeyedRows(document_pins)),
+            ("custody_transitions", &ByteRows(custody_transitions, true)),
+            ("room_turns", &ByteRows(room_turns, true)),
+            ("room_facts", &ByteRows(room_facts, true)),
+            ("document_pins", &ByteRows(document_pins, true)),
             ("peer_origins", &Rows(peer_origins, true)),
             ("row_births", &Rows(row_births, true)),
             ("withdrawn_cutoffs", &Rows(withdrawn_cutoffs, true)),
@@ -169,11 +170,135 @@ impl<T: Serialize> Field for Rows<'_, T> {
     }
 }
 
-struct Entities<'a>(&'a [CanonicalEntity]);
+trait ByteRow {
+    fn bytes(&self) -> &[u8];
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()>;
+}
 
-impl Field for Entities<'_> {
+impl ByteRow for CanonicalEntity {
+    fn bytes(&self) -> &[u8] {
+        &self.blob
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalEntity { id, blob: _ } = self;
+        write_struct_header(out, "CanonicalEntity", 2)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "blob")
+    }
+}
+
+impl ByteRow for CanonicalBaseEdge {
+    fn bytes(&self) -> &[u8] {
+        &self.value
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalBaseEdge {
+            source,
+            kind,
+            target,
+            value: _,
+        } = self;
+        write_struct_header(out, "CanonicalBaseEdge", 4)?;
+        write_named(out, "source")?;
+        write_named(out, source)?;
+        write_named(out, "kind")?;
+        write_named(out, kind)?;
+        write_named(out, "target")?;
+        write_named(out, target)?;
+        write_named(out, "value")
+    }
+}
+
+impl ByteRow for CanonicalTombstone {
+    fn bytes(&self) -> &[u8] {
+        &self.value
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalTombstone {
+            id,
+            deleted_at,
+            value: _,
+        } = self;
+        write_struct_header(out, "CanonicalTombstone", 3)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "deleted_at")?;
+        write_named(out, deleted_at)?;
+        write_named(out, "value")
+    }
+}
+
+impl ByteRow for CanonicalCustodyTransition {
+    fn bytes(&self) -> &[u8] {
+        &self.carrier
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalCustodyTransition {
+            id,
+            piece,
+            carrier: _,
+        } = self;
+        write_struct_header(out, "CanonicalCustodyTransition", 3)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "piece")?;
+        write_named(out, piece)?;
+        write_named(out, "carrier")
+    }
+}
+
+impl ByteRow for CanonicalRoomTurn {
+    fn bytes(&self) -> &[u8] {
+        &self.row
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalRoomTurn { key, row: _ } = self;
+        write_struct_header(out, "CanonicalRoomTurn", 2)?;
+        write_named(out, "key")?;
+        write_named(out, key)?;
+        write_named(out, "row")
+    }
+}
+
+impl ByteRow for CanonicalRoomFact {
+    fn bytes(&self) -> &[u8] {
+        &self.row
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalRoomFact { key, row: _ } = self;
+        write_struct_header(out, "CanonicalRoomFact", 2)?;
+        write_named(out, "key")?;
+        write_named(out, key)?;
+        write_named(out, "row")
+    }
+}
+
+impl ByteRow for CanonicalPinCarrier {
+    fn bytes(&self) -> &[u8] {
+        &self.row
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalPinCarrier { key, row: _ } = self;
+        write_struct_header(out, "CanonicalPinCarrier", 2)?;
+        write_named(out, "key")?;
+        write_named(out, key)?;
+        write_named(out, "row")
+    }
+}
+
+struct ByteRows<'a, T>(&'a [T], bool);
+
+impl<T: ByteRow> Field for ByteRows<'_, T> {
     fn present(&self) -> bool {
-        true
+        !self.1 || !self.0.is_empty()
     }
 
     fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
@@ -182,95 +307,14 @@ impl Field for Entities<'_> {
             *row = Some(RowCursor::default());
             return Ok(self.0.is_empty());
         };
-        let CanonicalEntity { id, blob } = &self.0[cursor.next];
-        if let Some(next) = cursor.bytes.as_mut() {
-            if !write_byte_page(out, blob, next)? {
-                return Ok(false);
-            }
-        } else {
-            let result = {
-                let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
-                serializer
-                    .serialize_struct("CanonicalEntity", 2)
-                    .and_then(SerializeStruct::end)
-            };
-            result.map_err(|_| out.refusal())?;
-            write_named(out, "id")?;
-            write_named(out, id)?;
-            write_named(out, "blob")?;
-            write_array_header(out, blob.len())?;
-            cursor.bytes = Some(0);
-            if !blob.is_empty() {
-                return Ok(false);
-            }
-        }
-        cursor.next += 1;
-        cursor.bytes = None;
-        Ok(cursor.next == self.0.len())
-    }
-}
-
-trait KeyedRow {
-    const NAME: &'static str;
-    fn key_and_row(&self) -> (&str, &[u8]);
-}
-
-impl KeyedRow for CanonicalRoomTurn {
-    const NAME: &'static str = "CanonicalRoomTurn";
-
-    fn key_and_row(&self) -> (&str, &[u8]) {
-        let CanonicalRoomTurn { key, row } = self;
-        (key, row)
-    }
-}
-
-impl KeyedRow for CanonicalRoomFact {
-    const NAME: &'static str = "CanonicalRoomFact";
-
-    fn key_and_row(&self) -> (&str, &[u8]) {
-        let CanonicalRoomFact { key, row } = self;
-        (key, row)
-    }
-}
-
-impl KeyedRow for CanonicalPinCarrier {
-    const NAME: &'static str = "CanonicalPinCarrier";
-
-    fn key_and_row(&self) -> (&str, &[u8]) {
-        let CanonicalPinCarrier { key, row } = self;
-        (key, row)
-    }
-}
-
-struct KeyedRows<'a, T>(&'a [T]);
-
-impl<T: KeyedRow> Field for KeyedRows<'_, T> {
-    fn present(&self) -> bool {
-        !self.0.is_empty()
-    }
-
-    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
-        let Some(cursor) = row else {
-            write_array_header(out, self.0.len())?;
-            *row = Some(RowCursor::default());
-            return Ok(self.0.is_empty());
-        };
-        let (key, bytes) = self.0[cursor.next].key_and_row();
+        let value = &self.0[cursor.next];
+        let bytes = value.bytes();
         if let Some(next) = cursor.bytes.as_mut() {
             if !write_byte_page(out, bytes, next)? {
                 return Ok(false);
             }
         } else {
-            let result = {
-                let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
-                serializer
-                    .serialize_struct(T::NAME, 2)
-                    .and_then(SerializeStruct::end)
-            };
-            result.map_err(|_| out.refusal())?;
-            write_named(out, "key")?;
-            write_named(out, key)?;
-            write_named(out, "row")?;
+            value.write_prefix(out)?;
             write_array_header(out, bytes.len())?;
             cursor.bytes = Some(0);
             if !bytes.is_empty() {
@@ -281,6 +325,16 @@ impl<T: KeyedRow> Field for KeyedRows<'_, T> {
         cursor.bytes = None;
         Ok(cursor.next == self.0.len())
     }
+}
+
+fn write_struct_header(out: &mut BoundedWriter, name: &'static str, len: usize) -> Result<()> {
+    let result = {
+        let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
+        serializer
+            .serialize_struct(name, len)
+            .and_then(SerializeStruct::end)
+    };
+    result.map_err(|_| out.refusal())
 }
 
 fn write_byte_page(out: &mut BoundedWriter, bytes: &[u8], next: &mut usize) -> Result<bool> {
