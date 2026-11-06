@@ -207,6 +207,7 @@ pub(super) fn collect(
                     if let Some(values) = whole_sequence_values(
                         &assignment.right,
                         semantic,
+                        alias,
                         native_module,
                         &mut accounted,
                     ) {
@@ -263,6 +264,7 @@ pub(super) fn collect(
 fn whole_sequence_values<'ast, 'src>(
     value: &'ast Expression<'src>,
     semantic: &Semantic<'_>,
+    alias: bool,
     native_module: bool,
     accounted: &mut BTreeSet<(u32, u32)>,
 ) -> Option<Vec<&'ast Expression<'src>>> {
@@ -312,7 +314,11 @@ fn whole_sequence_values<'ast, 'src>(
     let last = last.get_inner_expression();
     if !values.is_empty() && fresh_value(last) {
         values.push(last);
-    } else if !whole_value(last, semantic, &mut sequence_accounted) {
+    } else if !whole_value(last, semantic, &mut sequence_accounted)
+        && !(values.is_empty()
+            && alias
+            && wrapper(last, "exports", semantic, &mut sequence_accounted))
+    {
         return None;
     }
     accounted.extend(sequence_accounted);
