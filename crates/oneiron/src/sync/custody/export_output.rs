@@ -71,10 +71,25 @@ pub(super) fn admit_export_output(
     row_key: &str,
     bytes: &[u8],
 ) -> Result<()> {
+    admit_export_output_with_txn(vault, key, row_key, bytes, None)
+}
+
+/// [`admit_export_output`] over an optional caller-supplied reader: `Some`
+/// reuses it at the folded-result reader point below, `None` opens the
+/// original independent reader at the original point with the original error
+/// mapping. Bounds, filing and window checks never read and are unchanged;
+/// part rows judge through the parts twin with the same reader.
+pub(super) fn admit_export_output_with_txn(
+    vault: &Vault,
+    key: Option<&WindowKey>,
+    row_key: &str,
+    bytes: &[u8],
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
         return Err(refused("export secret supplement past one row's bound"));
     }
-    if let Some(admitted) = parts::admit_part(vault, key, row_key, bytes) {
+    if let Some(admitted) = parts::admit_part_with_txn(vault, key, row_key, bytes, txn) {
         return admitted;
     }
     let kept = KeptExportOutput::decode(bytes)
@@ -91,9 +106,16 @@ pub(super) fn admit_export_output(
     }
     // Reading this vault's own authority is the store's work: its fault is
     // this machine's, never the peer's refused update (FIX 5925).
-    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let owned;
+    let rtxn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(admission_read_fault)?;
+            &owned
+        }
+    };
     let fold = vault
-        .authority_view_readonly_in_txn(&rtxn)
+        .authority_view_readonly_in_txn(rtxn)
         .map_err(admission_read_fault)?;
     if !kept.named_by(&fold) {
         // Admitted, never kept: the keep path judges it against the result,
@@ -174,6 +196,57 @@ pub(super) fn mirror_export_outputs(
     Ok(wrote)
 }
 
+/// Export supplements prepared against the caller's current authority snapshot.
+pub(in crate::sync) struct ExportOutputBatch {
+    due: Vec<KeptExportOutput>,
+}
+
+impl ExportOutputBatch {
+    pub(in crate::sync) fn prepare_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        doc: &LoroDoc,
+        rows: &[(String, Vec<u8>)],
+    ) -> Result<Self> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let mut due = Vec::new();
+        for (map_key, bytes) in rows {
+            let Some(output) = KeptExportOutput::decode(bytes) else {
+                continue;
+            };
+            if *map_key == output_row(&output.request)
+                && !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        for output in parts::joined_copies(doc, rows) {
+            if !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        Ok(Self { due })
+    }
+
+    pub(in crate::sync) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+        let mut kept = 0;
+        for output in &self.due {
+            if keep_relayed_export_output_in_txn(vault, wtxn, &fold, output)? {
+                kept += 1;
+            }
+        }
+        Ok(kept)
+    }
+}
+
 /// Keeps each relayed copy, filed under its own request, that stands on
 /// this vault's fold and that it keeps no copy for yet, checked again in the
 /// writer that keeps it. A copy the fold holds an import mark of is not
@@ -189,43 +262,14 @@ pub(super) fn keep_relayed_export_outputs(
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let due = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut due = Vec::new();
-            for (map_key, bytes) in &rows {
-                let Some(output) = KeptExportOutput::decode(bytes) else {
-                    continue;
-                };
-                if *map_key == output_row(&output.request)
-                    && !fold.export_supplement_imported(&output.request)
-                    && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
-                {
-                    due.push(output);
-                }
-            }
-            for output in parts::joined_copies(doc, &rows) {
-                if !fold.export_supplement_imported(&output.request)
-                    && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
-                {
-                    due.push(output);
-                }
-            }
-            due
+            ExportOutputBatch::prepare_in_txn(vault, &rtxn, doc, &rows)?
         };
-        if due.is_empty() {
+        if batch.due.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-            let mut kept = 0;
-            for output in &due {
-                if keep_relayed_export_output_in_txn(vault, wtxn, &fold, output)? {
-                    kept += 1;
-                }
-            }
-            Ok(kept)
-        })
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {

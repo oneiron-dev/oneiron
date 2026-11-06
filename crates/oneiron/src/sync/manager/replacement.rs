@@ -159,6 +159,8 @@ impl WindowManager {
                 Err(error) => return Err(error),
             },
         };
+        let positions =
+            crate::sync::origin_positions::prepare(&self.vault, own_device, key, &old, snapshot);
         let prepared = crate::sync::ingest::with_own_device_import(
             &self.vault,
             own_device,
@@ -173,6 +175,7 @@ impl WindowManager {
                     snapshot,
                     evidence,
                     bound,
+                    positions,
                 )
             },
         )?;

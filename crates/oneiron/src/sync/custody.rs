@@ -54,7 +54,14 @@
 
 pub(super) mod checkpoint;
 mod export_output;
+mod isolated;
+mod materialize;
+pub(in crate::sync) use isolated::IsolatedCustody;
 mod witness;
+
+pub(super) use export_output::ExportOutputBatch;
+pub(super) use materialize::{CustodyInputBatch, CustodyPieceBatch};
+pub(super) use witness::WitnessBatch;
 
 use std::collections::BTreeMap;
 
@@ -69,8 +76,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncEngineContext};
 use crate::secret_custody::{
     CustodyApplied, CustodyPieces, CustodyTransition, RelayedInput, SecretCustodyStatus,
-    apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
-    held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn, keep_input_in_txn,
+    apply_custody_transition_in_txn, custody_transitions, held_inputs, keep_custody_piece_in_txn,
+    keep_input_in_txn,
 };
 
 /// Which input rows a window admits and prunes (CALLS CUSTODY_INPUT_PRUNE,
@@ -193,6 +200,20 @@ pub(crate) fn admit_custody_carrier(
     map_key: &str,
     value: &LoroValue,
 ) -> Result<()> {
+    admit_custody_carrier_with_txn(vault, key, map_key, value, None)
+}
+
+/// [`admit_custody_carrier`] over an optional caller-supplied reader: `Some`
+/// reuses it at the transition-genesis reader point below, `None` opens the
+/// original independent reader at the original point with the original error
+/// mapping. Input and witness decode branches never read and are unchanged.
+pub(in crate::sync) fn admit_custody_carrier_with_txn(
+    vault: Option<&Vault>,
+    key: Option<&WindowKey>,
+    map_key: &str,
+    value: &LoroValue,
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     let Some(vault) = vault else {
         return Err(refused("no vault to judge the signer by"));
     };
@@ -218,7 +239,7 @@ pub(crate) fn admit_custody_carrier(
         return witness::admit_witness_part(key, row_key, bytes);
     }
     if let Some(row_key) = map_key.strip_prefix(export_output::EXPORT_OUTPUT_ROW_PREFIX) {
-        return export_output::admit_export_output(vault, key, row_key, bytes);
+        return export_output::admit_export_output_with_txn(vault, key, row_key, bytes, txn);
     }
     let transition = CustodyTransition::decode(bytes)?;
     if transition.row_key() != map_key {
@@ -229,9 +250,16 @@ pub(crate) fn admit_custody_carrier(
     }
     // Reading this vault's own authority is the store's work: its fault is
     // this machine's, never the peer's refused update (FIX 5925).
-    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let owned;
+    let rtxn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(admission_read_fault)?;
+            &owned
+        }
+    };
     let vault_id = vault
-        .authority_view_readonly_in_txn(&rtxn)
+        .authority_view_readonly_in_txn(rtxn)
         .map_err(admission_read_fault)?
         .vault_id
         .ok_or_else(|| refused("the vault has no authority genesis"))?;
@@ -251,6 +279,17 @@ pub(crate) fn admit_custody_map(
     key: Option<&WindowKey>,
     map: &LoroMap,
 ) -> Result<()> {
+    admit_custody_map_with_txn(vault, key, map, None)
+}
+
+/// [`admit_custody_map`] over an optional caller-supplied reader, threaded
+/// to every row's carrier admission.
+pub(in crate::sync) fn admit_custody_map_with_txn(
+    vault: Option<&Vault>,
+    key: Option<&WindowKey>,
+    map: &LoroMap,
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     let mut rows = Vec::new();
     let mut nested = false;
     map.for_each(|map_key, value| match value {
@@ -261,7 +300,7 @@ pub(crate) fn admit_custody_map(
         return Err(refused("nested container"));
     }
     for (map_key, value) in &rows {
-        admit_custody_carrier(vault, key, map_key, value)?;
+        admit_custody_carrier_with_txn(vault, key, map_key, value, txn)?;
     }
     Ok(())
 }
@@ -524,52 +563,21 @@ fn apply_carriers(
     // one of the owner's machines has no secret, and keeps every value sealed.
     let secret = vault.machine_secret_outside_txn().ok();
     let outcome = (|| -> Result<usize> {
-        let (arrived, whole) = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut arrived = Vec::new();
-            for (map_key, bytes) in &rows {
-                let transition = match CustodyTransition::decode(bytes) {
-                    Ok(transition) if transition.row_key() == *map_key => transition,
-                    _ => {
-                        tracing::warn!(window, key = %map_key, "custody transition malformed; left out");
-                        continue;
-                    }
-                };
-                if skip_held && holds_custody_carrier_in_txn(vault, &rtxn, &transition)? {
-                    continue;
-                }
-                if let Err(error) = transition.verify(&fold) {
-                    tracing::warn!(window, key = %map_key, error = %error, "custody transition does not stand on its request here; left out");
-                    continue;
-                }
-                arrived.push(transition);
-            }
-            // A piece alone has no custody effect: only a group the pieces
-            // make with those kept here, whole and standing as one, does.
-            let mut whole = Vec::new();
-            for group in completed_custody_groups_in_txn(vault, &rtxn, &arrived)? {
-                if group.verify(&fold).is_err() {
-                    continue;
-                }
-                // A value sealed under its carrier key (FIX 7402) opens once
-                // that key is answered here; until then the group is kept.
-                let value = match (&secret, fold.vault_id) {
-                    (Some(secret), Some(vault_id)) => {
-                        vault.open_custody_value(&group, &vault_id, secret)
-                    }
-                    _ => None,
-                };
-                whole.push((group, value));
-            }
-            (arrived, whole)
+            CustodyPieceBatch::prepare_in_txn(
+                vault,
+                &rtxn,
+                window,
+                &rows,
+                skip_held,
+                secret.as_ref(),
+            )?
         };
-        if arrived.is_empty() {
+        if batch.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            stage_custody_pieces_in_txn(vault, wtxn, &arrived, &whole)
-        })
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(written) if written > 0 => {
@@ -594,32 +602,14 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let (machine, due) = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let Some(machine) = crate::identity::read_machine_id_in_txn(vault, &rtxn)? else {
-                return Ok(0);
-            };
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut due: Vec<RelayedInput> = Vec::new();
-            for (map_key, bytes) in &rows {
-                let Some(input) = RelayedInput::decode(bytes) else {
-                    continue;
-                };
-                let key = input.row_key();
-                if *map_key == input_row(&key)
-                    && input_awaits(&fold, machine, &input)
-                    && witness::input_genuine(vault, &rtxn, &input)?
-                    && witness::input_slot_open(vault, &rtxn, &key)?
-                {
-                    due.push(input);
-                }
-            }
-            (machine, due)
+            CustodyInputBatch::prepare_in_txn(vault, &rtxn, &rows)?
         };
-        if due.is_empty() {
+        let Some(batch) = batch else {
             return Ok(0);
-        }
-        vault.with_write_txn_grouped(|wtxn| stage_custody_inputs_in_txn(vault, wtxn, machine, &due))
+        };
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {

@@ -201,17 +201,31 @@ pub(super) fn admit_part(
     row_key: &str,
     bytes: &[u8],
 ) -> Option<Result<()>> {
-    bytes
-        .starts_with(PART_LABEL)
-        .then(|| admit_part_head(vault, key, row_key, bytes))
+    admit_part_with_txn(vault, key, row_key, bytes, None)
 }
 
-/// [`admit_part`] for bytes that start with the part label.
+/// [`admit_part`] over an optional caller-supplied reader, threaded to the
+/// part-head admission below.
+pub(super) fn admit_part_with_txn(
+    vault: &Vault,
+    key: Option<&WindowKey>,
+    row_key: &str,
+    bytes: &[u8],
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Option<Result<()>> {
+    bytes
+        .starts_with(PART_LABEL)
+        .then(|| admit_part_head(vault, key, row_key, bytes, txn))
+}
+
+/// [`admit_part`] for bytes that start with the part label, over an optional
+/// caller-supplied reader (`None` opens the original independent reader).
 fn admit_part_head(
     vault: &Vault,
     key: Option<&WindowKey>,
     row_key: &str,
     bytes: &[u8],
+    txn: Option<&heed::RoTxn<'_>>,
 ) -> Result<()> {
     let part = OutputPart::decode(bytes)
         .ok_or_else(|| refused("malformed export secret supplement part"))?;
@@ -227,11 +241,18 @@ fn admit_part_head(
     }
     // Reading this vault's own authority is the store's work: its fault is
     // this machine's, never the peer's refused update (FIX 5925).
-    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let owned;
+    let rtxn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(admission_read_fault)?;
+            &owned
+        }
+    };
     let fold = vault
-        .authority_view_readonly_in_txn(&rtxn)
+        .authority_view_readonly_in_txn(rtxn)
         .map_err(admission_read_fault)?;
-    let kept_at = kept_export_output_sealed_at_in_txn(vault, &rtxn, &part.request)
+    let kept_at = kept_export_output_sealed_at_in_txn(vault, rtxn, &part.request)
         .map_err(admission_read_fault)?;
     if !head_named(&fold, &part) || kept_at.is_some_and(|sealed_at| sealed_at != part.sealed_at) {
         // Admitted, never kept, as a one-part copy the result does not name
