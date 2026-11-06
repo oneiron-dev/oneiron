@@ -6,7 +6,9 @@
 //! worker holds that room until the relay's blocking receive has ended,
 //! whatever became of the session or the socket meanwhile, so no room comes
 //! back while a receive still blocks. At low load nothing waits for an
-//! answer: the send is acknowledged once its worker has started.
+//! answer: the send is acknowledged once its worker has started. An answer
+//! the guest's socket has no room for waits only while the session and the
+//! socket live ([`deliver`], FIX 8016).
 //!
 //! The relay prepares each datagram in the request thread, before its worker
 //! starts ([`crate::EgressRelay::prepare_datagram`]). A VM's relay returns
@@ -31,6 +33,7 @@ use crate::{HOST_NET_WORKER_FLOOR, HostNetPermit, floor_saturated, saturated_flo
 use std::io;
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixDatagram;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -45,6 +48,9 @@ const WRITER: (usize, usize) = (1, 0);
 /// How long a waiting send or writer sleeps before it looks at the floor
 /// again: a cadence, not a bound.
 const FLOOR_RETRY: Duration = Duration::from_millis(10);
+/// How long an answer waiting for room in the guest's socket sleeps before
+/// it tries again: a cadence, not a bound.
+const DELIVERY_RETRY: Duration = Duration::from_millis(10);
 
 /// Relays `bytes` to `target` on a worker of its own, which hands the answer
 /// to `socket`. Returns once the relay has prepared the datagram and the
@@ -67,12 +73,12 @@ pub(super) fn send(
             .acquire(fds, workers)
             .and_then(|permit| {
                 let prepared = Arc::clone(&state.relay).prepare_datagram(target, bytes.to_vec())?;
-                let socket = Arc::clone(socket);
+                let (state, socket) = (Arc::clone(state), Arc::clone(socket));
                 start(permit, move || {
                     if let Ok(answer) = prepared.answer()
                         && let Some((_, host)) = &socket.datagram
                     {
-                        let _ = host.send(&answer);
+                        deliver(&state, &socket, host, &answer);
                     }
                 })
             });
@@ -130,6 +136,35 @@ pub(super) fn relay_written(
                 std::thread::sleep(FLOOR_RETRY);
             }
             Err(_) => return None,
+        }
+    }
+}
+
+/// Hands `answer` to the guest through `host`, its socket's host end (FIX
+/// 8016). A guest whose socket has no room makes the answer wait, but only
+/// while the session and the socket live: a guest that never reads frees
+/// the worker, its descriptors and its room once either ends. Any other
+/// send failure drops the answer, as a lost datagram.
+pub(super) fn deliver(state: &State, socket: &Socket, host: &UnixDatagram, answer: &[u8]) {
+    loop {
+        // SAFETY: `send` reads `answer.len()` bytes from `answer`, a live
+        // buffer, on `host`'s live descriptor; MSG_DONTWAIT makes it return
+        // instead of blocking, without changing the descriptor's own mode.
+        let sent = unsafe {
+            libc::send(
+                host.as_raw_fd(),
+                answer.as_ptr().cast(),
+                answer.len(),
+                libc::MSG_DONTWAIT,
+            )
+        };
+        if sent >= 0 {
+            return;
+        }
+        match io::Error::last_os_error().kind() {
+            io::ErrorKind::Interrupted => continue,
+            io::ErrorKind::WouldBlock if live(state, socket) => std::thread::sleep(DELIVERY_RETRY),
+            _ => return,
         }
     }
 }

@@ -18,7 +18,8 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     pub url: String,
     pub status: u16,
-    pub headers: Vec<(String, String)>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
     #[serde(
         serialize_with = "serialize_response_body",
         deserialize_with = "deserialize_response_body"

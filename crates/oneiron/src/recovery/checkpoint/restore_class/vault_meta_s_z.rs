@@ -109,6 +109,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_ERASE_ASK, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_MATURED, SHARED_VAULT_MEMBERSHIP),
+    // A membership record still owed stands as the live vault owes it: a
+    // restore neither drops one nor revives one already signed (FIX 12335).
+    (&t::SHARED_ACT_MEMBERSHIP_PENDING, LIVE),
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     // A proposed policy change binds the digest of the rows it was proposed
     // against, so a restore that moves the policy manifest leaves it stale:
@@ -131,6 +134,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_INVITATION_KEY, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),

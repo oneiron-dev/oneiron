@@ -547,7 +547,7 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
                         && let Some(answer) =
                             relay_workers::relay_written(&state, &socket, target, &bytes[..n])
                     {
-                        let _ = host.send(&answer);
+                        relay_workers::deliver(&state, &socket, host, &answer);
                     }
                 }
                 Err(e)
