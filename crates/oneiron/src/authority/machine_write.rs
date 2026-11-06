@@ -293,7 +293,11 @@ fn proof(body: &ClaimBody) -> Result<Option<(EntityId, u64, Option<MachineWriteS
 
 /// Whether any asserted author resolves to a stored MACHINE row. Scan all
 /// occurrences before strict parsing so duplicate actor fields cannot hide it.
-fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)]) -> Result<bool> {
+fn names_machine(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    entries: &[(Value, Value)],
+) -> Result<bool> {
     for (_, value) in entries
         .iter()
         .filter(|(key, _)| key.as_str() == Some("actor_entity_ref"))
@@ -314,7 +318,7 @@ fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)
 }
 
 pub(crate) fn machine_claim_needs_history(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {

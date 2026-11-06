@@ -128,29 +128,13 @@ impl Vault {
             EntityId,
         ) -> Result<super::transition::ClaimTransitionProjection>,
     ) -> Result<Option<ClaimBody>> {
-        let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
-        let Some(body) = body else { return Ok(None) };
-        if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
-            || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
-                .is_empty()
-            || self
-                .store
-                .vault_meta
-                .get(rtxn, &super::history_projection::pin_key(*id))?
-                .is_some()
-        {
-            let fold = self.authority_fold_readonly_in_txn(rtxn)?;
-            let projection = history(&self.store, rtxn, &fold, *id)?;
-            // A superseded history's same-id successor is an ordinary claim.
-            if !projection.admits_successor_by(crate::claim::claim_author(&body))
-                || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
-            {
-                return Ok(Some(super::history_projection::project_machine_claim(
-                    &projection,
-                )));
-            }
-        }
-        Ok(Some(body))
+        claim_in_read(
+            &self.store.read(),
+            rtxn,
+            id,
+            self.privacy_posture(),
+            |_, store, txn, fold, target| history(store, txn, fold, target),
+        )
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(
@@ -401,3 +385,80 @@ pub(crate) fn facet_refs_in_port<P: crate::ports::EdgeStoreRead>(
 }
 
 pub(crate) use crate::store::claim_projection::session_claim_producer;
+
+/// A claim from this content snapshot, with its machine history verified by
+/// the owning vault's pin, authority and owner-confirmation obligations.
+pub(crate) fn get_claim_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Option<ClaimBody>> {
+    claim_in_read(
+        read,
+        txn,
+        id,
+        posture,
+        super::history_projection::resolved_machine_history_from,
+    )
+}
+
+struct ClaimControlRows<'a>(crate::store::StoreRead<'a>);
+
+impl super::history_projection::ControlRows for ClaimControlRows<'_> {
+    fn index_ids(
+        &self,
+        _store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        super::history_store::machine_history_ids_for_target(&self.0, txn, target)
+    }
+
+    fn row<'a>(
+        &'a self,
+        _store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<std::borrow::Cow<'a, [u8]>>> {
+        Ok(EntityStoreRead::port_entity_raw(&self.0, txn, id)?.map(std::borrow::Cow::Owned))
+    }
+}
+
+fn claim_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    posture: crate::HostingPrivacyPosture,
+    history: impl FnOnce(
+        &dyn super::history_projection::ControlRows,
+        &crate::store::Store,
+        &heed::RoTxn<'_>,
+        &crate::authority::AuthorityFold,
+        EntityId,
+    ) -> Result<super::transition::ClaimTransitionProjection>,
+) -> Result<Option<ClaimBody>> {
+    let body = crate::ports::claim_body_in_read(read, txn, id)?;
+    let Some(body) = body else { return Ok(None) };
+    if crate::authority::machine_claim_needs_history(read, txn, &body)?
+        || !super::history_store::machine_history_ids_for_target(read, txn, *id)?.is_empty()
+        || read
+            .base()
+            .vault_meta
+            .get(txn, &super::history_projection::pin_key(*id))?
+            .is_some()
+    {
+        let fold =
+            crate::authority::authority_fold_readonly_for_store_in_txn(read.base(), posture, txn)?;
+        let projection = history(&ClaimControlRows(*read), read.base(), txn, &fold, *id)?;
+        // A superseded history's same-id successor is an ordinary claim.
+        if !projection.admits_successor_by(crate::claim::claim_author(&body))
+            || crate::authority::machine_claim_needs_history(read, txn, &body)?
+        {
+            return Ok(Some(super::history_projection::project_machine_claim(
+                &projection,
+            )));
+        }
+    }
+    Ok(Some(body))
+}

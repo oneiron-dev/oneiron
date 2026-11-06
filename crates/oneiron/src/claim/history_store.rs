@@ -450,7 +450,7 @@ pub(crate) fn maintain_machine_history_index(
 /// history, so the read counts its rows against a threshold row and reads on
 /// past it (rule 5): no history is too long to index.
 pub(crate) fn machine_history_ids_for_target(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<Vec<EntityId>> {
@@ -462,7 +462,7 @@ pub(crate) fn machine_history_ids_for_target(
         target.as_bytes(),
     )?;
     let mut ids = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+    for row in store.vault_meta().prefix_iter(txn, &prefix)? {
         count.row();
         let (key, _) = row?;
         let bytes: [u8; 16] = key[prefix.len()..]
