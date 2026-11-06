@@ -875,6 +875,23 @@ fn stage_context_pack_retrieval_run_finalize(
             },
         )
     };
+    let trace_bytes = |trace: &super::types::RetrievalTrace| {
+        let mut bytes = (trace.per_channel.capacity() as u64).saturating_mul(std::mem::size_of::<
+            super::types::RetrievalTraceChannelRecord,
+        >() as u64);
+        for channel in &trace.per_channel {
+            bytes = bytes.saturating_add(score_breakdown_bytes(&channel.candidates));
+        }
+        for stage in [
+            &trace.fused,
+            &trace.blended,
+            &trace.reranked,
+            &trace.final_stage,
+        ] {
+            bytes = bytes.saturating_add(score_breakdown_bytes(&stage.candidates));
+        }
+        bytes
+    };
     let replaced_score_breakdown_bytes = memory.as_deref_mut().map_or(0, |memory| {
         let bytes = score_breakdown_bytes(&record.score_breakdown);
         memory.materialized(0, bytes);
@@ -908,6 +925,11 @@ fn stage_context_pack_retrieval_run_finalize(
     if let Some(memory) = memory.as_deref_mut() {
         memory.shrink(replaced_score_breakdown_bytes);
     }
+    let replaced_trace_bytes = memory.as_deref_mut().map_or(0, |memory| {
+        let bytes = record.trace.as_ref().map_or(0, &trace_bytes);
+        memory.materialized(0, bytes);
+        bytes
+    });
     if let Some(trace) = record.trace.as_mut() {
         // Finalization publishes only the caller's post-filter result set.
         // Earlier stages also reach the durable row and its fork index, so
@@ -926,26 +948,10 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     if let Some(memory) = memory.as_deref_mut() {
-        let mut bytes = score_breakdown_bytes(&record.score_breakdown);
-        if let Some(trace) = &record.trace {
-            bytes = bytes.saturating_add(
-                (trace.per_channel.capacity() as u64).saturating_mul(
-                    std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
-                ),
-            );
-            for channel in &trace.per_channel {
-                bytes = bytes.saturating_add(score_breakdown_bytes(&channel.candidates));
-            }
-            for stage in [
-                &trace.fused,
-                &trace.blended,
-                &trace.reranked,
-                &trace.final_stage,
-            ] {
-                bytes = bytes.saturating_add(score_breakdown_bytes(&stage.candidates));
-            }
-        }
+        let bytes = score_breakdown_bytes(&record.score_breakdown)
+            .saturating_add(record.trace.as_ref().map_or(0, &trace_bytes));
         memory.materialized(0, bytes);
+        memory.shrink(replaced_trace_bytes);
         memory.shrink(surfaced_breakdown_bytes);
     }
     let replaced_replay_bytes = memory.as_deref_mut().map_or(0, |memory| {
