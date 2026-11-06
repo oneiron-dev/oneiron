@@ -233,7 +233,7 @@ export_facade! {
 "vault.entities.look_before_mint" => fn vault_entities_look_before_mint(&self, input: IdentityLookupRequest) -> IdentityLookup = |client| {
     let input: oneiron::memory::identity_doors::IdentityLookupRequest = crate::codec::lower_record("vault.entities.look_before_mint", input)?;
     let output = client.vault_entities_look_before_mint(&input)?;
-    crate::codec::lift_record("vault.entities.look_before_mint", &output)
+    crate::codec::lift_identity_lookup("vault.entities.look_before_mint", output)
 };
 "vault.identity.mention" => fn vault_identity_mention(&self, input: WireMentionProvenance) -> IdentityMentionView = |client| {
     let input: oneiron::dreamer_runner::maintenance::identity::MentionProvenance = crate::codec::lower_record("vault.identity.mention", input)?;
@@ -600,7 +600,7 @@ export_facade! {
 "vault.retrieval.hyde.pending" => fn vault_retrieval_hyde_pending(&self, input: HydeHostPendingRequest) -> Vec<HydeHostWork> = |client| {
     let input: oneiron::query_expansion::host::HydeHostPendingRequest = crate::codec::lower_record("vault.retrieval.hyde.pending", input)?;
     let output = client.vault_retrieval_hyde_pending(&input)?;
-    crate::codec::lift_record("vault.retrieval.hyde.pending", &output)
+    crate::codec::lift_hyde_host_work("vault.retrieval.hyde.pending", output)
 };
 "vault.retrieval.hyde.complete" => fn vault_retrieval_hyde_complete(&self, input: HydeHostCompleteRequest) -> HydeHostReceipt = |client| {
     let input: oneiron::query_expansion::host::HydeHostCompleteRequest = crate::codec::lower_record("vault.retrieval.hyde.complete", input)?;

@@ -2378,6 +2378,10 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_saved_query_read({name}, output)'
             elif row['output'] == 'crate::campaign::surface::SavedQueryEvaluationReceipt':
                 result = f'crate::codec::lift_saved_query_evaluation({name}, output)'
+            elif row['output'] == 'crate::memory::identity_doors::IdentityLookup':
+                result = f'crate::codec::lift_identity_lookup({name}, output)'
+            elif row['output'] == 'Vec<crate::query_expansion::host::HydeHostWork>':
+                result = f'crate::codec::lift_hyde_host_work({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
