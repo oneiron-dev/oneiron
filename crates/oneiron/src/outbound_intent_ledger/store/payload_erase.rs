@@ -18,6 +18,7 @@
 use heed::RwTxn;
 
 use super::super::payload::{payload_erased, sealed_custody_ref};
+use super::super::remote_task_poll::keep_session_end_in_txn;
 use super::super::settlement::{forget_remote_task_in_txn, settle_reservation_in_txn};
 use super::super::types::{
     IntentEscalationReason, IntentLedgerRecord, IntentLedgerResult, IntentState,
@@ -66,6 +67,10 @@ pub(crate) fn erase_call_request_in_txn(
     if payload_erased(record.payload())? {
         return Ok(false);
     }
+    // A session its remote task's polls kept open is owed its end before the
+    // handle naming it goes, read while the request still opens (FIX 16028),
+    // as an actor's erase keeps it.
+    keep_session_end_in_txn(vault, wtxn, &id)?;
     if let Some(custody_ref) = sealed_custody_ref(record.payload())? {
         retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
     }
