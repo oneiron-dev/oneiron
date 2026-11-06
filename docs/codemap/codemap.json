@@ -19092,6 +19092,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/code_symbol/cjs_source.rs",
+     "purpose": "Full-grammar CommonJS parsing and lexical, source-derived symbol relations",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_symbol/codec.rs",
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
@@ -89679,7 +89689,7 @@
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
     "code_symbol": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90990,7 +91000,7 @@
    },
    "over_bar": 159,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6391,
+   "source_files": 6392,
    "test_files": 895
   },
   "oneiron-android": {

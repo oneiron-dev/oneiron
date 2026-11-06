@@ -1589,6 +1589,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/wasmtime_runtime/wire/describe.rs` | src | s | 3 crate-vis | — | How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle… |
 | `src/code_sandbox/wasmtime_runtime/wire/search.rs` | src | s | 1 crate-vis | — | `vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an… |
 | `src/code_symbol/actor_erase.rs` | src | s | 2 crate-vis | — | An erased actor out of the symbol manifests' producing-operation chains (FIX 4476) |
+| `src/code_symbol/cjs_source.rs` | src | m | 1 crate-vis | — | Full-grammar CommonJS parsing and lexical, source-derived symbol relations |
 | `src/code_symbol/codec.rs` | src | m | 2 fn · 4 const · 31 crate-vis | — | Pinned body keys and the manifest / chunk / revision / entity-body encode-decode |
 | `src/code_symbol/document_view.rs` | src | s | 2 struct · 5 fn | CodeAttributedChange, CodeUnitBlame | Semantic diff and blame over tested code documents, named per operation |
 | `src/code_symbol/keys.rs` | src | s | 2 fn · 8 crate-vis | — | Manifest and revision-index key families and the deterministic symbol entity id |
