@@ -133,3 +133,12 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
+`src/native_patch/table.rs`. When the rebuilt line count matches the original
+paragraph count, later lines reuse the same-index paragraph's properties and
+its first run's (else first field's, else the global run's) properties; a
+later-template error falls back to the first paragraph's template, and the
+first line and count-changed rebuilds keep the existing first-paragraph
+template. Field-removal receipts, expected-text checks and the retained/cut
+paths are unchanged.
