@@ -30,4 +30,3 @@ pub enum CustodyCredentialPassFault {
 
 pub const CUSTODY_CREDENTIAL_PASS_FAULT: CustodyCredentialPassFault =
     CustodyCredentialPassFault::WarnAndKeepLocal;
-

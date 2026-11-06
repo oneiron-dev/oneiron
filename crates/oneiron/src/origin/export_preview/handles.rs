@@ -3,7 +3,6 @@
 
 pub(crate) use oneiron_store::origin::export_preview::handles::*;
 
-use std::collections::BTreeMap;
 use super::PinnedLeaf;
 use super::types::{CodeExportByteHandle, CodeExportFileBytes, CodeExportPreview, CodeExportSide};
 use crate::EntityId;
@@ -11,6 +10,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::store::code_revision_record::CodeTreeInventory;
 use crate::store::code_tree_blob::CodeTreeBlob;
+use std::collections::BTreeMap;
 
 /// The pins and both complete trees one preview's identity binds.
 pub(super) struct PreviewIdentity<'a> {

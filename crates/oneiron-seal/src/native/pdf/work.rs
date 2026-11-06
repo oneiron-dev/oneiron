@@ -5,9 +5,9 @@
 //! except admission and bounds:
 //! - admission: every buffer and decode goes through the call's operation
 //!   [`MemoryLedger`], never the engine `Stage`;
-//! - bounds: PDF format bounds only ([`PDF_FORMAT_BYTES`]/[`PDF_FORMAT_OBJECTS`]);
-//!   the per-stream codec refusal (`StreamPastCodecBound`) never arises on
-//!   the organ path, where growth is admitted instead of refused.
+//! - bounds: preparation uses PDF format bounds; inspection also carries
+//!   its caller's configured per-stream codec bound. Both admit growth
+//!   through the operation ledger before allocation.
 //!
 //! Port files (one per engine source): `work_preflight` (`render/preflight`),
 //! `work_streams` (`render/streams`), `work_source` (`render/source`),
@@ -51,6 +51,9 @@ pub(crate) struct WorkLimits<'a> {
     pub ledger: &'a Arc<MemoryLedger>,
     /// The invocation's counts (`Counter::*` via `note`).
     pub observed: &'a SealObservations,
+    /// Inspection's caller-owned per-stream codec bound; preparation admits
+    /// its streams without this bound.
+    pub stream_decode_bytes: Option<usize>,
 }
 
 pub(crate) fn inspect_in(

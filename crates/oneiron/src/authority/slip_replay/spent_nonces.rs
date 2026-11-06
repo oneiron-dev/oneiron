@@ -535,6 +535,10 @@ pub(in crate::authority) struct SpendGuard {
 /// spend it answered is a row this writer reads; an absent or empty
 /// journal, the common path, costs one stat.
 pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<SpendGuard> {
+    // Inherited turn locks may be held by a thread that does not exist here.
+    if !vault.spent_nonces.in_own_process() {
+        return Err(Error::VaultServedElsewhere);
+    }
     let turn = spend_lock(vault.store.canonical_root())
         .lock()
         .unwrap_or_else(PoisonError::into_inner);

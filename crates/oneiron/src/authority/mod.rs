@@ -67,6 +67,7 @@ mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
 mod current_scope;
+mod device_succession;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
@@ -114,6 +115,7 @@ mod machine_profile;
 mod machine_standing;
 mod machine_write;
 mod managed_owner_check;
+mod membership_execution;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
@@ -125,6 +127,8 @@ mod owner_key_enrollment_door;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
+mod owner_work_diagnostics;
+mod pact_openings;
 mod past_grant_standing;
 mod pinned_root;
 mod policy_setting_choice;
@@ -135,6 +139,7 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;
@@ -193,13 +198,14 @@ pub use oneiron_authority::authority::{
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
-    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
-    TrustedContactSlipBinding, WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord,
-    WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
-    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
-    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
-    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
+    SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
+    SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
+    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
@@ -418,6 +424,7 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
