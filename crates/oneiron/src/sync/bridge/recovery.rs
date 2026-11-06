@@ -4,7 +4,7 @@ use super::Materializer;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{ArtifactError, Result};
-use crate::recovery::{CanonicalBaseEdge, CanonicalSnapshot};
+use crate::recovery::{CanonicalBaseEdge, CanonicalSnapshot, NotePlanRows};
 use crate::sync::ingest::{
     EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
 };
@@ -32,7 +32,7 @@ pub(crate) fn preflight_validated_canonical_recovery(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
 ) -> Result<()> {
-    preflight_canonical_recovery(vault, materializer, snapshot, doc, None)
+    preflight_canonical_recovery(vault, materializer, snapshot, doc, None, None)
 }
 
 pub(crate) fn preflight_validated_canonical_recovery_in_note_scope(
@@ -41,8 +41,16 @@ pub(crate) fn preflight_validated_canonical_recovery_in_note_scope(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     note_scope: &BTreeSet<[u8; 16]>,
+    note_plan: &NotePlanRows,
 ) -> Result<()> {
-    preflight_canonical_recovery(vault, materializer, snapshot, doc, Some(note_scope))
+    preflight_canonical_recovery(
+        vault,
+        materializer,
+        snapshot,
+        doc,
+        Some(note_scope),
+        Some(note_plan),
+    )
 }
 
 fn preflight_canonical_recovery(
@@ -51,6 +59,7 @@ fn preflight_canonical_recovery(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     note_scope: Option<&BTreeSet<[u8; 16]>>,
+    note_plan: Option<&NotePlanRows>,
 ) -> Result<()> {
     let analyzer = vault
         .analyzer
@@ -66,7 +75,15 @@ fn preflight_canonical_recovery(
     let mut parent = vault.store.env.write_txn()?;
     let refusals = vault.store.begin_refusal_attempt();
     let preflight = match vault.store.env.nested_write_txn(&mut parent) {
-        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn, note_scope),
+        Ok(mut txn) => preflight_in_txn(
+            vault,
+            materializer,
+            snapshot,
+            doc,
+            &mut txn,
+            note_scope,
+            note_plan,
+        ),
         Err(err) => Err(err.into()),
     };
     drop(guard);
@@ -82,11 +99,15 @@ fn preflight_in_txn(
     doc: &LoroDoc,
     txn: &mut RwTxn<'_>,
     note_scope: Option<&BTreeSet<[u8; 16]>>,
+    note_plan: Option<&NotePlanRows>,
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
-    match note_scope {
-        Some(scope) => snapshot.preflight_note_recovery_in_scope(vault, txn, scope)?,
-        None => snapshot.preflight_note_recovery(vault, txn)?,
+    match (note_scope, note_plan) {
+        (Some(scope), Some(rows)) => {
+            snapshot.preflight_note_recovery_with_rows(vault, txn, scope, rows)?
+        }
+        (Some(scope), None) => snapshot.preflight_note_recovery_in_scope(vault, txn, scope)?,
+        (None, _) => snapshot.preflight_note_recovery(vault, txn)?,
     }
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     // Each AUTHORITY_LOG row is judged beside the snapshot's others, as a
