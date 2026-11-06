@@ -20,7 +20,7 @@ impl HostedTtsLimits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(in crate::gate) enum HostedTtsScope {
     Vault,
     Holder(EntityId),
@@ -117,7 +117,10 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
     };
     // Every valid row is kept, however many a trusted policy carries (FIX
     // 8762): the shape and vocabulary checks below refuse, a count never does.
+    // A repeated `(provider, scope)` slot is found in one pass, so a long
+    // table costs its length, not its square (FIX 8781).
     let mut rows = Vec::with_capacity(values.len());
+    let mut slots = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         let Value::Map(fields) = value else {
             return None;
@@ -175,10 +178,7 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
         if limits.max_text_bytes == 0 {
             return None;
         }
-        if rows
-            .iter()
-            .any(|row: &HostedTtsPolicyRow| row.provider == provider && row.scope == scope)
-        {
+        if !slots.insert((provider.clone(), scope)) {
             return None;
         }
         rows.push(HostedTtsPolicyRow {

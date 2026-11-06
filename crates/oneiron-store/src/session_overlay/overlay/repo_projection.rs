@@ -54,6 +54,33 @@ impl SessionOverlay {
         ids: &BTreeSet<EntityId>,
     ) -> Result<()> {
         let stale = |entry: &JournalEntry| matches!(&entry.op, BatchOp::MediaVector { id, .. } if ids.contains(id));
+        let key_match = |key: &[u8]| copy_of(key, prefixes, ids);
+        self.invalidate_matching(prefixes, &key_match, &stale)
+    }
+
+    /// Drops staged media rows and journal entries for a retired space.
+    /// Rows use `space_key`; journal entries use `space_id`. Other spaces stay.
+    /// Run inside the retiring writer, before commit, as with record invalidation.
+    ///
+    /// # Errors
+    /// Only a poisoned overlay lock.
+    pub fn invalidate_repo_media_space_copies(
+        self: &Arc<Self>,
+        prefixes: &[&[u8]],
+        space_key: &[u8; 16],
+        space_id: &str,
+    ) -> Result<()> {
+        let key_match = |key: &[u8]| space_copy_of(key, prefixes, space_key);
+        let stale = |entry: &JournalEntry| matches!(&entry.op, BatchOp::MediaVector { space, .. } if space.as_str() == space_id);
+        self.invalidate_matching(prefixes, &key_match, &stale)
+    }
+
+    fn invalidate_matching(
+        self: &Arc<Self>,
+        prefixes: &[&[u8]],
+        key_match: &impl Fn(&[u8]) -> bool,
+        stale: &impl Fn(&JournalEntry) -> bool,
+    ) -> Result<()> {
         let same_thread = ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
             let Some(segment) = slot
@@ -64,16 +91,16 @@ impl SessionOverlay {
             };
             segment
                 .mutations
-                .retain(|mutation| !stages_copy(mutation, prefixes, ids));
+                .retain(|mutation| !stages_copy(mutation, key_match));
             segment.journal.retain(|entry| !stale(entry));
             segment.journal_bytes = segment
                 .journal
                 .iter()
                 .map(JournalEntry::byte_size)
                 .fold(0_usize, usize::saturating_add);
-            let keys = staged_copies(&segment.preview, prefixes, ids);
+            let keys = staged_copies(&segment.preview, prefixes, key_match);
             let mut preview = segment.preview.as_ref().clone();
-            drop_rows(&mut preview, &keys, &stale);
+            drop_rows(&mut preview, &keys, stale);
             segment.preview = Arc::new(preview);
             true
         });
@@ -95,12 +122,12 @@ impl SessionOverlay {
             return Ok(());
         }
         let current = self.state.load_full();
-        let keys = staged_copies(&current, prefixes, ids);
+        let keys = staged_copies(&current, prefixes, key_match);
         if !same_thread && keys.is_empty() && !current.journal.iter().any(|entry| stale(&**entry)) {
             return Ok(());
         }
         let mut next = current.as_ref().clone();
-        drop_rows(&mut next, &keys, &stale);
+        drop_rows(&mut next, &keys, stale);
         self.state.store(Arc::new(next));
         drop(lifecycle);
         // A room stretch's charge follows what its overlay retains, this
@@ -120,12 +147,21 @@ fn copy_of(key: &[u8], prefixes: &[&[u8]], ids: &BTreeSet<EntityId>) -> bool {
     })
 }
 
+/// Whether a media row belongs to `space_key`, regardless of its record.
+fn space_copy_of(key: &[u8], prefixes: &[&[u8]], space_key: &[u8; 16]) -> bool {
+    prefixes.iter().any(|prefix| {
+        key.strip_prefix(*prefix)
+            .and_then(<([u8; 16], EntityId) as SideKey>::decode_key)
+            .is_some_and(|(key, _)| &key == space_key)
+    })
+}
+
 /// The key of every vault-meta row `state` stages, or marks as bookkeeping,
-/// as a copy of one of `ids` under one of `prefixes`.
+/// matching `key_match` under one of `prefixes`.
 fn staged_copies(
     state: &OverlayState,
     prefixes: &[&[u8]],
-    ids: &BTreeSet<EntityId>,
+    key_match: &impl Fn(&[u8]) -> bool,
 ) -> BTreeSet<Vec<u8>> {
     let slot = OverlayKeyspace::VaultMeta.slot();
     let mut keys = BTreeSet::new();
@@ -136,7 +172,7 @@ fn staged_copies(
                 rows.range::<[u8], _>(from)
                     .take_while(|(key, _)| key.starts_with(prefix))
                     .filter(|(key, value)| {
-                        matches!(value, OverlayValue::Present(_)) && copy_of(key, prefixes, ids)
+                        matches!(value, OverlayValue::Present(_)) && key_match(key)
                     })
                     .map(|(key, _)| key.clone()),
             );
@@ -146,7 +182,7 @@ fn staged_copies(
                 marked
                     .range::<[u8], _>(from)
                     .take_while(|key| key.starts_with(prefix))
-                    .filter(|key| copy_of(key, prefixes, ids))
+                    .filter(|key| key_match(key))
                     .cloned(),
             );
         }
@@ -174,8 +210,8 @@ fn drop_rows(
 }
 
 /// Whether `mutation` stages (or marks as bookkeeping) a vault-meta row
-/// that is a copy of one of `ids` under one of `prefixes`.
-fn stages_copy(mutation: &OverlayMutation, prefixes: &[&[u8]], ids: &BTreeSet<EntityId>) -> bool {
+/// matching `key_match`.
+fn stages_copy(mutation: &OverlayMutation, key_match: &impl Fn(&[u8]) -> bool) -> bool {
     match mutation {
         OverlayMutation::Put {
             keyspace: OverlayKeyspace::VaultMeta,
@@ -185,7 +221,7 @@ fn stages_copy(mutation: &OverlayMutation, prefixes: &[&[u8]], ids: &BTreeSet<En
         | OverlayMutation::Bookkeeping {
             keyspace: OverlayKeyspace::VaultMeta,
             key,
-        } => copy_of(key, prefixes, ids),
+        } => key_match(key),
         _ => false,
     }
 }
