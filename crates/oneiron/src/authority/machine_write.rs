@@ -338,10 +338,26 @@ pub(crate) fn machine_claim_needs_history_observing(
     body: &ClaimBody,
     observe: impl FnMut(EntityId),
 ) -> Result<bool> {
-    if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+    machine_claim_metadata_needs_history_observing(
+        store,
+        txn,
+        &body.predicate,
+        body.evidence.as_ref(),
+        observe,
+    )
+}
+
+pub(crate) fn machine_claim_metadata_needs_history_observing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    evidence: Option<&Value>,
+    observe: impl FnMut(EntityId),
+) -> Result<bool> {
+    if crate::claim::history_store::machine_history_kind(predicate).is_some() {
         return Ok(false);
     }
-    let Some(Value::Map(entries)) = &body.evidence else {
+    let Some(Value::Map(entries)) = evidence else {
         return Ok(false);
     };
     if entries

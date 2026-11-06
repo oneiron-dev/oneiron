@@ -1,6 +1,6 @@
 //! A canonical claim read's relationship and value backing with separate memory custody.
 
-use super::ClaimBody;
+use super::{ClaimBody, ClaimLifecycleStatus};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::Error;
 use oneiron_contracts::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
@@ -119,12 +119,15 @@ impl ClaimBodyRead {
         Ok(self.body)
     }
 
-    /// Moves only the value and its guard; unused relationships drop here.
-    pub fn into_value(self) -> ClaimValueRead {
-        ClaimValueRead {
-            value: self.body.value,
-            _memory: self.value_memory,
-        }
+    /// Moves live-head metadata and the guarded value; unused relationships drop here.
+    pub fn into_value_head(self) -> ClaimValueHead {
+        ClaimValueHead::new(
+            self.body.predicate,
+            self.body.lifecycle,
+            self.body.stale,
+            self.body.value,
+            self.value_memory,
+        )
     }
 }
 
@@ -133,6 +136,51 @@ impl Deref for ClaimBodyRead {
 
     fn deref(&self) -> &Self::Target {
         &self.body
+    }
+}
+
+/// Only the fields a value-head reader uses, after full canonical validation.
+/// Its value cannot be extracted without its memory custody.
+pub struct ClaimValueHead {
+    predicate: String,
+    lifecycle: ClaimLifecycleStatus,
+    stale: bool,
+    value: ClaimValueRead,
+}
+
+impl ClaimValueHead {
+    pub(super) fn new(
+        predicate: String,
+        lifecycle: ClaimLifecycleStatus,
+        stale: bool,
+        value: Value,
+        memory: Option<MemoryLease>,
+    ) -> Self {
+        Self {
+            predicate,
+            lifecycle,
+            stale,
+            value: ClaimValueRead {
+                value,
+                _memory: memory,
+            },
+        }
+    }
+
+    pub fn predicate(&self) -> &str {
+        &self.predicate
+    }
+
+    pub fn lifecycle(&self) -> ClaimLifecycleStatus {
+        self.lifecycle
+    }
+
+    pub fn stale(&self) -> bool {
+        self.stale
+    }
+
+    pub fn into_value(self) -> ClaimValueRead {
+        self.value
     }
 }
 

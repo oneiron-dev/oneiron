@@ -7,7 +7,11 @@ use crate::entity_id::EntityId;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 
 pub(crate) fn claim_author(body: &ClaimBody) -> Option<EntityId> {
-    let Value::Map(entries) = body.evidence.as_ref()? else {
+    claim_author_from_evidence(body.evidence.as_ref())
+}
+
+pub(crate) fn claim_author_from_evidence(evidence: Option<&Value>) -> Option<EntityId> {
+    let Value::Map(entries) = evidence? else {
         return None;
     };
     let mut matches = entries

@@ -415,7 +415,9 @@ fn contact_claim_values_in_txn(
     // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
         let memory = memory.map(|memory| memory.with_additional_pinned(retained_value_bytes));
-        if let Some(body) = vault.get_claim_with_scope_memory_in_txn(rtxn, &claim_id, memory)? {
+        if let Some(body) =
+            vault.get_claim_value_head_with_memory_in_txn(rtxn, &claim_id, memory)?
+        {
             if duplicate {
                 continue;
             }
@@ -497,10 +499,10 @@ pub(super) fn counterparty_contact_with_memory_in_claims_in_txn(
     Ok(Some(record))
 }
 
-fn is_live_contact_head(body: &crate::claim::ClaimBody) -> bool {
-    is_counterparty_contact_claim_predicate(&body.predicate)
-        && body.lifecycle == ClaimLifecycleStatus::Active
-        && !body.stale
+fn is_live_contact_head(body: &ContactClaim) -> bool {
+    is_counterparty_contact_claim_predicate(body.predicate())
+        && body.lifecycle() == ClaimLifecycleStatus::Active
+        && !body.stale()
 }
 
 /// [`live_counterparty_contact_heads_in_txn`] for a reader that holds a
@@ -526,10 +528,15 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
             continue;
         };
         if raw.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            if let Some(value) = contact_claim_value(ContactClaim::retained(
-                crate::claim::decode_claim_body(&raw.body, true)?,
-                None,
-            )) {
+            if let Some(value) = contact_claim_value(
+                crate::write_envelope::claim_body::decode_claim_value_head_with_scope_memory(
+                    &raw.body,
+                    true,
+                    None,
+                    |_, _| Ok(None),
+                )
+                .map_err(ClaimBodyReadError::into_unbound_error)?,
+            ) {
                 bodies.push(value);
             }
         }
@@ -551,7 +558,7 @@ fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
     }
     let predicate_index = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
         .iter()
-        .position(|predicate| *predicate == body.predicate)?;
+        .position(|predicate| *predicate == body.predicate())?;
     Some(ContactClaimValue {
         predicate_index,
         value: body.into_value(),
