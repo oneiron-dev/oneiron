@@ -168,7 +168,7 @@ pub(crate) fn repo_touched_symbols(
     if let Some(manifest) = manifest {
         for symbol in &manifest.symbols {
             if paths.contains(&symbol.path) {
-                touched.insert(code_symbol_entity_id(&manifest.repo_ref, symbol)?.to_hex());
+                touched.insert(code_symbol_entity_id(&manifest.repo_identity, symbol)?.to_hex());
             }
         }
     }
