@@ -290,7 +290,7 @@ Tag field storage is now the native TagAttributes carrier; mutable borrows expos
 only the attribute slice, and plain Vec extraction returns the carrier instead
 when it still has an owned guard. No markup5ever trait, package version, manifest,
 content cap, default, deadline or configuration setting changes. Atomic payload
-copies outside the checked element-construction path, ordinary unhooked merge-name
+copies outside checked element construction and native attribute merge, ordinary unhooked merge-name
 scratch, public extraction/mutations/clones, other parser
 vectors, boxed callback/guard metadata, allocator-private work and opaque native
 intervals remain unadmitted; this does not complete FIX 9615.
@@ -318,6 +318,25 @@ pushed. The one checked create callback returns a typed result. A refusal drops
 partial values and the remaining owning input, records the same first parser
 error, and stops without publishing a dummy handle or a partial element. The
 ordinary unhooked TreeSink Vec entry retains its original behavior. Atomic value
-copies during later attribute merge, public extraction/mutations/clones, interned
+copies through ordinary unhooked paths, public extraction/mutations/clones, interned
 names, other parser storage, boxed guard/callback metadata, allocator-private
 work and opaque native intervals remain unadmitted; FIX 9615 is still partial.
+
+The same checked hook now returns a typed result for native attribute merge.
+It retains the original destination-name prefix and skips matching input names
+before value conversion. Such ignored values cannot cause a new copy reservation
+or refusal. Accepted names absent from the original destination keep their input
+order, including incoming duplicates, and their owned values use the same
+shared-only atomic conversion as element creation. Inline and uniquely owned
+values transfer without copying. Missing targets and non-element targets remain
+successful no-ops.
+
+The existing destination-vector preflight remains in place; the native merge
+entry also ensures that same storage before appending. Both HTML and BODY rule
+sites stop immediately when the one typed merge callback refuses. Any earlier
+accepted values remain only in the private partial DOM, which is dropped with
+input storage before the first typed error is returned, never as prefix success.
+The ordinary unhooked Vec merge keeps its original copied-name scratch and value
+wrapping. Public extraction/mutations/clones, interned names, other parser
+storage, boxed guard/callback metadata, allocator-private work and opaque native
+intervals remain unadmitted; FIX 9615 remains partial.
