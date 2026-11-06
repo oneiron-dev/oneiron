@@ -17,6 +17,7 @@ use crate::error::Result;
 use crate::ports::checkpoint::{EntityRowPlacement, entity_row_placement};
 use crate::store::checkpoint_payload::loro::{Atom, OpenedRow};
 use crate::store::checkpoint_payload::rows::{RoundTripPolicy, Unresolved, bad_part};
+use crate::store::window_record_sources::RecordDocumentPair;
 use crate::sync::carrier_parts::{Parts, join_parts_from, split_parts};
 use crate::vault::entity_revision::RevisionRef;
 
@@ -26,6 +27,7 @@ use crate::vault::entity_revision::RevisionRef;
 #[serde(deny_unknown_fields)]
 struct Content {
     record: crate::entity_doc::CarriedRecordDocument,
+    original_pair: RecordDocumentPair,
     row: Vec<u8>,
     snapshot: Vec<u8>,
     refinement: Option<RefinementContent>,
@@ -47,9 +49,18 @@ pub(crate) struct SplitRecordDocument {
     pub(crate) actors: Vec<Atom>,
 }
 
+/// Pair data authenticated with one native source, not a transport grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecordDocumentPairRebind {
+    pub(crate) original: RecordDocumentPair,
+    pub(crate) rebuilt: RecordDocumentPair,
+    pub(crate) head: Vec<u8>,
+}
+
 /// The actual restored head and each leg's pieces, kept apart even when a
 /// digest occurs in both legs or more than once within one leg.
 pub(crate) struct RecordDocumentTransport {
+    pub(crate) source: RecordDocumentPairRebind,
     pub(crate) row: Vec<u8>,
     pub(crate) head: Vec<u8>,
     pub(crate) snapshot: Vec<(String, Vec<u8>)>,
@@ -86,19 +97,25 @@ pub(crate) fn split<B: AsRef<[u8]>>(
             if !matches!(entity_row_placement(&raw), EntityRowPlacement::Owner) {
                 return Err(Unresolved::Undecodable);
             }
-            RefinementOriginSource::from_carried(&carried.record, source.revision, raw.clone())
-                .map_err(|_| Unresolved::Undecodable)?;
-            Some(RefinementContent {
-                revision: source.revision,
-                row: raw,
-            })
+            Some(
+                RefinementOriginSource::from_carried(&carried.record, source.revision, raw)
+                    .map_err(|_| Unresolved::Undecodable)?,
+            )
         }
         None => None,
     };
+    let original_pair =
+        RecordDocumentPair::of(row, &carried.record, &snapshot, refinement.as_ref())
+            .map_err(|_| Unresolved::Undecodable)?;
+    let refinement = refinement.map(|source| RefinementContent {
+        revision: source.revision(),
+        row: source.raw().to_vec(),
+    });
     let mut split = split_entity_doc_loro(&[&snapshot], RoundTripPolicy::HistoryEquivalent)?;
     let split = split.pop().ok_or(Unresolved::Undecodable)?;
     let content = Content {
         record: carried.record,
+        original_pair,
         row: row.to_vec(),
         snapshot: split.content,
         refinement,
@@ -134,9 +151,10 @@ pub(crate) fn join(content: &[u8], actors: Vec<Atom>) -> Result<RecordDocumentTr
     }])?;
     let snapshot = snapshots.pop().ok_or_else(bad_part)?;
     decoded.record.document(&decoded.row, &snapshot)?;
-    let (snapshot, snapshot_pieces) = parted(&snapshot)?;
-    let (refinement, refinement_pieces) = match decoded.refinement {
-        Some(source) => {
+    let refinement_source = decoded
+        .refinement
+        .as_ref()
+        .map(|source| {
             if !matches!(entity_row_placement(&source.row), EntityRowPlacement::Owner) {
                 return Err(bad_part());
             }
@@ -144,7 +162,29 @@ pub(crate) fn join(content: &[u8], actors: Vec<Atom>) -> Result<RecordDocumentTr
                 &decoded.record,
                 source.revision,
                 source.row.clone(),
-            )?;
+            )
+        })
+        .transpose()?;
+    let rebuilt = RecordDocumentPair::of(
+        &decoded.row,
+        &decoded.record,
+        &snapshot,
+        refinement_source.as_ref(),
+    )?;
+    if decoded.original_pair.row != rebuilt.row
+        || decoded.original_pair.head != rebuilt.head
+        || decoded.original_pair.refinement != rebuilt.refinement
+    {
+        return Err(bad_part());
+    }
+    let source = RecordDocumentPairRebind {
+        original: decoded.original_pair,
+        rebuilt,
+        head: decoded.record.encode()?,
+    };
+    let (snapshot, snapshot_pieces) = parted(&snapshot)?;
+    let (refinement, refinement_pieces) = match decoded.refinement {
+        Some(source) => {
             let (row, pieces) = parted(&source.row)?;
             (
                 Some(RefinementOriginParts {
@@ -162,6 +202,7 @@ pub(crate) fn join(content: &[u8], actors: Vec<Atom>) -> Result<RecordDocumentTr
         refinement,
     })?;
     Ok(RecordDocumentTransport {
+        source,
         row: decoded.row,
         head,
         snapshot: snapshot_pieces,

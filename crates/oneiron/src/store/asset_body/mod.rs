@@ -81,6 +81,8 @@ pub(crate) enum AssetFileKind {
     /// plane, which hands back the same bytes, and the readers of a stored
     /// row read nothing from it, as from its manifest.
     Record,
+    /// A canonical archived receipt source, read through its owning adapter.
+    ReceiptArchive,
 }
 
 impl AssetFileKind {
@@ -89,6 +91,7 @@ impl AssetFileKind {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
+            Self::ReceiptArchive => 3,
         }
     }
 
@@ -97,6 +100,7 @@ impl AssetFileKind {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
+            3 => Some(Self::ReceiptArchive),
             _ => None,
         }
     }
@@ -584,6 +588,13 @@ impl CheckedAssetBody {
     pub(crate) fn finish(mut self) -> Result<()> {
         io::copy(&mut self, &mut io::sink())?;
         Ok(())
+    }
+
+    /// Checks the whole body and keeps its original open file for positional
+    /// reads. The caller retains the pin that protects the body's snapshot.
+    pub(crate) fn into_verified_file(mut self) -> Result<BodyFile> {
+        io::copy(&mut self, &mut io::sink())?;
+        Ok(self.file)
     }
 
     /// The whole body, checked.

@@ -6,9 +6,9 @@ use std::cmp::Ordering::{Equal, Less};
 
 use loro::VersionVector;
 
-use super::super::OwnDeviceImport;
 use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
+use super::super::{OwnDeviceImport, PreparedSyncFrame};
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
@@ -28,7 +28,7 @@ impl SyncClient {
         window_key: &str,
         sub_tag: u8,
         payload: &[u8],
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+    ) -> std::result::Result<Vec<PreparedSyncFrame>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         // A world the owner keeps on one other machine left this one and never
         // lands here again (FIX 14534): its frames read as nothing, but for
@@ -70,7 +70,8 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -144,7 +145,8 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 ])
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
@@ -179,7 +181,8 @@ impl SyncClient {
                         window_sub_tags::SELECTOR_RETRY,
                         payload,
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 ])
             }
             window_sub_tags::VV_REQUEST => {
@@ -200,26 +203,22 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_result()?
+                        .into(),
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
-                    return Ok(vec![replacement_request(window_key)?]);
+                    return Ok(vec![replacement_request(window_key)?.into()]);
                 };
-                let mut responses = self.window_pad_frames(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    None,
-                    &delta,
-                    Some(doc),
-                )?;
+                let mut responses = self.prepared_window_reply(window_key, &delta, doc)?;
                 responses.push(
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -249,13 +248,13 @@ impl SyncClient {
                     Some(&mut answers),
                 ) {
                     // What answers a deferred sealed update this import let in (FIX 10474).
-                    Ok(()) => Ok(answers),
+                    Ok(()) => Ok(answers.into_iter().map(PreparedSyncFrame::from).collect()),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
                         self.staged_world_updates
                             .retain(|staged| staged.key != key || staged.bytes != payload);
-                        Ok(vec![replacement_request(window_key)?])
+                        Ok(vec![replacement_request(window_key)?.into()])
                     }
                     Err(error) => Err(error),
                 }
@@ -307,7 +306,8 @@ impl SyncClient {
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_result()?
+                        .into(),
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -320,15 +320,9 @@ impl SyncClient {
                 }
                 let window = self.ensure_window(window_key)?;
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
-                    return Ok(vec![replacement_request(window_key)?]);
+                    return Ok(vec![replacement_request(window_key)?.into()]);
                 };
-                let responses = self.window_pad_frames(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    None,
-                    &delta,
-                    Some(&window.doc),
-                )?;
+                let responses = self.prepared_window_reply(window_key, &delta, &window.doc)?;
                 self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }

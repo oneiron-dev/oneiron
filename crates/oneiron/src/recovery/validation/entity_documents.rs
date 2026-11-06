@@ -18,6 +18,8 @@ pub(in crate::recovery) struct EntityDocumentRows {
     history: HistoryValidation,
     history_complete: bool,
     fork_next: usize,
+    lineage_next: Option<usize>,
+    owner_next: usize,
     previous: Option<[u8; 16]>,
     last_proposal: Option<[u8; 16]>,
     proposals: BTreeMap<[u8; 16], Proposal>,
@@ -133,13 +135,14 @@ impl EntityDocumentRows {
                         self.start(Stage::Complete);
                         continue;
                     };
-                    if !snapshot
-                        .entity_blobs
-                        .iter()
-                        .any(|entity| entity.id == row.entity_id)
-                    {
+                    let Some(entity) = snapshot.entity_blobs.get(self.owner_next) else {
                         return Err(invalid("entity document owner absent"));
+                    };
+                    self.owner_next += 1;
+                    if entity.id != row.entity_id {
+                        return Ok(false);
                     }
+                    self.owner_next = 0;
                 }
                 Stage::Complete => return Ok(true),
             }
@@ -191,7 +194,8 @@ impl EntityDocumentRows {
         };
         let first_row = self.next;
         let fork_index = self.fork_next;
-        if !self.forks.insert(fork.fork) {
+        let starting = self.lineage_next.is_none();
+        if starting && !self.forks.insert(fork.fork) {
             return Err(invalid("entity document fork duplicated"));
         }
         let proposal = self
@@ -203,14 +207,26 @@ impl EntityDocumentRows {
                 members: BTreeSet::new(),
             });
         let first = proposal.first(snapshot);
-        if (first.proposal_len, first.proposal_settled, first.actor)
-            != (fork.proposal_len, fork.proposal_settled, fork.actor)
-            || first.proposal_opener_lineage != fork.proposal_opener_lineage
-            || !proposal.members.insert(fork.proposal_index)
+        if starting
+            && ((first.proposal_len, first.proposal_settled, first.actor)
+                != (fork.proposal_len, fork.proposal_settled, fork.actor)
+                || first.proposal_opener_lineage.len() != fork.proposal_opener_lineage.len())
         {
             return Err(invalid("entity document proposal bundle"));
         }
+        let next = self.lineage_next.get_or_insert(0);
+        if let Some(lineage) = first.proposal_opener_lineage.get(*next) {
+            if lineage != &fork.proposal_opener_lineage[*next] {
+                return Err(invalid("entity document proposal bundle"));
+            }
+            *next += 1;
+            return Ok(false);
+        }
+        if !proposal.members.insert(fork.proposal_index) {
+            return Err(invalid("entity document proposal bundle"));
+        }
 
+        self.lineage_next = None;
         self.fork_next += 1;
         Ok(false)
     }

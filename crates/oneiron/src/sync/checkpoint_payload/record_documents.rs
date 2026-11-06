@@ -6,6 +6,8 @@
 //! source copies, not the outer map-write expansion or native admission.
 
 mod bind;
+pub(crate) mod opened;
+pub(crate) mod reconstruct;
 
 use std::collections::BTreeSet;
 
@@ -69,12 +71,12 @@ pub(crate) struct BoundRecordDocuments {
 /// Original payloads are ephemeral here: this is neither a carrier nor a
 /// serializable product and cannot use the ordinary scalar-slot emitter.
 pub(crate) struct ClassifiedRecordDocuments {
-    parts: Parts,
-    plans: Vec<super::classify::Plan>,
-    homes: Vec<super::classify::Home>,
-    turn: Option<super::joined_turns::TurnSource>,
-    native_slots: BTreeSet<AtomId>,
-    sources: BoundRecordDocuments,
+    pub(super) parts: Parts,
+    pub(super) plans: Vec<super::classify::Plan>,
+    pub(super) homes: Vec<super::classify::Home>,
+    pub(super) turn: Option<super::joined_turns::TurnSource>,
+    pub(super) native_slots: BTreeSet<AtomId>,
+    pub(super) sources: BoundRecordDocuments,
 }
 
 impl PreparedRecordDocuments {
@@ -138,7 +140,7 @@ pub(crate) struct JoinedRecordDocument {
 /// A source rebuilt from one authenticated holder's copy. `transport` keeps
 /// ALL new pieces; the original slots describe uses, not a capacity bound.
 pub(crate) struct OpenedRecordDocument {
-    pub(crate) transport: RecordDocumentTransport,
+    pub(crate) transport: std::sync::Arc<RecordDocumentTransport>,
     pub(crate) lossless: bool,
 }
 
@@ -347,8 +349,96 @@ pub(crate) fn open(
     sources.iter().map(|source| source.open(opened)).collect()
 }
 
+impl ClassifiedRecordDocuments {
+    pub(super) fn has_sources(&self) -> bool {
+        !self.sources.sources.is_empty()
+    }
+
+    /// Rebuilds one window's snapshot and combined-pending groups together.
+    /// Each actual original native source is rejoined ONCE, then used by both
+    /// groups at the same operation identity. The result owns real Loro rows
+    /// and explicit added spans, not an unchanged-history verdict.
+    pub(crate) fn reconstruct_window_all_open(
+        groups: &[(&Self, &[super::LoroSlice])],
+    ) -> Result<Vec<reconstruct::ReconstructedWindow>> {
+        let mut transports: std::collections::BTreeMap<
+            reconstruct::SourceSite,
+            (&[u8], &[u8], &[Holder], RecordDocumentTransport),
+        > = std::collections::BTreeMap::new();
+        for (group, _) in groups {
+            for bound in &group.sources.sources {
+                let captured = &bound.source.captured;
+                let identity =
+                    reconstruct::source_site(&group.parts.skeleton, &captured.key, &bound.slots)?;
+                match transports.entry(identity) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert((
+                            &captured.head,
+                            &captured.split.row,
+                            &bound.source.holders,
+                            join(&captured.split.content, captured.split.actors.clone())?,
+                        ));
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry) => {
+                        let (head, row, holders, _) = entry.get();
+                        if *head != captured.head.as_slice()
+                            || *row != captured.split.row.as_slice()
+                            || *holders != bound.source.holders.as_slice()
+                        {
+                            return Err(bad_part());
+                        }
+                    }
+                }
+            }
+        }
+        let mut reconstructed = Vec::with_capacity(groups.len());
+        for (group, slices) in groups {
+            let mut sources = Vec::with_capacity(group.sources.sources.len());
+            for bound in &group.sources.sources {
+                let captured = &bound.source.captured;
+                let identity =
+                    reconstruct::source_site(&group.parts.skeleton, &captured.key, &bound.slots)?;
+                let (_, _, _, transport) = transports.get(&identity).ok_or_else(bad_part)?;
+                sources.push(reconstruct::ReconstructionSource {
+                    entity_key: &captured.key,
+                    slots: &bound.slots,
+                    opened: Some((transport, true)),
+                });
+            }
+            let available = group
+                .parts
+                .atoms
+                .iter()
+                .filter(|atom| !group.native_slots.contains(&atom.id))
+                .cloned()
+                .collect();
+            reconstructed.push(reconstruct::ReconstructionGroup {
+                skeleton: &group.parts.skeleton,
+                sources,
+                available,
+                erased: Vec::new(),
+                slices,
+            });
+        }
+        reconstruct::reconstruct_window(reconstructed)
+    }
+}
+
 impl JoinedRecordDocument {
     fn open(&self, opened: &dyn OpenedSyncAtoms) -> Result<Option<OpenedRecordDocument>> {
+        self.open_using(opened, &mut |content, actors| {
+            join(content, actors).map(std::sync::Arc::new)
+        })
+    }
+
+    fn open_using(
+        &self,
+        opened: &dyn OpenedSyncAtoms,
+        rejoin: &mut impl FnMut(
+            &[u8],
+            Vec<crate::store::checkpoint_payload::loro::Atom>,
+        ) -> Result<std::sync::Arc<RecordDocumentTransport>>,
+    ) -> Result<Option<OpenedRecordDocument>> {
         let holes: BTreeSet<&str> = self.holes.iter().map(String::as_str).collect();
         if holes.len() != self.holes.len() {
             return Err(bad_part());
@@ -373,7 +463,7 @@ impl JoinedRecordDocument {
                 }
             }
             let lossless = fields.len() == holes.len();
-            let transport = join(content, opened_atoms(&parts)?)?;
+            let transport = rejoin(content, opened_atoms(&parts)?)?;
             if transport.entity()?.to_hex() != self.entity_key {
                 return Err(bad_part());
             }

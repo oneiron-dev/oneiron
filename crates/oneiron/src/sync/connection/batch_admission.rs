@@ -329,14 +329,14 @@ impl SyncConnection {
                 // earlier frame waits on the socket.
                 for resp in responses
                     .into_iter()
-                    .filter(|frame| !client.frame_withheld(frame))
+                    .filter(|frame| !client.frame_withheld(frame.for_policy()))
                 {
                     let send_result = tokio::select! {
                         biased;
                         () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                             return Err(LoopExit::Shutdown);
                         }
-                        result = write.send(Message::Binary(resp.into())) => result,
+                        result = write.send_prepared(resp) => result,
                     };
                     if let Err(e) = send_result {
                         return Err(LoopExit::Disconnected(format!("Send failed: {e}")));

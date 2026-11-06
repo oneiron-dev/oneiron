@@ -47,6 +47,9 @@ fn holds_carrier(doc: &LoroDoc, key: &str, position: &OriginPosition) -> bool {
     let Some(carrier) = map_get_bytes(&doc.get_map("entities"), key) else {
         return false;
     };
+    if position.row.binds_inline_receipt_carrier(&carrier) {
+        return position.row.id == id;
+    }
     if !position.binds_carrier(&id, &carrier) {
         return false;
     }
@@ -215,7 +218,7 @@ pub(in crate::sync) fn scrub_stale(
         let mut stale = Vec::new();
         for key in doc.get_map(ORIGIN_POSITIONS_MAP).keys() {
             let keep = if let Some((position, _)) = bound_position(doc, &key) {
-                facts::capture_in_txn(vault, &txn, &position.row.id)?.as_ref() == Some(&position)
+                facts::stored_position_matches_in_txn(vault, &txn, &position)?
             } else {
                 false
             };
