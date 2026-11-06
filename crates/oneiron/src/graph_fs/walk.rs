@@ -6,7 +6,7 @@
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{LinePosition, contains_literal, join_graph_path, page_lines};
+use super::coreutils_text::{LinePosition, join_graph_path, page_grep_lines};
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
 
@@ -355,17 +355,15 @@ impl GraphFsResolver<'_, '_> {
                 let Some(file) = read.value else {
                     return Ok(Visited::Done);
                 };
-                let (matched, next) = page_lines(
+                let (matched, next) = page_grep_lines(
                     file.bytes(),
                     lines.unwrap_or_default(),
                     &mut walk.out,
                     usize::MAX,
                     reader,
                     self.options.page_byte_cap,
-                    |line| {
-                        contains_literal(line, pattern, reader, self.options.page_byte_cap)
-                            .map(|matched| matched.then(|| format!("{path}:")))
-                    },
+                    pattern,
+                    || format!("{path}:"),
                 )?;
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))

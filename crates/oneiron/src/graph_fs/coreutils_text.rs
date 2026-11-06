@@ -56,24 +56,122 @@ pub(super) fn page_head_lines(
     let mut at = from;
     while at.line < bytes.len() && finished < max_lines {
         let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
-        let mut len = 0;
-        let mut boundary = at.printed == 0;
-        lossy_for_each(line, reader, scan_bytes, |chunk| {
-            if let Some(offset) = at.printed.checked_sub(len)
-                && offset <= chunk.len()
+        let cut = push_lossy_line(line, "", at.printed, out, reader, scan_bytes)?;
+        if let Some(printed) = cut {
+            at.printed = printed;
+            return Ok((finished, Some(at)));
+        }
+        finished += 1;
+        at = LinePosition {
+            line: next,
+            printed: 0,
+        };
+    }
+    Ok((finished, None))
+}
+
+/// GREP uses a bounded lossy window for needles within the existing scan quantum.
+pub(super) fn page_grep_lines(
+    bytes: &[u8],
+    from: LinePosition,
+    out: &mut CommandOutputBuilder,
+    max_lines: usize,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+    pattern: &str,
+    mut prefix: impl FnMut() -> String,
+) -> Result<(usize, Option<LinePosition>)> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    if pattern.len() > quantum {
+        return page_lines(bytes, from, out, max_lines, reader, scan_bytes, |line| {
+            contains_literal(line, pattern, reader, scan_bytes)
+                .map(|matched| matched.then(|| prefix()))
+        });
+    }
+    let mut finished = 0;
+    let mut at = from;
+    while at.line < bytes.len() && finished < max_lines {
+        let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
+        if contains_lossy_literal(line, pattern, reader, scan_bytes)? {
+            let prefix = prefix();
+            if let Some(printed) =
+                push_lossy_line(line, &prefix, at.printed, out, reader, scan_bytes)?
             {
-                boundary |= chunk.is_char_boundary(offset);
+                at.printed = printed;
+                return Ok((finished, Some(at)));
             }
-            len += chunk.len();
-        })?;
-        // The rendered line always ends in one ASCII newline.
-        boundary |= at.printed == len || at.printed == len + 1;
-        len += 1;
-        let printed = if boundary { at.printed } else { 0 };
-        let cut = out.push_line_streamed(len, printed, |output, mut remaining| {
-            let (mut offset, mut copied) = (0, 0);
-            let mut truncated = false;
-            lossy_for_each(line, reader, scan_bytes, |chunk| {
+            finished += 1;
+        }
+        at = LinePosition {
+            line: next,
+            printed: 0,
+        };
+    }
+    Ok((finished, None))
+}
+
+fn contains_lossy_literal(
+    line: &[u8],
+    pattern: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<bool> {
+    if pattern.is_empty() {
+        checkpoint(reader)?;
+        return Ok(true);
+    }
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let mut window = String::new();
+    let mut pending = 0;
+    let mut matched = false;
+    lossy_for_each(line, reader, scan_bytes, |chunk| {
+        if matched {
+            return;
+        }
+        window.push_str(chunk);
+        pending += chunk.len();
+        if pending >= quantum {
+            matched = window.contains(pattern);
+            if !matched {
+                let mut keep_from = window.len().saturating_sub(pattern.len() - 1);
+                while !window.is_char_boundary(keep_from) {
+                    keep_from -= 1;
+                }
+                drop(window.drain(..keep_from));
+                pending = 0;
+            }
+        }
+    })?;
+    checkpoint(reader)?;
+    Ok(matched || window.contains(pattern))
+}
+
+fn push_lossy_line(
+    line: &[u8],
+    prefix: &str,
+    printed: usize,
+    out: &mut CommandOutputBuilder,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<Option<usize>> {
+    let mut len = prefix.len();
+    let mut boundary = prefix.is_char_boundary(printed);
+    lossy_for_each(line, reader, scan_bytes, |chunk| {
+        if let Some(offset) = printed.checked_sub(len)
+            && offset <= chunk.len()
+        {
+            boundary |= chunk.is_char_boundary(offset);
+        }
+        len += chunk.len();
+    })?;
+    boundary |= printed == len || printed == len + 1;
+    len += 1;
+    let printed = if boundary { printed } else { 0 };
+    out.push_line_streamed(len, printed, |output, mut remaining| {
+        let (mut offset, mut copied) = (0, 0);
+        let mut truncated = false;
+        {
+            let mut copy_chunk = |chunk: &str| {
                 let end = offset + chunk.len();
                 if !truncated && end > printed && remaining > 0 {
                     let start = printed.saturating_sub(offset);
@@ -87,24 +185,16 @@ pub(super) fn page_head_lines(
                     truncated = start + take < chunk.len();
                 }
                 offset = end;
-            })?;
-            if !truncated && remaining > 0 && printed <= offset {
-                output.push(b'\n');
-                copied += 1;
-            }
-            Ok(copied)
-        })?;
-        if let Some(printed) = cut {
-            at.printed = printed;
-            return Ok((finished, Some(at)));
+            };
+            copy_chunk(prefix);
+            lossy_for_each(line, reader, scan_bytes, &mut copy_chunk)?;
         }
-        finished += 1;
-        at = LinePosition {
-            line: next,
-            printed: 0,
-        };
-    }
-    Ok((finished, None))
+        if !truncated && remaining > 0 && printed <= offset {
+            output.push(b'\n');
+            copied += 1;
+        }
+        Ok(copied)
+    })
 }
 
 fn next_line<'bytes>(
