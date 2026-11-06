@@ -7001,6 +7001,21 @@
       "openapi": true
     },
     {
+      "name": "vault.agent.run_effect.answer",
+      "description": "The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it.",
+      "input": "crate::task_verb::sdk::AgentRunEffectAnswer",
+      "output": "crate::task_verb::sdk::AgentRunEffectAnswered",
+      "call": "crate::task_verb::sdk::answer_agent_run_effect_as(memory.vault(), &memory.embedded_owner(\"vault.agent.run_effect.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.create_child",
       "description": "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.",
       "input": "crate::task_verb::sdk::ResearchChildWire",

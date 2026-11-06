@@ -744,6 +744,9 @@ class Oneiron:
         def outbound(self) -> "Oneiron._VaultOutboundVerbs":
             return Oneiron._VaultOutboundVerbs(self._client)
         @property
+        def agent(self) -> "Oneiron._VaultAgentVerbs":
+            return Oneiron._VaultAgentVerbs(self._client)
+        @property
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
         @property
@@ -3091,6 +3094,18 @@ class Oneiron:
         def answer(self, spec):
             """The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."""
             return json.loads(_translate(lambda: self._client.vault_outbound_uncertain_send_answer(json.dumps(spec))))
+    class _VaultAgentVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def run_effect(self) -> "Oneiron._VaultAgentRunEffectVerbs":
+            return Oneiron._VaultAgentRunEffectVerbs(self._client)
+    class _VaultAgentRunEffectVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            """The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it."""
+            return json.loads(_translate(lambda: self._client.vault_agent_run_effect_answer(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

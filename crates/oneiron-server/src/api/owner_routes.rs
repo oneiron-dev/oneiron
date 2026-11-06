@@ -42,6 +42,7 @@ use crate::owner::{
 use crate::server::SyncServer;
 mod account_routes;
 mod agent_grant_routes;
+mod agent_run_effect_routes;
 mod authority_clock_routes;
 pub(super) mod backup_setting_routes;
 pub(super) mod board_layout_setting_routes;
@@ -177,6 +178,7 @@ fn owner_tables() -> OwnerTable {
         support_repair_routes::owner_table(),
         agent_grant_routes::owner_table(),
         uncertain_send_routes::owner_table(),
+        agent_run_effect_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
         weave_digest_channel_routes::owner_table(),

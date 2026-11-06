@@ -1242,6 +1242,8 @@ class Oneiron:
         @property
         def outbound(self) -> "Oneiron._VaultOutboundVerbs": ...
         @property
+        def agent(self) -> "Oneiron._VaultAgentVerbs": ...
+        @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
@@ -2635,6 +2637,12 @@ class Oneiron:
     class _VaultOutboundUncertainSendVerbs:
         def answer(self, spec: Facade.UncertainSendAnswer) -> Facade.UncertainSendAnswered:
             """The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."""
+    class _VaultAgentVerbs:
+        @property
+        def run_effect(self) -> "Oneiron._VaultAgentRunEffectVerbs": ...
+    class _VaultAgentRunEffectVerbs:
+        def answer(self, spec: Facade.AgentRunEffectAnswer) -> Facade.AgentRunEffectAnswered:
+            """The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it."""
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""

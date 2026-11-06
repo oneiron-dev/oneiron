@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4655 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4658 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1711,6 +1711,9 @@ declare namespace Sdk {
   type UncertainSendAnswer = { task_ref: EntityId; resend: boolean };
   type UncertainSendAnswerOutcome = "resend_released" | "declined" | "already_settled";
   type UncertainSendAnswered = { task_ref: EntityId; resend: boolean; outcome: UncertainSendAnswerOutcome };
+  type AgentRunEffectAnswer = { task_ref: EntityId; intent_ref: string; resend: boolean };
+  type AgentRunEffectAnswerOutcome = "resend_released" | "left" | "already_settled";
+  type AgentRunEffectAnswered = { task_ref: EntityId; intent_ref: string; resend: boolean; outcome: AgentRunEffectAnswerOutcome };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -5257,6 +5260,12 @@ declare const vault: Sdk.VaultHost & {
         /** Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent. */
         get(input: Sdk.EmptyRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
       };
+    };
+  };
+  agent: {
+    run_effect: {
+      /** The owner answers the ask on a call that an agent run moved to this machine replays and that the machine which ran it before may already have made: make it once more, or leave it. */
+      answer(input: Sdk.AgentRunEffectAnswer): Promise<Sdk.AgentRunEffectAnswered | StoredResult>;
     };
   };
   agents: {

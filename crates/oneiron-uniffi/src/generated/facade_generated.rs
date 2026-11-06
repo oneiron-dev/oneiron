@@ -2226,6 +2226,11 @@ export_facade! {
     let output = client.vault_outbound_uncertain_send_answer(&input)?;
     crate::codec::lift_record("vault.outbound.uncertain_send.answer", &output)
 };
+"vault.agent.run_effect.answer" => fn vault_agent_run_effect_answer(&self, input: AgentRunEffectAnswer) -> AgentRunEffectAnswered = |client| {
+    let input: oneiron::task_verb::sdk::AgentRunEffectAnswer = crate::codec::lower_record("vault.agent.run_effect.answer", input)?;
+    let output = client.vault_agent_run_effect_answer(&input)?;
+    crate::codec::lift_record("vault.agent.run_effect.answer", &output)
+};
 "vault.research.create_child" => fn vault_research_create_child(&self, input: ResearchChildWire) -> ResearchChildReceipt = |client| {
     let input: oneiron::task_verb::sdk::ResearchChildWire = crate::codec::lower_record("vault.research.create_child", input)?;
     let output = client.vault_research_create_child(&input)?;

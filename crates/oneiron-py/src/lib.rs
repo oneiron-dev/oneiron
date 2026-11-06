@@ -4390,6 +4390,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agent_run_effect_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agent.run_effect.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.agent.run_effect.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_research_create_child(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.research.create_child")?;
         let output = py
