@@ -18405,7 +18405,21 @@
      "surface": {
       "crate-vis": 3,
       "fn": 1,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRunRoomSecretLiftRequest"
+     ],
+     "path": "src/code_run/storage/secret_lift/room.rs",
+     "purpose": "The positive MESSAGE-linked lift proposals still in one room's overlay",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -50253,6 +50267,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/result_attachment/reference.rs",
+     "purpose": "The identity of a journal MESSAGE's result, without its content or preview",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/result_attachment/restore.rs",
      "purpose": "—",
      "surface": {
@@ -53501,6 +53525,16 @@
      "notable": [],
      "path": "src/off_record/lifecycle/room/message_result.rs",
      "purpose": "The result a room's off-record MESSAGE carries, found for someone in the room outside any run (FIX 3620)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room/secret_lifts.rs",
+     "purpose": "Positive MESSAGE-linked secret marks, admitted in one room read snapshot",
      "surface": {
       "crate-vis": 1
      }
@@ -85673,7 +85707,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1295
+      "fn": 1296
      }
     },
     {
@@ -91699,7 +91733,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92322,7 +92356,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 370,
+     "files": 371,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92371,7 +92405,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93038,7 +93072,7 @@
    },
    "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6560,
+   "source_files": 6563,
    "test_files": 895
   },
   "oneiron-android": {
@@ -94503,7 +94537,7 @@
      "path": "src/message_body_fields.rs",
      "purpose": "An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -107686,7 +107720,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1263
+      "fn": 1264
      }
     },
     {
@@ -109479,7 +109513,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1264
+      "fn": 1265
      }
     },
     {
@@ -114358,7 +114392,7 @@
      "path": "src/api/facade/code_run_secret_lift_doors.rs",
      "purpose": "The owner's code-result secret lift list and proposal-only dismissal",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -136294,7 +136328,7 @@
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
       "crate-vis": 2,
-      "fn": 30,
+      "fn": 31,
       "struct": 2
      }
     },
@@ -142569,6 +142603,7 @@
       "CodeRepoView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeRunRoomSecretLiftRequest",
       "CodeRunSecretLiftDismiss",
       "CodeRunSecretLiftDismissal",
       "CodeRunSecretLiftProposalView",
@@ -146409,7 +146444,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1138,
-      "struct": 3456
+      "struct": 3457
      }
     },
     {
