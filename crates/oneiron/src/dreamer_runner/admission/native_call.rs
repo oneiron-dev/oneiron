@@ -14,6 +14,7 @@ use oneiron_model::llm::{BudgetGuardId, BudgetMeterRange};
 mod net;
 mod observations;
 mod systemone;
+mod owed;
 use net::NativeNetCoverage;
 pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
 pub(crate) use net::{NativeNetSnapshot, NativeNetTally};
@@ -43,6 +44,7 @@ struct NativeCallObligation {
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
     systemone_usage: Option<systemone::SystemOneTerminalUsage>,
     aggregate_observations: Vec<NativeAggregateObservation>,
+    owed_reconciliations: Vec<owed::NativeOwedReconciliation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +162,7 @@ pub(crate) fn retain_native_call_in_txn(
         house_completions: None,
         systemone_usage: None,
         aggregate_observations: Vec::new(),
+        owed_reconciliations: Vec::new(),
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -175,6 +178,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.house_completions = None;
         original.systemone_usage = None;
         original.aggregate_observations.clear();
+        original.owed_reconciliations.clear();
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
