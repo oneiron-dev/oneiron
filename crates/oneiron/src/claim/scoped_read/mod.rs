@@ -29,6 +29,7 @@ mod graph_reads;
 mod instruction_files;
 mod loop_decision_read;
 mod named_reads;
+mod native_labels;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
