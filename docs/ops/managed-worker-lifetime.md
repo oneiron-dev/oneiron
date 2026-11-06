@@ -24,6 +24,23 @@ first. Only an actual failed rearm invokes the existing managed stop/grace path
 and normal supervisor relaunch. Guardian status never substitutes for worker
 status. There is no new timer, restart delay, cap or admission policy.
 
+## Restart for a vault's own drafter
+
+A vault's drafter binding (FIX 14976) restarts a managed EXL3 worker through
+the same row replacement as a changed config row. A new supervisor takes the
+row, and its launch loads the vault's private load set as the draft. The
+predecessor drains and stops through the existing managed stop and grace
+path. Then the new worker starts and qualifies. There is no new timer,
+restart delay, cap or admission policy. Calls that arrive during the restart
+wait for the new worker, as they do after a config change. The new worker
+reloads the target and starts with an empty cache.
+
+Only a process that launches the worker for its own one vault restarts it
+for a drafter. An external worker is never restarted for one. The hosted row
+stays the configured row. If the same config is configured again, the
+replacement stays. If the config changes, the row is replaced with the stock
+draft, and the vault's drafter host applies the binding again.
+
 ## Stop during a join
 
 A guardian is first spawned in its own private group. The controller obtains its
@@ -53,3 +70,25 @@ Combined guardian loss and server death during rearm are not claimed to have
 Linux's direct parent-death guarantee. This mechanism does not add adoption of a
 worker after its parent has died, and it does not prove a bound on every
 externally stopped or kernel-failed process.
+
+## Native EXL3 channel identity
+
+On Linux and macOS, a managed EXL3 channel checks the kernel peer UID and PID
+against the actual direct child held by that launch's supervisor. Reaping and
+terminal publication share the short custody lock used by this check. A copied
+PID, socket path, worker name or launch manifest alone is not the proof. The
+check holds no lock across a connection or reply wait.
+
+Before a generation or session operation sends any input body or descriptor,
+the same connected channel reads a `hello` and checks its launch-manifest digest,
+wire model and expected backend epoch. Qualification also checks its channel
+before sending its fixed input. Session create, fork, import, export, commit and
+drop use the captured launch context. A retiring session keeps its original
+context; it does not look up a replacement worker by name. Content-free activity
+and drain controls retain their existing UID check.
+
+This native transport check does not change provider locality, model offers,
+admission, charging or the device-only reranking guard. In particular, the
+existing HTTP fallback remains an OwnServer route. Other Unix targets retain
+their existing transport semantics; the child-PID check described here is for
+Linux and macOS.

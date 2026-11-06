@@ -7,15 +7,16 @@
 //! notice. Mode is stateless — recomputed from the presented interlocutor
 //! set on every assembly.
 //!
-//! Enforcement lives in `context_pack.rs` (the enforcement point IS context
-//! assembly); this module owns mode/tier/Scope classification, storage, and
-//! the agent-visible assembly block.
+//! Context assembly and native disclosure reads use this module's
+//! mode/tier/Scope and retained-copy admission, storage, and agent-visible
+//! assembly block.
 
 mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;
 mod import_audience;
 mod model_channel;
+mod retained_copies;
 mod room_party;
 mod scope_codec;
 pub mod task_ask_default;
@@ -38,6 +39,7 @@ pub(crate) use self::model_channel::{
     claim_data_class, claim_handle_in, model_names_admitted_in, person_name_claim_in,
     project_model_pack_in,
 };
+pub(crate) use self::retained_copies::retained_copy_admits;
 pub use self::room_party::{RoomParty, RoomPartyEntry};
 pub(crate) use self::room_party::{
     is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in, room_party_in,
