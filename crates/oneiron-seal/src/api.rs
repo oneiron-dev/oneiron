@@ -198,9 +198,10 @@ pub enum SealWarning {
 
 mod report;
 pub use report::{
-    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind,
-    RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
-    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionCoverage,
+    RevisionKind, RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest,
+    UncoveredByteRange, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    VerifyReport, VerifyVerdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

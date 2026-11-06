@@ -23,7 +23,11 @@ pub(super) fn checkout_changes(
     stamp: &DoorAdmissionStamp,
     updates: &[RefUpdate],
 ) -> Result<Option<Vec<GitPushRefChange>>> {
-    if !stamp.push.as_ref().is_some_and(|push| push.is_checkout()) {
+    if !stamp
+        .push
+        .as_ref()
+        .is_some_and(|push| push.names_checkout())
+    {
         return Ok(None);
     }
     let moves = read_moves(&fs::read(hooks.paths_path())?)?;

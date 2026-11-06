@@ -15,7 +15,9 @@ use super::verify_sig_pipeline::Checks;
 /// validate — CRLs against an embedded/anchored issuer cert with a fresh
 /// thisUpdate/nextUpdate window and no in-scope serial on its revoked list,
 /// OCSP responses with signature, responder authorization, cert-serial
-/// binding, freshness, and a `good` cert status. The material must also
+/// binding and freshness; only `good` supplies coverage, while authenticated
+/// `unknown` is unresolved. Optional `/VRI` does not preempt these global
+/// arrays. The material must also
 /// speak about the document's covered CMS signer/TSA chains: every covered
 /// certificate must appear in `/Certs` or be a trust anchor. A present DSS
 /// with no arrays at all is evidence-free and fails. Present-but-invalid
@@ -93,21 +95,28 @@ fn check_dss(
         )?;
         return Ok(());
     };
-    if dss.has(b"VRI") {
-        checks.record(
+    match dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded, limits)? {
+        MaterialValidity::Valid => checks.record(
+            VerifyCheckKind::ValidationMaterial,
+            true,
+            VerifyFindingCode::ValidationMaterialInvalid,
+        )?,
+        MaterialValidity::Invalid => checks.record(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        )?;
-        return Ok(());
+        )?,
+        MaterialValidity::Unresolved(reason) => {
+            checks.not_run_with_reason(VerifyCheckKind::ValidationMaterial, Some(reason))?;
+        }
     }
-    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded, limits)?;
-    checks.record(
-        VerifyCheckKind::ValidationMaterial,
-        ok,
-        VerifyFindingCode::ValidationMaterialInvalid,
-    )?;
     Ok(())
+}
+
+enum MaterialValidity {
+    Valid,
+    Invalid,
+    Unresolved(VerifyFindingCode),
 }
 
 fn dss_material_valid(
@@ -119,7 +128,7 @@ fn dss_material_valid(
     memory: &MemoryLedger,
     decoded: &mut usize,
     limits: &SealResourceLimits,
-) -> Result<bool, SealMemoryRefusal> {
+) -> Result<MaterialValidity, SealMemoryRefusal> {
     // Each entry decodes whole, its memory reserved first; the total across
     // all three arrays is counted, never capped, so material past the old
     // shared budget is read whole rather than called malformed.
@@ -140,28 +149,28 @@ fn material_valid(
     covered: &[EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-) -> Result<bool, SealMemoryRefusal> {
+) -> Result<MaterialValidity, SealMemoryRefusal> {
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
         && matches!(crls, DssArray::Absent)
         && matches!(ocsps, DssArray::Absent)
     {
-        return Ok(false);
+        return Ok(MaterialValidity::Invalid);
     }
     // /Certs first: CRL and OCSP issuer lookups draw from it. A
     // present-but-empty array breaks profile completeness.
     let embedded: Vec<EmbeddedCert> = match certs {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
                 let Some(c) = EmbeddedCert::admitted(e, memory)? else {
-                    return Ok(false);
+                    return Ok(MaterialValidity::Invalid);
                 };
                 v.push(c);
             }
@@ -178,17 +187,17 @@ fn material_valid(
             .any(|e| e.der == c.der)
     });
     if !bound {
-        return Ok(false);
+        return Ok(MaterialValidity::Invalid);
     }
     // Every CRL entry must be valid; collect the key-bound issuer certs the
     // valid CRLs authenticated under so the coverage rule below can match
     // them against each covered certificate's ACTUAL issuer (name+key).
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
             memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
@@ -196,7 +205,7 @@ fn material_valid(
                 let Some(issuer) =
                     crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
                 else {
-                    return Ok(false);
+                    return Ok(MaterialValidity::Invalid);
                 };
                 v.push(issuer);
             }
@@ -207,20 +216,22 @@ fn material_valid(
     // certificates the valid responses bind to with a `good` status, read
     // in place.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
+    let mut ocsp_unknown = false;
     match ocsps {
         DssArray::Absent => {}
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
             for e in &entries {
-                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
+                let Some(evidence) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
                 else {
-                    return Ok(false);
+                    return Ok(MaterialValidity::Invalid);
                 };
-                memory.admit_len::<&[u8]>(targets.len())?;
-                ocsp_targets.extend(targets);
+                memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
+                ocsp_unknown |= evidence.unknown;
+                ocsp_targets.extend(evidence.good_targets);
             }
         }
     }
@@ -230,9 +241,9 @@ fn material_valid(
     // (the covered cert's own signature verifies under the CRL-signing
     // key) or an OCSP SingleResponse bound to it with `cert_status` good.
     // Anchor certificates ride anchor trust and need no coverage. A
-    // cert-only DSS, evidence about an irrelevant issuer, or evidence
-    // authenticated by a same-subject/different-key shadow fails here —
-    // never AbsentAllowed.
+    // cert-only DSS or otherwise insufficient valid coverage is unresolved,
+    // never a profile pass. Invalid evidence has already failed above.
+    let mut covered_ok = true;
     for cert in covered {
         if anchors.iter().any(|anchor| anchor.der == cert.der) {
             continue;
@@ -245,10 +256,21 @@ fn material_valid(
             }
         }
         if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
-            return Ok(false);
+            covered_ok = false;
+            break;
         }
     }
-    Ok(true)
+    if ocsp_unknown {
+        return Ok(MaterialValidity::Unresolved(
+            VerifyFindingCode::RevocationStatusUnknown,
+        ));
+    }
+    if !covered_ok {
+        return Ok(MaterialValidity::Unresolved(
+            VerifyFindingCode::ValidationMaterialUnavailable,
+        ));
+    }
+    Ok(MaterialValidity::Valid)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
