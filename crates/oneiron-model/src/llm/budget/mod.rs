@@ -15,7 +15,7 @@ mod types;
 
 mod settlement;
 
-pub use self::accounting::{BudgetAccountingSnapshot, BudgetMeterRange};
+pub use self::accounting::{BudgetAccountingSnapshot, BudgetGuardId, BudgetMeterRange};
 pub use self::checkpoint::BudgetCheckpoint;
 pub use self::dispatch::{
     DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
