@@ -1,10 +1,11 @@
 //! Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage ABI/schema gates.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "linux")]
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::MutexGuard;
+use std::time::{Duration, Instant};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, RoTxn, RwTxn};
@@ -24,42 +25,81 @@ use super::hnsw_model_gates::{
 };
 use super::open_version_keys::{
     DB_MANIFEST, ERR_EXISTING_MISSING_HNSW_CONFIG, HnswCompatibilityState, LMDB_DATABASE_OPEN_LOCK,
-    MODEL_ID_NONE, OPEN_STORE_PATHS, PersistedHnswCompatibility, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
-    StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
+    MODEL_ID_NONE, OPEN_STORE_PATHS, OpenStorePath, PersistedHnswCompatibility,
+    STORAGE_ABI_VERSION, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION,
+    STORAGE_SCHEMA_VERSION_KEY, StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
 };
 use super::vault_root_bind::{VaultRootIdentity, duplicate_open_root, vault_root_preflight_error};
 use crate::error::StoreError;
 
+/// Each open store's path and the root identity it holds, as
+/// [`duplicate_open_root`] reads them.
+fn open_identities(
+    open_paths: &HashMap<PathBuf, OpenStorePath>,
+) -> impl Iterator<Item = (&PathBuf, Option<&VaultRootIdentity>)> {
+    open_paths
+        .iter()
+        .map(|(path, open)| (path, open.identity.as_ref()))
+}
+
+/// How long a reopen waits for a vault whose only handles are those its
+/// store's leader holds to close (FIX 12316): a detached write's run and the
+/// close after it, a few commits at most.
+const LEADER_HELD_CLOSE_WAIT: Duration = Duration::from_secs(5);
+
 pub(in crate::store) struct RegisteredPath {
     pub(in crate::store) path: PathBuf,
+    /// The vault handles this store's leader holds, counted where a reopen
+    /// of the path reads them (FIX 12316).
+    pub(in crate::store) holds: crate::store::LeaderHolds,
 }
 
 impl RegisteredPath {
+    /// Registers `path` for one open store, or refuses while a store this
+    /// process holds open sits there or at the same root. A vault there
+    /// whose only handles are those its store's leader holds for detached
+    /// writes closes once they are let go of: the reopen waits for that, up
+    /// to [`LEADER_HELD_CLOSE_WAIT`], rather than refuse a vault every caller
+    /// already let go of (FIX 12316).
     pub(super) fn reserve(path: PathBuf, identity: Option<VaultRootIdentity>) -> Result<Self> {
-        let mut open_paths = OPEN_STORE_PATHS
-            .lock()
-            .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
-
-        if open_paths.contains_key(&path) {
-            return Err(vault_root_preflight_error(
-                &path,
-                VaultRootProblem::DuplicateOpenRoot {
-                    open_path: path.clone(),
-                },
-            ));
+        let deadline = Instant::now() + LEADER_HELD_CLOSE_WAIT;
+        loop {
+            let mut open_paths = OPEN_STORE_PATHS
+                .lock()
+                .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
+            let open_path = if open_paths.contains_key(&path) {
+                Some(path.clone())
+            } else {
+                identity.as_ref().and_then(|identity| {
+                    duplicate_open_root(open_identities(&open_paths), &path, identity)
+                })
+            };
+            let Some(open_path) = open_path else {
+                let holds = crate::store::LeaderHolds::default();
+                open_paths.insert(
+                    path.clone(),
+                    OpenStorePath {
+                        identity,
+                        holds: holds.clone(),
+                    },
+                );
+                return Ok(Self { path, holds });
+            };
+            let closing = open_paths
+                .get(&open_path)
+                .map(|open| open.holds.clone())
+                .filter(crate::store::LeaderHolds::close_pending);
+            drop(open_paths);
+            let Some(closing) = closing.filter(|_| Instant::now() < deadline) else {
+                return Err(vault_root_preflight_error(
+                    &path,
+                    VaultRootProblem::DuplicateOpenRoot { open_path },
+                ));
+            };
+            // Its handles are let go of, and the last one's close done,
+            // before the path is looked at again.
+            closing.wait_for_release(deadline);
         }
-        if let Some(identity) = &identity
-            && let Some(open_path) = duplicate_open_root(&open_paths, &path, identity)
-        {
-            return Err(vault_root_preflight_error(
-                &path,
-                VaultRootProblem::DuplicateOpenRoot { open_path },
-            ));
-        }
-
-        open_paths.insert(path.clone(), identity);
-        Ok(Self { path })
     }
 
     pub(super) fn refresh_identity(&mut self, identity: Option<VaultRootIdentity>) -> Result<()> {
@@ -68,7 +108,8 @@ impl RegisteredPath {
             .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
 
         if let Some(identity) = &identity
-            && let Some(open_path) = duplicate_open_root(&open_paths, &self.path, identity)
+            && let Some(open_path) =
+                duplicate_open_root(open_identities(&open_paths), &self.path, identity)
         {
             return Err(vault_root_preflight_error(
                 &self.path,
@@ -79,7 +120,7 @@ impl RegisteredPath {
         let slot = open_paths
             .get_mut(&self.path)
             .ok_or(Error::InvariantViolation("missing reserved store path"))?;
-        *slot = identity;
+        slot.identity = identity;
         Ok(())
     }
 }
