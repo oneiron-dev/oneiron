@@ -112,11 +112,19 @@ impl<'vault> ScopedRead<'vault> {
         };
         for part in parts {
             let message = part?.target;
-            let Some(row) = self.entity_record_in(txn, &message)? else {
-                continue;
+            let (row, placed) = match self.entity_record_loaded_in(txn, &message)? {
+                super::admission::LoadedRecord::Placed(row) => (row, true),
+                super::admission::LoadedRecord::Unplaced(row) => (row, false),
+                super::admission::LoadedRecord::Absent => continue,
             };
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
+            }
+            // A message this room read cannot place still holds its words in
+            // the turn: the turn is refused, as a refused message refuses it
+            // (FIX 5161, review P1 #5926).
+            if !placed {
+                return Ok(false);
             }
             if !self.is_entity_readable_held_in(txn, policy, &message, &floor, &floor_authority)? {
                 return Ok(false);
