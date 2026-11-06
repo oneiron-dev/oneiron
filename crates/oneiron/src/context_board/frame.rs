@@ -423,10 +423,19 @@ impl BoardSection {
         }
         let known = !base.row_ids.is_empty();
         let held = base.kept_ids.clone();
+        // Without row ids the cut names no shown row: the shown ids stay as
+        // they were (`None`, or the rows a filter narrowed to).
+        let held_only = || {
+            if known {
+                Some(held.clone())
+            } else {
+                base.shown_ids.clone()
+            }
+        };
         if low == 0 {
             fitted.detail_rows = base.count_rows.clone();
             fitted.row_ids = Vec::new();
-            fitted.shown_ids = known.then(|| held.clone());
+            fitted.shown_ids = held_only();
             return fitted;
         }
         fitted.detail_rows = candidate(low);
@@ -439,17 +448,52 @@ impl BoardSection {
         } else {
             Vec::new()
         };
-        fitted.shown_ids = known.then(|| {
+        fitted.shown_ids = if known {
             let mut shown = held.clone();
             shown.extend(fitted.row_ids.iter().flatten().copied());
-            shown
-        });
+            Some(shown)
+        } else {
+            base.shown_ids.clone()
+        };
         if rows_tok(&fitted.count_rows) > rows_tok(&fitted.detail_rows) {
             fitted.detail_rows = fitted.count_rows.clone();
             fitted.row_ids = Vec::new();
-            fitted.shown_ids = known.then(|| held.clone());
+            fitted.shown_ids = held_only();
         }
         fitted
+    }
+
+    /// The section narrowed to the detail rows whose typed id `keep` accepts
+    /// (a layout's `who` filter, BOARD-LAYOUT add-on 2). Its pinned floor and
+    /// the rows a hook block pins always stay. A row with no typed id names
+    /// no writer, so no filter keeps it. When no detail row stays, the
+    /// section shows its count fallback, so a filter never takes it off the
+    /// board. A section whose producer named no row ids is unchanged.
+    #[must_use]
+    pub fn narrowed(&self, keep: impl Fn(crate::EntityId) -> bool) -> Self {
+        if self.row_ids.is_empty() || self.detail_rows.is_empty() {
+            return self.clone();
+        }
+        let mut narrowed = self.clone();
+        narrowed.detail_rows.clear();
+        narrowed.row_ids.clear();
+        for (row, id) in self.detail_rows.iter().zip(self.row_ids.iter().copied()) {
+            if id.is_some_and(|id| self.hook_pinned_ids.contains(&id) || keep(id)) {
+                narrowed.detail_rows.push(row.clone());
+                narrowed.row_ids.push(id);
+            }
+        }
+        let mut shown = self.kept_ids.clone();
+        for id in narrowed.row_ids.iter().flatten() {
+            if !shown.contains(id) {
+                shown.push(*id);
+            }
+        }
+        if narrowed.detail_rows.is_empty() {
+            narrowed.detail_rows = self.count_rows.clone();
+        }
+        narrowed.shown_ids = Some(shown);
+        narrowed
     }
 
     /// The section with the detail rows a layout must keep shown moved into
