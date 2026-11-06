@@ -176,7 +176,14 @@ impl SessionStoreView<'_> {
         memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
-        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize, 0, memory.as_mut())
+        let input_backing_bytes = record_finalize_input_backing(&finalize, memory.as_mut());
+        stage_context_pack_retrieval_run_finalize(
+            self,
+            wtxn,
+            finalize,
+            input_backing_bytes,
+            memory.as_mut(),
+        )
     }
 
     /// Session sibling of `Store::delete_retrieval_run`, used to discard a
@@ -542,11 +549,12 @@ impl Store {
         self.write_in_group(|wtxn| {
             admit(wtxn)?;
             let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
+            let input_backing_bytes = record_finalize_input_backing(&finalize, memory.as_mut());
             stage_retained_context_pack_retrieval_run_finalize(
                 self,
                 wtxn,
                 finalize,
-                0,
+                input_backing_bytes,
                 memory.as_mut(),
             )
         })
@@ -731,6 +739,26 @@ fn read_retrieval_runs_in_txn(
     }
     count.defer(target);
     Ok(records)
+}
+
+fn record_finalize_input_backing(
+    finalize: &RetrievalRunFinalize<'_>,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> u64 {
+    memory.map_or(0, |memory| {
+        let bytes = finalize
+            .empty_reason
+            .as_ref()
+            .map_or(0, |reason| reason.capacity() as u64)
+            .saturating_add(
+                finalize
+                    .pack_config
+                    .as_ref()
+                    .map_or(0, super::state::known_value_backing_bytes),
+            );
+        memory.materialized(0, bytes);
+        bytes
+    })
 }
 
 fn record_decoded_retrieval_run_backing(

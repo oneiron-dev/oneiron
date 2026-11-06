@@ -378,9 +378,18 @@ input count. This briefly counts moved backing twice without leaving a live
 gap or a duplicate final charge. Unused pack metadata drops at its original
 assignment before its input charge is released. On a missing row or an earlier
 error, the original payload still drops before the same lease. An unstarted
-write retains both in the same owner. Synchronous session-overlay and admitted
-finalizers keep their existing input handling; this pre-queue charge applies
-only to the canonical detached write.
+write retains both in the same owner.
+
+Synchronous session-overlay and admitted-base finalizers also observe their
+owned empty-reason string and pack metadata on their existing optional local
+lease, before the original row lookup and decode. The admitted path keeps its
+original admission first. Both use the same actual string-capacity and known
+pack-backing calculation as the detached input charge, carry that measured
+extent into the shared staging body, and retire it only after the current
+record's full known backing is added. They do not charge the caller's borrowed
+surfaced-ID slice or make another input copy. Missing rows and earlier errors
+drop the original owned payload before the local lease; unbound calls add no
+walk. The detached path's already-paid inputs are unchanged.
 
 The first decoded-record observation also includes the old empty-reason
 string, both replay-reference strings and the config's full known string,
@@ -396,7 +405,7 @@ extent, then the original input-backing charge. Unchanged replay references
 and config buffers remain paid throughout this transfer. The old empty-reason
 and replaced pack values have already dropped, while retained backing may
 briefly be counted twice without a duplicate final charge. These decoded
-buffers remain distinct from the canonical finalizer inputs, original capture
+buffers remain distinct from the incoming finalizer inputs, original capture
 and provisional clone. An unbound finalizer adds no walk. This remains
 post-allocation accounting, not construction-peak, config-map, number-internal
 or full-working-set coverage.
@@ -616,8 +625,8 @@ raw-read families, overlay storage, database pages and transaction scratch
 remain outside these charges.
 
 These finalization charges do not cover remaining backing, input construction
-before its first measurement, synchronous inputs before their existing moves,
-other mutation copies, config-map storage, number internals,
+before its first measurement, other mutation copies, config-map storage,
+number internals,
 serialization scratch, other marker/index/retention keys and values, construction
 peaks or pre-growth admission. They do not establish a full working-set bound
 or a compiler/runtime result.
