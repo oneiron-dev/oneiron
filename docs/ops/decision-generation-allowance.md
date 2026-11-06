@@ -108,8 +108,19 @@ reservation there; an unstarted or kept call carries its actual zero for this
 settlement. This does not turn the quantity into measured tokens or charge it again.
 The original run-line charge, allocation, errors and reported usage stay separate.
 The server log keeps the decimal quantity and the same sanitized unit-name format.
-This field supplies native accounting data; it does not connect a stronger Arc
-consumer or enable any provider.
+This field supplies native accounting data; it does not enable any provider.
+
+The Arc tallies each captured token-native quantity once in its existing wake
+budget. It does so before processing generated-step usage and terminal receipts,
+so a failed durable-receipt lookup or a later park keeps the native settled prefix.
+Generated terminal usage, an unfinished generated correction's usage, and native
+stronger-provider settlements are separate inventories. The tally never adds a
+receipt's converted line charge or failed-rung count on top of its native quantity,
+and never settles the model permit again. A reservation-known quantity still does
+not make missing actual token measurements known. Non-token quantities are not
+converted into the wake's token domain; they remain in the native receipt inventory
+and raise a warning. This is a token-native accounting connection, not complete
+provider coverage or permission to enable stronger reads.
 
 The Arc stronger-read path remains excluded by `generated_only`. The typed captured
 outcomes, native common path, and truthful stop vocabulary do not enable it by
