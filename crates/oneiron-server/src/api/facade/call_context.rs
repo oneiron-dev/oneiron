@@ -429,11 +429,13 @@ pub(crate) struct FacadeCallOutput {
 }
 
 impl FacadeCallOutput {
-    /// A result whose reads listed their rows in `producers`.
+    /// A result whose reads listed their rows in `producers`. A retry's
+    /// result that settlement's drain saved with no rows keeps them unknown,
+    /// `None`, never a fresh empty listing (FIX 21054).
     pub(super) fn listed(value: serde_json::Value, producers: &ProducerRows) -> Self {
         Self {
             value,
-            rows: Some(producers.take()),
+            rows: producers.take_listed(),
         }
     }
 

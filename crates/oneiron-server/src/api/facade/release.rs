@@ -1,6 +1,7 @@
 //! A facade answer's destination release, once its call has nothing left to wait on (FIX 8170),
 //! and again for each request that waited on the same claimed invocation (FIX 7914, FIX 8212).
-//! `released_reply`, `replayed_value` and `rows_still_admitted` are its call surface.
+//! `released_reply`, `released_value`, `replayed_value`, `released_hook_stop` and
+//! `rows_still_admitted` are its call surface.
 //! `oneiron::runtime_hooks::verb::InvocationRelease` is the record a claimed call keeps.
 
 use super::*;
@@ -64,6 +65,20 @@ pub(super) fn released_reply(
     verb: &str,
     output: FacadeCallOutput,
 ) -> (axum::Extension<FacadeReleased>, Json<serde_json::Value>) {
+    let (kept, sent) = released_value(server, auth, verb, output);
+    (axum::Extension(kept), Json(sent))
+}
+
+/// The value [`released_reply`] sends for `output`, beside what it keeps
+/// for the invocation claim: one judgement for a door that answers by HTTP
+/// and for one that hands the answer on in process, as a credential's
+/// action row does (FIX 21054).
+pub(super) fn released_value(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+    output: FacadeCallOutput,
+) -> (FacadeReleased, serde_json::Value) {
     let FacadeCallOutput { value, rows } = output;
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
     let destination = auth.destination();
@@ -96,7 +111,7 @@ pub(super) fn released_reply(
         rows,
         withheld,
     };
-    (axum::Extension(kept), Json(sent))
+    (kept, sent)
 }
 
 /// The reply of a call no credential binds, whose answer derives from no row
@@ -179,6 +194,56 @@ fn released_feedback(
         }
     }
     withheld.then_some(value)
+}
+
+/// `stopped`, a verb hook's refusal, with the result a `Completed` stop
+/// carries released before the stop goes on (FIX 1435, FIX 21054). That
+/// result is the one settlement's drain saved for this retry's invocation.
+/// `release` judges it beside the rows its door listed it derived from
+/// (`Vault::verb_hook_saved_producers`), `None` when they are unknown or do
+/// not read. The envelope and every other stop stay as they are, and no row
+/// or post chain runs again.
+pub(crate) fn released_hook_stop(
+    server: &SyncServer,
+    mut stopped: FacadeApiError,
+    release: impl FnOnce(Option<Vec<EntityId>>, serde_json::Value) -> serde_json::Value,
+) -> FacadeApiError {
+    if let Some((invocation, result)) = stopped.completed_hook_result() {
+        let rows = InvocationId::parse_hex(invocation).and_then(|invocation| {
+            server
+                .vault()
+                .verb_hook_saved_producers(invocation)
+                .inspect_err(|error| tracing::warn!(%error, "a drained call's rows did not read"))
+                .ok()
+                .flatten()
+        });
+        let saved = std::mem::take(result);
+        *result = release(rows, saved);
+    }
+    stopped
+}
+
+/// A drained call's saved `result` of `verb`, released for `auth`, its
+/// caller now, by `rows`, the rows it was saved beside (FIX 21054). It meets
+/// the facade's release of a kept answer ([`replayed_value`]). A row the
+/// caller's credential no longer reads, a row erased since, or a row a world
+/// withheld from where the answer goes keeps the result on this device: the
+/// caller gets the content-free word that the call ran
+/// ([`details_on_device`]). Unknown rows withhold nothing, as for every
+/// facade answer ([`known_denied`]).
+pub(crate) fn released_saved_result(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    rows: Option<Vec<EntityId>>,
+    result: serde_json::Value,
+) -> serde_json::Value {
+    let release = InvocationRelease {
+        peer: auth.peer(),
+        value: result,
+        rows,
+    };
+    replayed_value(vault, auth, verb, release)
 }
 
 /// Whether `auth`'s credential still reads every one of `rows` now, and none
