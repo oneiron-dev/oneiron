@@ -66,6 +66,21 @@ pub(super) fn identity_topology_receipts(
         )? {
             continue;
         }
+        // The seal binds the stored record; the receipt shows the decision
+        // read whole (FIX 10188). A part, or a manifest still waiting on
+        // one, projects nothing.
+        let actor = record.actor;
+        let Some(mut record) =
+            crate::identity_topology::logical_identity_topology_event_for_store_in_txn(
+                &vault.store,
+                rtxn,
+                &event_id,
+                record,
+            )?
+        else {
+            continue;
+        };
+        record.actor = actor;
         // Per-kind dispatch: a resolution row NAMED by the fold as a
         // duplicate (the proposal already retired by an EARLIER ruling)
         // projects nothing — an outcome receipt for it would read as a
@@ -303,8 +318,10 @@ fn identity_topology_receipt(
         }
         StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => {
-            unreachable!("sidecars do not project as topology receipts")
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => {
+            unreachable!("sidecars and operation parts do not project as topology receipts")
         }
     };
 
