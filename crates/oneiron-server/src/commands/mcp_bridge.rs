@@ -885,8 +885,12 @@ impl Refusal {
                 auth.refused_advice(),
                 Some(body),
             ),
-            Self::Refused(answer) => match answer.get("error") {
-                Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
+            Self::Refused(mut answer) => match answer.get_mut("error").map(Value::take) {
+                Some(error) => {
+                    let mut response = json!({ "jsonrpc": "2.0", "id": id, "error": null });
+                    response["error"] = error;
+                    response.to_string()
+                }
                 None => rpc_error(
                     id,
                     -32000,
