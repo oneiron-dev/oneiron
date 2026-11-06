@@ -561,10 +561,18 @@ impl StagedBodyPump {
     }
 
     /// Closes the socket and waits for its task.
-    pub(crate) async fn stop(self) {
-        drop(self.outbound);
+    pub(crate) async fn stop(mut self) {
         self.task.abort();
-        let _ = self.task.await;
+        let _ = (&mut self.task).await;
+    }
+}
+
+impl Drop for StagedBodyPump {
+    /// A run that returns early drops its pump without [`Self::stop`]: the
+    /// task ends with it, a socket write it waits in included, instead of
+    /// running on detached.
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 
