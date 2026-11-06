@@ -130,6 +130,10 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "used");
             optional_string(&mut properties, "resetAt");
         }
+        ErrorCode::TooManyAttempts => {
+            required.push("retryAfterSecs");
+            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
+        }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");
         }

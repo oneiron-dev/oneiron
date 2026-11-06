@@ -1135,6 +1135,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.habits.checkin", post(facade_route))
         .route("/vault.productivity.create", post(facade_route))
         .route("/vault.productivity.tree", post(facade_route))
+        .route("/vault.ingest.ag_ui.import", post(facade_route))
+        .route("/vault.ingest.ag_ui.read", post(facade_route))
         .route("/vault.claims.admit", post(facade_route))
         .route("/vault.artifacts.create", post(facade_route))
         .route("/vault.esign.create", post(facade_route))
