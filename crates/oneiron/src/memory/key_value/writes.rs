@@ -82,7 +82,10 @@ impl Memory<'_> {
                 value: input.value.clone(), created_at: prior.as_ref().map_or(now, |(_, old)| old.created_at),
                 request_id: input.request_id.clone() };
             let value = serde_json::to_value(&stored).map_err(|_| MemoryError::bad_request("invalid JSON value"))?;
-            super::super::caps::check_payload_bytes("keyed claim", serde_json::to_vec(&value)
+            // The payload ceiling (ABC row 35, FIX 86, still held) counts the
+            // caller's value alone: its address and request id are measured
+            // on their own rows and served whole (ABC rows 28-30, 33).
+            super::super::caps::check_payload_bytes("keyed claim", serde_json::to_vec(&input.value)
                 .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
