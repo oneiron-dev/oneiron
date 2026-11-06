@@ -98,7 +98,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
     let mut properties = Map::from_iter([("code".to_owned(), json!({ "const": code.as_str() }))]);
 
     match code {
-        ErrorCode::BadRequest => {
+        ErrorCode::BadRequest | ErrorCode::DeadlineExceeded => {
             optional_string(&mut properties, "field");
         }
         ErrorCode::Forbidden
@@ -132,6 +132,10 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "limit");
             optional_integer(&mut properties, "used");
             optional_string(&mut properties, "resetAt");
+        }
+        ErrorCode::TooManyAttempts => {
+            required.push("retryAfterSecs");
+            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
         }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");

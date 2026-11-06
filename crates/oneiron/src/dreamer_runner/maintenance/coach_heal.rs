@@ -28,6 +28,8 @@ use super::coach_diagnostic::{
     ProducerTarget,
 };
 pub use super::coach_environment::{CoachEnvironmentDraft, EnvironmentGrantTarget};
+use super::coach_prompt_repair;
+pub use super::coach_prompt_repair::CoachPromptDraft;
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
 use super::{coach_environment, proposals};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
@@ -174,6 +176,21 @@ impl HealDecisions<'_> {
 /// data for the author, never an instruction, and never picks the skill:
 /// the engine chose it before the author is asked.
 pub trait CoachHealAuthor {
+    /// Optionally drafts exact prompt bytes for the engine's recorded case.
+    /// A host supplies its own configured author; the default keeps today's
+    /// route-only heal. Neither a draft nor its artifact authorizes injection.
+    ///
+    /// # Errors
+    ///
+    /// An author error leaves the heal route-only, as a declined draft does.
+    fn draft_prompt(
+        &self,
+        _case: &HealerCase,
+        _cause: &HealEvidenceContext,
+    ) -> Result<Option<CoachPromptDraft>> {
+        Ok(None)
+    }
+
     /// Drafts the revision `brief` supports, reading `cause` as data.
     ///
     /// # Errors
@@ -308,7 +325,9 @@ impl Vault {
     /// skill, aimed at that cause too, landed as a gated candidate with the
     /// heal; a draft that went stale before the heal's write files the heal
     /// route-only, saying why (FIX 2497). A replay returns the heal already
-    /// filed. Returns the proposal.
+    /// filed. A host's optional prompt author can supply a Proposed prompt
+    /// artifact beside a case's prompt-inject heal; it never resumes the run.
+    /// Returns the proposal.
     pub fn run_coach_heal(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -362,6 +381,8 @@ impl Vault {
             "untrusted_cause_context": cause.value(),
         });
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
+        let prompt_repair = (route == HealRoute::PromptInject)
+            .then(|| coach_prompt_repair::draft(&case, &cause, author));
         let mut environment_repair = None;
         let repair = match route {
             HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
@@ -419,6 +440,10 @@ impl Vault {
             if let Some(repair) = &environment_repair {
                 value["repair"] =
                     coach_environment::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
+            }
+            if let Some(repair) = &prompt_repair {
+                value["repair"] =
+                    coach_prompt_repair::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
             }
             let proposal = proposals::emit_in_txn(
                 self,
