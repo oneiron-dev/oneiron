@@ -139,4 +139,3 @@ impl Drop for ResultHold {
             .fetch_sub(self.bytes, Ordering::Relaxed);
     }
 }
-

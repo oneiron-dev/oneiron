@@ -38,4 +38,3 @@ pub struct OwnerModelLine {
     /// Owner's quality estimate on the same millionths scale as measurements.
     pub expected_quality: u32,
 }
-
