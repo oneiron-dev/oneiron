@@ -16,20 +16,25 @@ impl ScopedRead<'_> {
         configure: impl for<'b> Fn(crate::PipelineBuilder<'b>) -> crate::PipelineBuilder<'b>,
         telemetry: Option<&SessionRetrievalTelemetry<'_>>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let (filter, policy) = self.resolve_retrieval_filter(None)?;
-        if filter.deny_all {
+        // The key's own rows and those its own live Grants add (FIX 7528).
+        let SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(None)?;
+        if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(None, &policy, &filter, 0),
+                receipt: self.receipt_for(None, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, None)?;
-        let admitted = self.plan_gate(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded, None);
         let mut builder = self
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&super::plan_row_decodes)
             .gate_candidates(&admitted);
@@ -60,16 +65,20 @@ impl ScopedRead<'_> {
         configure: impl for<'b> Fn(crate::ContextPackBuilder<'b>) -> crate::ContextPackBuilder<'b>,
         telemetry: Option<&SessionRetrievalTelemetry<'_>>,
     ) -> Result<ScopedReadResult<Vec<u8>>> {
-        let (filter, policy) = self.resolve_retrieval_filter(None)?;
+        let SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(None)?;
         let excluded = self.request_exclusions(&policy, None)?;
-        let admitted = self.plan_gate(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded, None);
         let mut builder = self
             .vault
             .context_pack()
             .reading(self.store_read())
             .l2_summary_reader(self)
             .scoped_note_reader(self.actor_key.clone())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .filter_candidates(&super::plan_row_decodes)
             .gate_candidates(&admitted);
         if let Some(telemetry) = telemetry {
