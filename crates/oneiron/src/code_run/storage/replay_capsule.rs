@@ -24,6 +24,8 @@
 //! bodies copies (FIX 18924). A read of a body whose folds' words are
 //! withdrawn reads none, and a fork writer meets such a request as erased.
 //! The withdrawal retires each such body in its own writer ([`fold_words`]).
+//! A hard erase of a source row retires each kept start it owns, in the
+//! erase's writer ([`source_erase`], FIX 20329).
 
 mod admit;
 mod context;
@@ -35,6 +37,7 @@ mod owner_pair;
 mod pieces;
 mod restore;
 mod route_prompt;
+mod source_erase;
 mod spawn_erase;
 mod start_parts;
 mod start_pieces;
@@ -74,6 +77,7 @@ pub(crate) use self::owner_pair::{
 };
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
+pub(super) use self::source_erase::retire_source_step_starts_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
