@@ -7,8 +7,10 @@
 //! is relaying, a relay answer on its way back, or a stream's relay once its
 //! threads end (FIX 6301). One miss reclaims nothing, so a socket that moved
 //! between tasks while one scan ran keeps its entry. A removed entry's
-//! virtual loopback ends with it: its bound address, and a listener's queue
-//! and waiting accepts ([`super::loopback::release`]).
+//! virtual loopback ends with it: its bound address, a listener's queue,
+//! its waiting accepts and the connects waiting their turn on it
+//! ([`super::loopback::release`]), and a connect the socket itself waits
+//! in. Its copy of its guest end closes with it.
 
 use super::State;
 use crate::wire;

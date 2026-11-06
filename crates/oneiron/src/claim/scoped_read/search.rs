@@ -1,6 +1,8 @@
 use super::access_gate::HeldAuthority;
 use super::*;
 
+mod native_query;
+
 /// The rows a bounded search's plan refused that its key's own ceiling
 /// admits: rows the request excluded, which its receipt counts (B7). A row
 /// the key cannot read is never among them. A text scan checks every
@@ -161,6 +163,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         query_affect: Option<oneiron_contracts::affect::Vad>,
+        media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
@@ -179,6 +182,9 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted);
+        if let Some(memory) = media_memory {
+            pipeline = pipeline.media_query_memory(memory);
+        }
         if let Some(query) = query {
             pipeline = pipeline.search_text(query, limit);
         }
@@ -471,7 +477,7 @@ impl ScopedRead<'_> {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Whether every `ceilings` snapshot of the key's own read, with no
     /// request, admits `id`: only then is a row a ranked filter withheld a
     /// request or projection exclusion its receipt counts (FIX 8670).
@@ -480,7 +486,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         ceilings: &[(&PolicyManifestResolution, &ResolvedRetrievalFilter)],
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
     ) -> Result<bool> {
         for (policy, ceiling) in ceilings {
             if !self.is_entity_retrievable_held_in(txn, policy, ceiling, id, held)? {
@@ -529,7 +535,7 @@ impl<'v> ScopedRead<'v> {
     fn snapshot_candidate_in(
         &self,
         snapshot: &heed::RoTxn<'_>,
-        held: &HeldAuthority<'v>,
+        held: &HeldAuthority,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
