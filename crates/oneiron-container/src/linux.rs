@@ -103,6 +103,25 @@ pub(crate) fn inject(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::
         Ok(result)
     }
 }
+/// Adds `fd` to the notifying task's table without completing its call,
+/// and returns its number there: a brokered receive installs what a
+/// message carried this way, then answers the call itself (FIX 6185).
+pub(crate) fn add_fd(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::Result<i32> {
+    let add = AddFd {
+        id,
+        flags: 0,
+        srcfd: fd as u32,
+        newfd: 0,
+        newfd_flags: if cloexec { libc::O_CLOEXEC as u32 } else { 0 },
+    };
+    // SAFETY: add has the exact seccomp_notif_addfd layout.
+    let result = unsafe { libc::ioctl(listener, NOTIF_ADDFD, &add) };
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(result)
+    }
+}
 
 const READ: u64 = (1 << 0) | (1 << 2) | (1 << 3);
 const WRITE: u64 = ((1 << 15) - 1) & !READ;

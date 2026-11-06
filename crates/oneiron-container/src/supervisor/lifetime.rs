@@ -1,6 +1,7 @@
 //! A guest socket's host entry lives as long as the guest holds the socket
 //! (FIX 5978). The launcher reports each complete inventory of the socket
-//! inodes its guest's tasks hold ([`crate::socket_lifetime`]); an entry two
+//! inodes its guest's tasks hold ([`crate::socket_lifetime`]), and of those
+//! that wait in a native Unix socket's queue (FIX 6185); an entry two
 //! complete inventories in a row miss is removed and its writer stops. The
 //! entry's descriptors close, and its room on the host floor comes back,
 //! once the last work that holds it ends: a writer finishing the datagram it
