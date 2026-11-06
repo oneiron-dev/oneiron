@@ -148,7 +148,10 @@ pub fn skill_reliability_posterior_for_executor(
     resolved_reliability_posterior_in_txn(vault, &txn, skill, Some(executor))
 }
 
-pub(crate) fn validate_executor(executor: &str) -> Result<()> {
+/// Checks an executor id as the skill-reliability reads and the context-pack
+/// builder take it: `id@revision`, at most 256 bytes, no control characters.
+/// A host checks it before any pack work starts (FIX 1435).
+pub fn validate_executor(executor: &str) -> Result<()> {
     if executor.len() > 256
         || executor.chars().any(char::is_control)
         || !executor

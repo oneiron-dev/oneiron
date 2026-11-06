@@ -13,6 +13,7 @@ mod reader;
 mod resolve;
 mod response;
 mod response_limits;
+mod validate;
 
 pub(crate) use self::audience::*;
 pub(crate) use self::companion_assembly::*;
