@@ -46,7 +46,7 @@ pub struct AuthorityCheckpointRow {
     pub body: Option<Vec<u8>>,
 }
 
-/// Whether a fitting image carries the canonical signed body of a covered
+/// Whether an image carries the canonical signed body of a covered
 /// row of `op`'s kind: each row a fold past the image reads whole
 /// ([`crate::authority::fold_resume::is_projected`]: an approval, a binding,
 /// a confirm, a device revocation, a handoff, a machine profile, a world-key
@@ -57,12 +57,14 @@ pub struct AuthorityCheckpointRow {
 /// that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices, frontier
 /// joins and custody permit pieces (FIX 11866) that may be a stranger's; each owner handover, whose signed
-/// grant ids a restore across it reads (FIX 5765); and each row whose
+/// grant ids a restore across it reads (FIX 5765), and each membership
+/// execution record, whose withdrawn Grants a store reader and whose
+/// handover a restore reads (FIX 12335); and each row whose
 /// transition reads the install's pin or its admitted peers' roots, which a
 /// fold under another pin or peer set judges again (a home candidacy, a
 /// federation lifecycle act; FIX 3004, 3005); and each residence directive
 /// and result, which a machine's directive reader reads past the image (FIX
-/// 5412). An image that would otherwise pass the cap drops its residence
+/// 5412). An image past the optional-compaction trigger drops its residence
 /// bodies for [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
@@ -78,6 +80,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::CheckpointPolicySet(_)
                 | AuthorityOp::HomeNodePick(_)
                 | AuthorityOp::OriginCut(_)
+                | AuthorityOp::DeviceSuccession(_)
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::AgentGrantAct(_)
@@ -86,6 +89,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::CustodyPermitPiece(_)
                 | AuthorityOp::OwnerHandover(_)
+                | AuthorityOp::MembershipExecution(_)
                 | AuthorityOp::HomeCandidacy(_)
                 | AuthorityOp::FederationLifecycle(_)
                 | AuthorityOp::ResidenceDirective(_)
@@ -96,7 +100,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
 impl AuthorityCheckpointRow {
     /// The summary of covered row `entry`, whose stored canonical signed body
     /// is `body`: the one place a builder marks a row's body required and
-    /// carries it. [`super::AuthorityCheckpointV2::within_cap`] may drop
+    /// carries it. [`super::AuthorityCheckpointV2::compact_optional_evidence`] may drop
     /// residence bodies after (FIX 11400).
     pub(in crate::authority) fn of(entry: &AuthorityLogEntry, body: &[u8]) -> Self {
         let body_required = carries_body(&entry.op);

@@ -47,13 +47,9 @@ impl BranchResources<'_> {
                 }
                 // A head the wake read may be closed or withheld since, as
                 // by an earlier branch of the same pass. The branch holds
-                // only what it may read now; the rest is counted on its
-                // receipt (the row-authority axis), and the turn proceeds.
+                // only what it may read now. An actor-floor denial adds no
+                // receipt count, and the turn proceeds.
                 if !self.read.is_entity_readable(&id)? {
-                    self.read_receipt
-                        .lock()
-                        .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
-                        .add_suppressed(1);
                     tracing::info!(
                         target: "oneiron::dreamer",
                         "a prior head the wake listed is no longer readable; the branch runs without it"
@@ -254,7 +250,7 @@ pub(in crate::dreamer_consolidation) fn standing(
     Ok(fits.then_some(standing))
 }
 
-fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
+pub(super) fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
     // Reuse the key derivation; this probe never enters candidate-id admission.
     let body = &prior.body;
     let mut candidate = crate::ClaimCandidate::new(
