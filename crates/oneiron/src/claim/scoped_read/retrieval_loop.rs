@@ -71,13 +71,48 @@ impl ScopedRead<'_> {
         requested: &RetrievalFilter,
     ) -> Result<ScopedReadResult<Vec<RetrievalHandle>>> {
         let reads: Vec<_> = handles.iter().map(point_read).collect();
-        self.read_projected(&reads, Some(requested), |_, rows| {
+        self.loop_read_projected(&reads, requested, |_, rows| {
             Ok(rows
                 .into_iter()
                 .zip(handles)
                 .filter_map(|(row, handle)| row.and_then(|row| row.body.map(|_| handle.clone())))
                 .collect())
         })
+    }
+
+    /// The rows the loop's Read action takes as evidence, under `requested`,
+    /// with the loop's receipt ([`Self::loop_read_projected`]).
+    pub(crate) fn retrieval_loop_read(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: &RetrievalFilter,
+    ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
+        self.loop_read_projected(reads, requested, |_, rows| Ok(rows))
+    }
+
+    /// [`Self::read_projected`] for the retrieval loop (FIX 7528): its
+    /// receipt's applied scope is the candidates a search under `requested`
+    /// ranks, read in the same snapshot, so the loop's next step, asked under
+    /// it, never refuses a row this read admitted under one of the reader's
+    /// own live Grants. Every row check is the point read's own.
+    fn loop_read_projected<T>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: &RetrievalFilter,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> Result<T>,
+    ) -> Result<ScopedReadResult<T>> {
+        let read = self.read_projected(reads, Some(requested), |txn, rows| {
+            let plan = self.search_plan_in(txn, Some(requested))?;
+            Ok::<_, Error>((project(txn, rows)?, plan))
+        })?;
+        let (value, plan) = read.value;
+        let receipt = self.receipt_for(
+            Some(requested),
+            &plan.policy,
+            &plan.candidates,
+            read.receipt.suppressed_count,
+        );
+        Ok(ScopedReadResult { value, receipt })
     }
 
     /// One step of the message ⊂ turn ⊂ session spine, using exact admitted
@@ -90,7 +125,7 @@ impl ScopedRead<'_> {
         requested: &RetrievalFilter,
     ) -> Result<ScopedReadResult<Vec<RetrievalHandle>>> {
         let mut result =
-            self.read_projected(&[point_read(anchor)], Some(requested), |txn, rows| {
+            self.loop_read_projected(&[point_read(anchor)], requested, |txn, rows| {
                 let Some(row) = rows.into_iter().next().flatten() else {
                     return Ok((Vec::new(), 0));
                 };
