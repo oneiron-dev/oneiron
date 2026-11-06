@@ -1,6 +1,7 @@
 //! One member's local leaves for the replica tear: its index, projection,
 //! vector and edge rows, then its entity row. Custody, provenance, document
-//! and control rows stay.
+//! and control rows stay, except the document payload the owner's discard of
+//! a world copy takes first ([`discard_owned_payload`]).
 
 use heed::RwTxn;
 use loro::LoroMap;
@@ -18,6 +19,33 @@ use crate::store::Store;
 use crate::store::loro_document::map_contains_binary;
 use crate::store::replica_edge_key::format_edge_key;
 use crate::temporal::TimeRange;
+
+/// The payload the owner's discard of a world copy takes with the members
+/// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
+/// call 4 = A): each one's entity document, a NOTE's text, workflow and
+/// pending slots, and its fetched read caches. Local only: no receipt,
+/// marker or operation. Their custody, provenance and lifecycle sidecars
+/// stay for now.
+pub(super) fn discard_owned_payload(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    ids: &[EntityId],
+) -> Result<()> {
+    let mut notes = Vec::new();
+    for id in ids {
+        let kind = store
+            .port_entity_raw(txn, id)?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+        if kind == Some(registry::ENTITY_TYPE_NOTE) {
+            notes.push(*id);
+        }
+    }
+    crate::entity_doc::discard_local_copies_in_txn(store, txn, &ids.iter().copied().collect())?;
+    for note in &notes {
+        crate::note::delete_document_in_txn(store, txn, note)?;
+    }
+    crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
+}
 
 /// Tears one member's local rows. Every step is a local index or projection
 /// leaf of the physical tear; custody, provenance, document and control rows
