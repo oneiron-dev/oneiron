@@ -55,7 +55,18 @@ impl ContextPackBuilder<'_> {
         pending.project_instruction_files_under(lane, disclosure.as_ref())?;
         // Counts exposed refer only to rows admitted by this read.
         pending.value.stats.candidates_considered = pending.value.results.len();
+        let mut surfaced_memory = pending
+            .telemetry_memory
+            .as_ref()
+            .map(crate::host_memory::MachineMemory::empty_lease);
         let (bytes, telemetry) = serialize_pack_with_telemetry(&pending.value, &config, tokenizer);
+        if let Some(memory) = surfaced_memory.as_mut() {
+            memory.materialized(
+                0,
+                (telemetry.result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         let run_id = pending.telemetry_run_id.take();
         let mut replay_config = pending.replay_config.take();
         if let Some(value) = replay_config.as_mut() {

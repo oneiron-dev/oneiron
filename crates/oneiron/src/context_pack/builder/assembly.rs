@@ -102,12 +102,23 @@ impl ContextPackBuilder<'_> {
         self,
     ) -> Result<(RetrievalWithTelemetry<ContextPack>, bool)> {
         let run = self.run_unfinalized()?;
+        let mut surfaced_memory = run
+            .telemetry_memory
+            .as_ref()
+            .map(crate::host_memory::MachineMemory::empty_lease);
         let surfaced_result_ids: Vec<[u8; 16]> = run
             .pack
             .results
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        if let Some(memory) = surfaced_memory.as_mut() {
+            memory.materialized(
+                0,
+                (surfaced_result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         let mut replay_config = run.replay_config;
         if let Some(config) = replay_config.as_mut() {
             config["terminal_kind"] = "structured".into();
@@ -233,7 +244,18 @@ impl ContextPackBuilder<'_> {
             max_item_tokens: self.max_item_tokens,
         };
         let run = self.run_unfinalized()?;
+        let mut surfaced_memory = run
+            .telemetry_memory
+            .as_ref()
+            .map(crate::host_memory::MachineMemory::empty_lease);
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config, tokenizer);
+        if let Some(memory) = surfaced_memory.as_mut() {
+            memory.materialized(
+                0,
+                (telemetry.result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         let mut replay_config = run.replay_config;
         if let Some(value) = replay_config.as_mut() {
             value["terminal_kind"] = "serialized".into();
