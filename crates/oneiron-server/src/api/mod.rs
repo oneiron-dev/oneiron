@@ -70,6 +70,7 @@ mod authority_checkpoint;
 mod blob_artifacts;
 // OF-604: zstd and gzip request bodies, and compressed JSON replies.
 mod body_codec;
+mod body_stage;
 // FIX 8195, FIX 7917: owner request bodies, read after the route's door and
 // spooled whatever their length.
 mod body_spool;
