@@ -131,7 +131,7 @@ fn scrub_carriers_in_txn(
         // revision (including pre-erasure versions). No core row is touched.
         // The marker goes too: its digest of the body could confirm a guess.
         crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
-        crate::batch::deindex_entity(&vault.store, wtxn, id)?;
+        crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, id)?;
         AUTHORED_HERE.delete(&vault.store, wtxn, &HexId(*id))?;
     }
     Ok(())
@@ -413,6 +413,8 @@ pub(crate) fn redact_actor_in_txn(
                 .map(|carrier| (*key, carrier.source))
         })
         .collect();
+    // FIX 9870: the actor's proposer handle no longer resolves to it.
+    super::proposer_scope::forget_actor_in_txn(&vault.store, wtxn, actor)?;
     let mut scrubbed = Vec::new();
     for (key, source) in keys {
         scrubbed.extend(

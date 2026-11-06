@@ -27,6 +27,7 @@ mod session_verbs;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
+mod team_submit_entity;
 mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
@@ -185,6 +186,11 @@ pub struct HostSelfDispatcher<'a> {
     /// reaches it.
     pub(super) repo_review_policy:
         Option<std::sync::Arc<dyn crate::memory::repo_doors::RepoReviewPolicy>>,
+    /// The host's own Git door base for this run's checkouts (FIX 7181),
+    /// ending in `/git`: the operator's setting, which wins over the base a
+    /// run names. Only [`Self::with_git_door_base`] binds it; `None` keeps
+    /// the run's own base.
+    pub(super) git_door_base: Option<String>,
     /// The seats each open spawn call resolved (FIX 9180): host-only, one
     /// frame per call, taken by the recorder of the call's row.
     spawn_capture: spawn_capture::SpawnCapture,

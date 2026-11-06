@@ -73,8 +73,9 @@ impl Memory<'_> {
 
     /// OF-023: one `core.conflict.open` marker per disagreeing stated peer,
     /// naming `[observed, stated]` under the pair's deterministic id, so a
-    /// replay finds its marker and writes nothing. The marker is signed on
-    /// its own and lands through this actor's content transaction.
+    /// replay finds its marker and writes nothing. Peers must currently be
+    /// valid and share the landed observation's facet and project. The marker
+    /// is signed on its own and lands through this actor's content transaction.
     pub(super) fn open_preference_conflicts_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -87,7 +88,18 @@ impl Memory<'_> {
             .vault
             .get_claim_in_txn(content.read(), &observed)?
             .ok_or(Error::EntityNotFound)?;
+        let standing_at = self.vault.store.clock.now_recorded_at();
         for old in stated {
+            let Some(peer) = self.vault.get_claim_in_txn(content.read(), old)? else {
+                continue;
+            };
+            if peer.scope_facet != body.scope_facet
+                || peer.scope_project != body.scope_project
+                || peer.valid_from.is_some_and(|start| start > standing_at)
+                || peer.valid_to.is_some_and(|end| end <= standing_at)
+            {
+                continue;
+            }
             let marker = crate::claim::conflict_marker(&observed, old, &body, envelope)?;
             if marker.landed_in_txn(self.vault, content.read())? {
                 continue;

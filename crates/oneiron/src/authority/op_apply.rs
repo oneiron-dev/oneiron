@@ -107,6 +107,8 @@ pub(super) fn apply_op(
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)

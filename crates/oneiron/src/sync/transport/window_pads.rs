@@ -28,7 +28,7 @@
 
 mod parts;
 
-pub use parts::{WindowPadArrival, WindowPadAssembly};
+pub use parts::{ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadAssembly, WindowPadPayload};
 
 use super::{
     MAX_ENCODED_FRAME_BYTES, TAG_WINDOW_SYNC, TransportError, validate_window_key, window_sub_tags,

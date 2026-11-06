@@ -163,7 +163,10 @@ pub use owner::{guests, packs, reveal_secret, revoke_secret, subscriptions};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 mod seat;
-pub use self::seat::{seat_login_plan, seat_routes, seat_runner_policy, seat_runners};
+pub use self::seat::{
+    seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
+    seat_siwc_login, seat_siwc_revoke,
+};
 mod registry;
 pub use self::registry::registry;
 

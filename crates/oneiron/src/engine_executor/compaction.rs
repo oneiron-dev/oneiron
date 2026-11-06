@@ -125,6 +125,8 @@ pub(super) struct FoldJob {
     pub(super) handles: Vec<String>,
     /// What ran its pass, when its backend writes as its agent (FIX 4465).
     pub(super) execution: Option<crate::compaction::CompactionExecution>,
+    /// The step its mark was made at.
+    pub(super) marked_at: Option<u64>,
 }
 
 /// What a flight answered.

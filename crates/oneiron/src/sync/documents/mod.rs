@@ -485,6 +485,7 @@ impl EntityDocument {
 
     /// Export after the selector has admitted this entity. `admission_key` is the
     /// canonical selector encoding, not peer-controlled claims about prior admission.
+    /// Current record use limits apply here, not to the owner's raw replica export.
     fn export(
         &self,
         admission_key: &[u8],
@@ -506,6 +507,13 @@ impl EntityDocument {
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
                 crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+            }
+            if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
+                .is_some()
+            {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
             }
             Ok(())
         })

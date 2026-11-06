@@ -252,6 +252,7 @@ impl ProcessLauncher {
             native,
             stats,
             llama_metrics,
+            &self.slot,
         )
         .await
     }
@@ -290,6 +291,8 @@ impl ProcessLauncher {
             pins,
             native_socket,
             scheduling: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            native_peer: None,
         });
         Ok(path)
     }
@@ -629,7 +632,9 @@ async fn spawn(
     native: Option<PathBuf>,
     stats: Option<StatsRoute>,
     llama_metrics: Option<super::llama_metrics::MetricsRoute>,
+    slot: &LaunchSlot,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
+    let _ = slot;
     #[cfg(target_os = "macos")]
     if let Some(cli) = crate::mac_worker_bootstrap::cli() {
         return super::process::guarded::spawn(
@@ -642,6 +647,7 @@ async fn spawn(
             native,
             stats,
             llama_metrics,
+            slot,
         )
         .await
         .map_err(|error| {
@@ -674,6 +680,10 @@ async fn spawn(
             Some(metrics) => worker.with_llama_metrics(metrics),
             None => worker,
         };
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(record) = slot.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+            record.native_peer = Some(worker.native_peer());
+        }
         Ok(Box::new(worker))
     }
     #[cfg(not(unix))]

@@ -81,6 +81,7 @@ mod op_apply;
 mod op_undo;
 mod op_vocabulary;
 mod proposal_resolution;
+mod proposer_scope;
 mod reassignment_map;
 mod replicated_event_validation;
 mod seal_standing;
@@ -96,7 +97,7 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};

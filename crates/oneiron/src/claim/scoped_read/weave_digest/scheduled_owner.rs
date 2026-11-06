@@ -213,7 +213,9 @@ impl Vault {
                     .any(|section| !section.items.is_empty())
                 {
                     crate::dreamer_runner::DreamerRunnerStore::new(self)
-                        .enqueue_weave_lens_in_txn(txn, reader, scheduled_for, now)?;
+                        .enqueue_weave_lens_in_txn(
+                            txn, reader, scheduled_for, now, published.report_revision, now,
+                        )?;
                 }
                 Ok(Some(notice))
             })?;

@@ -664,6 +664,10 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
+        let memory = match &actor.signing_request_transport {
+            Some(transport) => memory.with_signing_request_transport(transport.clone()),
+            None => memory,
+        };
         // The hook pause the request resumes beside the invocation it named
         // (L13 PR-D): with no invocation named, it resumes nothing.
         let memory = match actor.hook_ask.filter(|_| actor.invocation.is_some()) {

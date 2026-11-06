@@ -152,6 +152,14 @@ pub(super) fn carry_current_authority(
         merged.extend(live_rows.iter().filter(|row| is_live(row)).cloned());
         *rows = merged.into_iter().collect();
     }
+    for (database, carried) in &live.carried {
+        let rows = databases
+            .get_mut(*database)
+            .ok_or_else(super::codec_error)?;
+        let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = std::mem::take(rows).into_iter().collect();
+        merged.extend(carried.iter().cloned());
+        *rows = merged.into_iter().collect();
+    }
     super::claim_order::set_floor(
         databases
             .get_mut("vault_meta")
@@ -175,6 +183,18 @@ struct LiveRows {
     fences: BTreeSet<Vec<u8>>,
     /// Its pad objects, captured in the same read (PAD-1).
     pad_objects: crate::store::PadObjectsCapture,
+    /// Runtime rows it keeps across the restore ([`carried_from_live`]), by
+    /// database.
+    carried: BTreeMap<&'static str, CanonicalRows>,
+}
+
+/// Whether a restore over the live vault keeps `key` of `database` from it:
+/// a runtime row no image holds and none may drop. Each proposing actor's
+/// handle map (FIX 9870): the vault's own and erasable, so never imaged, yet
+/// kept, so an actor's proposals keep one ramp scope across a restore.
+fn carried_from_live(database: &str, key: &[u8]) -> bool {
+    database == "sync_state"
+        && key.starts_with(crate::side_table::IDENTITY_TOPOLOGY_PROPOSER_SCOPE.prefix)
 }
 
 /// Entity ids with the authority their bodies carry and the class's name.
@@ -192,6 +212,7 @@ fn current_rows(
         claim_of: Vec::new(),
         fences: BTreeSet::new(),
         pad_objects: super::pad_objects::capture_open_in_txn(current, &txn, copy),
+        carried: BTreeMap::new(),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
@@ -206,6 +227,12 @@ fn current_rows(
         for row in db.iter(&txn)? {
             let (key, value) = row?;
             if super::storage_tier(entry.name, key) != super::StorageTier::Canonical {
+                if carried_from_live(entry.name, key) {
+                    live.carried
+                        .entry(entry.name)
+                        .or_default()
+                        .push((key.to_vec(), value.to_vec()));
+                }
                 continue;
             }
             if entry.name == "sync_state"

@@ -417,15 +417,16 @@ impl AgentVerbDoor for FacadeRowDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::MemorySearch
-                    | SelfEffect::MemoryPutEdge
-                    | SelfEffect::ConsultResult
-                    | SelfEffect::WorkflowDispatch
-            )
-        )
+        Ok((matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+            || matches!(
+                call,
+                RunCall::Bridge(
+                    SelfEffect::MemorySearch
+                        | SelfEffect::MemoryPutEdge
+                        | SelfEffect::ConsultResult
+                        | SelfEffect::WorkflowDispatch
+                )
+            ))
         .then(|| self.read_key.clone()))
     }
 

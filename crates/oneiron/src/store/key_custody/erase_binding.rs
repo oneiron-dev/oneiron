@@ -87,6 +87,62 @@ fn pad_of(records: &BTreeSet<&[u8]>, item: &[u8]) -> bool {
 }
 
 impl Store {
+    /// Native erase names for just these independently captured body
+    /// subjects, not unrelated retirements of the same erased sources.
+    #[cfg(unix)]
+    pub(crate) fn body_erase_retirement_names_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        erased: &[EntityId],
+        expected: &BTreeSet<[u8; 16]>,
+    ) -> Result<Vec<String>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(Vec::new());
+        };
+        let mut items = BTreeSet::new();
+        for instance in expected {
+            let id = crate::store::instance_id(custody.binding(), instance)?;
+            items.insert(id.subject().item().to_vec());
+        }
+        Ok(self
+            .erase_custody_retirements_in_txn(txn, erased)?
+            .into_iter()
+            .filter(|name| {
+                retirement_of_name(name).is_some_and(|(kind, item, _)| {
+                    kind == CustodyKind::BodyInstance && items.contains(&item)
+                })
+            })
+            .collect())
+    }
+
+    /// Whether these actual native retirement names cover every independently
+    /// captured body instance. Empty or unrelated names never prove coverage.
+    #[cfg(unix)]
+    pub(crate) fn erase_retirement_names_cover_body_instances(
+        &self,
+        names: &[String],
+        expected: &BTreeSet<[u8; 16]>,
+    ) -> Result<bool> {
+        if expected.is_empty() {
+            return Ok(false);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(false);
+        };
+        let covered: BTreeSet<Vec<u8>> = names
+            .iter()
+            .filter_map(|name| retirement_of_name(name))
+            .filter_map(|(kind, item, _)| (kind == CustodyKind::BodyInstance).then_some(item))
+            .collect();
+        for instance in expected {
+            let id = crate::store::instance_id(custody.binding(), instance)?;
+            if !covered.contains(id.subject().item()) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether `name` is a bound custody retirement's name, as an erase
     /// receipt carries it: the receipt grammar's check.
     pub(crate) fn erase_retirement_name_valid(name: &str) -> bool {

@@ -20,7 +20,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
-use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_run_actor};
+use oneiron::agent_dispatch::{
+    AgentDispatchStatus, AgentDispatcher, WorkflowToolAnswer, WorkflowToolContinuation,
+    WorkflowToolProgress, WorkflowToolTranscript, agent_dispatch_run_actor,
+};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::code_run::ReadWorldUnknown;
 use oneiron::code_run::model_call::{
@@ -32,7 +35,7 @@ use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
     WorkClass,
-    run_admission::{RunAdmission, WorkPhysical, forget_work_parent, take_work_parent},
+    run_admission::{WorkPhysical, forget_work_parent, take_work_parent},
 };
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
@@ -50,7 +53,7 @@ use crate::server::SyncServer;
 
 mod secret_use;
 
-use secret_use::StepSecretUse;
+use secret_use::{StepConversation, StepConversationFault, StepSecretUse};
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
@@ -117,6 +120,11 @@ pub(super) struct GeneratedStep {
     pub(super) planner_craft_rows: Option<Vec<EntityId>>,
 }
 
+struct WorkflowInputs {
+    objectives: Vec<String>,
+    known_sources: Vec<EntityId>,
+}
+
 /// The objectives a step is asked to confess against: the caller's, verbatim,
 /// when the dispatch carries them; else the one its task names, whitespace
 /// folded and whole. The spawn's planned need comes first, then the step's
@@ -151,6 +159,9 @@ pub(super) struct StepFault {
     /// the step parks as it is, neither failed nor retried, until they
     /// answer.
     pub(super) payer: Option<PayerFault>,
+    /// The native tool checkpoint and Hook pause committed together. The
+    /// pump treats this as waiting, never as a failed model/tool result.
+    pub(super) hook_wait: bool,
     pub(super) error: Error,
 }
 
@@ -160,6 +171,7 @@ impl From<Error> for StepFault {
             retryable: false,
             exhausted: false,
             payer: None,
+            hook_wait: false,
             error,
         }
     }
@@ -245,6 +257,7 @@ impl StepRunner {
         vault: &Vault,
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
+        continuation: Option<WorkflowToolContinuation>,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
@@ -262,6 +275,48 @@ impl StepRunner {
                 %error,
                 "the workflow step could not declare its read set; its pack receipt keeps it unknown"
             );
+        }
+        if let Some(saved) = continuation {
+            let objectives = saved.transcript.objectives.clone();
+            let known_sources = saved.progress.known_sources.clone();
+            let sources = saved
+                .progress
+                .sources_complete
+                .then(|| known_sources.clone());
+            let generated = self.generate_in(
+                runtime,
+                vault,
+                ModelStep {
+                    definition,
+                    attempt: &step.attempt,
+                    actor: agent_dispatch_run_actor(&step.input, step.attempt.id)?,
+                    purpose: STEP_PURPOSE,
+                    messages: Vec::new(),
+                    planner: None,
+                    sources,
+                    response_format: ResponseFormat::Text,
+                },
+                saved.transcript.answer.is_none()
+                    && requires_payer(vault, step.attempt.id, step.input.room.is_some())?,
+                true,
+                step.input.room.map(|room| room.room),
+                Some(WorkflowInputs {
+                    objectives: objectives.clone(),
+                    known_sources,
+                }),
+                Some(saved),
+            )?;
+            record_step_read(vault, step.attempt.id, None, &mut read_set_lost);
+            let confession = if objectives.is_empty() {
+                None
+            } else {
+                parse_confession(&generated.bytes, &objectives)
+            };
+            return Ok(StepOutput {
+                bytes: generated.bytes,
+                confession,
+                objectives,
+            });
         }
         // FIX 6290: the memory and chat rows the step's context selected, as
         // text read on its run's own lanes. A row that no longer reads is
@@ -365,6 +420,18 @@ impl StepRunner {
             payer_required,
             true,
             step.input.room.map(|room| room.room),
+            Some(WorkflowInputs {
+                objectives: objectives.clone(),
+                known_sources: step
+                    .input
+                    .target
+                    .agent_definition_ref()
+                    .ok()
+                    .into_iter()
+                    .chain(selected.source_rows().iter().copied())
+                    .collect(),
+            }),
+            None,
         )?;
         // The step's inputs as one read set (FIX 6934): the caller's part
         // above with its planner craft, or unknown when it ran tool rounds,
@@ -395,7 +462,7 @@ impl StepRunner {
         vault: &Vault,
         input: ModelStep<'_>,
     ) -> Result<GeneratedStep, StepFault> {
-        self.generate_in(runtime, vault, input, false, false, None)
+        self.generate_in(runtime, vault, input, false, false, None, None, None)
     }
 
     /// [`Self::generate`] for a step that knows whether it must read its
@@ -411,11 +478,16 @@ impl StepRunner {
         payer_required: bool,
         offers_use: bool,
         room: Option<oneiron::EntityId>,
+        workflow: Option<WorkflowInputs>,
+        continuation: Option<WorkflowToolContinuation>,
     ) -> Result<GeneratedStep, StepFault> {
         // FIX 12516: a step in a room with a live off-record stretch keeps
         // no model-call evidence. Arrival is checked here, Done rechecks
         // before the write: a stretch may open mid-call.
-        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
+        let no_record_at_arrival = continuation
+            .as_ref()
+            .is_some_and(|saved| saved.progress.no_record_at_arrival)
+            || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let ModelStep {
             definition,
             attempt,
@@ -426,6 +498,38 @@ impl StepRunner {
             sources,
             response_format,
         } = input;
+        let mut checkpoints = if workflow.is_some() {
+            Some(AgentDispatcher::new(vault).workflow_tool_checkpoint_writer(attempt)?)
+        } else {
+            None
+        };
+        if let Some(saved) = &continuation
+            && let Some(answer) = &saved.transcript.answer
+        {
+            stamp_executor(vault, attempt, &answer.rung);
+            let binding = ModelCallBinding {
+                rung: answer.rung.clone(),
+                route: answer.route.clone(),
+            };
+            let no_record = no_record_at_arrival
+                || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
+            record_workflow_response(
+                vault,
+                None,
+                &saved.transcript.request,
+                &answer.response,
+                &binding,
+                attempt,
+                actor,
+                true,
+                no_record,
+            );
+            return Ok(GeneratedStep {
+                bytes: response_text(&answer.response),
+                tool_rounds: true,
+                planner_craft_rows: saved.progress.planner_craft_rows.clone(),
+            });
+        }
         // FIX 5777: a wave plan speaks with its planner's instructions for
         // its requester, so it is shown both crafts, each attributed: the
         // planner's first, after the instructions, then the requester's.
@@ -434,107 +538,142 @@ impl StepRunner {
         // never shown (FIX 8985). The rows the planner's shows are stamped
         // under the requester's receipt (FIX 5912); a stamp that fails
         // withholds nothing.
-        let now = super::unix_now();
-        // The planner craft rows the call shows (FIX 6934): kept beside the
-        // joined text for the attempt's read set, `None` when not known
-        // complete. A planner with no craft shows none.
-        let mut planner_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
-        if let Some(planner) = planner
-            && let Some(craft) =
-                super::resident_craft::planner_craft(vault, &planner, &actor.entity_ref(), now)
+        let (request, ladder, planner_craft_rows, requester_craft_rows, offers_use) = if let Some(
+            saved,
+        ) =
+            &continuation
         {
-            let message = craft.message;
-            let entries = craft.entries;
-            super::resident_craft::join_craft(&mut messages, message);
-            if !entries.is_empty() {
-                super::resident_craft::stamp_planner_craft_exposure(
-                    vault,
-                    attempt,
-                    &actor.entity_ref(),
-                    &entries,
-                );
+            // The body already holds the admitted request. Resolve current
+            // route admission, never reconstruct or resample its tool tail.
+            let call = self
+                .models
+                .admit_role(vault, CHAT_ROLE, saved.transcript.request.clone())
+                .map_err(|refusal| {
+                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
+                })?;
+            let mut request = call.request;
+            request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            (
+                request,
+                call.ladder,
+                saved.progress.planner_craft_rows.clone(),
+                Some(Vec::new()),
+                true,
+            )
+        } else {
+            let now = super::unix_now();
+            // The planner craft rows the call shows (FIX 6934): kept beside the
+            // joined text for the attempt's read set, `None` when not known
+            // complete. A planner with no craft shows none.
+            let mut planner_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
+            if let Some(planner) = planner
+                && let Some(craft) =
+                    super::resident_craft::planner_craft(vault, &planner, &actor.entity_ref(), now)
+            {
+                let message = craft.message;
+                let entries = craft.entries;
+                super::resident_craft::join_craft(&mut messages, message);
+                if !entries.is_empty() {
+                    super::resident_craft::stamp_planner_craft_exposure(
+                        vault,
+                        attempt,
+                        &actor.entity_ref(),
+                        &entries,
+                    );
+                }
+                planner_craft_rows = entries
+                    .iter()
+                    .map(|entry| EntityId::from_hex(&entry.reference))
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok();
             }
-            planner_craft_rows = entries
-                .iter()
-                .map(|entry| EntityId::from_hex(&entry.reference))
-                .collect::<Result<Vec<_>, _>>()
-                .ok();
-        }
-        // OF-490: the step speaks as its resident, so it is shown that
-        // resident's craft after its instructions, each note loaded on its
-        // own attempt. A replayed wave plan never calls here.
-        // The requester craft rows the call shows (FIX 11313): kept beside
-        // the joined text for the run's sources. A step with no craft shows
-        // none.
-        let mut requester_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
-        if let Some((craft, rows)) =
-            super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
-        {
-            super::resident_craft::join_craft(&mut messages, craft);
-            requester_craft_rows = Some(rows);
-        }
-        // The requester craft door self-reports each CLAIM it loads (FIX
-        // 7017); this empty report makes it report on every path, even when
-        // no craft loaded. Reports union, so it never hides those. Capture
-        // only: a storage error never ends the step.
-        if let Err(error) =
-            vault.record_attempt_sources(attempt.id, ReadSetProducer::ACTOR_CLAIM, Some(Vec::new()))
-        {
-            tracing::warn!(
-                attempt = ?attempt.id,
-                %error,
-                "the workflow step could not record its craft read set; its pack receipt keeps it unknown"
-            );
-            let _ = vault.record_attempt_sources(attempt.id, ReadSetProducer::ACTOR_CLAIM, None);
-        }
-        let seat = self
-            .models
-            .seat(CHAT_ROLE)
-            .ok_or_else(|| Error::InvalidConfig("no [models] rung serves workflow steps".into()))?;
-        let call_purpose = CallPurpose::Other {
-            name: purpose.to_owned(),
+            // OF-490: the step speaks as its resident, so it is shown that
+            // resident's craft after its instructions, each note loaded on its
+            // own attempt. A replayed wave plan never calls here.
+            // The requester craft rows the call shows (FIX 11313): kept beside
+            // the joined text for the run's sources. A step with no craft shows
+            // none.
+            let mut requester_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
+            if let Some((craft, rows)) =
+                super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
+            {
+                super::resident_craft::join_craft(&mut messages, craft);
+                requester_craft_rows = Some(rows);
+            }
+            // The requester craft door self-reports each CLAIM it loads (FIX
+            // 7017); this empty report makes it report on every path, even when
+            // no craft loaded. Reports union, so it never hides those. Capture
+            // only: a storage error never ends the step.
+            if let Err(error) = vault.record_attempt_sources(
+                attempt.id,
+                ReadSetProducer::ACTOR_CLAIM,
+                Some(Vec::new()),
+            ) {
+                tracing::warn!(
+                    attempt = ?attempt.id,
+                    %error,
+                    "the workflow step could not record its craft read set; its pack receipt keeps it unknown"
+                );
+                let _ =
+                    vault.record_attempt_sources(attempt.id, ReadSetProducer::ACTOR_CLAIM, None);
+            }
+            let seat = self.models.seat(CHAT_ROLE).ok_or_else(|| {
+                Error::InvalidConfig("no [models] rung serves workflow steps".into())
+            })?;
+            let call_purpose = CallPurpose::Other {
+                name: purpose.to_owned(),
+            };
+            let request = LlmRequest {
+                model: seat.model.clone(),
+                envelope: CallEnvelope {
+                    seat_effort: None,
+                    // No world: the world a step was dispatched in does not vouch
+                    // for its text (Astra R3). Its definition, its briefing and
+                    // earlier steps' outputs may come from any world the
+                    // dispatcher read, so the vault-wide floor holds its fallback
+                    // on the device while any world stays on it.
+                    scope: Default::default(),
+                    tier: TierPrecedence::for_purpose(
+                        &call_purpose,
+                        definition
+                            .model_tier
+                            .clone()
+                            .unwrap_or_else(|| ModelTierRef(purpose.to_owned())),
+                    ),
+                    purpose: call_purpose,
+                    class: CallClass::BestEffort,
+                    response_format,
+                    locality: seat.locality,
+                    host_keyless: false,
+                },
+                messages,
+                tools: Vec::new(),
+                params: BTreeMap::new(),
+                provider_options: BTreeMap::new(),
+                host_segments: None,
+            };
+            // A route the vault narrowed past what this server serves ends the
+            // step here, before any call leaves.
+            let call = self
+                .models
+                .admit_role(vault, CHAT_ROLE, request)
+                .map_err(|refusal| {
+                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
+                })?;
+            let mut request = call.request;
+            // FIX 10592: beside the door-stamped locality, the request carries
+            // whether its ladder may only serve free keyless own-server work, so
+            // the replay below admits unmetered. Unstamped stays paid.
+            request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
+            (
+                request,
+                call.ladder,
+                planner_craft_rows,
+                requester_craft_rows,
+                offers_use,
+            )
         };
-        let request = LlmRequest {
-            model: seat.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                // No world: the world a step was dispatched in does not vouch
-                // for its text (Astra R3). Its definition, its briefing and
-                // earlier steps' outputs may come from any world the
-                // dispatcher read, so the vault-wide floor holds its fallback
-                // on the device while any world stays on it.
-                scope: Default::default(),
-                tier: TierPrecedence::for_purpose(
-                    &call_purpose,
-                    definition
-                        .model_tier
-                        .clone()
-                        .unwrap_or_else(|| ModelTierRef(purpose.to_owned())),
-                ),
-                purpose: call_purpose,
-                class: CallClass::BestEffort,
-                response_format,
-                locality: seat.locality,
-                host_keyless: false,
-            },
-            messages,
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-            host_segments: None,
-        };
-        // A route the vault narrowed past what this server serves ends the
-        // step here, before any call leaves.
-        let call = self
-            .models
-            .admit_role(vault, CHAT_ROLE, request)
-            .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
-        let mut request = call.request;
-        // FIX 10592: beside the door-stamped locality, the request carries
-        // whether its ladder may only serve free keyless own-server work, so
-        // the replay below admits unmetered. Unstamped stays paid.
-        request.envelope.host_keyless = call.ladder.all_keyless_own_server();
-        let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
         // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call, and each rung it
         // sent was charged its reservation. Those charges are replayed into
@@ -547,12 +686,18 @@ impl StepRunner {
         // an estimate, exact only when every earlier rung went out metered on
         // the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
-        let earlier = AttemptQueue::new(vault).retry_chain_depth(attempt.id)?;
-        let carried = {
+        let earlier = if continuation.is_none() {
+            AttemptQueue::new(vault).retry_chain_depth(attempt.id)?
+        } else {
+            0
+        };
+        let carried = if continuation.is_none() {
             let mut spent = self.spent.lock().expect("step spend mutex poisoned");
             spent
                 .remove(&attempt.id)
                 .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+        } else {
+            None
         };
         let run_id = format!(
             "workflow-step:{}",
@@ -560,13 +705,13 @@ impl StepRunner {
         );
         let charged = match carried {
             Some(units) => units.div_ceil(reserve),
-            None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
+            None => u64::from(earlier).saturating_mul(ladder.rungs() as u64),
         };
         // The estimate counts metered reservations only: on a free ladder the
         // earlier tries spent nothing, so no replay is owed. A restart across
         // a paid-to-keyless route move replays 0 for tries that paid, the
         // same estimate class as above.
-        let charged = if request.envelope.host_keyless {
+        let charged = if continuation.is_some() || request.envelope.host_keyless {
             0
         } else {
             charged
@@ -578,6 +723,17 @@ impl StepRunner {
         // bound, not inside it.
         let dispatcher = AgentDispatcher::new(vault);
         let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
+        if continuation
+            .as_ref()
+            .is_some_and(|saved| saved.progress.spend_scope != lease)
+        {
+            return Err(
+                Error::InvalidConfig("workflow checkpoint spend scope changed".to_owned()).into(),
+            );
+        }
+        let logical_budget_units = continuation
+            .as_ref()
+            .map_or(self.budget_units, |saved| saved.progress.budget_units);
         // OF-531: a room-paid step bills its root payer's own account, bound
         // before anything is reserved, never the vault owner's by default;
         // so does a member's bound run's step (FIX 5316). A payer this host
@@ -589,7 +745,7 @@ impl StepRunner {
             Ok(payer) => payer,
             Err(fault) => {
                 let held = matches!(fault, PayerFault::Needed { .. });
-                if held {
+                if held && continuation.is_none() {
                     self.spent
                         .lock()
                         .expect("step spend mutex poisoned")
@@ -600,30 +756,36 @@ impl StepRunner {
                     retryable: false,
                     exhausted: false,
                     payer: held.then_some(fault),
+                    hook_wait: false,
                     error,
                 });
             }
         };
         let budget_units = match &lease {
-            Some(scope) => self.budget_units.min(
+            Some(scope) => logical_budget_units.min(
                 charged
                     .saturating_mul(reserve)
                     .saturating_add(dispatcher.available_units(scope)?),
             ),
-            None => self.budget_units,
+            None => logical_budget_units,
         };
-        let guard = vault.policy_budget_guard(
-            run_id.clone(),
-            budget_units,
-            reserve,
-            BudgetExhaustionPolicy::Suspend,
-            actor,
-        )?;
         let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
             retryable: false,
             exhausted: matches!(denied, oneiron::llm::BudgetDenied::Exhausted),
             payer: None,
+            hook_wait: false,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
+        };
+        let guard = if let Some(saved) = &continuation {
+            oneiron::BudgetGuard::from_checkpoint(saved.progress.budget.clone()).map_err(budget)?
+        } else {
+            vault.policy_budget_guard(
+                run_id.clone(),
+                budget_units,
+                reserve,
+                BudgetExhaustionPolicy::Suspend,
+                actor,
+            )?
         };
         for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
@@ -633,7 +795,13 @@ impl StepRunner {
         // Each call of this try books its spend on the lease once it
         // settled, and the next is admitted against what the lease has left
         // then, its siblings' spend included (FIX 1819).
-        let live = LiveLease::new(vault, lease, guard.clone(), self.budget_units, replayed);
+        let live = LiveLease::new(
+            vault,
+            lease.clone(),
+            guard.clone(),
+            logical_budget_units,
+            replayed,
+        );
         let uses =
             offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id, &self.host));
         // The step is a run on that meter: each rung its call reaches is
@@ -648,11 +816,15 @@ impl StepRunner {
         let sources = if offers_use {
             None
         } else {
-            union_source_rows([sources, planner_craft_rows.clone(), requester_craft_rows])
+            union_source_rows([
+                sources,
+                planner_craft_rows.clone(),
+                requester_craft_rows.clone(),
+            ])
         };
         let run = self
             .models
-            .funded_run(run_id, guard, payer)
+            .funded_run(run_id, guard.clone(), payer)
             .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();
@@ -683,59 +855,142 @@ impl StepRunner {
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
-        oneiron::code_run::capture_workflow_step(
-            vault,
-            attempt.id,
-            attempt.attempt_count,
-            actor,
-            &request,
-            sources,
-        );
+        if !continuation
+            .as_ref()
+            .is_some_and(|saved| saved.progress.cursor.capture_completed)
+        {
+            oneiron::code_run::capture_workflow_step(
+                vault,
+                attempt.id,
+                attempt.attempt_count,
+                actor,
+                &request,
+                sources,
+            );
+        }
         let may_send = || {
             live.book_and_revise();
             true
         };
-        let generated = match &uses {
-            Some(uses) => uses
-                .converse(runtime, &call.ladder, &run, &live, request)
-                .map(|(response, binding, rounds, final_request)| {
-                    ((response, binding, final_request), rounds)
+        let mut known_sources = workflow
+            .as_ref()
+            .map_or_else(Vec::new, |workflow| workflow.known_sources.clone());
+        known_sources.extend(planner_craft_rows.iter().flatten().copied());
+        known_sources.extend(requester_craft_rows.iter().flatten().copied());
+        let objectives = workflow
+            .as_ref()
+            .map_or_else(Vec::new, |workflow| workflow.objectives.clone());
+        let mut saved_tool_state = continuation.is_some();
+        let mut save = |request: &LlmRequest,
+                        cursor: &oneiron::agent_dispatch::WorkflowToolCursor,
+                        wait,
+                        answer: Option<(&LlmResponse, &ModelCallBinding)>,
+                        refreshed_sources: &[EntityId]|
+         -> oneiron::Result<()> {
+            for source in refreshed_sources {
+                if !known_sources.contains(source) {
+                    known_sources.push(*source);
+                }
+            }
+            // No new scope booking may remain behind a durable cursor/park.
+            live.book_rest()?;
+            let budget = guard.checkpoint().map_err(|denied| {
+                Error::InvalidConfig(format!("workflow checkpoint budget: {denied}"))
+            })?;
+            let progress = WorkflowToolProgress {
+                cursor: cursor.clone(),
+                wait,
+                budget,
+                budget_units: logical_budget_units,
+                spend_scope: lease.clone(),
+                known_sources: known_sources.clone(),
+                // Tool answer lineage is not yet a complete entity read set.
+                sources_complete: false,
+                planner_craft_rows: planner_craft_rows.clone(),
+                no_record_at_arrival,
+            };
+            let transcript = WorkflowToolTranscript {
+                request: request.clone(),
+                objectives: objectives.clone(),
+                answer: answer.map(|(response, binding)| WorkflowToolAnswer {
+                    response: response.clone(),
+                    rung: binding.rung.clone(),
+                    route: binding.route.clone(),
                 }),
+            };
+            let park_at = progress.wait.is_some().then(super::unix_now);
+            checkpoints
+                .as_mut()
+                .ok_or_else(|| {
+                    Error::InvalidConfig("workflow checkpoint route is missing".to_owned())
+                })?
+                .save(&transcript, progress, park_at)?;
+            saved_tool_state = true;
+            Ok(())
+        };
+        let generated = match &uses {
+            Some(uses) => uses.converse(
+                runtime,
+                &ladder,
+                &run,
+                &live,
+                request,
+                continuation
+                    .as_ref()
+                    .map(|saved| (saved.progress.cursor.clone(), saved.progress.wait.clone())),
+                &mut save,
+            ),
             None => {
                 let final_request = request.clone();
                 runtime
-                    .block_on(
-                        call.ladder
-                            .generate_recorded_while(&run, request, None, &may_send),
-                    )
-                    .map(|(response, binding)| ((response, binding, final_request), false))
+                    .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
+                    .map(|(response, binding)| StepConversation::Answered {
+                        response,
+                        binding,
+                        tool_rounds: false,
+                        request: final_request,
+                    })
+                    .map_err(StepConversationFault::Model)
             }
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
-        live.book_rest()?;
+        if !matches!(&generated, Ok(StepConversation::HookPending(_))) {
+            live.book_rest()?;
+        }
         let (response, binding, final_request, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok(((response, binding, final_request), rounds)) => {
-                if let Some(owner) = attempt.lease_owner.as_deref()
-                    && let Err(error) = AttemptQueue::new(vault).set_executor_model(
-                        attempt.id,
-                        owner,
-                        attempt.attempt_count,
-                        binding.rung.model.as_str(),
-                    )
-                {
-                    tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
-                }
+            Ok(StepConversation::HookPending(wait)) => {
+                return Err(StepFault {
+                    retryable: false,
+                    exhausted: false,
+                    payer: None,
+                    hook_wait: true,
+                    error: Error::from(oneiron::runtime_hooks::VerbHookStop::Pending {
+                        invocation: oneiron::runtime_hooks::InvocationId(wait.invocation).to_hex(),
+                        ask: wait.ask.to_hex(),
+                    }),
+                });
+            }
+            Ok(StepConversation::Answered {
+                response,
+                binding,
+                request: final_request,
+                tool_rounds: rounds,
+            }) => {
+                stamp_executor(vault, attempt, &binding.rung);
                 (response, binding, final_request, rounds)
             }
-            Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
-            Err(error) => {
+            Err(StepConversationFault::Checkpoint(error)) => return Err(error.into()),
+            Err(StepConversationFault::Model(oneiron::llm::LlmError::BudgetDenied(denied))) => {
+                return Err(budget(denied));
+            }
+            Err(StepConversationFault::Model(error)) => {
                 let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
-                if retryable {
+                if retryable && !saved_tool_state {
                     let chain = run.read().used_units;
                     self.spent
                         .lock()
@@ -746,6 +1001,7 @@ impl StepRunner {
                     retryable,
                     exhausted: false,
                     payer: None,
+                    hook_wait: false,
                     error: Error::InvalidConfig(format!(
                         "workflow step model call failed: {error}"
                     )),
@@ -756,7 +1012,7 @@ impl StepRunner {
             || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         record_workflow_response(
             vault,
-            &run,
+            run.source_rows(),
             &final_request,
             &response,
             &binding,
@@ -765,21 +1021,42 @@ impl StepRunner {
             tool_rounds,
             no_record,
         );
-        let text: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
         Ok(GeneratedStep {
-            bytes: text.into_bytes(),
+            bytes: response_text(&response),
             tool_rounds,
             planner_craft_rows,
         })
     }
+}
+
+fn stamp_executor(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    rung: &oneiron::code_run::CapsuleRungBinding,
+) {
+    if let Some(owner) = attempt.lease_owner.as_deref()
+        && let Err(error) = AttemptQueue::new(vault).set_executor_model(
+            attempt.id,
+            owner,
+            attempt.attempt_count,
+            rung.model.as_str(),
+        )
+    {
+        tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
+    }
+}
+
+fn response_text(response: &LlmResponse) -> Vec<u8> {
+    response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>()
+        .into_bytes()
 }
 
 /// Best-effort final-answer capture for FIX 12516. Intermediate self.use
@@ -787,7 +1064,7 @@ impl StepRunner {
 #[allow(clippy::too_many_arguments)]
 fn record_workflow_response(
     vault: &Vault,
-    run: &RunAdmission,
+    source_rows: Option<Vec<EntityId>>,
     request: &LlmRequest,
     response: &LlmResponse,
     binding: &ModelCallBinding,
@@ -822,7 +1099,6 @@ fn record_workflow_response(
         let parent_entity = oneiron::EntityId::from_bytes(*parent.as_bytes()).ok()?;
         Some((parent_entity, u64::from(parent_row.attempt_count)))
     });
-    let source_rows = run.source_rows();
     let input_parts = if source_rows.is_none() {
         vec![ModelCallInputPart::Unknown {
             reason: "workflow-step sources are unknown".to_owned(),

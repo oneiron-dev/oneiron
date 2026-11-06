@@ -202,6 +202,7 @@ fn write_capsule_in_txn(
             body: request_ref,
             path: draft.request_path.clone(),
             stored_hash: *blake3::hash(stored).as_bytes(),
+            erased: false,
         },
         request_hash: *blake3::hash(&draft.request).as_bytes(),
         messages_digest: draft.messages_digest,
@@ -288,6 +289,7 @@ fn publish_start_in_txn(
             path: draft.start_path.clone(),
             digest: *blake3::hash(&bytes).as_bytes(),
             bridge_start,
+            erased: false,
         }),
         None => None,
     })

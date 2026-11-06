@@ -125,6 +125,40 @@ const KEY_NAME: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[0];
 const KEY_FIELDS: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[2];
 const KEY_LAYOUT_HASH: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[3];
 
+/// Identity of the exact source prefix a continuation proved at seed time.
+/// A child may later mask its inherited reply bytes; that does not rewrite
+/// the original source prefix this child-owned witness recorded.
+pub(crate) fn continuation_prefix_digest(
+    record: &CodeRunReplayRecord,
+    steps: u64,
+    bridge_start: u64,
+) -> Result<Option<[u8; 32]>> {
+    let (Ok(steps), Ok(bridge_start)) = (usize::try_from(steps), usize::try_from(bridge_start))
+    else {
+        return Ok(None);
+    };
+    let (Some(checkpoints), Some(calls)) = (
+        record.step_checkpoints.get(..steps),
+        record.bridge_calls.get(..bridge_start),
+    ) else {
+        return Ok(None);
+    };
+    let value = Value::Array(vec![
+        Value::Binary(record.run_id.as_bytes().to_vec()),
+        record
+            .determinism
+            .as_ref()
+            .map_or(Value::Nil, encode_determinism),
+        Value::Array(checkpoints.iter().map(encode_step_checkpoint).collect()),
+        Value::Array(calls.iter().map(encode_bridge_call).collect()),
+    ]);
+    let bytes = encode_value(&value, "continuation prefix MessagePack encode failed")?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:executor-continuation-prefix:v1");
+    hasher.update(&bytes);
+    Ok(Some(*hasher.finalize().as_bytes()))
+}
+
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;

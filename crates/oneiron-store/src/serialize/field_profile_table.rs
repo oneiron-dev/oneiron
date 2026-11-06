@@ -1,0 +1,184 @@
+//! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
+
+use crate::serialize::pack_format::FieldProfile;
+use oneiron_base::registry::ENTITY_TYPE_ACCESS_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron_base::registry::ENTITY_TYPE_CLAIM;
+use oneiron_base::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
+use oneiron_base::registry::ENTITY_TYPE_EVENT;
+use oneiron_base::registry::ENTITY_TYPE_FACET;
+use oneiron_base::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_MACHINE;
+use oneiron_base::registry::ENTITY_TYPE_NOTE;
+use oneiron_base::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_PERSON;
+use oneiron_base::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
+use oneiron_base::registry::ENTITY_TYPE_PSYCH_PROFILE;
+use oneiron_base::registry::ENTITY_TYPE_SKILL;
+use oneiron_base::registry::ENTITY_TYPE_SUMMARY;
+use oneiron_base::registry::ENTITY_TYPE_TASK;
+use oneiron_base::registry::ENTITY_TYPE_TASK_LIST;
+use oneiron_base::registry::ENTITY_TYPE_TURN;
+
+pub fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
+    match (entity_type, profile) {
+        // CLAIM profiles are drawn from the pinned on-disk key set (D11) —
+        // sourced from `claim::CLAIM_BODY_KEYS` so the read projection can
+        // never drift from the storage ABI:
+        //   Minimal  = pred val
+        //   Standard = pred val conf sal evid confBand confBasis
+        //   Full     = pred val conf sal evid from to src world rel subj scope
+        //              confBand confBasis
+        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => {
+            crate::write_envelope::claim_body::CLAIM_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => {
+            crate::write_envelope::claim_body::CLAIM_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => {
+            crate::write_envelope::claim_body::CLAIM_FIELDS_FULL
+        }
+
+        (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
+        (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at", "reactions"],
+        (ENTITY_TYPE_TURN, FieldProfile::Full) => &["txt", "spkr", "at", "sess", "reactions"],
+
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Minimal) => &["txt"],
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Standard) => &["txt", "lvl", "at"],
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Full) => &["txt", "lvl", "at", "src"],
+
+        (ENTITY_TYPE_EVENT, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_EVENT, FieldProfile::Standard) => &["name", "at", "ppl"],
+        (ENTITY_TYPE_EVENT, FieldProfile::Full) => &["name", "at", "ppl", "place", "desc"],
+
+        (ENTITY_TYPE_PERSON, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_PERSON, FieldProfile::Standard) => &["name"],
+        (ENTITY_TYPE_PERSON, FieldProfile::Full) => &["name", "role", "rel"],
+
+        (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
+        (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => {
+            &crate::write_envelope::skill_record::SKILL_RECORD_BODY_KEYS
+        }
+
+        // AGENT_DEF mirrors SKILL: identity-only Minimal, identity + summary in
+        // Standard, and the full pinned body only at Full — the 16 KiB
+        // `instructions` prompt must never surface in Minimal/Standard packs.
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_record::AGENT_DEF_BODY_KEYS,
+
+        // TaskList (project container)
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Standard) => &["name", "goal", "status"],
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Full) => {
+            &["name", "goal", "status", "icon", "color", "repoUrl"]
+        }
+
+        // Task (universal work unit)
+        (ENTITY_TYPE_TASK, FieldProfile::Minimal) => &["title", "role"],
+        (ENTITY_TYPE_TASK, FieldProfile::Standard) => {
+            &["title", "role", "status", "priority", "dueDate"]
+        }
+        (ENTITY_TYPE_TASK, FieldProfile::Full) => &[
+            "title",
+            "role",
+            "status",
+            "priority",
+            "dueDate",
+            "frequency",
+            "frequencyDetail",
+            "currentStreak",
+            "longestStreak",
+            "parentId",
+            "listId",
+            "position",
+        ],
+
+        // Machine: schema-reserved, no fields yet. Explicit empty arms so
+        // future field additions don't silently fall through to alphabetical order.
+        (ENTITY_TYPE_MACHINE, _) => &[],
+
+        // NOTE (ARCH-0032 take): Minimal carries the attribution pair a
+        // renderer needs to label the row "{actor} take" and nothing else —
+        // `markdown` is unbounded prose and only earns its tokens once the
+        // profile is already paying for body text.
+        (ENTITY_TYPE_NOTE, FieldProfile::Minimal) => &["kind", "author_ref"],
+        (ENTITY_TYPE_NOTE, FieldProfile::Standard | FieldProfile::Full) => {
+            &["kind", "author_ref", "markdown"]
+        }
+
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Standard) => {
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Full) => {
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal) => {
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Standard) => {
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Standard) => {
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Standard) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Full) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Standard) => {
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Full) => {
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_FULL
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Standard) => {
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Full) => {
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_FACET, FieldProfile::Minimal) => {
+            &["kind", "label", "scope", "subject", "sensitivity"]
+        }
+        (ENTITY_TYPE_FACET, FieldProfile::Standard) => {
+            &["kind", "scope", "subject", "lifecycle", "sensitivity"]
+        }
+        (ENTITY_TYPE_FACET, FieldProfile::Full) => &[
+            "schema_version",
+            "kind",
+            "scope",
+            "subject",
+            "lifecycle",
+            "sensitivity",
+            "lifecycle_events",
+            "provenance",
+        ],
+
+        _ => &[],
+    }
+}

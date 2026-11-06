@@ -75,6 +75,17 @@ pub(crate) fn withdraw_grant_row_in_txn(
     else {
         return Ok(());
     };
+    // The Grant's scope, bound to this withdrawal's tombstone, while its row
+    // is still live (FIX 11780): a narrower grant's selector export then
+    // carries the tombstone too, as whole-vault member sync does. A capture
+    // never fails the withdrawal (deletion/tombstone_scope.rs).
+    let request_id = *grant.as_bytes();
+    crate::deletion::tombstone_scope::capture_deleted_scope_in_store_txn(
+        store,
+        wtxn,
+        &grant,
+        Some(&request_id),
+    );
     mark_withdrawn_grant_in_txn(store, wtxn, grant)?;
     let withdrawn_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::deletion::stage_engine_row_hard_erasure_in_txn(
@@ -85,7 +96,7 @@ pub(crate) fn withdraw_grant_row_in_txn(
         &crate::deletion::TombstoneValueV2 {
             reason: crate::deletion::TombstoneReason::UserHardDelete,
             deleted_at: withdrawn_at,
-            request_id: *grant.as_bytes(),
+            request_id,
         },
     )
 }

@@ -75,6 +75,7 @@ pub(crate) fn erase_citations_in_txn(
 ) -> Result<Vec<EntityId>> {
     let mut dependents = fence_dependents(&vault.store, txn, *id)?;
     scrub_stored_proposal_citations(vault, txn)?;
+    scrub_retired_canonical_citations(vault, txn)?;
     dependents.retain(|citing| citing != id);
     #[cfg(feature = "sync")]
     for citing in &dependents {
@@ -151,6 +152,7 @@ fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> 
         };
         let doc = super::document::NoteDocument::load((key.0).0, &raw)?;
         if remove_erased_pins(vault, txn, &doc)? {
+            super::proposals::preserve_recovery_basis(vault, txn, (key.0).0, (key.1).0, &doc.doc)?;
             doc.doc.commit();
             // A normal snapshot would keep the removed quote in its oplog.
             let clean = super::storage::state_copy(&doc.doc)?;
@@ -158,6 +160,68 @@ fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> 
             validate_pins(vault, txn, &retained.pins()?)?;
             super::documents::NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &clean)?;
         }
+    }
+    Ok(())
+}
+
+/// A switched-away canonical slot keeps its own snapshot and update journal,
+/// independently of the proposal carrier and the current reverse-pin index.
+fn scrub_retired_canonical_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
+
+    let mut slots = std::collections::BTreeSet::new();
+    for (note, head) in super::documents::NOTE_HEAD_DOC.scan_keys(&vault.store, txn, &[])? {
+        slots.insert((note, note));
+        slots.insert((note, head));
+    }
+    for (note, head) in slots {
+        if head == super::documents::head_in(&vault.store, txn, note)?.0 {
+            continue;
+        }
+        let slot = DocumentSlot::of(head);
+        let snapshot = vault
+            .store
+            .port_document_row(txn, slot, DocumentRow::Snapshot)?;
+        let updates = vault.store.port_document_updates(txn, slot)?;
+        let doc = match snapshot {
+            Some(snapshot) => {
+                let doc = loro::LoroDoc::new();
+                super::storage::import_complete(&doc, &snapshot)?;
+                doc
+            }
+            None if updates.is_empty() => continue,
+            None if head == note => super::document_birth_in_txn(vault, txn, note)?
+                .ok_or_else(|| super::document::invalid("NOTE original document birth missing"))?,
+            None => return Err(super::document::invalid("NOTE head document missing")),
+        };
+        for update in updates {
+            if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
+                return Err(super::document::invalid(
+                    "invalid canonical document update key",
+                ));
+            }
+            super::storage::import_complete(&doc, &update.bytes)?;
+        }
+        let retained = super::document::NoteDocument::from_loro(note, doc)?;
+        if !remove_erased_pins(vault, txn, &retained)? {
+            continue;
+        }
+        retained.doc.commit();
+        let snapshot = super::storage::state_copy(&retained.doc)?;
+        let clean = super::document::NoteDocument::load(note, &snapshot)?;
+        validate_pins(vault, txn, &clean.pins()?)?;
+        vault
+            .store
+            .port_document_snapshot_put(txn, slot, &snapshot)?;
+        vault
+            .store
+            .port_document_state_vector_put(txn, slot, &clean.doc.oplog_vv().encode())?;
+        vault.store.port_document_shallow_since_put(
+            txn,
+            slot,
+            &clean.doc.shallow_since_vv().to_vv().encode(),
+        )?;
+        vault.store.port_document_updates_delete(txn, slot)?;
     }
     Ok(())
 }

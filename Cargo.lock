@@ -265,6 +265,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8276,6 +8282,7 @@ dependencies = [
  "flate2",
  "harfrust",
  "oneiron-contracts",
+ "png 0.18.1",
  "proptest",
  "quick-xml 0.42.0",
  "roxmltree",
@@ -8286,6 +8293,7 @@ dependencies = [
  "similar",
  "stemma",
  "thiserror 2.0.20",
+ "tiny-skia",
  "unicode-bidi",
  "unicode-script",
  "zip 0.6.6",
@@ -8565,6 +8573,7 @@ dependencies = [
  "oneiron",
  "oneiron-remote",
  "oneiron-server",
+ "serde",
  "serde_json",
 ]
 
@@ -8803,6 +8812,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokenizers",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite 0.26.2",
  "tokio-tungstenite 0.29.0",
  "toml 0.9.12+spec-1.1.0",
@@ -8811,6 +8821,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+ "webpki-roots 1.0.9",
  "windows-sys 0.61.2",
  "zeroize",
  "zip 0.6.6",
@@ -8837,16 +8848,27 @@ name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "base64 0.22.1",
  "blake3",
+ "chrono",
+ "flate2",
  "getrandom 0.4.3",
  "half",
  "heed",
+ "libc",
+ "lopdf",
+ "loro",
+ "lzma-rust2",
  "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-model",
+ "oneiron-skill-attribution",
+ "oneiron-vault-contract",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
  "rmp-serde",
  "rmpv",
  "rustix",
@@ -8854,12 +8876,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
+ "windows-sys 0.61.2",
  "xxhash-rust",
  "zeroize",
+ "zip 0.6.6",
 ]
 
 [[package]]
@@ -12094,6 +12121,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
+name = "strict-num"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
+
+[[package]]
 name = "string_cache"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12766,6 +12799,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
+]
+
+[[package]]
+name = "tiny-skia"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "bytemuck",
+ "cfg-if",
+ "log",
+ "tiny-skia-path",
+]
+
+[[package]]
+name = "tiny-skia-path"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edca365c3faccca67d06593c5980fa6c57687de727a03131735bb85f01fdeeb9"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "strict-num",
 ]
 
 [[package]]

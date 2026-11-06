@@ -12,6 +12,7 @@
 mod admit;
 mod erase;
 mod fork_erase;
+mod restore;
 mod spawn_erase;
 mod start_parts;
 
@@ -36,6 +37,7 @@ pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
+pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -250,6 +252,9 @@ pub(crate) fn capsule_start_body(
     let Some(start) = &capsule.start else {
         return Ok(None);
     };
+    if start.erased {
+        return Ok(None);
+    }
     let held = match held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body) {
         // Bytes that drifted from their row are no start, as bytes no longer
         // its digest are; a read that fails stays an error (FIX 4194).
@@ -275,6 +280,7 @@ pub(crate) fn capsule_request(
         body,
         path,
         stored_hash,
+        erased: false,
     } = &capsule.request
     else {
         return Ok(None);
@@ -381,6 +387,9 @@ pub(crate) fn fork_response(
     run: EntityId,
     receipt: &ContributionForkReceipt,
 ) -> Result<Option<LlmResponse>> {
+    if receipt.response_erased {
+        return Ok(None);
+    }
     let path = receipt.response_path.as_str();
     let Some(bytes) = held_body(vault, run, path, receipt.response, |_| Ok(true))? else {
         return Ok(None);

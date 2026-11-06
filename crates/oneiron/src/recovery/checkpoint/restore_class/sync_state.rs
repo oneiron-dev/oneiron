@@ -116,6 +116,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_BUNDLE_ATTEMPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
+    // The home's queue of sealed world updates and this machine's place in
+    // it and its outbox follow the live vault, as the sealed bundle's
+    // custody and cursor do (DEC-0005 fix 8, FIX 12586).
+    (&t::SYNC_SEALED_UPDATE_CURSOR, LIVE),
+    (&t::SYNC_SEALED_UPDATE_ENTRY, LIVE),
+    (&t::SYNC_SEALED_UPDATE_ID, LIVE),
+    (&t::SYNC_SEALED_UPDATE_QUEUE, LIVE),
+    (&t::SYNC_SEALED_UPDATE_OUTBOX, LIVE),
+    (&t::SYNC_SEALED_UPDATE_OUTBOX_ID, LIVE),
     (&t::SYNC_RETAINED_WORK_CARRIER, CONTENT),
     (&t::SYNC_RETAINED_WORK_CURSOR, CONTENT),
     (&t::SYNC_MAINTENANCE_RETAINED_WORK, CONTENT),

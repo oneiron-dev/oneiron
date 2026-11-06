@@ -306,6 +306,7 @@ struct FileServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    git_door_base: Option<String>,
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
@@ -378,6 +379,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer,
             oauth_jwks_uri: value.oauth_jwks_uri,
             oauth_resource_indicator: value.oauth_resource_indicator,
+            git_door_base: value.git_door_base,
             kit_bundle_public_urls: value.kit_bundle_public_urls,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
@@ -456,6 +458,7 @@ struct PartialServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    git_door_base: Option<String>,
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
@@ -556,6 +559,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_issuer", &self.oauth_issuer)
             .field("oauth_jwks_uri", &self.oauth_jwks_uri)
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
+            .field("git_door_base", &self.git_door_base)
             .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
@@ -662,6 +666,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
+            git_door_base: value.git_door_base.clone(),
             kit_bundle_public_urls: value.kit_bundle_public_urls.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),

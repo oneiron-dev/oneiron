@@ -74,7 +74,11 @@ pub(super) fn run(
     let vault = server.vault();
     let host = server.decision_host();
     let coach = coach_ladder(server);
+    let wording = server.ai.dreamer_wording();
     let decisions = CodeFixDecisions {
+        reproduced_wording: wording.code_fix_reproduced().to_owned(),
+        fixed_wording: wording.code_fix_fixed().to_owned(),
+        export_safe_wording: wording.code_fix_export_safe().to_owned(),
         ladder: coach
             .as_ref()
             .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),

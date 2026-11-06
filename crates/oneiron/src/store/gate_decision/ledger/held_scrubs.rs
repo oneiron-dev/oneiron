@@ -242,6 +242,9 @@ impl Store {
             &record.decision_id,
             &encode_gate_decision(&record)?,
         )?;
+        if record.claim_id.is_some() {
+            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, record.decision_id)?;
+        }
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)
     }
 

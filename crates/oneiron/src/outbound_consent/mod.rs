@@ -57,7 +57,9 @@ pub(crate) use self::connector_call_consent::{
 };
 pub(crate) use self::connector_call_erase::erase_connector_call_actor_in_txn;
 pub use self::connector_call_input::ConnectorCallInput;
-pub use self::connector_call_input_resume::{ConnectorResumeProtocol, OpenedConnectorResume};
+pub use self::connector_call_input_resume::{
+    ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
+};
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,
 };

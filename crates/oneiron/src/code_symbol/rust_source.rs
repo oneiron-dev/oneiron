@@ -46,6 +46,8 @@ pub(crate) struct PreparedCodeSymbolGraph<'a> {
     parsed_sources: Vec<ParsedRustSource<'a>>,
     symbol_ids: Vec<EntityId>,
     symbols_by_name: HashMap<String, Vec<usize>>,
+    cjs_edges: Vec<CodeSymbolGraphEdge>,
+    sources: Vec<CodeSymbolSource<'a>>,
 }
 
 pub(crate) fn prepare_code_symbol_graph<'a>(
@@ -68,7 +70,8 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
     let mut extracted = Vec::<ExtractedCodeSymbol>::new();
     let mut parsed_sources = Vec::<ParsedRustSource<'a>>::new();
 
-    for source in sources {
+    let cjs = super::cjs_source::derive_cjs_graph(&repo_ref, commit_hash.clone(), &sources)?;
+    for source in sources.iter().copied() {
         validate_manifest_path(source.path)?;
         if !is_tree_sitter_rust_source(source.path) {
             continue;
@@ -117,20 +120,29 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
         })
         .collect();
 
-    let manifest = CodeSymbolManifest::new(
-        repo_ref,
-        commit_hash,
-        chunks,
-        extracted
-            .into_iter()
-            .map(|symbol| {
-                let mut revision = symbol.revision;
-                revision.source_session =
-                    Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{repo_key}"));
-                revision
-            })
-            .collect(),
-    )?;
+    let mut symbols = extracted
+        .into_iter()
+        .map(|symbol| {
+            let mut revision = symbol.revision;
+            revision.source_session = Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{repo_key}"));
+            revision
+        })
+        .collect::<Vec<_>>();
+    let chunk_offset = u32::try_from(chunks.len()).map_err(|_| {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "chunk index exceeds u32",
+        ))
+    })?;
+    for mut symbol in cjs.manifest.symbols {
+        for index in &mut symbol.chunk_indexes {
+            *index = index.checked_add(chunk_offset).ok_or(Error::Code(
+                CodeError::InvalidCodeSymbolManifestBody("chunk index exceeds u32"),
+            ))?;
+        }
+        symbols.push(symbol);
+    }
+    chunks.extend(cjs.manifest.chunks);
+    let manifest = CodeSymbolManifest::new(repo_ref, commit_hash, chunks, symbols)?;
     Ok(PreparedCodeSymbolGraph {
         manifest,
         attached,
@@ -138,6 +150,8 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
         parsed_sources,
         symbol_ids,
         symbols_by_name,
+        cjs_edges: cjs.edges,
+        sources,
     })
 }
 
@@ -164,11 +178,7 @@ impl PreparedCodeSymbolGraph<'_> {
         }
         for (document, indexes) in by_document {
             let path = self.manifest.symbols[indexes[0]].path.as_str();
-            let Some(source) = self
-                .parsed_sources
-                .iter()
-                .find(|source| source.path == path)
-            else {
+            let Some(source) = self.sources.iter().find(|source| source.path == path) else {
                 continue;
             };
             let ranges: Vec<(u32, u32)> = indexes
@@ -245,7 +255,9 @@ impl PreparedCodeSymbolGraph<'_> {
                 }
             }
         }
-        Ok(())
+        self.cjs_edges
+            .iter()
+            .try_for_each(|edge| sink(edge.clone()))
     }
 }
 

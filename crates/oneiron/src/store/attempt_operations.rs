@@ -23,7 +23,7 @@ pub(crate) trait StoreAttemptOperations: Send + Sync {
     /// dispatch text one hard-erased actor owns leaves the attempt payloads.
     fn erase_attempt_payload_actor_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
@@ -32,7 +32,7 @@ pub(crate) trait StoreAttemptOperations: Send + Sync {
     /// same erasure for every actor in `actors`, in one pass over the ledger.
     fn erase_attempt_payload_actors_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actors: &BTreeSet<EntityId>,
     ) -> Result<()>;

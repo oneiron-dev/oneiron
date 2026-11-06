@@ -3,7 +3,7 @@
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
     mcp_actor_result, mcp_board_frame_error, mcp_board_verb_error, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error, type_feedback_release,
+    mcp_endpoint_result, mcp_engine_error, mcp_page_cursor_error, type_feedback_release,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
@@ -471,6 +471,7 @@ fn mcp_board_world(actor: &McpResolvedActor) -> oneiron::EntityId {
 fn mcp_live_board(
     actor: &McpResolvedActor,
     board: &McpBoardState,
+    cap_tok: usize,
 ) -> Result<McpLiveBoard, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
         epoch: board.epoch,
@@ -478,9 +479,9 @@ fn mcp_live_board(
     };
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
-        &board.sections,
+        &board.laid_out,
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+            harness_default_tok: cap_tok,
             caller_limit_tok: None,
             explicit_override_tok: None,
         },
@@ -564,7 +565,9 @@ pub(super) async fn execute_mcp_board_verb(
     let board = mcp_current_board(server, actor).await?;
     served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
-    let source = mcp_live_board(actor, &board)?;
+    let cap_tok =
+        crate::api::context_board::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK);
+    let source = mcp_live_board(actor, &board, cap_tok)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let output = {
         let mut registry = server.mcp_registry.lock().await;
@@ -574,7 +577,7 @@ pub(super) async fn execute_mcp_board_verb(
             source: &source,
             streams: registry.streams_mut(),
             budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+                harness_default_tok: cap_tok,
                 caller_limit_tok: None,
                 explicit_override_tok: None,
             },
@@ -585,6 +588,9 @@ pub(super) async fn execute_mcp_board_verb(
 
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // A keyframe of the laid-out board goes back: the actor's layout
+            // batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -765,7 +771,7 @@ pub(crate) async fn execute_run_board_verb_in_session(
     let world = actor.entity_ref();
     let source = McpLiveBoard {
         world,
-        view: live_board_view(&board).map_err(run_board_error)?,
+        view: live_board_view(server, &board).map_err(run_board_error)?,
     };
     let scope = oneiron::board_verb::BoardWorldScope::single(world);
     let output = {
@@ -775,17 +781,16 @@ pub(crate) async fn execute_run_board_verb_in_session(
             scope: &scope,
             source: &source,
             streams: registry.streams_mut(),
-            budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-                caller_limit_tok: None,
-                explicit_override_tok: None,
-            },
+            budget: run_board_budget_request(server),
         };
         oneiron::board_verb::dispatch_board_verb(&mut context, call)
     }
     .map_err(|error| run_board_error(mcp_board_verb_error(error)))?;
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // The run's next turn sees this keyframe of its laid-out board,
+            // so the layout batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board).map_err(run_board_error)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -855,8 +860,42 @@ pub(crate) async fn drop_run_board(
         .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
+/// A keyframe of the board just went back with its actor's layout batch:
+/// the actor's next turn sees it, so the batch becomes live (BOARD-LAYOUT).
+/// A describe, a subscription or a refused verb shows no keyframe and
+/// leaves the batch pending.
+fn activate_board_layout(
+    server: &SyncServer,
+    board: &McpBoardState,
+) -> Result<(), McpGatewayError> {
+    if let Some(candidate) = &board.layout_candidate {
+        server
+            .vault
+            .activate_board_layout_now(candidate)
+            .map_err(|error| mcp_engine_error("board layout activation failed", error))?;
+    }
+    Ok(())
+}
+
+/// The native run board's harness cap, shared by section projection and its
+/// final keyframe: the owner's board cap, else the MCP harness default. Run
+/// boards have no caller limit or explicit override.
+pub(super) fn run_board_budget_request(
+    server: &SyncServer,
+) -> oneiron::context_board::BoardBudgetRequest {
+    oneiron::context_board::BoardBudgetRequest {
+        harness_default_tok: crate::api::context_board::board_cap_tok(
+            &server.vault,
+            crate::mcp::MCP_BOARD_BUDGET_TOK,
+        ),
+        caller_limit_tok: None,
+        explicit_override_tok: None,
+    }
+}
+
 /// [`mcp_live_board`]'s view of one rendered board.
 fn live_board_view(
+    server: &SyncServer,
     board: &McpBoardState,
 ) -> Result<oneiron::board_verb::LiveBoardView, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
@@ -865,12 +904,8 @@ fn live_board_view(
     };
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
-        &board.sections,
-        oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
+        &board.laid_out,
+        run_board_budget_request(server),
     )
     .map_err(mcp_board_frame_error)?;
     let mut rows = std::collections::BTreeMap::new();

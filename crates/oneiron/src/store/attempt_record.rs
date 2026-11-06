@@ -19,7 +19,7 @@ use crate::store::attempt_state::AttemptState;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
-pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 5;
 
 /// Durable attempt row stored in LMDB.
 ///
@@ -228,6 +228,8 @@ pub(crate) enum AttemptPause {
     Budget,
     /// OF-393: the cut waits on its launch approval.
     Fanout { launch_ref: EntityId },
+    /// FIX 7114: a workflow tool waits on this verb-hook invocation.
+    Hook { invocation: [u8; 16] },
 }
 
 /// A terminal try's durable exhaust: the output references it attached
