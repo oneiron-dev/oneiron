@@ -73,7 +73,7 @@ impl CallSources for WindowShown<'_> {
 
 impl ConsolidationExecutor<'_> {
     pub(super) async fn run_sieve_window_audit(
-        &mut self,
+        &self,
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,

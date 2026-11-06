@@ -7,9 +7,9 @@ use super::*;
 impl CanonicalSnapshot {
     /// Validate every section and reference before any reconstruction or storage write.
     pub fn validate(&self) -> Result<()> {
-        validation::validate(self)?;
-        row_births::validate(self)?;
-        withdrawn_cutoffs::validate(self)
+        let mut validation = CanonicalValidation::default();
+        while !validation.advance(self, usize::MAX)? {}
+        Ok(())
     }
 
     /// Deterministic MessagePack, protected by the blake3 artifact envelope.

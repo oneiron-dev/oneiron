@@ -42,23 +42,49 @@ pub const MAX_HELLO_CODECS: usize = 8;
 /// The codecs this build decodes, as its hellos list them.
 pub const DECODED_CODEC_IDS: &[u8] = &[codec_ids::ZSTD];
 
+/// Frame kind ids a hello may list after its codec ids: optional frames the
+/// peer decodes. They sit apart from codec ids, so neither list ever reads an
+/// id of the other, and an older peer ignores them as unknown codec ids.
+pub mod frame_kind_ids {
+    /// Sealed world-update frames ([`super::super::TAG_SEALED_UPDATE`],
+    /// DEC-0005 fix 8).
+    pub const SEALED_WORLD_UPDATES: u8 = 0x80;
+}
+
+/// The optional frame kinds this build decodes, as its hellos list them.
+pub const DECODED_FRAME_KIND_IDS: &[u8] = &[frame_kind_ids::SEALED_WORLD_UPDATES];
+
 /// The codecs one peer decodes, from its hello. Unknown ids are ignored.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WireCodecs {
     zstd: bool,
+    /// The peer's hello also listed [`frame_kind_ids::SEALED_WORLD_UPDATES`].
+    sealed_world_updates: bool,
 }
 
 impl WireCodecs {
     /// A peer that listed nothing, such as a light web client: it gets plain frames.
-    pub const NONE: Self = Self { zstd: false };
+    pub const NONE: Self = Self {
+        zstd: false,
+        sealed_world_updates: false,
+    };
     /// Our own server and clients: every build decodes zstd.
-    pub const OURS: Self = Self { zstd: true };
+    pub const OURS: Self = Self {
+        zstd: true,
+        sealed_world_updates: true,
+    };
 
     /// The codecs named by a hello's id list.
     pub fn from_ids(ids: &[u8]) -> Self {
         Self {
             zstd: ids.contains(&codec_ids::ZSTD),
+            sealed_world_updates: ids.contains(&frame_kind_ids::SEALED_WORLD_UPDATES),
         }
+    }
+
+    /// Whether the peer decodes sealed world-update frames (DEC-0005 fix 8).
+    pub const fn decodes_sealed_world_updates(self) -> bool {
+        self.sealed_world_updates
     }
 
     /// Whether the peer decodes zstd codec frames.
@@ -67,11 +93,12 @@ impl WireCodecs {
     }
 }
 
-/// Builds a hello: `[TAG_PROTOCOL_HELLO][version][codec ids…]`.
+/// Builds a hello: `[TAG_PROTOCOL_HELLO][version][codec ids…][frame kind ids…]`.
 pub(super) fn hello_frame(version: u8) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(2 + DECODED_CODEC_IDS.len());
+    let mut frame = Vec::with_capacity(2 + DECODED_CODEC_IDS.len() + DECODED_FRAME_KIND_IDS.len());
     frame.extend_from_slice(&[TAG_PROTOCOL_HELLO, version]);
     frame.extend_from_slice(DECODED_CODEC_IDS);
+    frame.extend_from_slice(DECODED_FRAME_KIND_IDS);
     frame
 }
 

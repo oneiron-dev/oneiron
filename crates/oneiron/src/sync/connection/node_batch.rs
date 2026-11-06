@@ -157,6 +157,9 @@ impl SyncConnection {
             }
             match verdict {
                 UpdateVerdict::Withheld => {
+                    // A home that may not read the world takes it sealed,
+                    // when the world syncs sealed (DEC-0005 fix 8).
+                    client.relay_withheld_update(&update.window_key, &update.update_bytes);
                     updates.remove(0);
                     continue;
                 }
