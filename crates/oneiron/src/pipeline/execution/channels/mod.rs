@@ -321,7 +321,7 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            let text_channel_index = self.run_text_channel(
+            let (text_channel_index, text_exhausted) = self.run_text_channel(
                 rtxn,
                 stages.next_if(self.text_search.is_some()),
                 TextChannelInputs {
@@ -501,6 +501,7 @@ impl PipelineBuilder<'_> {
                     revisions: HashMap::new(),
                     words_bound: Default::default(),
                     diagnostics,
+                    text_exhausted,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
                     capabilities: Vec::new(),
@@ -851,6 +852,7 @@ impl PipelineBuilder<'_> {
                     diversity.apply(scores, self.result_limit, &self.ppr_community)
                 })?;
             }
+            let text_exhausted = text_exhausted && scores.len() <= self.result_limit;
             match world_share {
                 Some(share) => {
                     let had_rows = !scores.is_empty();
@@ -992,6 +994,7 @@ impl PipelineBuilder<'_> {
                 revisions,
                 words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
+                text_exhausted,
                 scores,
                 cited_messages,
                 capabilities,

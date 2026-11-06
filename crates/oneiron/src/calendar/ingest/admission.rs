@@ -223,6 +223,7 @@ impl PollAdmission<'_> {
                     self.vault.stage_calendar_event(
                         txn,
                         &input,
+                        None,
                         self.event_occurred(event),
                         WriteActor::new(actor, crate::EdgeActorClass::System),
                         id,
