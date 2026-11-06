@@ -11,8 +11,8 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// run properties; each paired middle replacement keeps the global run
 /// template. Unpaired added lines use the first template. Unsupported
 /// coverage or properties use the actual one-template render for same-count
-/// later lines, then first; same-count first, count-changed outer and paired
-/// middle lines fall to first.
+/// later lines, then first; same-count first uses first. Count-changed outer
+/// and paired middle fallbacks keep their original wrapper and first's style.
 /// Copied properties keep namespace bindings; removed field types are reported.
 /// Whole field-free opaque retained segments keep their original XML and
 /// namespace bindings.
@@ -43,8 +43,10 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// With no retained original, the first emitted fresh copy keeps its identity;
 /// failed render attempts do not reserve a fresh property source. A successful
 /// styled paragraph also owns its original pPr and endParaRPr sources; their original bytes stay.
-/// Same-count fallback renders keep their actual original paragraph's attributes;
+/// Fallback renders of mapped originals keep their own paragraph name and attributes;
 /// cloned first/global and added templates still copy only namespace declarations.
+/// First-template properties moved under another original wrapper carry their
+/// effective source bindings on each property, including shadowed prefixes.
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
@@ -109,6 +111,7 @@ fn rebuilt_pass(
     let run_xml = |selected: Option<(usize, &Node)>,
                    para_node: &Node,
                    text: &str,
+                   clear_unbound_default: bool,
                    copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Result<String, NativeRefusal> {
         let property = selected
@@ -120,9 +123,16 @@ fn rebuilt_pass(
                 node.child_name("r"),
                 node.child_name("t"),
                 format!(
-                    "{}{}",
+                    "{}{}{}",
                     crate::edit::xml::inherited_bindings(bytes, tree, at),
                     crate::edit::xml::own_bindings(bytes, node),
+                    if clear_unbound_default
+                        && crate::edit::xml::default_namespace(tree, at).is_none()
+                    {
+                        " xmlns=\"\""
+                    } else {
+                        ""
+                    },
                 ),
             ),
             None => (
@@ -164,17 +174,44 @@ fn rebuilt_pass(
     let render = |paragraph: (usize, &Node),
                   selected: Option<(usize, &Node)>,
                   line: &str,
-                  original_wrapper: bool,
+                  original_wrapper: Option<(usize, &Node)>,
                   copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Result<String, NativeRefusal> {
         let mut pending_sources = copied_sources.clone();
         let (para, para_node) = paragraph;
-        let p_pr = template_property(tree.child(para, DML, "pPr")?, &mut pending_sources);
-        let run = run_xml(selected, para_node, line, &mut pending_sources)?;
-        let end = template_property(tree.child(para, DML, "endParaRPr")?, &mut pending_sources);
-        let p = para_node.qualified.as_str();
-        let p_attributes = if original_wrapper {
-            para_node
+        let (wrapper, wrapper_node) = original_wrapper.unwrap_or(paragraph);
+        let moved_wrapper = wrapper != para;
+        let clear_unbound_default = moved_wrapper
+            && crate::edit::xml::default_namespace(tree, wrapper)
+                .is_some_and(|namespace| !namespace.is_empty());
+        let property_xml =
+            |property: Option<(usize, &Node)>, copied_sources: &mut Vec<std::ops::Range<usize>>| {
+                let mut xml = template_property(property, copied_sources);
+                if moved_wrapper {
+                    if let Some((at, node)) = property {
+                        let mut bindings = crate::edit::xml::inherited_bindings(bytes, tree, at);
+                        if clear_unbound_default
+                            && crate::edit::xml::default_namespace(tree, at).is_none()
+                        {
+                            bindings.push_str(" xmlns=\"\"");
+                        }
+                        xml.insert_str(1 + node.qualified.len(), &bindings);
+                    }
+                }
+                xml
+            };
+        let p_pr = property_xml(tree.child(para, DML, "pPr")?, &mut pending_sources);
+        let run = run_xml(
+            selected,
+            wrapper_node,
+            line,
+            clear_unbound_default,
+            &mut pending_sources,
+        )?;
+        let end = property_xml(tree.child(para, DML, "endParaRPr")?, &mut pending_sources);
+        let p = wrapper_node.qualified.as_str();
+        let p_attributes = if original_wrapper.is_some() {
+            wrapper_node
                 .attr_spans
                 .values()
                 .map(|span| format!(" {}", String::from_utf8_lossy(&bytes[span.clone()])))
@@ -318,7 +355,8 @@ fn rebuilt_pass(
                         let part: String = text[start - position..end - position].iter().collect();
                         let copied_before = pending_sources.len();
                         let mut run =
-                            run_xml(Some((*at, *node)), para_node, &part, pending_sources).ok()?;
+                            run_xml(Some((*at, *node)), para_node, &part, false, pending_sources)
+                                .ok()?;
                         // The source-start piece owns a split run's wrapper; the tail stays static.
                         if field_free
                             && node.is(DML, "r")
@@ -450,7 +488,7 @@ fn rebuilt_pass(
             String::new()
         } else {
             let text: String = new[prefix..new.len() - suffix].iter().collect();
-            run_xml(selected, para_node, &text, &mut pending_sources).ok()?
+            run_xml(selected, para_node, &text, false, &mut pending_sources).ok()?
         };
         let tail = retained_runs(old.len() - suffix, old.len(), &mut pending_sources)?;
         *copied_sources = pending_sources;
@@ -541,7 +579,7 @@ fn rebuilt_pass(
                     (first, first_node),
                     source_run,
                     line,
-                    true,
+                    Some((first, first_node)),
                     &mut copied_sources,
                 )?,
             }
@@ -550,13 +588,13 @@ fn rebuilt_pass(
             let actual_run = paragraph_run(actual.0);
             match styled(actual, actual_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => match render(actual, actual_run, line, true, &mut copied_sources) {
+                None => match render(actual, actual_run, line, Some(actual), &mut copied_sources) {
                     Ok(xml) => xml,
                     Err(_) => render(
                         (first, first_node),
                         source_run,
                         line,
-                        false,
+                        None,
                         &mut copied_sources,
                     )?,
                 },
@@ -573,18 +611,19 @@ fn rebuilt_pass(
                     (first, first_node),
                     source_run,
                     line,
-                    false,
+                    Some(actual),
                     &mut copied_sources,
                 )?,
             }
         } else if !same_count && index >= head && index < head + paired {
-            match styled(paragraphs[index], source_run, line, &mut copied_sources) {
+            let actual = paragraphs[index];
+            match styled(actual, source_run, line, &mut copied_sources) {
                 Some(xml) => xml,
                 None => render(
                     (first, first_node),
                     source_run,
                     line,
-                    false,
+                    Some(actual),
                     &mut copied_sources,
                 )?,
             }
@@ -593,7 +632,7 @@ fn rebuilt_pass(
                 (first, first_node),
                 source_run,
                 line,
-                false,
+                None,
                 &mut copied_sources,
             )?
         };
