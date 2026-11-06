@@ -92,8 +92,28 @@ The completed transfer's cancellation flag is not reused for a later admission.
 A physical memory floor keeps the existing internal-server-error shape with a spool
 reader allocation message; cancellation keeps the body-not-whole response. Admitted
 reads retain the existing JSON-before-sink and native validation order. This accounts
-only for the fixed reader buffer, not generic DTOs, metadata heads, base64 text or
-native decoded rows.
+only for the fixed reader buffer, not generic DTOs, metadata heads or native decoded
+rows. The sealed object's additional fixed base64 buffers are covered below.
+
+## Sealed base64 working buffers
+
+The sealed custody reader admits its JSON reader, pending base64 text and decoded
+output together on the original transfer worker, before any of them allocates.
+It takes no second reader lease. One buffer lease covers the existing read window,
+a pending base64 piece plus one reader run, and the maximum decoded bytes of that
+text. Their room is derived from the existing 64 KiB window and piece geometry,
+not a request-size limit. Actual capacities are recorded once on the combined lease.
+
+The sink keeps reusable text and initialized output buffers. It decodes the same
+text extent with the same standard base64 engine and writes only the decoded
+prefix. Chunk boundaries, padding checks, JSON-before-sink errors, file writes
+and final field handling keep their existing order. The reader and both sink
+buffers drop before the lease, including refusal and unwind; the returned request
+keeps only its original head, input file and disk room.
+
+A physical memory floor uses the existing internal-server-error shape with a
+custody-decode allocation message. A stopped wait keeps body-not-whole, not disk
+capacity. Generic metadata and DTO allocations still remain separate work.
 
 ## Native answers
 
