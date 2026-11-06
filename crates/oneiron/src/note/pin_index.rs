@@ -55,6 +55,84 @@ pub(super) fn remove_citing(store: &Store, txn: &mut heed::RwTxn<'_>, id: Entity
     Ok(())
 }
 
+/// Each `(citing, request)` of a queued citation request that names a cited
+/// id in `erased` (FIX 18270): the request rows keyed by the cited ids go
+/// when a restore does not open that record, so the citing row is read.
+pub(super) fn requests_citing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    erased: &BTreeSet<EntityId>,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    let mut out = Vec::new();
+    for (key, refs) in NOTE_PIN_REQUEST_CITING.scan(store, txn)? {
+        if erased.contains(&refs.document) || erased.contains(&refs.claim) {
+            out.push(((key.0).0, (key.1).0));
+        }
+    }
+    Ok(out)
+}
+
+/// Drops the reverse rows of `citing` that name a pin row a restore left out
+/// (FIX 18270): a CITING or CLAIM row stands without the SOURCE row it points
+/// at when the cited document or claim did not open. A coherent row stays,
+/// for the document's next persist to replace ([`remove_citing`]).
+pub(super) fn drop_dangling_citing(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if citing.is_empty() {
+        return Ok(());
+    }
+    for id in citing {
+        let key_prefix = format!("{}:", id.to_hex()).into_bytes();
+        for (citing_key, source_key) in NOTE_PIN_CITING.scan_from(store, txn, &key_prefix)? {
+            if !source_present(store, txn, &source_key)? {
+                NOTE_PIN_CITING.delete(store, txn, &citing_key)?;
+            }
+        }
+    }
+    for (claim_key, source_key) in NOTE_PIN_CLAIM.scan(store, txn)? {
+        if citing.contains(&(claim_key.1).0) && !source_present(store, txn, &source_key)? {
+            NOTE_PIN_CLAIM.delete(store, txn, &claim_key)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the SOURCE row a reverse row points at stands.
+fn source_present(store: &Store, txn: &heed::RoTxn<'_>, source_key: &[u8]) -> Result<bool> {
+    let key = source_key
+        .strip_prefix(NOTE_PIN_SOURCE.decl().prefix)
+        .and_then(HexHexHash::decode_key);
+    match key {
+        Some(key) => NOTE_PIN_SOURCE.contains(store, txn, &key),
+        None => Ok(false),
+    }
+}
+
+/// Writes `citing`'s reverse rows for `pins`: each pin's SOURCE row, keyed by
+/// the cited document, and the CLAIM and CITING rows that point at it.
+pub(super) fn index_pins(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: EntityId,
+    pins: &[super::NotePin],
+) -> Result<()> {
+    for pin in pins {
+        let value = NOTE_PIN_SOURCE.encode_value(pin)?;
+        let hash = blake3::hash(&value).to_hex().to_string();
+        let index = HexHexHash(HexId(pin.document), HexId(citing), hash.clone());
+        let index_bytes = NOTE_PIN_SOURCE.key_bytes(&index);
+        NOTE_PIN_SOURCE.put(store, txn, &index, pin)?;
+        let claim_index = HexHexHash(HexId(pin.claim), HexId(citing), hash.clone());
+        NOTE_PIN_CLAIM.put(store, txn, &claim_index, &index_bytes)?;
+        let citing_index = HexHexHash(HexId(citing), HexId(pin.document), hash);
+        NOTE_PIN_CITING.put(store, txn, &citing_index, &index_bytes)?;
+    }
+    Ok(())
+}
+
 pub(super) fn dependents(
     store: &Store,
     txn: &heed::RoTxn<'_>,
