@@ -283,7 +283,8 @@ fn resolved_receipt_in_txn(
 impl crate::Vault {
     /// Whether a queued NOTE receipt still has its authoritative durable row.
     /// Host delivery combines this freshness check with current selector admission.
-    /// Erasure deletes copied full-view receipts in the same writer as their pins.
+    /// Erasure strips its pins from a saved receipt and drops the queued copies
+    /// in the same writer.
     pub fn note_receipt_is_current(
         &self,
         note: EntityId,
