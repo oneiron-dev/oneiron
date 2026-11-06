@@ -131,7 +131,7 @@ pub(in crate::models) async fn open_turn_with_release(
         path,
         admitted,
     };
-    let Some(opened) = session(&worker_id, &place, &key, ops, &turn).await else {
+    let Some(opened) = session(&worker_id, &place, &key, ops, &turn, release).await? else {
         return Ok(None);
     };
     let binding = key.binding();
@@ -302,7 +302,8 @@ async fn session(
     key: &SessionKey,
     ops: Ops,
     turn: &Turn<'_>,
-) -> Option<Opened> {
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<Option<Opened>, LlmError> {
     let binding = key.binding();
     let (found, retired, restoring) = {
         let mut workers = registry::lock();
@@ -352,33 +353,58 @@ async fn session(
         registry::release_later(target, at, reason);
     }
     if restoring {
-        return None;
+        return Ok(None);
     }
     match found {
         Some((opened, residency)) => {
-            resident(worker_id, place, &binding, opened, residency, ops.restore).await
+            resident(
+                worker_id,
+                place,
+                &binding,
+                opened,
+                residency,
+                ops.restore,
+                release,
+            )
+            .await
         }
         None => {
             let restored = if ops.snapshot {
-                restore::restore(
-                    worker_id,
-                    place,
-                    key,
-                    turn.manifest,
-                    turn.path,
-                    turn.admitted,
-                )
-                .await
+                match release {
+                    Some(release) => {
+                        restore::restore_with_release(
+                            worker_id,
+                            place,
+                            key,
+                            turn.manifest,
+                            turn.path,
+                            turn.admitted,
+                            Some(release),
+                        )
+                        .await?
+                    }
+                    None => {
+                        restore::restore(
+                            worker_id,
+                            place,
+                            key,
+                            turn.manifest,
+                            turn.path,
+                            turn.admitted,
+                        )
+                        .await
+                    }
+                }
             } else {
                 None
             };
             match restored {
-                Some(restored) => Some(Opened {
+                Some(restored) => Ok(Some(Opened {
                     target: restored.target,
                     generation: restored.generation,
                     published: Some(restored.checkpoint),
-                }),
-                None => create(worker_id, place, key, turn.admitted).await,
+                })),
+                None => create(worker_id, place, key, turn.admitted, release).await,
             }
         }
     }
@@ -394,14 +420,15 @@ async fn resident(
     opened: Opened,
     residency: SessionResidency,
     restore: bool,
-) -> Option<Opened> {
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<Option<Opened>, LlmError> {
     let Some(checkpoint) = opened.published.clone() else {
-        return Some(opened);
+        return Ok(Some(opened));
     };
     if residency.resident {
-        return Some(opened);
+        return Ok(Some(opened));
     }
-    let restored: Result<SessionRestored, SessionInvalidation> = if restore {
+    let restored: Result<SessionRestored, registry::SendFailure> = if restore {
         let body = SessionRestore {
             target: opened.target.clone(),
             stamp: SessionOpStamp {
@@ -410,9 +437,11 @@ async fn resident(
             },
             checkpoint,
         };
-        send(place, SessionOp::Restore, &body, None).await
+        registry::send_optional(place, SessionOp::Restore, &body, None, release).await
     } else {
-        Err(SessionInvalidation::ResidencyLost)
+        Err(registry::SendFailure::Invalid(
+            SessionInvalidation::ResidencyLost,
+        ))
     };
     match restored {
         Ok(restored) if restored.residency.resident => {
@@ -422,7 +451,7 @@ async fn resident(
             {
                 session.observe(restored.residency);
             }
-            Some(opened)
+            Ok(Some(opened))
         }
         Ok(_) => {
             registry::drop_session(
@@ -431,12 +460,13 @@ async fn resident(
                 binding,
                 SessionInvalidation::ResidencyLost,
             );
-            None
+            Ok(None)
         }
-        Err(reason) => {
+        Err(registry::SendFailure::Invalid(reason)) => {
             registry::drop_session(worker_id, &place.epoch, binding, reason);
-            None
+            Ok(None)
         }
+        Err(registry::SendFailure::Release(error)) => Err(error),
     }
 }
 
@@ -448,12 +478,18 @@ async fn create(
     place: &Place,
     key: &SessionKey,
     admitted: Admitted,
-) -> Option<Opened> {
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<Option<Opened>, LlmError> {
     let body = SessionCreate {
         binding: key.binding(),
         op_id: policy::next_op_id(),
     };
-    let created: SessionCreated = send(place, SessionOp::Create, &body, None).await.ok()?;
+    let created: SessionCreated =
+        match registry::send_optional(place, SessionOp::Create, &body, None, release).await {
+            Ok(created) => created,
+            Err(registry::SendFailure::Invalid(_)) => return Ok(None),
+            Err(registry::SendFailure::Release(error)) => return Err(error),
+        };
     let target = SessionTarget {
         handle: created.handle,
         binding: key.binding(),
@@ -482,7 +518,9 @@ async fn create(
     };
     let refused = {
         let mut workers = registry::lock();
-        let worker = registry::current(&mut workers, worker_id, place)?;
+        let Some(worker) = registry::current(&mut workers, worker_id, place) else {
+            return Ok(None);
+        };
         if lifecycle::admission(&key.anchor.vault) == Some(admitted) {
             worker.sessions.insert(key.binding(), session);
             None
@@ -492,7 +530,7 @@ async fn create(
     };
     if let Some((target, at)) = refused {
         registry::release_later(target, at, SessionInvalidation::Evicted);
-        return None;
+        return Ok(None);
     }
-    Some(opened)
+    Ok(Some(opened))
 }

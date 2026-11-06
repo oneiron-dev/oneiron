@@ -55,11 +55,23 @@ session or fall back to an ordinary generate. A worker refusal or socket fault
 keeps the existing session invalidation and plain fallback. Unguarded calls keep
 the original session send path.
 
-This covers the call's `Fork` input, not all session traffic. Snapshot import
-also sends an input region. Create, resident restore and checkpoint publication
-carry session metadata even without an input region. Background Prepare owns a
-separate task and conversation; it cannot borrow a foreground call's callback.
-Those boundaries remain separate engineering work. These changes do not complete
-private-send coverage or activate a private producer. Other configured backends
-need their own native qualification; a LocalVision seat name does not prove it
-uses the in-process local runtime.
+Foreground session setup also carries that release through Create, resident
+Restore, snapshot Import and the restored checkpoint's publication. Metadata
+frames without descriptors use the same nonblocking first-write check, after
+writer readiness, with no ancillary descriptor. Snapshot input uses the same
+check with its descriptor. Ordinary sends without a release keep their existing
+path and validation.
+
+A snapshot restore releases its device hold before returning any import result.
+A release failure then uses the existing cleanup for whether its newly created
+session owns the snapshot pin, before returning the original error. It does not
+retire a valid snapshot or turn that error into cold fallback. Existing resident
+sessions are not evicted merely because a call's release failed. Ordinary cold
+restores retain their existing cleanup, retirement and fallback behavior.
+
+This is still not all session traffic. Background Prepare owns a separate task
+and conversation; it cannot borrow a foreground call's callback. Its owned
+authorization and lifetime remain separate engineering work. These changes do
+not complete private-send coverage or activate a private producer. Other
+configured backends need their own native qualification; a LocalVision seat name
+does not prove it uses the in-process local runtime.

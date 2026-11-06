@@ -111,14 +111,9 @@ pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
             Some(release),
         )
         .await
-        .map_err(|error| {
-            match error
-                .get_ref()
-                .and_then(|cause| cause.downcast_ref::<LlmError>())
-            {
-                Some(error) => ReleasedOpFault::Release(error.clone()),
-                None => ReleasedOpFault::Operation(OpFault::Cut),
-            }
+        .map_err(|error| match release_error(&error) {
+            Some(error) => ReleasedOpFault::Release(error),
+            None => ReleasedOpFault::Operation(OpFault::Cut),
         })?;
     drop(input);
     response(op, frame, worker).map_err(ReleasedOpFault::Operation)
@@ -208,10 +203,7 @@ pub(in crate::models) async fn import(
     worker: &InferenceWorker,
 ) -> Result<SessionImported, OpFault> {
     let op = SessionOp::Import;
-    if snapshot.len() != body.snapshot_bytes {
-        return Err(cut(op, &"the region is not the snapshot the body names"));
-    }
-    let request = serde_json::to_value(body).map_err(|e| cut(op, &e))?;
+    let request = import_request(body, snapshot)?;
     let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|e| cut(op, &e))?;
@@ -224,6 +216,54 @@ pub(in crate::models) async fn import(
         )
         .await
         .map_err(|e| cut(op, &e))?;
+    imported(epoch, body, frame, worker)
+}
+
+/// Imports a snapshot under the same release as the call that restores it.
+pub(in crate::models) async fn import_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionImport,
+    snapshot: &SnapshotRegion,
+    worker: &InferenceWorker,
+    release: (DispatchRelease<'_>, &BudgetLease),
+) -> Result<SessionImported, ReleasedOpFault> {
+    let op = SessionOp::Import;
+    let request = import_request(body, snapshot)?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|e| cut(op, &e))?;
+    let frame = channel
+        .exchange_with_release(
+            op.wire_name(),
+            Some(epoch),
+            request,
+            Some(snapshot.outbound()),
+            Some(release),
+        )
+        .await
+        .map_err(|error| match release_error(&error) {
+            Some(error) => ReleasedOpFault::Release(error),
+            None => ReleasedOpFault::Operation(cut(op, &error)),
+        })?;
+    imported(epoch, body, frame, worker).map_err(ReleasedOpFault::Operation)
+}
+
+fn import_request(body: &SessionImport, snapshot: &SnapshotRegion) -> Result<JsonValue, OpFault> {
+    let op = SessionOp::Import;
+    if snapshot.len() != body.snapshot_bytes {
+        return Err(cut(op, &"the region is not the snapshot the body names"));
+    }
+    serde_json::to_value(body).map_err(|e| cut(op, &e))
+}
+
+fn imported(
+    epoch: &str,
+    body: &SessionImport,
+    frame: Incoming,
+    worker: &InferenceWorker,
+) -> Result<SessionImported, OpFault> {
+    let op = SessionOp::Import;
     let answer: SessionImported = answer_of(op, epoch, &frame)?;
     if answer.staged != body.checkpoint {
         return Err(cut(op, &"the answer staged another checkpoint"));
@@ -235,6 +275,10 @@ pub(in crate::models) async fn import(
     }
     report(worker, &frame.body);
     Ok(answer)
+}
+
+fn release_error(error: &std::io::Error) -> Option<LlmError> {
+    error.get_ref()?.downcast_ref::<LlmError>().cloned()
 }
 
 /// The answer `frame` gives `op`: its own frame, from the incarnation
