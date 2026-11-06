@@ -124,7 +124,11 @@ impl GraphFsResolver<'_, '_> {
         Ok(read.value)
     }
 
-    pub(super) fn snapshot_visible(&self, path: &str) -> Result<bool> {
+    pub(super) fn snapshot_visible(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<bool> {
         let Some(_) = self.snapshot else {
             return Ok(true);
         };
@@ -133,7 +137,11 @@ impl GraphFsResolver<'_, '_> {
                 .snapshot_entries(path)
                 .map(|entries| !entries.is_empty());
         }
-        if self.snapshot_file(path)?.value.is_some() {
+        if self
+            .snapshot_file_with_reader(path, reader)?
+            .value
+            .is_some()
+        {
             return Ok(true);
         }
         self.snapshot_entries(path)

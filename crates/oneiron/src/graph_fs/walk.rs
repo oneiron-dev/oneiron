@@ -315,7 +315,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<bool> {
         let mut steps = 0;
         if !at.root_done {
-            if !self.coreutils_path_visible(root)? {
+            if !self.coreutils_path_visible(root, reader)? {
                 return Ok(false);
             }
             if let Visited::Cut(lines) =
@@ -400,7 +400,7 @@ impl GraphFsResolver<'_, '_> {
                 self.options.page_byte_cap,
             )?;
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
-            if self.coreutils_path_visible(&child)? {
+            if self.coreutils_path_visible(&child, reader)? {
                 if let Visited::Cut(lines) =
                     self.visit(verb, &child, is_dir, lines, walk, reader)?
                 {
