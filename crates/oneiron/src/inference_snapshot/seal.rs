@@ -223,15 +223,20 @@ fn seal_chunk(
         recipient: RECIPIENT,
         vault_id: id,
     };
-    Ok(seal_with_aad(
+    let envelope = seal_with_aad(
         &params,
         SealKey::SymmetricKek(kek),
         plaintext,
         extra,
         &mut SysRng,
     )
-    .map_err(|_| refused("sealing an inference snapshot failed"))?
-    .to_bytes())
+    .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(envelope.len())
+        .map_err(std::io::Error::from)?;
+    envelope.write_to(&mut frame)?;
+    Ok(frame)
 }
 
 /// The plaintext of `frame`, authenticated as envelope `index` of `role`
