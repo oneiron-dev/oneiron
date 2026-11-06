@@ -189,7 +189,7 @@ impl EngineNativeExecutor<'_> {
                     // summary, ids and a note: each is masked at every
                     // render, so a value custody learns later is masked too.
                     for part in &mut frame.content {
-                        if let ContentPart::Text { text } = part {
+                        if let ContentPart::Text { text, .. } = part {
                             *text = mask_known_text(&self.storage, text)?;
                         }
                     }
