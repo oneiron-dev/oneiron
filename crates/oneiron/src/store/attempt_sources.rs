@@ -79,10 +79,39 @@ pub struct RuleOutcomeReadSource {
     pub kind: RuleOutcomeReadKind,
 }
 
+/// Physical tables consulted by the original attributed-outcome fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeReadKind {
+    Outcome,
+    Paired,
+    Amended,
+    Displaced,
+}
+
+/// Full physical identity and stored bytes, including a marker absence that
+/// the original short-circuit branch actually read.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct OutcomeReadSource {
+    pub kind: OutcomeReadKind,
+    pub key: Vec<u8>,
+    pub body_hash: Option<[u8; 32]>,
+}
+
 /// Family tags never grant ENTITY access, even for UUID-shaped native keys.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum NativeReadSource {
+    OutcomeRow {
+        row: OutcomeReadSource,
+    },
+    /// Original eager scans and their conditional displacement reads, before
+    /// DEV selection, amended exclusions and stable result deduplication.
+    AttributedOutcomeScan {
+        skill: EntityId,
+        prefixes: Vec<Vec<u8>>,
+        rows: Vec<OutcomeReadSource>,
+    },
     RuleOutcome {
         skill: EntityId,
         receipt: String,

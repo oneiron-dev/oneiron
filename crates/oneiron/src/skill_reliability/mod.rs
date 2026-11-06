@@ -26,6 +26,19 @@ mod row_ids;
 mod rule_outcome;
 mod rule_outcome_position;
 mod rule_outcome_read;
+mod outcome_position;
+mod outcome_row;
+mod outcome_write;
+mod outcome_read;
+
+pub(crate) use outcome_position::OutcomeReadPosition;
+pub(crate) use outcome_read::{
+    CanonicalOutcomeDependency, canonical_attributed_outcomes_in_txn,
+    canonical_outcome_dependency_in_txn,
+};
+pub(crate) use outcome_write::{
+    mark_displaced_outcome_positioned_in_txn, record_outcome_positioned_in_txn,
+};
 
 pub(crate) use self::rule_outcome_position::RuleOutcomeReadPosition;
 pub(crate) use self::rule_outcome_read::{
@@ -34,6 +47,7 @@ pub(crate) use self::rule_outcome_read::{
 
 pub(crate) use self::amended::{
     AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,
+    reconcile_amended_outcomes_positioned_in_txn,
 };
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
@@ -80,7 +94,6 @@ pub(crate) use self::rule_outcome::{
     RuleOutcomeSource, record_rule_outcome_in_txn, rule_outcome_receipts_in_txn,
     withdraw_rule_outcome_in_txn,
 };
-
 #[cfg(test)]
 mod tests;
 
