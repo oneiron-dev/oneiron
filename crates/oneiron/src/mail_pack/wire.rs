@@ -197,7 +197,9 @@ pub trait MailProviderWire {
     /// The labels a listing read for `provider_id` in this wire's step,
     /// when they come at no further provider read: a provider whose folders
     /// are labels (IMAP) names a message once per folder, so a message the
-    /// vault holds carries the folders it is found in. `None` by default.
+    /// vault holds carries the folders it is found in, and a listing after
+    /// an expired anchor takes them whole where it first names the message
+    /// (an empty set where only the all-mail view does). `None` by default.
     fn listed_labels(&self, _provider_id: &str) -> Option<Vec<String>> {
         None
     }
