@@ -1,20 +1,18 @@
 //! Kept removal archives across a restore over the live vault (FIX 3679).
 //!
-//! An archive's row is Live: the live vault's row wins, and one it no
-//! longer keeps stays absent. Its bytes are a body file held under its
-//! removal receipt's archive owner, and that file's descriptor, digest
-//! holder and instance row are
-//! content, restored from the image. Here they follow the row: each live
-//! archive keeps its exact descriptor and holder as the live vault holds
-//! them; the restore lands its file from the live vault when the image
-//! carries none of its digest, under the instance the live rows bind it to,
-//! which joins the image's rows so the restore's custody plan requires it;
-//! and an archive owner's descriptor no live archive names goes, an image
-//! row's and
-//! an opened payload's alike. An archive whose file cannot come with it
-//! goes with a warning, rather than stand over a file the copy lacks. A
-//! restore beside the vault, or one with no live vault, keeps the image's
-//! archives and the image's files, and runs none of this.
+//! An archive's row is Live: the live vault's row wins, and one it no longer
+//! keeps stays absent. Its bytes are a body file held under its row's archive
+//! owner (the removed member and the receipt), and that file's descriptor,
+//! digest holder and instance row are content, restored from the image. Here
+//! they follow the row: each live archive keeps its exact descriptor and holder
+//! as the live vault holds them; the restore lands its file from the live vault
+//! when the image carries none of its digest, under the instance the live rows
+//! bind it to, which joins the image's rows so the restore's custody plan
+//! requires it; and an archive owner's descriptor no live archive names goes,
+//! an image row's and an opened payload's alike. An archive whose file cannot
+//! come with it goes with a warning, rather than stand over a file the copy
+//! lacks. A restore beside the vault, or one with no live vault, keeps the
+//! image's archives and the image's files, and runs none of this.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -50,8 +48,8 @@ struct LiveFile {
 /// What a restore over the live vault carries of its kept removal archives
 /// ([`carry_live`]), until the restored rows commit.
 pub(super) struct LiveArchives {
-    /// The archive owner of every receipt the image or the live vault keeps
-    /// an archive under: the owners whose descriptors this restore settles.
+    /// The archive owner of every archive row the image or the live vault
+    /// keeps: the owners whose descriptors this restore settles.
     owners: BTreeSet<EntityId>,
     /// Each kept archive's descriptor and digest-holder rows, raw, as the
     /// live vault holds them, by key.
@@ -73,8 +71,8 @@ fn row_at<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]> {
 /// the image carries none of its digest; the instance row the file is bound
 /// under joins the image's rows. A row whose descriptor `current` no longer
 /// holds as named, or whose digest the image binds under another instance,
-/// goes. `image_owners` are the archive owners of the receipts the image
-/// kept archives under before the carry replaced its archive rows.
+/// goes. `image_owners` are the archive owners of the archive rows the
+/// image kept before the carry replaced them.
 ///
 /// # Errors
 ///
