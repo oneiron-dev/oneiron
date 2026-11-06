@@ -329,7 +329,7 @@ impl ServedConnectorCallHost {
                 &task.task_id,
                 key_ref
                     .as_ref()
-                    .map(|key_ref| (&self.vault, key_ref, view.tool())),
+                    .map(|key_ref| (self.vault.as_ref(), key_ref, view.tool())),
             )? {
                 Some(end) => Polled::Ended(end, live),
                 None => Polled::Running {
