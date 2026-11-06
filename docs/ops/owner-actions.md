@@ -1,7 +1,8 @@
 # Your vault: where it lives, backups, restore, export, and one-act approvals
 
-Everything here works with no model configured. Each action has a CLI command and, for a
-running server, a route under `/v1/owner`. The CLI commands read the same config as
+Everything here works with no model configured. Each action has a CLI command. Except for
+notes-to-Files conversion, each also has a running-server route under `/v1/owner`.
+The CLI commands read the same config as
 `oneiron serve` (`--config FILE`, `--vault-path DIR`, `ONEIRON_*`). Commands that open the
 vault need the server stopped, because one process holds a vault at a time. Two commands
 also work while `serve` runs: `restore --rehearse`, which never opens the vault, and
@@ -825,6 +826,21 @@ default list, and a list, even an empty one, replaces it.
 files one holds, and `oneiron files detach <folder>` stops every rescan from reading
 it again (a folder that is gone is detached by the name it was attached by; its notes
 stay).
+
+`oneiron files convert <folder>` changes a folder already attached as notes into a
+Files source in one owner act. Its include patterns, note kind and source attribution
+stay. The notes already imported, their history and their links stay where they are;
+they are not moved into the Files world. The conversion clears only the old rescan
+ledger and replaces the source placement in the same transaction. It then runs the
+ordinary Files rescan, which creates Files copies under that source's own identity.
+A first rescan that reports an error does not undo the conversion; `oneiron files
+rescan <folder>` retries it. A missing source or one already attached as Files is not
+converted, and its ledger is unchanged.
+
+Conversion uses the Files default exclusions. `--exclude <pattern>` adds to them;
+`--no-default-exclude` drops the defaults, just as for attach. The command requires a
+stopped vault. There is no running-server conversion verb in this slice; the existing
+attach, rescan and detach verbs keep their behavior.
 
 ## Approve an import in one act
 
