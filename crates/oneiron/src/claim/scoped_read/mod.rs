@@ -100,7 +100,7 @@ mod residence;
 mod residence_page;
 #[cfg(feature = "sync")]
 mod selected_search;
-pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
+pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, WeakTurnTerms, meet_clearance};
 #[cfg(feature = "sync")]
 pub use residence::ResidenceReadContext;
 

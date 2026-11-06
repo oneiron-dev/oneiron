@@ -5,7 +5,7 @@ its existing turn/checkpoint/stack dedupe key and the existing live/bulk class,
 lease, backoff and retry chain.
 
 The witness also carries its original optional identity-hint reader. The stored
-reader represents a plain `Memory` read: the actual actor and actor class,
+reader represents the original `Memory` read: the actual actor and actor class,
 an explicit authority position, and the original destination ceiling. A
 credentialed position keeps
 every effective fact of the original bound verified read proof. An
@@ -13,8 +13,23 @@ uncredentialed position uses the native grant-bound reader. If the same witness
 write already held a native Owner reader for its assertions or held tags, or
 already opened a native Owner key to admit a quote, it records that Owner
 position instead. Capturing the position opens no new read.
-A host-action lane or room-turn lane carries an explicit unknown, not the
-internal hint aggregate.
+A host-action lane carries an explicit unknown, not the internal hint aggregate.
+A room-turn reader also needs that witness's already-opened native assertion,
+held-tag or quote key. Capturing it opens no new read. Its room, caller, thread
+and personal/held position travel as private data, beside an opaque reference
+to the original shared monotonic turn terms in this vault open. No room roster,
+peer read key or authority is serialized.
+
+The live reference is weak: a queued job does not extend the original turn's
+lifetime. If that original position is gone, or the vault has reopened, the
+worker keeps the full candidate set. This supports only a still-live original
+room turn, not complete durable room context. While it exists, the worker uses
+the native room/thread constructor and its current standing, roster and peer
+keys. It meets the current terms into the SAME original shared terms, never a
+snapshot or a fork. Later narrowing observed by the original turn therefore
+still binds the queued reader. The saving reader holds those shared terms
+through its native per-row checks. Weak entries are pruned on capture and open;
+no strong queued turn, new retention cap or writer refusal is added.
 
 The destination keeps its original on/off-device flag and every carried machine
 and proof key, including unknown destinations and proof facts not yet used on

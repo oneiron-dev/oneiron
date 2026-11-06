@@ -159,6 +159,17 @@ impl RoomTerms {
 #[derive(Debug, Clone)]
 pub(crate) struct TurnTerms(std::sync::Arc<std::sync::Mutex<RoomTerms>>);
 
+/// A queued optional hint may refer to a turn while its original native
+/// position is still alive. Losing it never recreates that position.
+#[derive(Debug, Clone)]
+pub(crate) struct WeakTurnTerms(std::sync::Weak<std::sync::Mutex<RoomTerms>>);
+
+impl WeakTurnTerms {
+    pub(crate) fn upgrade(&self) -> Option<TurnTerms> {
+        self.0.upgrade().map(TurnTerms)
+    }
+}
+
 impl PartialEq for TurnTerms {
     fn eq(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.0, &other.0)
@@ -170,6 +181,10 @@ impl Eq for TurnTerms {}
 impl TurnTerms {
     pub(crate) fn new(terms: RoomTerms) -> Self {
         Self(std::sync::Arc::new(std::sync::Mutex::new(terms)))
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakTurnTerms {
+        WeakTurnTerms(std::sync::Arc::downgrade(&self.0))
     }
 
     /// The terms as the turn holds them now.
