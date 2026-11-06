@@ -167,9 +167,14 @@ whole-slot prefix when its final element reads the current native module slot,
 such as `var exports = (module.exports = {a: 1}, module.exports)`. It applies the
 fresh prefix values in order and reconnects that actual wrapper binding; an
 all-current prefix preserves keys. Fresh or `exports` final values retain the
-ordinary initializer handling. Lexical and function shadows remain distinct from
-wrapper bindings. Destructured, conditional and loop-carried initializer flows
-are not modeled.
+ordinary initializer handling. A direct root `var module` initializer can use
+that same flat whole-slot prefix when its final element reads the native `module`
+object itself, as in `var module = (module.exports = {a: 1}, module)`. Fresh prefix
+values apply in source order and detach the old `exports` alias; an all-current
+prefix preserves keys and alias. The `module` binding stays native because the
+final read returns the same original module object, not the current exported value.
+Lexical and function shadows remain distinct from wrapper bindings. Destructured,
+conditional and loop-carried initializer flows are not modeled.
 A direct `module = module` or `var module = module` preserves its current
 wrapper identity; assigning an unrelated value does not. This does not infer
 arbitrary alias identities. Rebinding `exports` does not replace the module value. Replacing

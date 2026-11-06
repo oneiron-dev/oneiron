@@ -71,6 +71,23 @@ pub(super) fn collect(
                     alias = (native_module && whole_value(value, semantic, &mut accounted))
                         || (alias && wrapper(value, "exports", semantic, &mut accounted));
                 } else if binding.name == "module" {
+                    if let Some(values) = module_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        continue;
+                    }
                     native_module =
                         native_module && wrapper(value, "module", semantic, &mut accounted);
                 }
@@ -314,6 +331,42 @@ fn current_final_sequence_values<'ast, 'src>(
     whole_sequence_values(value, semantic, alias, native_module, accounted)
 }
 
+fn module_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let (last, replacements) = sequence.expressions.split_last()?;
+    let mut sequence_accounted = BTreeSet::new();
+    if replacements.is_empty()
+        || !wrapper(
+            last.get_inner_expression(),
+            "module",
+            semantic,
+            &mut sequence_accounted,
+        )
+    {
+        return None;
+    }
+    let values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
+    accounted.extend(sequence_accounted);
+    Some(values)
+}
+
 fn whole_sequence_values<'ast, 'src>(
     value: &'ast Expression<'src>,
     semantic: &Semantic<'_>,
@@ -341,36 +394,13 @@ fn whole_sequence_values<'ast, 'src>(
         replacements
     };
     let mut sequence_accounted = BTreeSet::new();
-    let mut values = Vec::new();
-    for expression in replacements {
-        let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
-            return None;
-        };
-        if !assignment.operator.is_assign()
-            || !matches!(
-                target(
-                    assignment.left.as_member_expression()?,
-                    semantic,
-                    false,
-                    native_module,
-                    &mut sequence_accounted,
-                ),
-                Some(Target::Whole)
-            )
-        {
-            return None;
-        }
-        let value = assignment.right.get_inner_expression();
-        if fresh_value(value) {
-            values.push(value);
-        } else if !whole_value(value, semantic, &mut sequence_accounted)
-            && !(values.is_empty()
-                && alias
-                && wrapper(value, "exports", semantic, &mut sequence_accounted))
-        {
-            return None;
-        }
-    }
+    let mut values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
     if !assigned_final {
         let last = last.get_inner_expression();
         if fresh_value(last) {
@@ -384,6 +414,44 @@ fn whole_sequence_values<'ast, 'src>(
         }
     }
     accounted.extend(sequence_accounted);
+    Some(values)
+}
+
+fn whole_prefix_values<'ast, 'src>(
+    replacements: &'ast [Expression<'src>],
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    let mut values = Vec::new();
+    for expression in replacements {
+        let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
+            return None;
+        };
+        if !assignment.operator.is_assign()
+            || !matches!(
+                target(
+                    assignment.left.as_member_expression()?,
+                    semantic,
+                    false,
+                    native_module,
+                    accounted,
+                ),
+                Some(Target::Whole)
+            )
+        {
+            return None;
+        }
+        let value = assignment.right.get_inner_expression();
+        if fresh_value(value) {
+            values.push(value);
+        } else if !whole_value(value, semantic, accounted)
+            && !(values.is_empty() && alias && wrapper(value, "exports", semantic, accounted))
+        {
+            return None;
+        }
+    }
     Some(values)
 }
 
