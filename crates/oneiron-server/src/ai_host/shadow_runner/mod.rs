@@ -56,7 +56,7 @@ use oneiron::engine_executor::{
 use oneiron::{EntityId, Error, LlmResponse, Result, Vault};
 
 use self::arm_store::ArmEntry;
-pub(crate) use self::arm_store::ArmRegistry;
+pub(crate) use self::arm_store::{ArmRegistry, sweep_stopped_runners};
 use self::model::Gateway;
 pub(crate) use self::runtimes::{CheckedInRuntimes, checked_in_runtimes};
 use crate::server::SyncServer;
