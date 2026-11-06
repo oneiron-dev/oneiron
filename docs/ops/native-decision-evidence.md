@@ -67,9 +67,36 @@ capture behavior stays in place. An own-meter read enables capture only when
 its context supplies an original native source. Binding failure warns and keeps
 the ordinary read, deadline and settlement paths.
 
-This attachment does not retain a native input or response invoice. An invoice
+This attachment alone does not retain a native input or response invoice. An invoice
 lookup may still be unknown. The binding does not change the permit's pricing
 quantity, settle it again, or authorize a payment. Existing captured-receipt
 consumers keep their own accounting paths. Staffed stronger providers remain
 excluded from Arc openings. Ordinary host receipt sinks do not receive the
 runtime admission attachment.
+
+## SystemOne original response quantities
+
+A SystemOne read with that original admission retains its finalized native input
+body hash before the prepared request is sent. The hash describes input bytes;
+it is not a terminal claim, proof of send or a payment identity. Failed evidence
+writes warn and keep the ordinary request and settlement paths.
+
+A successfully parsed single or pack response retains its reported aggregate
+input and output counters with its immutable invoice in the same writer. A pack
+has one aggregate measurement, never a measured share for each answer. Raw output
+zero stays zero; House's forward-pass floor is not applied to SystemOne. A failed
+or cancelled request does not turn a known prefix, reservation or absent counter
+into a terminal invoice. A successful response does not prove the expense of
+unreported retries or other remote work.
+
+The original-admission terminal-usage reader accepts these SystemOne source
+counters and checks their sum against that same call's invoice, boot, line and
+lease. House reads still require their complete native prompt population. The
+SystemOne model-call observer uses that reader for a failed read and keeps usage
+absent if its source is unknown or cannot be read. Successful returned usage and
+all existing no-record checks stay unchanged. Default detail fields are not
+measurements of cache, timing, price or inference receipts.
+
+This is source and observer plumbing only. The original settlement still owns
+its pricing quantity. Nothing here pays the invoice, substitutes NET for GROSS,
+changes coverage or enables staffed stronger-rung Arc openings.

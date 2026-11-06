@@ -13,6 +13,8 @@ use oneiron_model::llm::{BudgetGuardId, BudgetMeterRange};
 
 mod net;
 mod observations;
+mod systemone;
+mod owed;
 use net::NativeNetCoverage;
 pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
 pub(crate) use net::{NativeNetSnapshot, NativeNetTally};
@@ -40,7 +42,9 @@ struct NativeCallObligation {
     net_response: NativeNetResponse,
     net_coverage: NativeNetCoverage,
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
+    systemone_usage: Option<systemone::SystemOneTerminalUsage>,
     aggregate_observations: Vec<NativeAggregateObservation>,
+    owed_reconciliations: Vec<owed::NativeOwedReconciliation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,7 +160,9 @@ pub(crate) fn retain_native_call_in_txn(
         net_response: NativeNetResponse::Unknown,
         net_coverage: NativeNetCoverage::Unknown,
         house_completions: None,
+        systemone_usage: None,
         aggregate_observations: Vec::new(),
+        owed_reconciliations: Vec::new(),
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -170,7 +176,9 @@ pub(crate) fn retain_native_call_in_txn(
         original.net_response = NativeNetResponse::Unknown;
         original.net_coverage = NativeNetCoverage::Unknown;
         original.house_completions = None;
+        original.systemone_usage = None;
         original.aggregate_observations.clear();
+        original.owed_reconciliations.clear();
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -232,9 +240,9 @@ pub(crate) fn invoice_native_call_in_txn(
 }
 
 impl DreamerRunnerStore<'_> {
-    /// Native response totals from the already selected original House admission.
+    /// Native response totals from the already selected original admission.
     /// This reads evidence only, never a payment, terminal alias or meter balance.
-    pub(crate) fn native_house_terminal_usage(
+    pub(crate) fn native_terminal_usage(
         &self,
         origin: AdmittedCallId,
         boot: [u8; 16],
@@ -246,25 +254,31 @@ impl DreamerRunnerStore<'_> {
             return Ok(None);
         };
         if row.boot != boot || row.line != line || row.lease != lease {
-            return Err(invalid_dreamer_runner(
-                "native House original admission differs",
-            ));
+            return Err(invalid_dreamer_runner("native original admission differs"));
         }
         let units = match row.invoice {
             NativeCallInvoice::Admitted => return Ok(None),
             NativeCallInvoice::Invoiced { units } | NativeCallInvoice::Paid { units, .. } => units,
         };
-        let Some(usage) = row
-            .house_completions
-            .as_deref()
-            .and_then(crate::dreamer_wake::DecisionCompletionObservation::terminal_usage)
-        else {
-            return Ok(None);
+        let usage = match (&row.house_completions, &row.systemone_usage) {
+            (Some(completions), None) => {
+                let Some(usage) =
+                    crate::dreamer_wake::DecisionCompletionObservation::terminal_usage(completions)
+                else {
+                    return Ok(None);
+                };
+                usage
+            }
+            (None, Some(observed)) => observed.terminal_usage(),
+            (None, None) => return Ok(None),
+            _ => {
+                return Err(invalid_dreamer_runner(
+                    "native terminal quantity sources differ",
+                ));
+            }
         };
         if usage.input.total.checked_add(usage.output.total) != Some(units) {
-            return Err(invalid_dreamer_runner(
-                "native House terminal quantity differs",
-            ));
+            return Err(invalid_dreamer_runner("native terminal quantity differs"));
         }
         Ok(Some(usage))
     }
