@@ -485,6 +485,7 @@ impl EntityDocument {
 
     /// Export after the selector has admitted this entity. `admission_key` is the
     /// canonical selector encoding, not peer-controlled claims about prior admission.
+    /// Current record use limits apply here, not to the owner's raw replica export.
     fn export(
         &self,
         admission_key: &[u8],
@@ -506,6 +507,13 @@ impl EntityDocument {
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
                 crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+            }
+            if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
+                .is_some()
+            {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
             }
             Ok(())
         })
@@ -611,13 +619,13 @@ impl EntityDocument {
                 Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
                 None => bytes,
             };
-            encode_document(
-                copy.as_ref().map_or(self.id, |copy| copy.key),
-                kind,
-                &payload,
-            )
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
+            let entity = copy.as_ref().map_or(self.id, |copy| copy.key);
+            let encoded = if note_head.is_some() {
+                crate::sync::transport::encode_unsplit_document(entity, kind, &payload)
+            } else {
+                encode_document(entity, kind, &payload).into_result()
+            };
+            encoded.map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
     }
 

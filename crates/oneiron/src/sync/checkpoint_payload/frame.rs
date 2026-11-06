@@ -3,19 +3,25 @@
 //! the vendor's own encoding, each row's locator, family and slice, and
 //! each value's copies and fields: locators, ordinals, each copy's home and
 //! the owners it holds only while they do (FIX 10283), and field names,
-//! never a value or an actor. A carrier has one spelling; any other refuses.
+//! never a value or an actor; each derived slot's turn and role, and each
+//! joined turn's key, part count, copies and fields (FIX 12153). A carrier
+//! has one spelling; any other refuses.
 
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 use serde::{Deserialize, Serialize};
 
-use super::{AtomHome, AtomRef, LoroCarrier, LoroRow, LoroSlice, LoroSlot, SlotCopy, SyncCarrier};
+use super::{
+    AtomHome, AtomRef, DerivedRole, DerivedSlot, JoinedTurn, LoroCarrier, LoroRow, LoroSlice,
+    LoroSlot, SlotCopy, SyncCarrier,
+};
 use crate::error::Result;
 use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, RowDb, RowLocator, bad_part};
 
-/// The spelling's version: 2 binds each copy to its home (FIX 10283).
-const FRAME: u8 = 2;
+/// The spelling's version: 2 binds each copy to its home (FIX 10283), 3
+/// carries a parted room turn joined, its slots derived (FIX 12153).
+const FRAME: u8 = 3;
 
 #[derive(Serialize, Deserialize)]
 struct Frame {
@@ -24,6 +30,7 @@ struct Frame {
     skeleton: Vec<u8>,
     rows: Vec<FrameRow>,
     slots: Vec<FrameSlot>,
+    joined: Vec<FrameJoined>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,6 +73,25 @@ struct FrameCopy {
 
 #[derive(Serialize, Deserialize)]
 struct FrameSlot {
+    copies: Vec<FrameCopy>,
+    holes: Vec<String>,
+    derived: Option<FrameDerived>,
+}
+
+/// A derived slot: its joined turn's place, and its role, 0 the manifest, 1
+/// a part's key, 2 a part's bytes, with that part's place (0 for the
+/// manifest).
+#[derive(Serialize, Deserialize)]
+struct FrameDerived {
+    source: u32,
+    role: u8,
+    place: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FrameJoined {
+    key: String,
+    parts: u32,
     copies: Vec<FrameCopy>,
     holes: Vec<String>,
 }
@@ -151,6 +177,62 @@ fn tagged<T: Copy>(all: &[T], tag: u8) -> Result<T> {
     all.get(usize::from(tag)).copied().ok_or_else(bad_part)
 }
 
+fn write_derived(derived: DerivedSlot) -> FrameDerived {
+    let (role, place) = match derived.role {
+        DerivedRole::Manifest => (0, 0),
+        DerivedRole::PartKey(place) => (1, place),
+        DerivedRole::PartValue(place) => (2, place),
+    };
+    FrameDerived {
+        source: derived.source,
+        role,
+        place,
+    }
+}
+
+fn read_derived(derived: FrameDerived) -> Result<DerivedSlot> {
+    let role = match (derived.role, derived.place) {
+        (0, 0) => DerivedRole::Manifest,
+        (1, place) => DerivedRole::PartKey(place),
+        (2, place) => DerivedRole::PartValue(place),
+        _ => return Err(bad_part()),
+    };
+    Ok(DerivedSlot {
+        source: derived.source,
+        role,
+    })
+}
+
+fn write_copies(copies: &[SlotCopy]) -> Result<Vec<FrameCopy>> {
+    let mut written = Vec::with_capacity(copies.len());
+    for copy in copies {
+        written.push(FrameCopy {
+            at: write_locator(&copy.at)?,
+            atom: copy.atom.0,
+            home: write_home(&copy.home)?,
+            dependencies: copy.dependencies.iter().map(write_owner).collect(),
+        });
+    }
+    Ok(written)
+}
+
+fn read_copies(copies: Vec<FrameCopy>) -> Result<Vec<SlotCopy>> {
+    let mut read = Vec::with_capacity(copies.len());
+    for copy in copies {
+        read.push(SlotCopy {
+            at: read_locator(copy.at)?,
+            atom: AtomRef(copy.atom),
+            home: read_home(copy.home)?,
+            dependencies: copy
+                .dependencies
+                .into_iter()
+                .map(read_owner)
+                .collect::<Result<_>>()?,
+        });
+    }
+    Ok(read)
+}
+
 fn write_locator(at: &RowLocator) -> Result<FrameLocator> {
     Ok(FrameLocator {
         db: tag(&DBS, &at.db)?,
@@ -189,18 +271,19 @@ impl LoroCarrier {
         }
         let mut slots = Vec::with_capacity(self.slots.len());
         for slot in &self.slots {
-            let mut copies = Vec::with_capacity(slot.copies.len());
-            for copy in &slot.copies {
-                copies.push(FrameCopy {
-                    at: write_locator(&copy.at)?,
-                    atom: copy.atom.0,
-                    home: write_home(&copy.home)?,
-                    dependencies: copy.dependencies.iter().map(write_owner).collect(),
-                });
-            }
             slots.push(FrameSlot {
-                copies,
+                copies: write_copies(&slot.copies)?,
                 holes: slot.holes.clone(),
+                derived: slot.derived.map(write_derived),
+            });
+        }
+        let mut joined = Vec::with_capacity(self.joined.len());
+        for turn in &self.joined {
+            joined.push(FrameJoined {
+                key: turn.key.clone(),
+                parts: turn.parts,
+                copies: write_copies(&turn.copies)?,
+                holes: turn.holes.clone(),
             });
         }
         let frame = Frame {
@@ -209,6 +292,7 @@ impl LoroCarrier {
             skeleton: self.skeleton.to_bytes().map_err(|_| bad_part())?,
             rows,
             slots,
+            joined,
         };
         rmp_serde::to_vec_named(&frame).map_err(|_| bad_part())
     }
@@ -238,22 +322,19 @@ impl LoroCarrier {
         }
         let mut slots = Vec::with_capacity(frame.slots.len());
         for slot in frame.slots {
-            let mut copies = Vec::with_capacity(slot.copies.len());
-            for copy in slot.copies {
-                copies.push(SlotCopy {
-                    at: read_locator(copy.at)?,
-                    atom: AtomRef(copy.atom),
-                    home: read_home(copy.home)?,
-                    dependencies: copy
-                        .dependencies
-                        .into_iter()
-                        .map(read_owner)
-                        .collect::<Result<_>>()?,
-                });
-            }
             slots.push(LoroSlot {
-                copies,
+                copies: read_copies(slot.copies)?,
                 holes: slot.holes,
+                derived: slot.derived.map(read_derived).transpose()?,
+            });
+        }
+        let mut joined = Vec::with_capacity(frame.joined.len());
+        for turn in frame.joined {
+            joined.push(JoinedTurn {
+                key: turn.key,
+                parts: turn.parts,
+                copies: read_copies(turn.copies)?,
+                holes: turn.holes,
             });
         }
         let carrier = Self {
@@ -261,6 +342,7 @@ impl LoroCarrier {
             skeleton: Skeleton::from_bytes(&frame.skeleton).map_err(|_| bad_part())?,
             rows,
             slots,
+            joined,
         };
         if carrier.to_bytes()? != bytes {
             return Err(bad_part());

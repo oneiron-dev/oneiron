@@ -69,7 +69,8 @@ impl Vault {
     /// in `crate::secret_custody`), each kept custody input whose request is
     /// answered is forgotten, and so is each kept export secret copy whose
     /// secret ended (FIX 12064), and each revoke this install owes the owner's
-    /// other machines is carried once it can sign (FIX 4851). A wait a root
+    /// other machines is carried once it can sign (FIX 4851), as is each
+    /// membership change's record no host issuer signed (FIX 12335). A wait a root
     /// request's pickup committed is cleared once the fold holds that
     /// request cancelled or superseded, byte-free (FIX 5582). The machine
     /// secret is read outside every transaction, and only when a request's
@@ -115,6 +116,9 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // So is the record of a membership change no host issuer signed
+        // (FIX 12335).
+        self.carry_owed_membership_executions();
         // A restore's credentials pending on their source's evidence are
         // judged again on it (FIX-LIST 10671).
         self.resolve_pending_credential_restores_logged();
@@ -230,7 +234,15 @@ impl Vault {
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, machine, outcome.clone())?;
+        let (result, signing) =
+            self.append_owner_work_result_with_key_in_txn(txn, hash, machine, outcome.clone())?;
+        // An export copy's numbered parts are signed by the key that signed
+        // its result, in this commit (FIX 12373).
+        if let (OwnerWorkBody::ExportSecret(_), OwnerWorkOutcome::Sealed { output }) =
+            (&request.work, &outcome)
+        {
+            self.sign_export_output_parts_in_txn(txn, &fold, hash, result, output, &signing)?;
+        }
         Ok(Ran::Answered(outcome))
     }
 

@@ -3,6 +3,8 @@
 //! born at its first edit or citation, and retains its full operation history.
 
 mod citations;
+mod document_version;
+pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;

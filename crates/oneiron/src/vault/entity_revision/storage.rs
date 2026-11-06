@@ -22,7 +22,7 @@ use history::{
     revision_raw,
 };
 pub(super) use history::{
-    RevisionNamespace, citation_live_doc, fork_revision_with_namespace,
+    RevisionNamespace, citation_live_doc, common_binding_in_txn, fork_revision_with_namespace,
     retained_row_sources_in_txn, revision_text_fields,
 };
 mod redact;
