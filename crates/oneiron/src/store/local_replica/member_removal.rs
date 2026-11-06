@@ -106,6 +106,35 @@ pub(crate) fn discard_bundle_payload_in_txn(
     crate::note::discard_bundle_explainers_in_txn(store, txn, discarded)
 }
 
+/// The content-addressed byte carriers among `order` whose bytes a holder
+/// outside it still reads: an artifact's version chain or claim, or a
+/// reference ASSET's `asset_ref` (FIX 14534, Engine 11-06 08:34 call 1 = A:
+/// shared stays). A holder held or kept for any reason is outside it. The
+/// holders inside it let go of the bytes in this same write.
+pub(super) fn shared_carriers(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    order: &[EntityId],
+) -> Result<BTreeSet<EntityId>> {
+    let gone: BTreeSet<EntityId> = order.iter().copied().collect();
+    let mut shared = BTreeSet::new();
+    for id in order {
+        let Some(raw) = store.port_entity_raw(txn, id)? else {
+            continue;
+        };
+        let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, &raw)? else {
+            continue;
+        };
+        if crate::blob_artifact::content_holders_in_txn(store, txn, &hash)?
+            .iter()
+            .any(|holder| holder != id && !gone.contains(holder))
+        {
+            shared.insert(*id);
+        }
+    }
+    Ok(shared)
+}
+
 /// Tears one member's local rows. Every step is a local index or projection
 /// leaf of the physical tear; custody, provenance, document and control rows
 /// stay. A released member takes every edge it touches with it.
