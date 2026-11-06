@@ -77,8 +77,9 @@ pub(crate) use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{
     StrippedPieces, drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    republish_step_start_lengths_in_rows, settle_start_bodies_in_rows, step_capsule_row,
-    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
+    republish_step_start_lengths_in_rows, settle_start_bodies_in_rows,
+    start_piece_held_apart_in_txn, step_capsule_row, step_start_body_row,
+    step_start_content_pieces, step_start_owners_in_txn,
 };
 pub(crate) use self::replay_capsule::{
     bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
