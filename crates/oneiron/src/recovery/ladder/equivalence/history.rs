@@ -6,6 +6,7 @@ use crate::recovery::canonical::{
     CanonicalDocumentVersion, CanonicalEntityDocumentHistory,
 };
 
+use super::metadata::MetadataComparison;
 use super::{compare_bytes, compare_optional_text, compare_rows, compare_value};
 
 #[derive(Default)]
@@ -15,6 +16,7 @@ pub(super) struct HistoryComparison {
     member: usize,
     byte: usize,
     part: Part,
+    metadata: MetadataComparison,
 }
 
 #[derive(Default)]
@@ -36,15 +38,16 @@ enum Part {
     Second,
     Third,
     Fourth,
+    Fifth,
 }
 
 impl HistoryComparison {
     pub(super) fn advance(
         &mut self,
-        actual: &Option<CanonicalEntityDocumentHistory>,
+        actual: &mut Option<CanonicalEntityDocumentHistory>,
         wanted: &Option<CanonicalEntityDocumentHistory>,
     ) -> Result<bool> {
-        let (Some(actual), Some(wanted)) = (actual, wanted) else {
+        let (Some(actual), Some(wanted)) = (actual.as_mut(), wanted.as_ref()) else {
             compare_value(&actual.is_some(), &wanted.is_some())?;
             return Ok(true);
         };
@@ -85,11 +88,12 @@ impl HistoryComparison {
         self.member = 0;
         self.byte = 0;
         self.part = Part::First;
+        self.metadata = MetadataComparison::default();
     }
 
     fn versions(
         &mut self,
-        actual: &[CanonicalDocumentVersion],
+        actual: &mut [CanonicalDocumentVersion],
         wanted: &[CanonicalDocumentVersion],
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
@@ -100,7 +104,7 @@ impl HistoryComparison {
             middle,
             metadata,
             summary_meta,
-        }) = actual.get(self.next)
+        }) = actual.get_mut(self.next)
         else {
             return Ok(true);
         };
@@ -114,13 +118,27 @@ impl HistoryComparison {
             }
             return Ok(false);
         }
-        if compare_bytes(
-            middle.as_bytes(),
-            expected.middle.as_bytes(),
-            &mut self.byte,
-        )? {
-            compare_value(metadata, &expected.metadata)?;
-            compare_value(summary_meta, &expected.summary_meta)?;
+        if self.part == Part::Second {
+            if compare_bytes(
+                middle.as_bytes(),
+                expected.middle.as_bytes(),
+                &mut self.byte,
+            )? {
+                self.part = Part::Third;
+                self.byte = 0;
+            }
+            return Ok(false);
+        }
+        if self.part == Part::Third {
+            if self.metadata.advance(metadata, &expected.metadata)? {
+                self.part = Part::Fourth;
+            }
+            return Ok(false);
+        }
+        if self
+            .metadata
+            .advance(summary_meta, &expected.summary_meta)?
+        {
             self.finish_row();
         }
         Ok(false)
@@ -200,7 +218,7 @@ impl HistoryComparison {
 
     fn forks(
         &mut self,
-        actual: &[CanonicalDocumentFork],
+        actual: &mut [CanonicalDocumentFork],
         wanted: &[CanonicalDocumentFork],
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
@@ -221,7 +239,7 @@ impl HistoryComparison {
             proposal_opener_lineage,
             read_refs,
             keep,
-        }) = actual.get(self.next)
+        }) = actual.get_mut(self.next)
         else {
             return Ok(true);
         };
@@ -244,8 +262,15 @@ impl HistoryComparison {
                 }
             }
             Part::Second => {
+                if self
+                    .metadata
+                    .advance_optional(output_metadata, &expected.output_metadata)?
+                {
+                    self.part = Part::Third;
+                }
+            }
+            Part::Third => {
                 if self.member == 0 {
-                    compare_value(output_metadata, &expected.output_metadata)?;
                     compare_value(proposal_index, &expected.proposal_index)?;
                     compare_value(proposal_len, &expected.proposal_len)?;
                     compare_value(proposal_settled, &expected.proposal_settled)?;
@@ -255,17 +280,17 @@ impl HistoryComparison {
                     &expected.proposal_opener_lineage,
                     &mut self.member,
                 )? {
-                    self.part = Part::Third;
-                    self.member = 0;
-                }
-            }
-            Part::Third => {
-                if compare_rows(read_refs, &expected.read_refs, &mut self.member)? {
                     self.part = Part::Fourth;
                     self.member = 0;
                 }
             }
             Part::Fourth => {
+                if compare_rows(read_refs, &expected.read_refs, &mut self.member)? {
+                    self.part = Part::Fifth;
+                    self.member = 0;
+                }
+            }
+            Part::Fifth => {
                 if compare_optional_text(keep, &expected.keep, &mut self.byte)? {
                     self.finish_row();
                 }

@@ -21,10 +21,11 @@ pub mod organ;
 pub use api::{
     Anomaly, BackendError, BackendRejectCode, BackendSignature, ByteRangeEvidence, Coverage,
     DigestAlgorithm, ModificationLevel, Modifications, PadesProfile, PdfSealEngine,
-    PreparedRevision, ProfileDegradeReason, RevisionKind, RevisionReport, SealBackend, SealClock,
+    PreparedRevision, ProfileDegradeReason, RevisionCoverage, RevisionKind, RevisionReport,
+    SealBackend, SealClock,
     SealRequest, SealWarning, SealedPdf, Sha256Digest, SignDigestRequest, SignRevisionRequest,
     SignatureAlgorithm, SignatureKind, SignatureReport, SignedRangeDigest, SigningIdentity,
-    VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+    UncoveredByteRange, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
     VerifyVerdict,
 };
 #[cfg(feature = "native")]

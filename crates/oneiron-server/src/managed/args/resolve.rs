@@ -107,6 +107,10 @@ impl ManagedArgs {
             ready_fd,
             credentials_fd,
             custody_anchor_credentials_fd,
+            checkpoint_host_holds_recipient_fd: args
+                .checkpoint_host_holds_recipient_fd
+                .map(|fd| require_fd(Some(fd), "checkpoint-host-holds-recipient-fd"))
+                .transpose()?,
             vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
@@ -243,6 +247,30 @@ impl ManagedArgs {
                 }
             }
         }
+        if let Some(recipient) = managed.checkpoint_host_holds_recipient_fd {
+            let mut taken = vec![
+                ("--ready-fd", managed.ready_fd),
+                ("--credentials-fd", managed.credentials_fd),
+            ];
+            taken.extend(
+                managed
+                    .custody_anchor_credentials_fd
+                    .map(|fd| ("--custody-anchor-credentials-fd", fd)),
+            );
+            if let ManagedStartMode::Restore {
+                input_fd,
+                result_fd,
+            } = managed.start_mode
+            {
+                taken.extend([
+                    ("--restore-input-fd", input_fd),
+                    ("--restore-result-fd", result_fd),
+                ]);
+            }
+            for other in taken.into_iter().filter(|(_, fd)| *fd >= 0) {
+                refuse_fd_alias(("--checkpoint-host-holds-recipient-fd", recipient), other)?;
+            }
+        }
         managed.vault_binding()?;
         Ok(Some(managed))
     }
@@ -261,6 +289,12 @@ impl ManagedArgs {
     /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
         refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
+        if let Some(recipient) = self.checkpoint_host_holds_recipient_fd {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--checkpoint-host-holds-recipient-fd", recipient),
+            )?;
+        }
         if let Some(anchor) = self.custody_anchor_credentials_fd {
             refuse_fd_alias(
                 (HYPNOS_LISTEN_FD, listen_fd),

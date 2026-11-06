@@ -1018,6 +1018,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -1030,6 +1034,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -2432,6 +2440,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "expect",
             "content",
+            "exact_marks",
             "semantic_hash",
             "rationale",
         ],
@@ -2443,6 +2452,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "expect",
             "content",
+            "exact_marks",
             "semantic_hash",
             "rationale",
         ],
@@ -2839,8 +2849,8 @@ pub enum SchemaError {
     EmptyPageSetup { op_index: usize },
 
     /// An `edit_header` / `edit_footer` op carried an empty `header_part` /
-    /// `footer_part` or `expect`. Without the part name the story is
-    /// unaddressable; without `expect` the edit has no anchor.
+    /// `footer_part`, or a blank `expect` without a semantic hash. The part names
+    /// the story; a blank substring expectation needs the existing content guard.
     HeaderFooterEmptyField {
         op_index: usize,
         field: &'static str,
@@ -3702,6 +3712,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditHeader {
                 header_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if header_part.trim().is_empty() {
@@ -3710,7 +3721,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "header_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
@@ -3720,6 +3731,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditFooter {
                 footer_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if footer_part.trim().is_empty() {
@@ -3728,7 +3740,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "footer_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
@@ -5160,6 +5172,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditHeader {
@@ -5168,6 +5181,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::EditFooter {
@@ -5175,6 +5189,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditFooter {
@@ -5183,6 +5198,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::CreateHeader { kind, rationale } => Ok(EditStep::CreateHeader {
