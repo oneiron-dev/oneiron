@@ -147,7 +147,9 @@ mod host {
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
-    use oneiron_organ_host::{AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService};
+    use oneiron_organ_host::{
+        AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService, VaultOrganNodes,
+    };
     use tokio::sync::watch;
     use tokio::task::{JoinHandle, JoinSet};
 
@@ -247,9 +249,19 @@ mod host {
         let vault = &server.vault;
         // This machine's organ host (the server's one, which the seal worker
         // shares) serves the owner's other nodes, and its calls that wait for
-        // a node are re-driven on the tick (OF-575).
+        // a node are re-driven on the tick (OF-575): here first, else on one
+        // of the owner's other nodes granted organ calls, over this
+        // install's one endpoint (FIX 14544).
         let organs = Arc::clone(&server.organs);
-        let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
+        let mut router = OrganRouter::new().with_local(Arc::clone(&organs));
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            router = router.with_mesh(
+                Arc::new(BoundEndpoint(Arc::downgrade(server))),
+                Arc::new(VaultOrganNodes(Arc::clone(vault))),
+                runtime,
+            );
+        }
+        let router = Arc::new(router);
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
         MeshRoutes::default()
@@ -290,6 +302,38 @@ mod host {
                 work.organs.clone(),
             ))
             .tick(server.pack_organ_tick(work.organs.clone()))
+    }
+
+    /// This install's one mesh endpoint as the organ router dials it (FIX
+    /// 14544). The router is built with the listener's routes, before the
+    /// endpoint binds, so each dial reads the endpoint the listener attached
+    /// to the server. Before that, or once the server is gone, a dial is
+    /// unavailable and the call keeps waiting. It accepts nothing: the
+    /// listener's accept loop owns every inbound connection.
+    struct BoundEndpoint(std::sync::Weak<crate::server::SyncServer>);
+
+    impl MeshTransport for BoundEndpoint {
+        fn dial(
+            &self,
+            machine: oneiron_mesh_transport::MachineId,
+            alpn: &[u8],
+        ) -> MeshFuture<'_, Box<dyn MeshConnection>> {
+            let endpoint = self
+                .0
+                .upgrade()
+                .and_then(|server| server.mesh_transport.get().cloned());
+            let alpn = alpn.to_vec();
+            Box::pin(async move {
+                match endpoint {
+                    Some(endpoint) => endpoint.dial(machine, &alpn).await,
+                    None => Err(MeshError::Unavailable),
+                }
+            })
+        }
+
+        fn accept(&self) -> MeshFuture<'_, Box<dyn MeshConnection>> {
+            Box::pin(async { Err(MeshError::Unavailable) })
+        }
     }
 
     /// Runs every held organ call a node can take now, on a blocking thread,
