@@ -212,9 +212,14 @@ pub(crate) fn join_sync_update_in_txn(
     };
     let doc = storage::load(&vault.store, txn, &h)?;
     let before = doc.doc.oplog_vv();
-    // Operations after a birth build on it, so a whole document this one
-    // does not hold is another birth of the same text: it stands apart.
-    if whole.is_some_and(|whole| !before.includes_vv(&whole.oplog_vv())) {
+    // Operations after a birth build on it, so a whole document that does
+    // not hold this one's birth is another birth of the same text: it stands
+    // apart. One born where this one was joins, its unseen edits with it
+    // (FIX 11795).
+    if let Some(whole) = whole
+        && !before.includes_vv(&whole.oplog_vv())
+        && !born_alike(entity, &h, &before, &whole)?
+    {
         return Err(invalid("sync text of another document birth"));
     }
     import_whole(&doc.doc, update)?;
@@ -261,7 +266,7 @@ pub(crate) fn replace_sync_text_in_txn(
     }
     let mut h = match head {
         Some(h) => h,
-        None => carried_head_in_txn(vault, txn, entity)?,
+        None => carried_head_in_txn(vault, txn, entity, &doc.doc)?,
     };
     storage::persist_scanned(vault, txn, entity, &mut h, &doc, None, synced(None))?;
     if doc.doc.is_shallow() {
@@ -507,15 +512,60 @@ fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
     Some((text, pointer))
 }
 
-/// A fresh document whose peer is derived from `entity`.
-fn seeded(entity: &EntityId) -> Result<LoroDoc> {
+/// The peer `entity`'s lazy birth's operations take, the same on every
+/// machine.
+fn birth_peer(entity: &EntityId) -> u64 {
     let key = blake3::derive_key(BIRTH_PEER_CONTEXT, entity.as_bytes());
     let mut peer = [0u8; 8];
     peer.copy_from_slice(&key[..8]);
+    u64::from_be_bytes(peer) >> 1
+}
+
+/// A fresh document whose peer is derived from `entity`.
+fn seeded(entity: &EntityId) -> Result<LoroDoc> {
     let doc = LoroDoc::new();
-    doc.set_peer_id(u64::from_be_bytes(peer) >> 1)
+    doc.set_peer_id(birth_peer(entity))
         .map_err(|_| invalid("document birth peer"))?;
     Ok(doc)
+}
+
+/// The incarnation of `entity`'s lazy birth, the same on every machine as
+/// its operations are (FIX 11795): two machines' lazy births of one row are
+/// one document wherever their heads meet.
+fn lazy_incarnation(entity: &EntityId) -> Result<String> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::SYNC_TEXT_BIRTH_INCARNATION,
+        &[entity.as_bytes()],
+    )
+    .map(|id| id.to_hex())
+}
+
+/// Whether `doc` holds `entity`'s lazy birth: the operations of its derived
+/// birth peer, which nothing but that birth writes.
+fn holds_lazy_birth(entity: &EntityId, doc: &LoroDoc) -> bool {
+    doc.oplog_vv().get(&birth_peer(entity)).is_some()
+}
+
+/// Whether `whole`, a peer's whole document of `entity`, was born where the
+/// document `h` heads, holding `before`, was (FIX 11795): it holds every
+/// operation of that document's birth here, or both hold the one lazy birth
+/// of the row, at the same counter. Its later edits then build on the same
+/// birth and join.
+fn born_alike(
+    entity: &EntityId,
+    h: &Head,
+    before: &VersionVector,
+    whole: &LoroDoc,
+) -> Result<bool> {
+    let held = whole.oplog_vv();
+    if let Some(birth) = &h.birth_frontier {
+        let birth = super::document::decode_frontier(birth)?;
+        if !birth.is_empty() && birth.iter().all(|id| held.includes_id(id)) {
+            return Ok(true);
+        }
+    }
+    let peer = birth_peer(entity);
+    Ok(before.get(&peer).is_some() && before.get(&peer) == held.get(&peer))
 }
 
 /// A birth that names no one: no stamp, at the record's time. Its commit
@@ -557,7 +607,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     )?;
     let mut head = Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
         field: born.field,
         generation: 0,
@@ -568,10 +618,18 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     Ok(head)
 }
 
-/// The head a peer's document takes here for a MESSAGE, or another kind with
-/// a field rule (FIX 11794), that holds none: the document its row names, or,
-/// for a row still holding its text, its own id, its row then naming it.
-fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
+/// The head a peer's document `carried` takes here for a MESSAGE, or another
+/// kind with a field rule (FIX 11794), that holds none: the document its row
+/// names, or, for a row still holding its text, its own id, its row then
+/// naming it. A document holding the row's lazy birth takes that birth's
+/// incarnation, as every machine's lazy birth of it does (FIX 11795); any
+/// other takes a new one.
+fn carried_head_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    carried: &LoroDoc,
+) -> Result<Head> {
     let raw = vault
         .store
         .port_entity_raw(txn, entity)?
@@ -593,9 +651,14 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
             entity.to_hex()
         }
     };
+    let incarnation = if holds_lazy_birth(entity, carried) {
+        lazy_incarnation(entity)?
+    } else {
+        EntityId::now().to_hex()
+    };
     Ok(Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        incarnation,
         document,
         field,
         generation: 0,
