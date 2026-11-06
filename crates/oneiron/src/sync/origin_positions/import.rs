@@ -1,20 +1,24 @@
 //! Exact optional position operations of one successful own-device import.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Weak};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
 use super::{ORIGIN_POSITIONS_MAP, bound_position, has_positions, holds_carrier};
-use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::error::Result;
 use crate::federation::record_scope::origin_positions::{self as facts, OriginPosition};
 use crate::ports::EntityStoreRead;
+use crate::sync::asset_body::session::LocalBodyLand;
 use crate::sync::client::OwnDeviceImport;
 use crate::sync::loro_support::map_for_each_value_bytes;
+use crate::sync::manager::WindowManager;
 use crate::sync::types::WindowKey;
+use crate::sync::window::LoadedWindow;
+use crate::{EntityId, Vault};
 
 /// Optional position bytes that this exact payload inserted, prepared before
 /// the live import. Only the successful import boundary may finish it; no
@@ -131,7 +135,7 @@ impl OwnDevicePositionImport {
     /// live document still holds. Missing facts, unknown births, a changed
     /// key or a peer-origin owner/source leaves ordinary row import alone.
     /// Result bodies are pinned before the writer and through its commit.
-    pub fn finish(self, vault: &Vault, doc: &LoroDoc) -> Result<()> {
+    pub fn finish(&self, vault: &Vault, doc: &LoroDoc) -> Result<()> {
         if self.vault != vault.store.env.path() {
             return Ok(());
         }
@@ -141,7 +145,7 @@ impl OwnDevicePositionImport {
                 let (position, current) = bound_position(doc, key)?;
                 (current == *sent).then_some(position)
             });
-            self.install_in_txn(vault, txn, positions)
+            self.install_in_txn(vault, txn, positions).map(|_| ())
         })
     }
 
@@ -155,15 +159,43 @@ impl OwnDevicePositionImport {
         (!self.values.is_empty()).then_some(ReplacementPositions { incoming: self })
     }
 
+    /// Only the completed live importer may retain these selected values.
+    /// Root scrubs can remove their map entries, never their carrier binding.
+    pub(in crate::sync) fn select_deferred(
+        mut self,
+        window: &Arc<LoadedWindow>,
+    ) -> Option<DeferredPositions> {
+        if self.window != window.key {
+            return None;
+        }
+        self.values.retain(|key, sent| {
+            OriginPosition::decode(sent).is_some_and(|position| {
+                holds_carrier(&window.doc, key, &position)
+                    && std::iter::once(&position.row)
+                        .chain(position.sources.iter())
+                        .all(|row| row.birth_digest.is_some())
+                    && std::iter::once(&position.row)
+                        .chain(position.sources.iter())
+                        .any(|row| row.file_reference.is_some())
+            })
+        });
+        (!self.values.is_empty()).then(|| DeferredPositions {
+            incoming: self,
+            window: Arc::downgrade(window),
+            ready: BTreeSet::new(),
+        })
+    }
+
     fn install_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         positions: impl Iterator<Item = OriginPosition>,
-    ) -> Result<()> {
+    ) -> Result<Vec<EntityId>> {
         if self.vault != vault.store.env.path() || !self.proof.stands_in_txn(vault, txn)? {
-            return Ok(());
+            return Ok(Vec::new());
         }
+        let mut settled = Vec::new();
         for position in positions {
             // Unknown birth is data, not an incarnation certificate.
             if std::iter::once(&position.row)
@@ -201,7 +233,88 @@ impl OwnDevicePositionImport {
                         position: &position,
                     },
                 )?;
+                settled.push(position.row.id);
             }
+        }
+        Ok(settled)
+    }
+}
+
+/// Selected facts of one completed live import, owned only by its socket's
+/// body session. A weak window handle never holds up replacement or eviction.
+/// Neither a remote Receipt nor a replay can construct a local-land effect.
+pub(in crate::sync) struct DeferredPositions {
+    incoming: OwnDevicePositionImport,
+    window: Weak<LoadedWindow>,
+    ready: BTreeSet<String>,
+}
+
+impl DeferredPositions {
+    pub(in crate::sync) fn supersede_by(&mut self, newer: &Self) {
+        if self.incoming.window == newer.incoming.window {
+            if !Weak::ptr_eq(&self.window, &newer.window) {
+                self.incoming.values.clear();
+            } else {
+                self.incoming
+                    .values
+                    .retain(|key, _| !newer.incoming.values.contains_key(key));
+            }
+        }
+    }
+
+    pub(in crate::sync) fn is_empty(&self) -> bool {
+        self.incoming.values.is_empty()
+    }
+
+    pub(in crate::sync) fn body_landed(&mut self, landed: &LocalBodyLand) -> Result<()> {
+        let reference = landed.reference()?;
+        for (key, sent) in &self.incoming.values {
+            if OriginPosition::decode(sent).is_some_and(|position| {
+                std::iter::once(&position.row)
+                    .chain(position.sources.iter())
+                    .any(|row| row.file_reference.as_deref() == Some(reference.as_slice()))
+            }) {
+                self.ready.insert(key.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Retry through existing housekeeping after a related local body landed.
+    /// A later native caption materialization need not coincide with that event.
+    pub(in crate::sync) fn retry(&mut self, manager: &WindowManager) -> Result<()> {
+        let Some(current) = manager
+            .window(&self.incoming.window)
+            .filter(|current| Weak::ptr_eq(&Arc::downgrade(current), &self.window))
+        else {
+            self.incoming.values.clear();
+            return Ok(());
+        };
+        self.incoming.values.retain(|key, sent| {
+            OriginPosition::decode(sent)
+                .is_some_and(|position| holds_carrier(&current.doc, key, &position))
+        });
+        self.ready
+            .retain(|key| self.incoming.values.contains_key(key));
+        if self.ready.is_empty() {
+            return Ok(());
+        }
+        let vault = manager.vault();
+        let _bodies = vault.pin_all_result_bodies();
+        let settled = vault.with_write_txn_grouped(|txn| {
+            let positions = self.incoming.values.iter().filter_map(|(key, sent)| {
+                if !self.ready.contains(key) {
+                    return None;
+                }
+                let position = OriginPosition::decode(sent)?;
+                holds_carrier(&current.doc, key, &position).then_some(position)
+            });
+            self.incoming.install_in_txn(vault, txn, positions)
+        })?;
+        for id in settled {
+            let key = id.to_hex();
+            self.incoming.values.remove(&key);
+            self.ready.remove(&key);
         }
         Ok(())
     }

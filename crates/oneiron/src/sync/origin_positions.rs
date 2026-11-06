@@ -15,7 +15,7 @@ use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 
 mod import;
 pub(crate) use import::VerifiedOriginPosition;
-pub(in crate::sync) use import::prepare;
+pub(in crate::sync) use import::{DeferredPositions, prepare};
 pub use import::{OwnDevicePositionImport, prepare_own_device_push_positions};
 
 pub(crate) const ORIGIN_POSITIONS_MAP: &str = "origin_positions";
