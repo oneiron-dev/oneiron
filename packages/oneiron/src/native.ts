@@ -1317,6 +1317,8 @@ selfFocusUnsubscribe(input: unknown): unknown
   acceptSharedInvitationHttps(request: unknown): NativeSharedAcceptance
   /** Retry under the pending refusal's own invocation with the same request. */
   retrySharedInvitationHttps(pending: unknown, request: unknown): NativeSharedAcceptance
+  /** Same retry with the pending refusal as its original JSON text, so full integers survive. */
+  retrySharedInvitationHttpsJson(pendingJson: string, request: unknown): NativeSharedAcceptance
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
   exportTo(path: string, format: string | undefined): unknown

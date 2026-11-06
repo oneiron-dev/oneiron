@@ -1,7 +1,8 @@
 # Raw Node-API shared invitation integration
 
-These APIs are exported by the raw `oneiron-napi` addon. They are not yet
-wrapped by the high-level `Oneiron` class in `packages/oneiron`.
+These APIs are exported by the raw `oneiron-napi` addon and wrapped by the
+high-level `Oneiron` class in `packages/oneiron` (`acceptSharedInvitationHttps`,
+`retrySharedInvitationHttps`, `bootstrapSharedEnv`, `retainSharedEnv`).
 `NativeClient` is available in every addon build. `NativeEngine` and
 `NativeSharedBootstrapOutcome` require the opt-in `engine` Cargo feature.
 The feature remains off by default.
@@ -18,8 +19,11 @@ wire shape:
 
 A pending call throws the complete native `MemoryError` as JSON in the error's
 message. Pass that serialized refusal and the same request to
-`client.retrySharedInvitationHttps(pending, request)`. The native retry uses the
-refusal's own invocation. The ordinary verb and generic retry are unchanged.
+`client.retrySharedInvitationHttps(pending, request)`, or pass the refusal's
+original JSON text and the same request to
+`client.retrySharedInvitationHttpsJson(pendingJson, request)` to keep full
+integers parsing only in Rust. The native retry uses the refusal's own
+invocation. The ordinary verb and generic retry are unchanged.
 
 Both methods return `NativeSharedAcceptance`, which holds the original opaque
 HTTPS acceptance. A decoded receipt cannot construct that value. It provides:

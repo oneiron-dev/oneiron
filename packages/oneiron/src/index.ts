@@ -18,6 +18,15 @@
 
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient, NativeEngine, type NativeEngineConnection } from "./native.js"
+import {
+  unwrapSharedAcceptance,
+  wrapBootstrapOutcome,
+  wrapSharedAcceptance,
+  type SharedEnvBootstrapOutcome,
+  type SharedEnvEntry,
+  type SharedInvitationAcceptance as SharedAcceptanceOf,
+  type SharedInvitationAcceptRequest,
+} from "./shared-env.js"
 import type * as Facade from "./facade-types.js"
 import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
@@ -134,6 +143,18 @@ export interface EmbeddedEngine {
    * attaches anew and none reopens the path.
    */
   localClient(): Oneiron
+  /**
+   * Imports the original acceptance into this engine's live shared-env registry.
+   * Forwards the SAME acceptance and entry; never persists the entry.
+   */
+  bootstrapSharedEnv(
+    acceptance: SharedInvitationAcceptance,
+    entry: SharedEnvEntry,
+    dimensions?: number,
+    configFile?: string,
+  ): SharedEnvBootstrapOutcome
+  /** Explicitly retains the same config entry for this engine's next start. */
+  retainSharedEnv(entry: SharedEnvEntry): void
   /**
    * Sends one request on the API's origin and returns the whole reply. `/ws` is not served
    * through it, and a reply past the buffered ceiling throws `ENGINE_REPLY_TOO_LARGE`; open a
@@ -323,6 +344,13 @@ export class Oneiron {
     return {
       client: (key) => new Oneiron(call(() => native.client(key))),
       localClient: () => new Oneiron(call(() => native.localClient())),
+      bootstrapSharedEnv: (acceptance, entry, dimensions, configFile) =>
+        wrapBootstrapOutcome(
+          call(() =>
+            native.bootstrapSharedEnv(unwrapSharedAcceptance(acceptance), entry, dimensions, configFile),
+          ),
+        ),
+      retainSharedEnv: (entry) => call(() => native.retainSharedEnv(entry)),
       request: (request) => call(() => native.request(request)),
       requestArtifact: (request) => call(() => native.requestArtifact(request)),
       connect: () => held(call(() => native.connect())),
@@ -425,6 +453,27 @@ export class Oneiron {
       ...(pending.hook ? {hook: pending.hook} : {}),
     }
     return this.#call(() => this.#client.retry(refusal, verb, input))
+  }
+
+  /**
+   * Accepts the invitee's invitation through this connected handle, keeping
+   * the call's original HTTPS value. The request keeps wire spelling.
+   */
+  acceptSharedInvitationHttps(request: SharedInvitationAcceptRequest): SharedInvitationAcceptance {
+    const native = this.#call(() => this.#client.acceptSharedInvitationHttps(request))
+    return wrapSharedAcceptance(native, (inner) => new Oneiron(inner))
+  }
+
+  /**
+   * Retries a pending acceptance under its original invocation. `pendingJson`
+   * is the exact original `MemoryError` JSON text (`OneironError.nativeErrorJson`).
+   */
+  retrySharedInvitationHttps(
+    pendingJson: string,
+    request: SharedInvitationAcceptRequest,
+  ): SharedInvitationAcceptance {
+    const native = this.#call(() => this.#client.retrySharedInvitationHttpsJson(pendingJson, request))
+    return wrapSharedAcceptance(native, (inner) => new Oneiron(inner))
   }
 
   /**
@@ -3788,5 +3837,11 @@ export type { HookStop } from "./error.js"
 export type { LegalHoldNotice } from "./facade-types.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
+export type SharedInvitationAcceptance = SharedAcceptanceOf<Oneiron>
+export type {
+  SharedEnvBootstrapOutcome,
+  SharedEnvEntry,
+  SharedInvitationAcceptRequest,
+} from "./shared-env.js"
 
 export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskWho, TaskAskShort, TaskAskLadderPrediction, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskCanAskRequest, TaskAskPreflight, TaskAskPreflightRecipient, TaskAskPersonKind, TaskAskPersonEvidence, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEffectAuthorization, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait, TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"
