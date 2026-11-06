@@ -8,45 +8,51 @@
 //! unavailable, never answered by anything else. A call that runs a step or
 //! a run of its own (a callable skill, a reader child, a summary) recorded
 //! its subtree after its own row, which one row cannot replay; it is
-//! unavailable too, as is a call the live guest read through a view the
-//! record does not keep.
+//! unavailable too, as is a revealed secret's answer, which no capture keeps.
+//!
+//! A matched call is answered as the live guest read it (FIX 6351): the
+//! recorded outcome with the response the step's replay context kept for its
+//! row, a verb hook's view in the outcome's place or none, and the wake
+//! pass's budget envelope or none. A call whose response the context does
+//! not hold stops the arm before the guest reads the bare outcome.
 //!
 //! The program's results are the arm's own: its streamed result goes to the
 //! arm's store, a value it stores or a reply too large for one message is a
 //! result of the arm, bound in the arm alone, and its reads (`describe`,
 //! `can`, the facets, a chunk) answer from the arm's store and the run's
 //! results and observations before the step, frozen with their taint before
-//! the arm started.
+//! the arm started. A read of another run's result (a reader child's
+//! source, a child's finding) answers as the step's live read did, from the
+//! step's read context (FIX 6352).
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::super::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use super::source::{FrozenReply, PreparedShadowStep};
 use super::store::ShadowBodyStore;
 use super::types::{
-    ShadowBodyRef, ShadowTraceEntry, ShadowTraceKind, ShadowUnavailable,
-    ShadowUnavailableReason as Reason,
+    ShadowTraceEntry, ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason as Reason,
 };
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayRecord,
-    CodeRunResultBinding, ResultFacet, ResultOccurrence, ResultRead, ResultReply, SelfCall,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, resolve_result, result_cannot,
-    result_refusal, unknown_handle,
+    CodeRunResultBinding, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
+    reveals_secret,
 };
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall,
-    JsResultTarget, RESULT_READ_ROOT, SelfDispatchResponse, StepCancellation,
-    bridge_result_output_path, is_result_output_path, parse_result_read_path,
-    store_result_output_path,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream, JsResultCall, RESULT_READ_ROOT,
+    SelfDispatchResponse, StepCancellation, bridge_result_output_path, is_result_output_path,
 };
 use crate::limit_ask::{EngineLimit, EngineLimits, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
-use crate::store::BodySink;
-use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Error, Result};
 
 /// The taint a result reads under: its state and the secret scan's reason.
 type Taint = (ArtifactTaintState, Option<String>);
+
+mod results;
+mod streams;
+mod taint;
+use self::streams::ArmStreams;
 
 /// Where the arm's program reads its run's bodies back by path, as the
 /// executor names them.
@@ -67,96 +73,11 @@ struct ArmResult {
     own: bool,
 }
 
-/// The step's streamed result, written into the arm's store frame by frame.
-#[derive(Default)]
-pub(crate) struct ArmStreams {
-    console: Option<BodySink>,
-    finish: Option<BodySink>,
-    /// The value the program is passing to `store`, until the host takes it.
-    store: Option<BodySink>,
-    files: Vec<(String, BodySink)>,
-}
-
-impl ArmStreams {
-    /// Appends one frame to its target's body, as a run's host does: a
-    /// finish frame that starts an answer drops the answer before it, and a
-    /// store frame that starts a value drops any value no `store` took.
-    fn write(
-        &mut self,
-        store: &ShadowBodyStore,
-        stream: JsCodeModeStream<'_>,
-        frame: &[u8],
-    ) -> Result<()> {
-        let sink = match stream {
-            JsCodeModeStream::Console => &mut self.console,
-            JsCodeModeStream::Finish { start } => {
-                if start {
-                    self.finish = None;
-                }
-                &mut self.finish
-            }
-            JsCodeModeStream::Store { start } => {
-                if start {
-                    self.store = None;
-                }
-                &mut self.store
-            }
-            JsCodeModeStream::File(path) => {
-                let at = match self.files.iter().position(|(held, _)| held == path) {
-                    Some(at) => at,
-                    None => {
-                        self.files.push((path.to_owned(), store.sink()?));
-                        self.files.len() - 1
-                    }
-                };
-                return self.files[at].1.write(frame);
-            }
-        };
-        if sink.is_none() {
-            *sink = Some(store.sink()?);
-        }
-        match sink {
-            Some(sink) => sink.write(frame),
-            None => Err(Error::InvariantViolation("shadow arm stream sink missing")),
-        }
-    }
-
-    /// The step's bodies once it ran: the answer of a finished step, else
-    /// its console lines, and its files, with whatever the runtime returned
-    /// in its outcome instead of streaming it.
-    pub(crate) fn into_bodies(
-        self,
-        store: &ShadowBodyStore,
-        outcome: &JsCodeModeStepOutcome,
-    ) -> Result<(BodySink, Vec<(String, BodySink)>)> {
-        let observation = if outcome.done {
-            self.finish
-        } else {
-            self.console
-        };
-        let mut observation = match observation {
-            Some(sink) => sink,
-            None => store.sink()?,
-        };
-        observation.write(outcome.observation.as_bytes())?;
-        let mut files = self.files;
-        for output in &outcome.outputs {
-            let mut sink = store.sink()?;
-            sink.write(&output.bytes)?;
-            files.push((output.path.clone(), sink));
-        }
-        Ok((observation, files))
-    }
-
-    /// What a step that failed streamed before it failed: its console
-    /// lines, else its answer so far, and its files, each kept partial.
-    pub(crate) fn into_partial(self) -> (Option<BodySink>, Vec<(String, BodySink)>) {
-        (self.console.or(self.finish), self.files)
-    }
-}
-
 /// The arm's host bridge for one captured step.
 pub(crate) struct ShadowBridgeHost<'a> {
+    /// The step it replays, its replay context the responses it answers
+    /// with (FIX 6351).
+    step: &'a PreparedShadowStep,
     cursor: CodeRunReplayCursor<'a>,
     window: &'a CodeRunReplayRecord,
     replies: &'a [FrozenReply],
@@ -220,6 +141,7 @@ impl<'a> ShadowBridgeHost<'a> {
             })
             .collect();
         Ok(Self {
+            step: prepared,
             cursor: CodeRunReplayCursor::from_position(&prepared.window, prepared.bridge_start)?,
             window: &prepared.window,
             replies: &prepared.replies,
@@ -255,15 +177,6 @@ impl<'a> ShadowBridgeHost<'a> {
         std::mem::take(&mut self.streams)
     }
 
-    /// The results the arm stored, each by its ref.
-    pub(crate) fn own_results(&self) -> Vec<ShadowBodyRef> {
-        self.results
-            .iter()
-            .filter(|result| result.own)
-            .map(|result| ShadowBodyRef::of(&result.output, result.secret.as_deref()))
-            .collect()
-    }
-
     /// Whether the arm's bridge is halted: past a recorded hard failure, or
     /// once the arm stopped.
     fn halted(&self) -> bool {
@@ -292,281 +205,6 @@ impl<'a> ShadowBridgeHost<'a> {
             self.stopped = Some(unavailable);
         }
         error
-    }
-
-    /// The arm's live result names, oldest first: its binds over the run's.
-    fn live_bindings(&self) -> Vec<&CodeRunResultBinding> {
-        let mut live: Vec<_> = self
-            .bindings
-            .iter()
-            .filter(|binding| !self.bound.iter().any(|held| held.name == binding.name))
-            .collect();
-        live.extend(&self.bound);
-        live
-    }
-
-    /// The next free automatic name: `r<n>`, counting from one past the
-    /// live names, past any name taken.
-    fn next_auto_name(&self) -> String {
-        let live = self.live_bindings();
-        (live.len() + 1..)
-            .map(|n| format!("r{n}"))
-            .find(|name| !live.iter().any(|binding| binding.name == *name))
-            .unwrap_or_default()
-    }
-
-    /// Binds `name` to the result `handle` at its occurrence `path`; a
-    /// rebind replaces the name's entry in place.
-    fn bind(&mut self, name: String, handle: String, path: String) {
-        let binding = CodeRunResultBinding::new(name, handle, path);
-        match self.bound.iter_mut().find(|held| held.name == binding.name) {
-            Some(held) => *held = binding,
-            None => self.bound.push(binding),
-        }
-    }
-
-    /// A read of the arm's results is admitted as a run's is: never past a
-    /// halted bridge or a declined TASK.
-    fn admit_read(&self) -> Result<()> {
-        let refused =
-            |code: &str| Error::InvalidConfig(format!("recorded output read refused: {code}"));
-        if self.halted() {
-            return Err(refused("host_bridge_halted"));
-        }
-        if self.declined {
-            return Err(refused("task_declined"));
-        }
-        Ok(())
-    }
-
-    /// The arm's result `target` names, read as a run's read is, with the
-    /// taint it reads under, or the refusal the guest gets.
-    fn checked(
-        &self,
-        target: &JsResultTarget,
-    ) -> Result<std::result::Result<(ResultRead, Taint), Value>> {
-        self.admit_read()?;
-        let live = self.live_bindings();
-        let outputs = self.results.iter().map(|result| &result.output);
-        let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
-        else {
-            return Ok(Err(unknown_handle(&live)));
-        };
-        let taint = self.taint_of(&output);
-        Ok(
-            ResultRead::in_arm(self.run_id, output, name, target.range, taint.clone())
-                .map(|read| (read, taint)),
-        )
-    }
-
-    /// The taint the arm holds `output` under.
-    fn taint_of(&self, output: &CodeRunRawOutput) -> Taint {
-        self.results
-            .iter()
-            .find(|held| held.output.path == output.path && held.output.handle == output.handle)
-            .map_or((ArtifactTaintState::Clean, None), |held| {
-                (held.state, held.secret.clone())
-            })
-    }
-
-    /// Finishes the body `sink` wrote as a stored value of the arm, named by
-    /// the digest of the bytes the wall admitted (FIX 5718 part 3), the
-    /// taint of `inherit` on it, and binds it to `name`, or to the next free
-    /// `r<n>`: the result and its card.
-    fn bind_stored(
-        &mut self,
-        sink: BodySink,
-        name: Option<String>,
-        inherit: &[Taint],
-    ) -> Result<(CodeRunRawOutput, Value)> {
-        // The same ordinal live execution names this store with (FIX 1393):
-        // the step-start full-output base plus the arm's own stores so far.
-        // A replayed store then reuses its frozen occurrence and taint
-        // instead of colliding with a later ordinal.
-        let ordinal = self.output_ordinal_base
-            + self.spilled
-            + self.results.iter().filter(|held| held.own).count();
-        let (output, secret) = self.store.finish_named(
-            |digest| store_result_output_path(digest, ordinal),
-            sink,
-            true,
-        )?;
-        let taint = match self
-            .results
-            .iter()
-            .find(|held| held.output.path == output.path)
-        {
-            Some(held) => (held.state, held.secret.clone()),
-            None => {
-                let taint = stored_taint(secret, inherit);
-                self.results.push(ArmResult {
-                    output: output.clone(),
-                    state: taint.0,
-                    secret: taint.1.clone(),
-                    own: true,
-                });
-                taint
-            }
-        };
-        let name = name.unwrap_or_else(|| self.next_auto_name());
-        self.bind(name.clone(), output.handle.clone(), output.path.clone());
-        let card = match ResultRead::in_arm(self.run_id, output.clone(), Some(name), None, taint) {
-            Ok(read) => read.arm_card(self.store)?,
-            Err(_) => return Err(Error::InvariantViolation("a whole result has no range")),
-        };
-        Ok((output, card))
-    }
-
-    /// `store(value, name?, {sources?, receipt?})`, as a run's host stores
-    /// it, in the arm alone. A fold's receipt names reader jobs, which the
-    /// arm has none of: unavailable.
-    fn store_result(
-        &mut self,
-        name: Option<String>,
-        sources: &[String],
-        receipt: bool,
-    ) -> Result<Value> {
-        let sink = self
-            .streams
-            .store
-            .take()
-            .ok_or_else(|| Error::InvalidConfig("store sent no body".to_owned()))?;
-        if self.halted() {
-            return Ok(result_refusal("host_bridge_halted"));
-        }
-        if self.declined {
-            return Ok(result_refusal("task_declined"));
-        }
-        if name
-            .as_deref()
-            .is_some_and(|name| !CodeRunResultBinding::is_valid_name(name))
-        {
-            return Ok(result_refusal("invalid_result_name"));
-        }
-        if receipt {
-            let nested = ShadowUnavailable::new(Reason::NestedReplayUnsupported, "fold_receipt");
-            return Err(self.stop(nested));
-        }
-        let mut inherit = Vec::with_capacity(sources.len());
-        for source in sources {
-            match self.checked(&JsResultTarget::parse(source))? {
-                Ok((_, taint)) => inherit.push(taint),
-                Err(refused) => return Ok(refused),
-            }
-        }
-        let (_, card) = self.bind_stored(sink, name, &inherit)?;
-        Ok(json!({ "output": card }))
-    }
-
-    /// `describe(r)`: the card of one of the arm's results.
-    fn describe_result(&self, target: &JsResultTarget) -> Result<Value> {
-        Ok(match self.checked(target)? {
-            Ok((read, _)) => json!({ "output": read.arm_card(self.store)? }),
-            Err(refused) => refused,
-        })
-    }
-
-    /// `can({read: r})`: the verdict a read's checks give. With `child`, a
-    /// readable result is also asked of a reader spawn, which the arm runs
-    /// none of: unavailable.
-    fn can_read_result(&mut self, target: &JsResultTarget, child: bool) -> Result<Value> {
-        let verdict = match self.checked(target)? {
-            Ok((read, _)) => read.preflight(),
-            Err(refused) => result_cannot(refused),
-        };
-        if !child || verdict["can"] != json!(true) {
-            return Ok(json!({ "output": verdict }));
-        }
-        let nested = ShadowUnavailable::new(Reason::NestedReplayUnsupported, "reader_spawn");
-        Err(self.stop(nested))
-    }
-
-    /// One facet of one of the arm's results. A query whose selection is
-    /// past one reply is stored as a new result of the arm.
-    fn read_result(
-        &mut self,
-        target: &JsResultTarget,
-        facet: ResultFacet,
-        input: Value,
-    ) -> Result<Value> {
-        let read = match self.checked(target)? {
-            Ok((read, _)) => read,
-            Err(refused) => return Ok(refused),
-        };
-        let mut sink = match facet {
-            ResultFacet::Query => Some(self.store.sink()?),
-            _ => None,
-        };
-        let reply = read.arm_read(self.store, &self.watch, facet, input, sink.as_mut())?;
-        Ok(match reply {
-            ResultReply::Output(output) => json!({ "output": output }),
-            ResultReply::Denied(refused) => refused,
-            ResultReply::Spilled { count, next } => {
-                let sink = sink.ok_or(Error::InvariantViolation(
-                    "a result read spilled with no sink",
-                ))?;
-                let (_, card) = self.bind_stored(sink, None, &[])?;
-                let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
-                if let Some(next) = next {
-                    output["next"] = next;
-                }
-                json!({ "output": output })
-            }
-        })
-    }
-
-    /// One chunk of a body at `offset`, while the arm holds it clean; a
-    /// body frozen withheld stops the arm, since its live read read it.
-    fn read_chunk(
-        &mut self,
-        output: &CodeRunRawOutput,
-        clean: bool,
-        offset: u64,
-    ) -> Result<Option<Vec<u8>>> {
-        if offset > output.raw_len {
-            return Err(Error::InvalidConfig(
-                "recoverable output offset exceeds source".to_owned(),
-            ));
-        }
-        if !clean {
-            let withheld = ShadowUnavailable::new(Reason::SourceWithheld, "recoverable_output");
-            return Err(self.stop(withheld));
-        }
-        self.store
-            .read_range(output.output_ref(), offset, self.reads.chunk_bytes)?
-            .ok_or(Error::CorruptedIndex("shadow arm output bytes"))
-            .map(Some)
-    }
-
-    /// A chunk of one of the arm's stored results, by its read path. The
-    /// path names the occurrence when the card gave one: a same-byte
-    /// result reads its own occurrence, never the first with its bytes.
-    fn read_stored_result(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
-        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
-            return Err(Error::InvalidConfig(
-                "stored result is outside this run".to_owned(),
-            ));
-        };
-        let found = self.results.iter().find_map(|held| {
-            if held.output.output_ref() != wanted {
-                return None;
-            }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), &held.output)
-                    .ok()?
-                    .id();
-                if &mine != occurrence {
-                    return None;
-                }
-            }
-            Some((held.output.clone(), !held.state.is_tainted()))
-        });
-        let Some((output, clean)) = found else {
-            return Err(Error::InvalidConfig(
-                "stored result is outside this run".to_owned(),
-            ));
-        };
-        self.read_chunk(&output, clean, offset)
     }
 
     /// One matched recorded call, for the bridge trace.
@@ -713,6 +351,14 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             }
         };
         self.record_matched(at)?;
+        // The live guest read this row through the response the step's
+        // replay context kept for it (FIX 6351); with none kept, the arm
+        // stops before its guest reads the bare outcome.
+        let step = self.step;
+        let response = match step.guest_response(at as u64) {
+            Ok(response) => response,
+            Err(missing) => return Err(self.stop(missing)),
+        };
         // A matched bridge answer live spilled as a body shifts every later
         // store ordinal: the arm counts it, as live counts its captured
         // outputs, or the next store mints a new path instead of reusing
@@ -771,8 +417,8 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         }
         Ok(SelfDispatchResponse {
             outcome,
-            budget: None,
-            view: None,
+            budget: response.budget,
+            view: response.view.clone(),
         })
     }
 
@@ -802,7 +448,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
 /// report and a summary run a step or a run of their own, whose calls were
 /// recorded after the call's own row, and one matched row cannot replay
 /// them; a revealed secret's answer reached the live guest through a view
-/// the record does not keep, by design.
+/// no replay context keeps, by design (FIX 6351).
 fn unreplayable(call: &SelfCall) -> Option<ShadowUnavailable> {
     match call {
         SelfCall::SkillsCall(_)
@@ -812,9 +458,10 @@ fn unreplayable(call: &SelfCall) -> Option<ShadowUnavailable> {
             Reason::NestedReplayUnsupported,
             call.effect().as_str(),
         )),
-        SelfCall::AgentVerb(verb) if verb.verb == AgentVerb::RevealWait => Some(
-            ShadowUnavailable::new(Reason::GuestViewCaptureMissing, "reveal_wait"),
-        ),
+        _ if reveals_secret(call) => Some(ShadowUnavailable::new(
+            Reason::GuestViewCaptureMissing,
+            "reveal_wait",
+        )),
         _ => None,
     }
 }
@@ -832,19 +479,6 @@ fn response_erased(outcome: &SelfDispatchOutcome) -> bool {
 /// TASK was declined: the step closes the run, and fails nothing.
 fn declined_halt(outcome: &SelfDispatchOutcome) -> bool {
     matches!(outcome, SelfDispatchOutcome::Failed(failed) if failed.error == "task_declined")
-}
-
-/// The taint a value the arm stored reads under: the secret scan's mark on
-/// its own bytes, else the first taint among the results it was made from.
-fn stored_taint(secret: Option<&'static str>, inherit: &[Taint]) -> Taint {
-    if let Some(reason) = secret {
-        return (ArtifactTaintState::TaintedLive, Some(reason.to_owned()));
-    }
-    inherit
-        .iter()
-        .find(|(state, _)| state.is_tainted())
-        .cloned()
-        .unwrap_or((ArtifactTaintState::Clean, None))
 }
 
 /// An offset as a read path writes it: decimal digits, no sign, no
