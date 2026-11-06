@@ -1,6 +1,5 @@
 //! Vault-root preflight pair classifier plus descriptor-bound root and LMDB header validators.
 
-use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
 #[cfg(target_os = "linux")]
@@ -630,16 +629,18 @@ pub fn preflight_rejected_aliased_root(error: &Error) -> bool {
     )
 }
 
-pub fn duplicate_open_root(
-    open_paths: &HashMap<PathBuf, Option<VaultRootIdentity>>,
+/// The open store, other than `path`, whose root overlaps `identity`:
+/// `open_paths` names each open store's path and the root identity it
+/// holds, if any.
+pub fn duplicate_open_root<'a>(
+    open_paths: impl IntoIterator<Item = (&'a PathBuf, Option<&'a VaultRootIdentity>)>,
     path: &Path,
     identity: &VaultRootIdentity,
 ) -> Option<PathBuf> {
-    open_paths.iter().find_map(|(open_path, open_identity)| {
-        (open_path != path
-            && open_identity
-                .as_ref()
-                .is_some_and(|open| open.overlaps(identity)))
-        .then(|| open_path.clone())
-    })
+    open_paths
+        .into_iter()
+        .find_map(|(open_path, open_identity)| {
+            (open_path != path && open_identity.is_some_and(|open| open.overlaps(identity)))
+                .then(|| open_path.clone())
+        })
 }

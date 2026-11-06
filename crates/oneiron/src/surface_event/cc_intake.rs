@@ -311,18 +311,14 @@ fn record_cc_sender_membership_in_txn(
     if crate::comm::validate_comm_party_key(&party).is_err() {
         return Ok(());
     }
-    crate::comm::record_comm_thread_event_in_txn(
-        vault,
-        txn,
-        thread_ref,
-        &party,
-        true,
-        event.received_at,
-    )
-    .map_err(|error| match error {
-        crate::write_envelope::communication::CommError::Engine(error) => error,
-        _ => Error::InvalidClaimBody("CC thread membership refused"),
-    })
+    vault
+        .store
+        .record_hooks
+        .record_comm_thread_event_in_txn(vault, txn, thread_ref, &party, true, event.received_at)
+        .map_err(|error| match error {
+            crate::write_envelope::communication::CommError::Engine(error) => error,
+            _ => Error::InvalidClaimBody("CC thread membership refused"),
+        })
 }
 
 /// The attempt that already owns `event`'s identity tuple when it was
