@@ -27,13 +27,15 @@
 //!   holds no trace of it: the root is in no anchor's roots here.
 //! - A witnessed anchor chain head this fold does not hold valid is proven
 //!   lag when this install holds no trace of it and no other head of that
-//!   anchor's chain, as before; or when it is stored here and waits
-//!   ([`head_waits`]): its own signed parents are the ones the witness names,
-//!   and every row beneath it this fold does not hold valid is stored and
-//!   waits in turn, down to rows this install does not hold at all, never a
-//!   stored row whose parents are all folded here. A head of that chain this
-//!   fold does hold is then lag only as a folded row that walk met beneath
-//!   the witnessed head.
+//!   anchor's chain, as before; or when it holds the head's signed entry,
+//!   stored or carried by the image it adopted ([`SignedRows`]), and that
+//!   entry waits ([`waits_on_absent_rows`]): its own signed parents are the
+//!   ones the witness names, and every row beneath it this fold does not
+//!   hold valid is a signed entry that waits in turn, down to rows this
+//!   install holds no trace of, never an entry whose parents are all folded
+//!   here. A head of that chain this fold does hold is then lag only where
+//!   it is in the witnessed head's signed ancestry ([`signed_beneath`]),
+//!   below folded rows too: a proof apart from the wait.
 //! - An accepted roster revision other than the witnessed one is proven lag
 //!   only beside such a lagging chain head of the target, and only as the
 //!   standing of the target's own answers: both accepted revisions, where
@@ -47,8 +49,10 @@
 //! inclusion alone, proves nothing: a stored head proves its wait only by
 //! its own signature over the parents the witness names.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
+use std::sync::Arc;
 
+use super::super::adopted_evidence::AdoptedEvidence;
 use super::*;
 use crate::error::Result;
 
@@ -74,9 +78,10 @@ pub(crate) enum RootBasisCheck {
 /// The witness a root request on `target` carries for `change`, built from
 /// this install's `fold` in the recorder's transaction `txn` (FIX 6556): the
 /// heads and the bound anchor of [`AuthorityFold::root_work_basis`], and the
-/// parents each anchor chain head's stored entry names. A head this install
-/// does not store, or that names no parent, gets none, and a target that
-/// stores it unfolded cannot prove its wait.
+/// parents each anchor chain head's signed entry names, stored here or
+/// carried by the image this install adopted ([`SignedRows`]). A head this
+/// install holds no signed entry of, or that names no parent, gets none, and
+/// a target that holds it unfolded cannot prove its wait.
 pub(crate) fn root_work_witness_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -85,8 +90,9 @@ pub(crate) fn root_work_witness_in_txn(
     change: RootChange,
 ) -> Result<RootRevisionBasis> {
     let mut basis = fold.root_work_basis(target, change);
+    let mut rows = SignedRows::default();
     for entry in basis.anchored.values() {
-        if let Some(row) = stored_row(store, txn, entry)?
+        if let RowHere::Signed(row) = rows.read(store, txn, entry)?
             && !row.parent_hashes.is_empty()
         {
             basis
@@ -139,6 +145,7 @@ pub(crate) fn check_root_basis_in_txn(
     if basis.roots.difference(&here.roots).any(held_root) {
         return Ok(RootBasisCheck::Moved);
     }
+    let mut rows = SignedRows::default();
     let mut marks_lag = false;
     for (anchor, entry) in &basis.anchored {
         let held = here.anchored.get(anchor);
@@ -148,10 +155,19 @@ pub(crate) fn check_root_basis_in_txn(
         if fold.valid_entries.contains(entry) {
             return Ok(RootBasisCheck::Moved);
         }
-        let lags = match head_waits(store, txn, fold, entry, basis.parents.get(entry))? {
-            HeadHere::Absent => held.is_none(),
-            HeadHere::Waits { beneath } => held.is_none_or(|held| beneath.contains(held)),
-            HeadHere::Otherwise => false,
+        let lags = match rows.read(store, txn, entry)? {
+            RowHere::Absent => held.is_none(),
+            RowHere::Held => false,
+            RowHere::Signed(row) => {
+                let signed: BTreeSet<AuthorityEntryHash> =
+                    row.parent_hashes.iter().copied().collect();
+                basis.parents.get(entry) == Some(&signed)
+                    && waits_on_absent_rows(&mut rows, store, txn, fold, &row)?
+                    && match held {
+                        None => true,
+                        Some(held) => signed_beneath(&mut rows, store, txn, &row, held)?,
+                    }
+            }
         };
         if !lags {
             return Ok(RootBasisCheck::Moved);
@@ -159,7 +175,7 @@ pub(crate) fn check_root_basis_in_txn(
         marks_lag = true;
     }
     if here.roster_trusted != basis.roster_trusted {
-        let waits = marks_lag && accepted_roster_waits(store, txn, fold, target, basis)?;
+        let waits = marks_lag && accepted_roster_waits(&mut rows, store, txn, fold, target, basis)?;
         if !waits {
             return Ok(RootBasisCheck::Moved);
         }
@@ -171,66 +187,75 @@ pub(crate) fn check_root_basis_in_txn(
     })
 }
 
-/// What this install holds of a witnessed anchor chain head its fold does
-/// not hold valid.
-enum HeadHere {
-    /// No trace: not stored here.
-    Absent,
-    /// Stored with the parents the witness names, and waiting on rows this
-    /// install does not hold; `beneath` is every row the walk met that this
-    /// fold holds valid.
-    Waits {
-        beneath: BTreeSet<AuthorityEntryHash>,
-    },
-    /// Stored, and either the witness names no parents for it, or names
-    /// others than its signed entry does, or it or a row beneath it would
-    /// have folded here: it was judged otherwise.
-    Otherwise,
-}
-
-/// Whether the witnessed head `entry`, which this fold does not hold valid,
-/// is stored here and waits (FIX 6556): its own signed parents are
-/// `witnessed`, and every stored row the walk from them meets that this fold
-/// does not hold valid names a parent the fold does not hold valid either.
-/// The walk reads each row at most once and ends at rows this fold holds
-/// valid and rows not stored here, which are what it waits on.
-fn head_waits(
+/// Whether the signed entry `head`, which this fold does not hold valid,
+/// waits here (FIX 6556): it names a parent this fold does not hold valid,
+/// and so does every signed entry beneath it that this fold does not hold
+/// valid, down to rows this install holds no trace of, which are what it
+/// waits on. An entry whose parents are all folded here was judged here,
+/// and a row held here without a signed entry to read proves nothing: either
+/// is no wait. Each row is read at most once.
+fn waits_on_absent_rows(
+    rows: &mut SignedRows,
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
-    entry: &AuthorityEntryHash,
-    witnessed: Option<&BTreeSet<AuthorityEntryHash>>,
-) -> Result<HeadHere> {
-    let Some(row) = stored_row(store, txn, entry)? else {
-        return Ok(HeadHere::Absent);
-    };
-    let signed: BTreeSet<AuthorityEntryHash> = row.parent_hashes.iter().copied().collect();
-    if witnessed != Some(&signed) {
-        return Ok(HeadHere::Otherwise);
-    }
-    let mut beneath = BTreeSet::new();
-    let mut met = BTreeSet::from([*entry]);
-    let mut stored = vec![row];
-    while let Some(row) = stored.pop() {
-        if row
+    head: &AuthorityLogEntry,
+) -> Result<bool> {
+    let folds_here = |entry: &AuthorityLogEntry| {
+        entry
             .parent_hashes
             .iter()
             .all(|parent| fold.valid_entries.contains(parent))
-        {
-            return Ok(HeadHere::Otherwise);
+    };
+    if folds_here(head) {
+        return Ok(false);
+    }
+    let mut met = BTreeSet::new();
+    let mut unfolded = head.parent_hashes.clone();
+    while let Some(hash) = unfolded.pop() {
+        if fold.valid_entries.contains(&hash) || !met.insert(hash) {
+            continue;
         }
-        for parent in &row.parent_hashes {
-            if !met.insert(*parent) {
-                continue;
-            }
-            if fold.valid_entries.contains(parent) {
-                beneath.insert(*parent);
-            } else if let Some(row) = stored_row(store, txn, parent)? {
-                stored.push(row);
+        match rows.read(store, txn, &hash)? {
+            RowHere::Absent => {}
+            RowHere::Held => return Ok(false),
+            RowHere::Signed(row) => {
+                if folds_here(&*row) {
+                    return Ok(false);
+                }
+                unfolded.extend(row.parent_hashes);
             }
         }
     }
-    Ok(HeadHere::Waits { beneath })
+    Ok(true)
+}
+
+/// Whether `held` is in the signed ancestry of `head` (FIX 6556): among its
+/// parents, or beneath one through signed entries this install reads,
+/// folded or not, breadth first so a recent row is found near the head. A
+/// row it holds no signed entry of ends its branch, and only a row met
+/// counts.
+fn signed_beneath(
+    rows: &mut SignedRows,
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    head: &AuthorityLogEntry,
+    held: &AuthorityEntryHash,
+) -> Result<bool> {
+    let mut met = BTreeSet::new();
+    let mut queue: VecDeque<AuthorityEntryHash> = head.parent_hashes.iter().copied().collect();
+    while let Some(hash) = queue.pop_front() {
+        if hash == *held {
+            return Ok(true);
+        }
+        if !met.insert(hash) {
+            continue;
+        }
+        if let RowHere::Signed(row) = rows.read(store, txn, &hash)? {
+            queue.extend(row.parent_hashes);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether the target's accepted roster revision here and the witnessed one
@@ -240,6 +265,7 @@ fn head_waits(
 /// lagging chain head of the target, that standing waits on the marks this
 /// install has not folded yet.
 fn accepted_roster_waits(
+    rows: &mut SignedRows,
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
@@ -260,21 +286,68 @@ fn accepted_roster_waits(
     if !fold.valid_entries.contains(&witnessed) {
         return Ok(false);
     }
-    Ok(stored_row(store, txn, &witnessed)?.is_some_and(|row| {
-        matches!(&row.op, AuthorityOp::MachineProfile(profile)
-            if profile.machine == target && own_answer(profile.carrier))
-    }))
+    let RowHere::Signed(row) = rows.read(store, txn, &witnessed)? else {
+        return Ok(false);
+    };
+    Ok(matches!(&row.op, AuthorityOp::MachineProfile(profile)
+        if profile.machine == target && own_answer(profile.carrier)))
 }
 
-/// The authority row stored here at `hash`, when the entry it holds hashes
-/// to `hash`: a signed entry, whose parents its signature covers.
-fn stored_row(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    hash: &AuthorityEntryHash,
-) -> Result<Option<AuthorityLogEntry>> {
-    let Some(row) = super::super::stored_authority_row(store, txn, hash)? else {
-        return Ok(None);
-    };
-    Ok((authority_entry_hash(&row)? == *hash).then_some(row))
+/// What this install holds of one authority row by its hash.
+enum RowHere {
+    /// Its signed entry, stored here or carried by the image this install
+    /// adopted, and hashing to the row's hash: its parents are what its
+    /// signature covers.
+    Signed(Box<AuthorityLogEntry>),
+    /// Held, but with no signed entry to read: a row the adopted image
+    /// covers without carrying its body, or a stored row whose entry hashes
+    /// otherwise.
+    Held,
+    /// No trace: neither stored nor covered by an adopted image.
+    Absent,
+}
+
+/// The signed rows a basis reads (FIX 6556): each row this install stores,
+/// else the body the image it adopted carries of a covered row, both
+/// decoded with their signatures verified. The adopted evidence is read at
+/// the first row not stored here.
+#[derive(Default)]
+struct SignedRows(Option<Option<Arc<AdoptedEvidence>>>);
+
+impl SignedRows {
+    /// What this install holds of the row `hash`.
+    fn read(
+        &mut self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        hash: &AuthorityEntryHash,
+    ) -> Result<RowHere> {
+        if let Some(row) = super::super::stored_authority_row(store, txn, hash)? {
+            return signed_row(row, hash);
+        }
+        if self.0.is_none() {
+            self.0 = Some(super::super::adopted_evidence_in_txn(store, txn)?);
+        }
+        let Some(Some(evidence)) = &self.0 else {
+            return Ok(RowHere::Absent);
+        };
+        if let Some(body) = evidence.body(hash) {
+            return signed_row(body.clone(), hash);
+        }
+        Ok(if evidence.rows().contains_key(hash) {
+            RowHere::Held
+        } else {
+            RowHere::Absent
+        })
+    }
+}
+
+/// `row`, read as the row `hash`: signed evidence when its entry hashes to
+/// `hash`, else a row held here that proves nothing.
+fn signed_row(row: AuthorityLogEntry, hash: &AuthorityEntryHash) -> Result<RowHere> {
+    Ok(if authority_entry_hash(&row)? == *hash {
+        RowHere::Signed(Box::new(row))
+    } else {
+        RowHere::Held
+    })
 }
