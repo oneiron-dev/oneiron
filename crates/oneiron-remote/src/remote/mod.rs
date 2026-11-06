@@ -50,7 +50,7 @@ mod wire;
 
 use self::origin::{bearer_header, normalize_origin};
 pub use self::app_action::prepare_app_action;
-pub use self::pairing::{PreparedPairing, replace_paired_slip};
+pub use self::pairing::{PreparedPairing, paired_binding_key, replace_paired_slip};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
     ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,

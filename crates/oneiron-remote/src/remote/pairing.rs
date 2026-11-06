@@ -61,6 +61,16 @@ pub(super) fn credential_string(slip_token: &str, key: &SigningKey) -> Option<St
         .map(|slip| format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())))
 }
 
+/// Returns the public binding key from a credential retained by this app.
+///
+/// A bare bearer has no connection key and returns `None`. This only reads the
+/// local key; it does not verify the slip or grant. Give the owner the returned
+/// public key, never the credential itself.
+pub fn paired_binding_key(credential: &str) -> Result<Option<[u8; 32]>, MemoryError> {
+    let (_, key) = parse_credential(credential)?;
+    Ok(key.map(|key| key.verifying_key().to_bytes()))
+}
+
 /// Keeps the app's existing connection key while adopting a separately issued slip.
 ///
 /// This formats a credential; it neither issues nor verifies a slip or grant.
@@ -110,6 +120,20 @@ pub struct PreparedPairing {
 
 impl PreparedPairing {
     pub fn new(link: &str) -> Result<Self, MemoryError> {
+        Self::with_key(link, || SigningKey::generate(&mut rand_core::OsRng))
+    }
+
+    /// Prepares pairing with a connection key retained by this app.
+    ///
+    /// The seed is the app's private Ed25519 key, not a grant or a bearer token.
+    /// The app owns its generation, storage and delivery to this process. Never
+    /// place it in a published snapshot, browser state, logs or request body.
+    /// The owner-delivered link and all ordinary redemption checks still apply.
+    pub fn from_seed(link: &str, seed: [u8; 32]) -> Result<Self, MemoryError> {
+        Self::with_key(link, || SigningKey::from_bytes(&seed))
+    }
+
+    fn with_key(link: &str, key: impl FnOnce() -> SigningKey) -> Result<Self, MemoryError> {
         use ed25519_dalek::Signer;
         // The link and its code are never echoed: the code is the enrollment grant
         // until it is spent.
@@ -122,7 +146,7 @@ impl PreparedPairing {
         let (origin, code, holder_ref, pin_ref) =
             oneiron::authority::parse_pinned_pairing_link(link).map_err(|_| malformed())?;
         let base_url = normalize_origin(&origin)?;
-        let key = SigningKey::generate(&mut rand_core::OsRng);
+        let key = key();
         let binding_key = key.verifying_key().to_bytes();
         let transcript = oneiron::authority::pairing_binding_transcript_pinned(
             &code,
