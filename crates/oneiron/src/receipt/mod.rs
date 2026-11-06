@@ -59,6 +59,7 @@ pub use self::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
 };
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
+pub(crate) use self::field_set::append_task_type_parent_fields;
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
     FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, FIELD_LEASE_GENERATION,

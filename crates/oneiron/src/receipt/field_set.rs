@@ -358,7 +358,7 @@ pub fn append_task_type_fields(
 
 /// Records the nearest-parent-first lineage frozen with a placement.
 /// An absent capture leaves `typeParents` unknown; a captured root has `[]`.
-pub(super) fn append_task_type_parent_fields(
+pub(crate) fn append_task_type_parent_fields(
     receipt: &mut ReceiptRecord,
     parents: &[crate::learning::TypeRef],
 ) -> Result<()> {

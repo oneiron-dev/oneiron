@@ -15,5 +15,15 @@ A captured root placement has an empty array. Undecodable optional capture data 
 unknown without refusing the dispatch. Low-level frozen dispatch inputs without an
 actual placement tree also leave the capture unknown.
 
-This covers native dispatch and its terminal attempt pack receipt. TASK lifecycle
-receipts and other context-pack assembly callers remain separate work.
+Native TASK creation also records the parents of its actual validation-time
+placement. The TASK body keeps this optional capture through its normal wire codec
+and body rewrites. Minters without an actual captured tree leave it unknown.
+
+A lifecycle receipt copies these parents only when the stored birth placement
+exactly matches its existing receipt type reference, including node and version.
+The receipt's brief-based type resolution and its existing errors stay unchanged.
+A different or revised brief is not relabelled with birth parents. Missing,
+undecodable, or unreadable optional capture stays unknown without refusing a call.
+The original receipt identity, projection, index, and writer order stay intact.
+
+Other context-pack assembly callers remain separate work.
