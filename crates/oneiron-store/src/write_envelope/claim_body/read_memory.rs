@@ -77,6 +77,7 @@ pub struct ClaimBodyRead {
     _memory: Option<MemoryLease>,
     value_memory: Option<MemoryLease>,
     predicate_memory: Option<MemoryLease>,
+    metadata_memory: Option<MemoryLease>,
 }
 
 impl ClaimBodyRead {
@@ -85,12 +86,14 @@ impl ClaimBodyRead {
         memory: Option<MemoryLease>,
         value_memory: Option<MemoryLease>,
         predicate_memory: Option<MemoryLease>,
+        metadata_memory: Option<MemoryLease>,
     ) -> Self {
         Self {
             body,
             _memory: memory,
             value_memory,
             predicate_memory,
+            metadata_memory,
         }
     }
 
@@ -107,6 +110,18 @@ impl ClaimBodyRead {
             lease.materialized(0, body.predicate.capacity() as u64);
             lease
         });
+        let metadata_memory = memory.map(|memory| {
+            let mut lease = memory.value_lease();
+            lease.materialized(
+                0,
+                metadata_storage_bytes(
+                    body.evidence.as_ref(),
+                    body.scope.as_ref(),
+                    body.session_tag.as_ref(),
+                ),
+            );
+            lease
+        });
         let memory = memory.map(|memory| {
             let mut lease = memory.memory.empty_lease();
             let bytes = body
@@ -116,12 +131,21 @@ impl ClaimBodyRead {
             lease.materialized(0, bytes);
             lease
         });
-        Self::new(body, memory, value_memory, predicate_memory)
+        Self::new(
+            body,
+            memory,
+            value_memory,
+            predicate_memory,
+            metadata_memory,
+        )
     }
 
-    /// Extracts a body only when its relationship, value and predicate guards are absent.
+    /// Extracts a body only when all of its backing guards are absent.
     pub fn try_into_unbound_body(self) -> Result<ClaimBody, Self> {
-        if self._memory.is_some() || self.value_memory.is_some() || self.predicate_memory.is_some()
+        if self._memory.is_some()
+            || self.value_memory.is_some()
+            || self.predicate_memory.is_some()
+            || self.metadata_memory.is_some()
         {
             return Err(self);
         }
@@ -281,6 +305,17 @@ impl Deref for ClaimStringRead {
     fn deref(&self) -> &Self::Target {
         &self.value
     }
+}
+
+pub(super) fn metadata_storage_bytes(
+    evidence: Option<&Value>,
+    scope: Option<&Value>,
+    session_tag: Option<&String>,
+) -> u64 {
+    evidence
+        .map_or(0, value_storage_bytes)
+        .saturating_add(scope.map_or(0, value_storage_bytes))
+        .saturating_add(session_tag.map_or(0, |tag| tag.capacity() as u64))
 }
 
 pub(super) fn value_storage_bytes(value: &Value) -> u64 {

@@ -356,16 +356,13 @@ fn decode_claim(
     // scope decision. Unknown sibling entries are not inspected.
     validate_known_claim_scope_entries(scope.as_ref())?;
 
+    let metadata_bytes = dom_memory.as_ref().map_or(0, |_| {
+        read_memory::metadata_storage_bytes(evidence.as_ref(), scope.as_ref(), session_tag.as_ref())
+    });
     if let Some(dom_memory) = &mut dom_memory {
         let retained = read_memory::value_storage_bytes(&claim_value)
             .saturating_add(predicate.capacity() as u64)
-            .saturating_add(
-                evidence
-                    .as_ref()
-                    .map_or(0, read_memory::value_storage_bytes),
-            )
-            .saturating_add(scope.as_ref().map_or(0, read_memory::value_storage_bytes))
-            .saturating_add(session_tag.as_ref().map_or(0, |tag| tag.capacity() as u64))
+            .saturating_add(metadata_bytes)
             .saturating_add(rel.as_ref().map_or(0, |rel| rel.storage_bytes()));
         dom_memory.shrink(dom_memory.bytes().saturating_sub(retained));
     }
@@ -413,6 +410,9 @@ fn decode_claim(
             .map_or(0, |ids| read_memory::relationship_bytes(ids.capacity()));
         memory.materialized(reserved, actual);
     }
+    let metadata_memory = dom_memory
+        .as_mut()
+        .map(|dom_memory| dom_memory.split_allocated(metadata_bytes));
     Ok(DecodedClaim::Body(ClaimBodyRead::new(
         ClaimBody {
             predicate,
@@ -439,5 +439,6 @@ fn decode_claim(
         memory,
         value_memory,
         predicate_memory,
+        metadata_memory,
     )))
 }
