@@ -204,6 +204,7 @@ impl SyncServer {
             // under the same admission, sequentially in this existing task
             // (FIX 11136). Active and left handles are both included.
             for vault in server.shared_vault_handles() {
+                let copies = Arc::clone(&vault);
                 let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
                 match tokio::task::spawn_blocking(move || vault.housekeeping(budget)).await {
                     Ok(Ok(report)) => log_report(&report),
@@ -216,6 +217,10 @@ impl SyncServer {
                             "shared-env housekeeping task failed"
                         );
                     }
+                }
+                let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+                if let Err(error) = copies.reuse_pending_home_claim_vectors(budget).await {
+                    tracing::warn!(kind = ?error.kind(), "shared-env home CLAIM vector catch-up failed");
                 }
             }
             let copies = Arc::clone(server.vault());
