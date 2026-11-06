@@ -8,6 +8,58 @@ use crate::{Result, Vault};
 const COMPARE_CHUNK_BYTES: usize = 64 * 1024;
 
 impl Vault {
+    /// Declines a widen whose reference was decoded into a file. Credential
+    /// validation still precedes the reference's existing hex64 shape.
+    pub fn reject_widen_reader(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        mut reference: impl Read,
+        reference_len: u64,
+    ) -> Result<ConsentReceipt> {
+        if let Some(credential) = credential {
+            self.require_widen_holder_credential(owner, credential)?;
+        }
+        let mut bytes = [0; 64];
+        if reference_len != bytes.len() as u64 {
+            return Err(super::invalid_row());
+        }
+        reference.read_exact(&mut bytes)?;
+        if reference.read(&mut [0; 1])? != 0 {
+            return Err(super::invalid_row());
+        }
+        let reference = std::str::from_utf8(&bytes).map_err(|_| super::invalid_row())?;
+        self.reject_widen_checked(owner, credential, reference)
+    }
+
+    /// Answers a widen whose JSON reference and delta were both streamed.
+    /// The holder credential is checked before the reference's existing
+    /// hex64 shape; no caller-sized reference string is materialized.
+    pub fn accept_widen_readers(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        mut reference: impl Read,
+        reference_len: u64,
+        expected: impl Read,
+        expected_len: u64,
+    ) -> Result<ConsentReceipt> {
+        if let Some(credential) = credential {
+            self.require_widen_holder_credential(owner, credential)?;
+        }
+        let mut bytes = [0; 64];
+        if reference_len != bytes.len() as u64 {
+            return Err(super::invalid_row());
+        }
+        reference.read_exact(&mut bytes)?;
+        if reference.read(&mut [0; 1])? != 0 {
+            return Err(super::invalid_row());
+        }
+        let reference = std::str::from_utf8(&bytes).map_err(|_| super::invalid_row())?;
+        validate_reference_shape(reference)?;
+        self.accept_widen_reader(owner, credential, reference, expected, expected_len)
+    }
+
     /// Answers a widen with incrementally decoded bytes. File reads happen
     /// outside every transaction; the acting writer rechecks the same frozen
     /// bytes, owner, holder credential, expiry and unresolved state.

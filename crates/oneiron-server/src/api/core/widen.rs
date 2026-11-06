@@ -1,6 +1,7 @@
 //! Host-only landing or decline of a frozen widen proposal. A transport login is not a holder action.
 
 mod streamed;
+mod streamed_reject;
 
 use crate::{
     api::body_spool::{OwnerJsonBody, TransferBody},
@@ -246,8 +247,22 @@ pub(crate) async fn core_reject_widen(
     payload: OwnerJsonBody<CoreRejectWidenRequest>,
 ) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
     let holder = widen_holder(&parts, &server, managed_holder).await?;
-    let req = payload.read_for_transfer(&server).await?;
-    let (owner, credential) = holder.owner(&server)?;
+    match payload
+        .read_for_transfer_with(&server, streamed_reject::bulk_decoder(&server))
+        .await?
+    {
+        TransferBody::Whole(req) => answer_reject_small(&server, &holder, req),
+        TransferBody::Bulk(decoded) => streamed_reject::answer_bulk(server, holder, decoded).await,
+    }
+}
+
+/// The unchanged native decline for an in-memory body.
+fn answer_reject_small(
+    server: &SyncServer,
+    holder: &WidenHolder,
+    req: CoreRejectWidenRequest,
+) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
+    let (owner, credential) = holder.owner(server)?;
     let result = match credential {
         Some(credential) => {
             server
