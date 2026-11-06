@@ -182,20 +182,18 @@ async fn reply(
     // caller's message, which is sent as the caller wrote it and retrieval
     // read it. The vault's `[models] prompt_layout` picks the layout, else
     // the host's.
-    let (messages, message_prompt_bytes) = match server.ai.prompt_layout() {
+    let (messages, message_prompt_bytes, outgoing) = match server.ai.prompt_layout() {
         PromptLayout::EarlySystem => {
-            let system = outgoing.clone();
-            let system_bytes = system.capacity() as u64;
-            prompt_storage.materialized(0, system_bytes);
             drop(prefix);
             drop(board);
             prompt_storage.shrink(prefix_bytes.saturating_add(board_bytes));
             (
                 vec![
-                    text_message(LlmMessageRole::System, system),
+                    text_message(LlmMessageRole::System, outgoing),
                     text_message(LlmMessageRole::User, input.message),
                 ],
-                system_bytes,
+                outgoing_bytes,
+                None,
             )
         }
         PromptLayout::StableHistoryThenTurnContext => {
@@ -211,7 +209,11 @@ async fn reply(
             // Compact JSON object text is nonempty and already trimmed.
             messages.push(text_message(LlmMessageRole::User, board));
             messages.push(text_message(LlmMessageRole::User, input.message));
-            (messages, kept_prefix_bytes.saturating_add(board_bytes))
+            (
+                messages,
+                kept_prefix_bytes.saturating_add(board_bytes),
+                Some(outgoing),
+            )
         }
     };
     request.messages = messages;
@@ -267,18 +269,27 @@ async fn reply(
     // content-free (FIX 4937, 4939).
     let prompt_for =
         crate::device_local::prompt_destination(auth.destination(), request.envelope.locality);
-    if let Some(hold) =
+    if let Some(hold) = {
+        let outgoing = match outgoing.as_deref() {
+            Some(text) => text,
+            None => match &request.messages[0].content[0] {
+                ContentPart::Text { text } => text.as_str(),
+                _ => unreachable!("reply system message is text"),
+            },
+        };
         crate::device_local::retained_hold(&server.vault, &prompt_for, rows, outgoing.as_bytes())
             .map_err(MemoryError::from)?
-    {
+    } {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("reply context is kept on this device: {}", hold.reason()),
             &[],
         ));
     }
-    drop(outgoing);
-    prompt_storage.shrink(outgoing_bytes);
+    if let Some(outgoing) = outgoing {
+        drop(outgoing);
+        prompt_storage.shrink(outgoing_bytes);
+    }
     if !auth.credential_is_live(&server.vault) {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
