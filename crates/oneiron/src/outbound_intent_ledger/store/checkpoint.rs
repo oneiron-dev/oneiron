@@ -13,11 +13,16 @@
 //! (FIX 9157).
 //!
 //! Its accounting and state (what it charged, whether it was sent, settled
-//! or abandoned, and when) are also kept as structure outside the
-//! compartment, so they outlive the call's erase: a restore that cannot open
-//! a call writes neither its record nor its binding, never an empty sendable
-//! request, and still knows the call was admitted. It names the call
-//! unavailable ([`call_of`]) and drops the attempt's sendable rows (KS7-5).
+//! or abandoned, and when) are also kept outside the compartment, as one
+//! accounting row per call (KS7-5, FIX 12117), so they outlive the call's
+//! erase: a restore that cannot open a call writes neither its record nor
+//! its binding, never an empty sendable request, and lands the call's
+//! accounting row instead ([`restore_accounting_in_txn`]). A call with such a
+//! row and no record is never admitted again ([`call_accounting_in_txn`]):
+//! the attempt or caller that would ask it again is refused, so it is never
+//! asked or paid for twice. A call whose record does come back keeps no
+//! accounting row. An accounting row with no record is kept by every later
+//! capture, as an unavailable row is.
 //!
 //! So does the call's per-tool bound (FIX 6260): each call is also kept as
 //! one unavailable row, the digest of the server and tool its bound counts
@@ -26,8 +31,7 @@
 //! ([`restore_unavailable_in_txn`]), and the bound counts a call that has
 //! no record here through it ([`unavailable_calls_since_in_txn`]), so the
 //! owner's per-tool bound survives a restore. The accounting rows keep their
-//! shape. Nothing calls the getters until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! shape.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -40,13 +44,14 @@ use rmpv::Value;
 
 use super::super::codec::{
     KEY_BUDGET_ACCOUNTING, KEY_CREATED_MS, KEY_DELIVERY_UNCERTAIN, KEY_RECORDED_OUTCOME, KEY_STATE,
-    KEY_UPDATED_MS,
+    KEY_UPDATED_MS, decode_call_accounting,
 };
-use super::super::types::{IntentEscalationReason, IntentLedgerRecord, RecordedOutboundOutcome};
+use super::super::types::{
+    CallAccounting, IntentEscalationReason, IntentLedgerRecord, RecordedOutboundOutcome,
+};
 use super::{AttemptCallKey, INTENT_ATTEMPT_INDEX, LEDGER};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::ManifestDbs;
@@ -60,6 +65,67 @@ use crate::store::checkpoint_payload::rows::{
 /// u64be(call seq).
 const UNAVAILABLE: SideTable<AttemptCallKey, UnavailableCall, Raw> =
     SideTable::new(&side_table::OUTBOUND_INTENT_UNAVAILABLE);
+
+/// The calls this vault holds no record of, by call, as their records kept
+/// their accounting and state (KS7-5, FIX 12117): a call here with no
+/// attempt binding is never admitted again. Key: id16(attempt) + u64be(call
+/// seq).
+const CALL_ACCOUNTING: SideTable<AttemptCallKey, CallAccountingRow, Raw> =
+    SideTable::new(&side_table::OUTBOUND_INTENT_ACCOUNTING);
+
+/// One accounting row: its exact stored bytes, the six-entry map
+/// [`accounting`] cuts from a ledger row, and what they read as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CallAccountingRow {
+    bytes: Vec<u8>,
+    accounting: CallAccounting,
+}
+
+/// The stored map exactly, read and checked with the ledger codec's own
+/// accounting rules ([`decode_call_accounting`]).
+impl RawValue for CallAccountingRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.bytes.clone())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let accounting = decode_call_accounting(bytes)
+            .map_err(|_| CodecError::from(Error::CorruptedIndex("outbound call accounting")))?;
+        Ok(Self {
+            bytes: bytes.to_vec(),
+            accounting,
+        })
+    }
+}
+
+/// The accounting a restore kept of call `call_seq` of `attempt_id`, read
+/// in `txn`, when the vault holds no record of it (FIX 12117), as the
+/// owner's erase of its request leaves a row ([`CallAccounting::erased`]):
+/// `Some` means the call was admitted before the restore and its compartment
+/// did not open, so it is never admitted again. `None` when it has no
+/// accounting row, or its record stands.
+///
+/// # Errors
+///
+/// An accounting row that does not read (the caller refuses on it); storage
+/// faults.
+pub(crate) fn call_accounting_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> Result<Option<CallAccounting>> {
+    let call = AttemptCallKey {
+        attempt_id,
+        call_seq,
+    };
+    if INTENT_ATTEMPT_INDEX.contains(&vault.store, txn, &call)? {
+        return Ok(None);
+    }
+    Ok(CALL_ACCOUNTING
+        .get(&vault.store, txn, &call)?
+        .map(|row| row.accounting.erased()))
+}
 
 /// The domain a per-tool bound's digest derives under.
 const TOOL_BOUND_DOMAIN: &str = "oneiron outbound intent per-tool bound v1";
@@ -193,6 +259,37 @@ pub(crate) fn restore_unavailable_in_txn(
     Ok(true)
 }
 
+/// Writes a captured call's accounting row back in `txn` (KS7-5, FIX
+/// 12117), after the opened bundles landed: only for a call whose record
+/// did not come back (no attempt binding), so a call that opened keeps its
+/// record alone. `false` for a row of another table, which this writes
+/// nothing for.
+///
+/// # Errors
+///
+/// A row its codec does not read, or under a key that names no call;
+/// storage faults.
+pub(crate) fn restore_accounting_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+) -> Result<bool> {
+    if !at.in_table(CALL_ACCOUNTING.decl()) {
+        return Ok(false);
+    }
+    rows::check_row(CALL_ACCOUNTING, at, value)?;
+    let call = at
+        .key
+        .strip_prefix(CALL_ACCOUNTING.decl().prefix)
+        .and_then(AttemptCallKey::decode_key)
+        .ok_or_else(rows::bad_part)?;
+    if !INTENT_ATTEMPT_INDEX.contains(dbs, &*txn, &call)? {
+        rows::restore_row_in_txn(dbs, txn, at, value)?;
+    }
+    Ok(true)
+}
+
 /// The entries of a record's own map that are its accounting and state.
 const ACCOUNTING_KEYS: [&str; 6] = [
     KEY_BUDGET_ACCOUNTING,
@@ -202,9 +299,6 @@ const ACCOUNTING_KEYS: [&str; 6] = [
     KEY_CREATED_MS,
     KEY_UPDATED_MS,
 ];
-
-/// The path a call's accounting and state are kept at, before the call.
-const ACCOUNTING: &str = "accounting ";
 
 /// A call's compartment: its attempt id (16), then its call sequence
 /// (u64be).
@@ -255,6 +349,7 @@ fn accounting(bytes: &[u8]) -> Result<Vec<u8>> {
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
     let mut out = Captured::default();
     let mut recorded = BTreeSet::new();
+    let mut accounted = BTreeSet::new();
     for row in rows::typed_rows(dbs, txn, LEDGER, &mut out)? {
         let record = &row.value;
         if record.id != row.key {
@@ -262,21 +357,16 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             continue;
         }
         let owner = call(&record.attempt_id, record.call_seq)?;
-        let kept = RowLocator {
-            db: row.at.db,
-            key: LEDGER.decl().prefix.to_vec(),
-            path: format!(
-                "{ACCOUNTING}{}:{}",
-                bytes_to_hex_lower(record.attempt_id.as_bytes()),
-                record.call_seq
-            ),
+        let call_key = AttemptCallKey {
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
         };
-        out.structure(kept, accounting(&row.bytes)?, Vec::new());
+        let key = CALL_ACCOUNTING.key_bytes(&call_key);
+        accounted.insert(key.clone());
+        let at = RowLocator::row(RowDb::of(CALL_ACCOUNTING.decl()), key);
+        out.structure(at, accounting(&row.bytes)?, Vec::new());
         if counts_toward_bound(record) {
-            let key = UNAVAILABLE.key_bytes(&AttemptCallKey {
-                attempt_id: record.attempt_id,
-                call_seq: record.call_seq,
-            });
+            let key = UNAVAILABLE.key_bytes(&call_key);
             let value = UNAVAILABLE.encode_value(&UnavailableCall::of(record))?;
             recorded.insert(key.clone());
             let at = RowLocator::row(RowDb::of(UNAVAILABLE.decl()), key);
@@ -290,6 +380,11 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     }
     for row in rows::typed_rows(dbs, txn, UNAVAILABLE, &mut out)? {
         if !recorded.contains(&row.at.key) {
+            out.structure(row.at, row.bytes, Vec::new());
+        }
+    }
+    for row in rows::typed_rows(dbs, txn, CALL_ACCOUNTING, &mut out)? {
+        if !accounted.contains(&row.at.key) {
             out.structure(row.at, row.bytes, Vec::new());
         }
     }
