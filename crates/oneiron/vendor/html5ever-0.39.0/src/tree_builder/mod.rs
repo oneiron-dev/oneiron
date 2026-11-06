@@ -21,7 +21,7 @@ use crate::{ExpandedName, LocalName, Namespace, QualName};
 
 use crate::tokenizer;
 use crate::tokenizer::states as tok_state;
-use crate::tokenizer::{Doctype, EndTag, StartTag, Tag, TokenSink, TokenSinkResult};
+use crate::tokenizer::{Doctype, EndTag, StartTag, Tag, TagAttributes, TokenSink, TokenSinkResult};
 
 use std::borrow::Cow::{self, Borrowed};
 use std::cell::{Cell, Ref, RefCell};
@@ -42,6 +42,7 @@ mod control;
 mod pending_table_text;
 use self::pending_table_text::PendingTableText;
 pub use control::TreeSinkOperation;
+pub(crate) use control::TagAttributesHooks;
 mod data;
 
 macro_rules! stop_on_none {
@@ -159,6 +160,7 @@ pub struct TreeBuilder<Handle, Sink> {
     coalesce_table_text: bool,
     pending_table_text_reservation: Option<control::PendingTableTextReservation>,
     pending_table_storage_reservation: Option<control::PendingTableStorageReservation>,
+    tag_attributes_hooks: Option<control::TagAttributesHooks<Handle, Sink>>,
 
     // Keep last: stack storage must be freed before the captured reservation.
     open_elements_reservation: Option<control::OpenElementsReservation<Handle>>,
@@ -196,6 +198,7 @@ where
             coalesce_table_text: false,
             pending_table_text_reservation: None,
             pending_table_storage_reservation: None,
+            tag_attributes_hooks: None,
             open_elements_reservation: None,
         }
     }
@@ -241,6 +244,7 @@ where
             coalesce_table_text: false,
             pending_table_text_reservation: None,
             pending_table_storage_reservation: None,
+            tag_attributes_hooks: None,
             open_elements_reservation: None,
         };
 
@@ -248,7 +252,7 @@ where
         // 5. Let root be a new html element with no attributes.
         // 6. Append the element root to the Document node created above.
         // 7. Set up the parser's stack of open elements so that it contains just the single element root.
-        let _ = tb.create_root(vec![]);
+        let _ = tb.create_root(TagAttributes::default());
         // 10. Reset the parser's insertion mode appropriately.
         let old_insertion_mode = tb.reset_insertion_mode();
         tb.mode.set(old_insertion_mode);
@@ -801,19 +805,20 @@ where
                 .active_formatting_end_to_marker()
                 .iter()
                 .find(|&(_, _, tag)| tag.name == subject)
-                .map(|(i, h, t)| (i, h.clone(), t.clone()));
+                .map(|(i, h, t)| (i, h.clone(), self.clone_tag(t)));
 
             let Some((fmt_elem_index, fmt_elem, fmt_elem_tag)) = maybe_fmt_entry else {
                 self.process_end_tag_in_body(Tag {
                     kind: EndTag,
                     name: subject,
                     self_closing: false,
-                    attrs: vec![],
+                    attrs: TagAttributes::default(),
                     had_duplicate_attributes: false,
                 });
                 return Some(());
             };
 
+            let fmt_elem_tag = fmt_elem_tag?;
             let Some(fmt_elem_stack_index) = self
                 .open_elems
                 .borrow()
@@ -897,14 +902,14 @@ where
                 let tag = match self.active_formatting.borrow()[node_formatting_index] {
                     FormatEntry::Element(ref h, ref t) => {
                         assert!(self.sink.same_node(h, &node));
-                        t.clone()
+                        self.clone_tag(t)?
                     },
                     FormatEntry::Marker => panic!("Found marker during adoption agency"),
                 };
                 // FIXME: Is there a way to avoid cloning the attributes twice here (once on their
                 // own, once as part of t.clone() above)?
                 let new_element = self.create_element_with_flags_checked(QualName::new(None, ns!(html), tag.name.clone()),
-                    tag.attrs.clone(),
+                    self.clone_tag_attributes(&tag.attrs)?,
                     tag.had_duplicate_attributes,
                 )?;
                 self.open_elems.borrow_mut()[node_index] = new_element.clone();
@@ -935,7 +940,7 @@ where
             // FIXME: Is there a way to avoid cloning the attributes twice here (once on their own,
             // once as part of t.clone() above)?
             let new_element = self.create_element_with_flags_checked(QualName::new(None, ns!(html), fmt_elem_tag.name.clone()),
-                fmt_elem_tag.attrs.clone(),
+                self.clone_tag_attributes(&fmt_elem_tag.attrs)?,
                 fmt_elem_tag.had_duplicate_attributes,
             )?;
             let new_entry = FormatEntry::Element(new_element.clone(), fmt_elem_tag);
@@ -1082,7 +1087,7 @@ where
             // Step 8. Create: Insert an HTML element for the token for which the element entry was created,
             // to obtain new element.
             let tag = match self.active_formatting.borrow()[entry_index] {
-                FormatEntry::Element(_, ref t) => t.clone(),
+                FormatEntry::Element(_, ref t) => self.clone_tag(t)?,
                 FormatEntry::Marker => {
                     panic!("Found marker during formatting element reconstruction")
                 },
@@ -1094,7 +1099,7 @@ where
                 PushFlag::Push,
                 ns!(html),
                 tag.name.clone(),
-                tag.attrs.clone(),
+                self.clone_tag_attributes(&tag.attrs)?,
                 tag.had_duplicate_attributes,
             )?;
 
@@ -1433,17 +1438,35 @@ where
     fn create_element_with_flags_checked(
         &self,
         name: QualName,
-        attrs: Vec<Attribute>,
+        attrs: TagAttributes,
         had_duplicate_attributes: bool,
     ) -> Option<Handle> {
         if !self.before_tree_sink_operation(TreeSinkOperation::CreateElement(&name, attrs.len())) {
             return None;
         }
-        Some(create_element_with_flags(&self.sink, name, attrs, had_duplicate_attributes))
+        if let Some(hooks) = &self.tag_attributes_hooks {
+            let mut flags = ElementFlags::default();
+            match name.expanded() {
+                expanded_name!(html "template") => flags.template = true,
+                expanded_name!(mathml "annotation-xml") => {
+                    flags.mathml_annotation_xml_integration_point = attrs.iter().any(|attr| {
+                        attr.name.expanded() == expanded_name!("", "encoding")
+                            && (attr.value.eq_ignore_ascii_case("text/html")
+                                || attr.value.eq_ignore_ascii_case("application/xhtml+xml"))
+                    });
+                },
+                _ => {},
+            }
+            flags.had_duplicate_attributes = had_duplicate_attributes;
+            Some((hooks.create)(&self.sink, name, attrs, flags))
+        } else {
+            let attrs = attrs.into_unreserved().expect("guarded attributes require a native sink");
+            Some(create_element_with_flags(&self.sink, name, attrs, had_duplicate_attributes))
+        }
     }
 
     //§ creating-and-inserting-nodes
-    fn create_root(&self, attrs: Vec<Attribute>) -> Option<()> {
+    fn create_root(&self, attrs: TagAttributes) -> Option<()> {
         let elem = self.create_element_with_flags_checked(
             QualName::new(None, ns!(html), local_name!("html")),
             attrs,
@@ -1461,7 +1484,7 @@ where
         push: PushFlag,
         ns: Namespace,
         name: LocalName,
-        attrs: Vec<Attribute>,
+        attrs: TagAttributes,
         had_duplicate_attributes: bool,
     ) -> Option<Handle> {
         declare_tag_set!(form_associatable =
@@ -1473,7 +1496,7 @@ where
         // Step 7.
         let qname = QualName::new(None, ns, name);
         let elem = self.create_element_with_flags_checked(qname.clone(),
-            attrs.clone(),
+            self.clone_tag_attributes(&attrs)?,
             had_duplicate_attributes,
         )?;
 
@@ -1530,7 +1553,7 @@ where
         )
     }
     fn insert_phantom(&self, name: LocalName) -> Option<Handle> {
-        self.insert_element(PushFlag::Push, ns!(html), name, vec![], false)
+        self.insert_element(PushFlag::Push, ns!(html), name, TagAttributes::default(), false)
     }
 
     /// <https://html.spec.whatwg.org/multipage/parsing.html#insert-an-element-at-the-adjusted-insertion-location>
@@ -1543,7 +1566,7 @@ where
         let adjusted_insertion_location = self.appropriate_place_for_insertion(None);
         let qname = QualName::new(None, ns, tag.name.clone());
         let elem = self.create_element_with_flags_checked(qname.clone(),
-            tag.attrs.clone(),
+            self.clone_tag_attributes(&tag.attrs)?,
             tag.had_duplicate_attributes,
         )?;
 
@@ -1618,7 +1641,7 @@ where
         let mut first_match = None;
         let mut matches = 0usize;
         for (i, _, old_tag) in self.active_formatting_end_to_marker().iter() {
-            if tag.equiv_modulo_attr_order(old_tag) {
+            if self.equivalent_tags(&tag, old_tag)? {
                 first_match = Some(i);
                 matches += 1;
             }
@@ -1634,7 +1657,7 @@ where
             PushFlag::Push,
             ns!(html),
             tag.name.clone(),
-            tag.attrs.clone(),
+            self.clone_tag_attributes(&tag.attrs)?,
             tag.had_duplicate_attributes,
         )?;
         self.active_formatting

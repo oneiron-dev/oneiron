@@ -25,6 +25,16 @@ pub enum TreeSinkOperation<'a, Handle> {
     ParseError,
 }
 
+
+pub(crate) struct TagAttributesHooks<Handle, Sink> {
+    pub(crate) reserve: crate::tokenizer::TagAttributesReservation,
+    pub(crate) create: Box<
+        dyn Fn(&Sink, QualName, crate::tokenizer::TagAttributes, super::ElementFlags) -> Handle
+            + Send,
+    >,
+    pub(crate) add: Box<dyn Fn(&Sink, &Handle, crate::tokenizer::TagAttributes) + Send>,
+}
+
 pub(super) type SinkCheckpoint<Handle, Sink> =
     Box<dyn Fn(&Sink, TreeSinkOperation<'_, Handle>) -> bool + Send>;
 
@@ -37,6 +47,48 @@ pub(super) type OpenElementsReservation<Handle> =
     Box<dyn Fn(&mut Vec<Handle>, usize) -> bool + Send>;
 
 impl<Handle, Sink> TreeBuilder<Handle, Sink> {
+    pub(crate) fn set_tag_attributes_hooks(&mut self, hooks: TagAttributesHooks<Handle, Sink>) {
+        self.tag_attributes_hooks = Some(hooks);
+    }
+
+    pub(super) fn clone_tag_attributes(
+        &self,
+        attrs: &crate::tokenizer::TagAttributes,
+    ) -> Option<crate::tokenizer::TagAttributes> {
+        match &self.tag_attributes_hooks {
+            Some(hooks) => attrs.try_clone(&hooks.reserve),
+            None => Some(attrs.clone()),
+        }
+    }
+
+    pub(super) fn clone_tag(&self, tag: &crate::tokenizer::Tag) -> Option<crate::tokenizer::Tag> {
+        Some(crate::tokenizer::Tag {
+            kind: tag.kind,
+            name: tag.name.clone(),
+            self_closing: tag.self_closing,
+            attrs: self.clone_tag_attributes(&tag.attrs)?,
+            had_duplicate_attributes: tag.had_duplicate_attributes,
+        })
+    }
+
+    pub(super) fn equivalent_tags(
+        &self,
+        tag: &crate::tokenizer::Tag,
+        other: &crate::tokenizer::Tag,
+    ) -> Option<bool> {
+        if self.tag_attributes_hooks.is_none() {
+            return Some(tag.equiv_modulo_attr_order(other));
+        }
+        if tag.kind != other.kind || tag.name != other.name {
+            return Some(false);
+        }
+        let mut attrs = self.clone_tag_attributes(&tag.attrs)?;
+        let mut other_attrs = self.clone_tag_attributes(&other.attrs)?;
+        attrs.sort_unstable();
+        other_attrs.sort_unstable();
+        Some(attrs == other_attrs)
+    }
+
     pub(crate) fn coalesce_table_text(&mut self) {
         self.coalesce_table_text = true;
     }
@@ -127,6 +179,22 @@ where
     Handle: Clone,
     Sink: super::TreeSink<Handle = Handle>,
 {
+    pub(super) fn add_tag_attributes(
+        &self,
+        target: &Handle,
+        attrs: crate::tokenizer::TagAttributes,
+    ) {
+        match &self.tag_attributes_hooks {
+            Some(hooks) => (hooks.add)(&self.sink, target, attrs),
+            None => self.sink.add_attrs_if_missing(
+                target,
+                attrs
+                    .into_unreserved()
+                    .expect("guarded attributes require a native sink"),
+            ),
+        }
+    }
+
     pub(crate) fn report_parse_error(&self, error: std::borrow::Cow<'static, str>) {
         if self.before_tree_sink_operation(TreeSinkOperation::ParseError) {
             self.sink.parse_error(error);

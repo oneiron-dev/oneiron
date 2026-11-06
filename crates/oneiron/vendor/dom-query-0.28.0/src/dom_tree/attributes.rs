@@ -13,6 +13,14 @@ pub(crate) struct AttributeReservation {
     _guard: Arc<dyn Send + Sync>,
 }
 
+impl AttributeReservation {
+    pub(crate) fn from_tag_guard(guard: html5ever::tokenizer::TagAttributeGuard) -> Self {
+        Self {
+            _guard: Arc::new(guard),
+        }
+    }
+}
+
 impl Debug for AttributeReservation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
