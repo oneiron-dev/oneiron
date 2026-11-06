@@ -693,9 +693,8 @@ impl SyncClient {
         })();
         if result.is_ok()
             && let Some(positions) = positions
-            && let Some(current) = self.manager.window(&key)
-            && std::ptr::eq(window, current.as_ref())
-            && let Some(positions) = positions.select_deferred(&current)
+            && let Some(identity) = self.manager.weak_window_if_same(window)
+            && let Some(positions) = positions.select_deferred(window, identity)
         {
             self.asset_bodies
                 .get_mut()

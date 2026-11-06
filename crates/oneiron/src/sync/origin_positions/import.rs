@@ -163,7 +163,8 @@ impl OwnDevicePositionImport {
     /// Root scrubs can remove their map entries, never their carrier binding.
     pub(in crate::sync) fn select_deferred(
         mut self,
-        window: &Arc<LoadedWindow>,
+        window: &LoadedWindow,
+        identity: Weak<LoadedWindow>,
     ) -> Option<DeferredPositions> {
         if self.window != window.key {
             return None;
@@ -181,7 +182,7 @@ impl OwnDevicePositionImport {
         });
         (!self.values.is_empty()).then(|| DeferredPositions {
             incoming: self,
-            window: Arc::downgrade(window),
+            window: identity,
             ready: BTreeSet::new(),
         })
     }
