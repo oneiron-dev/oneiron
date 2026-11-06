@@ -427,9 +427,19 @@ native keys drop before the caller lease; the known capacities stay charged
 conservatively until that lease drops. Ordinary unbound deletion uses the same
 shared body without recording capacities.
 
-The preceding turn-index, trace-fork, outcome and age-index cleanup stays in
-its original order with its original errors. Its buffers remain outside this
-two-key charge, as do raw row copies, overlay copies, database pages, transaction
+The preceding age-index cleanup also forwards the same optional caller lease
+to its existing shared helper. It records the original by-run lookup key and,
+when a capture time exists, the age-ordered delete key followed by the by-run
+delete key. Each native key's actual capacity is recorded once before its
+original database operation. Missing rows still skip both deletes; false and
+error returns keep their original behavior. These keys drop inside cleanup,
+before the final two delete keys and the caller lease, including errors and
+unwind. Their known capacities stay charged conservatively until that lease
+drops. Unbound cleanup keeps the same shared body without capacity accounting.
+
+Turn-index, trace-fork and outcome cleanup buffers remain outside these key
+charges. The full cleanup order and errors stay unchanged, as do exclusions
+for raw row copies, decoded values, overlay copies, database pages, transaction
 scratch and allocation peaks. No extra encode, copy, lease, admission, wait or
 configured limit is introduced.
 
