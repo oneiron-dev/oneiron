@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m2 · the edge</title>
+<script>
+(function(){var h=document.documentElement,p='m2',d={voice:'mono',head:'none',rail:'edge'},t=null;
+try{t=localStorage.getItem('oneiron-theme')}catch(e){}h.dataset.theme=t==='light'?'light':'dark';
+for(var k in d){var v=null;try{v=localStorage.getItem('mock-agents:'+p+':'+k)}catch(e){}h.dataset[k]=v||d[k];}})();
+</script>
+<link rel="stylesheet" href="mock.css">
+</head>
+<body class="app" data-page="m2" data-switches="voice head rail" data-active="agents">
+<div class="app-frame">
+<nav class="rail" aria-label="the app"></nav>
+<main class="pane">
+<div class="pane-body">
+  <div class="pane-head">
+    <h1>Agents</h1>
+    <span class="pane-tools"><button type="button" class="act" title="a new agent · Antevon proposes the pieces, you confirm each">+ new agent</button><button type="button" class="hint-btn" title="what this screen is">?</button></span>
+  </div>
+
+  <div class="agents-grid">
+    <nav class="roster" aria-label="roster">
+      <a class="rrow on live" data-agent="eiri" href="m2-collapsed.html" title="Eiri · the room">
+        <span class="rtext"><span class="rname aname">Eiri</span><span class="rrole">Reaches out and keeps the thread warm.</span><span class="rdoing">drafting the COO intro, in Yurii’s register</span></span>
+      </a>
+      <a class="rrow live" data-agent="tory" href="#" title="Tory · the room">
+        <span class="rtext"><span class="rname aname">Tory</span><span class="rdoing">checking the supplier rumor against the filings</span></span>
+      </a>
+      <a class="rrow" data-agent="antevon" href="#" title="Antevon · the room">
+        <span class="rtext"><span class="rname aname">Antevon</span><span class="rdoing">nights</span></span>
+      </a>
+      <span class="rsep" aria-hidden="true"></span>
+      <a class="rrow" href="m3-house.html" title="the house · every agent and you in one room">
+        <span class="rtext"><span class="rname">The house</span><span class="rdoing">3 agents · you</span></span>
+      </a>
+    </nav>
+
+    <section class="room" aria-label="Eiri">
+      <div class="centre">
+        <div class="rhead rhead-portrait" data-agent="eiri">
+          <span class="face" data-agent="eiri" role="img" aria-label="Iris, the messenger"></span>
+          <div class="rh-text"><h2 class="rh-name aname">Eiri</h2><span class="rh-role">Reaches out and keeps the thread warm.</span></div>
+        </div>
+        <div class="rhead rhead-line" data-agent="eiri">
+          <h2 class="rh-name aname">Eiri</h2>
+          <span class="rh-role">Reaches out and keeps the thread warm.</span>
+          <span class="meta-line" title="two runs live · one waits on you, in the rail">2 running · 1 needs you</span>
+        </div>
+
+        <div class="thread" aria-live="polite">
+          <span class="rday">today</span>
+
+          <div class="msg" data-agent="eiri">
+            <div class="body">
+              <p class="txt">Mika Tanaka wrote on LINE: a quote request for Tuesday. I turned it into one claim.</p>
+              <div class="cwidget">
+                <span class="cw-title">Mika Tanaka prefers LINE for quick questions</span>
+                <span class="cw-line">one claim · 0.90 · waits on nobody</span>
+                <span class="cw-foot"><a class="act" href="#" title="the claim, its source span and its confidence">the claim</a></span>
+              </div>
+            </div>
+            <span class="at">09:15</span>
+          </div>
+
+          <div class="msg" data-agent="eiri">
+            <div class="body">
+              <p class="txt">Sent the pilot scope summary and verified it in the thread.</p>
+              <div class="cwidget">
+                <span class="cw-title">Pilot scope summary · to Hokuei ops</span>
+                <span class="cw-line">sent 11:14 on your click · verified in thread 11:20</span>
+                <span class="cw-foot"><a class="act" href="#" title="run rx_8c41 · the send, its grant and its verification">receipt</a><a class="act" href="#" title="email · Hokuei ops">the thread</a></span>
+              </div>
+            </div>
+            <span class="at">11:20</span>
+          </div>
+
+          <div class="msg mine">
+            <div class="body"><p class="txt">Draft a reply to Mika about the quote. Short. Japanese.</p></div>
+            <span class="at">13:12</span>
+          </div>
+
+          <div class="msg mine">
+            <div class="body"><p class="txt">Tory found nothing in the filings. Go ahead with the COO intro.</p></div>
+            <span class="at">13:52</span>
+          </div>
+
+          <div class="msg" data-agent="eiri">
+            <div class="body"><p class="txt">Starting it in Yurii’s register. It will queue, not send.</p></div>
+            <span class="at">13:55</span>
+          </div>
+
+          <div class="msg" data-agent="eiri">
+            <div class="body">
+              <p class="txt">The reply is ready.</p>
+              <div class="cwidget">
+                <span class="cw-title">Reply to Mika Tanaka: the quote for Tuesday</span>
+                <span class="cw-line">a draft · LINE · waits in your inbox</span>
+                <span class="cw-foot"><a class="act" href="#" title="the draft, in the inbox · edit it there, send from there">open</a></span>
+              </div>
+            </div>
+            <span class="at">14:02</span>
+          </div>
+
+          <div class="msg" data-agent="eiri">
+            <div class="body">
+              <div class="cwidget gate">
+                <span class="cw-title">Reach the Hokuei COO through Yurii’s account?</span>
+                <span class="cw-why">A new audience for the LinkedIn grant, so I ask before I reach. Every send stays a human click.</span>
+                <span class="cw-meta" title="the narrowest standing rule the click would mint">allow + grant remembers: LinkedIn · Hokuei people · through Yurii’s account</span>
+                <span class="cw-foot"><a class="act" href="#" title="this one send only · it asks again next time">allow once</a><a class="act" href="#" title="mints a scoped, budgeted, revocable grant">allow + grant</a><a class="act" href="#">deny</a><a class="act" href="#" title="the same ask, in the inbox">in the inbox</a></span>
+              </div>
+            </div>
+            <span class="at">14:06</span>
+          </div>
+        </div>
+
+        <div class="line">
+          <span class="agent-chip" data-agent="eiri" title="you are talking to Eiri"><span class="aname">eiri</span><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5"/></svg></span>
+          <input class="gask-input" type="text" placeholder="message Eiri · / for commands" aria-label="message">
+        </div>
+      </div>
+
+      <aside class="rrail" aria-label="Eiri · work and conversations">
+        <div class="rr-open">
+          <div class="rr-top">
+            <span title="kimi-k2.6 · pinned 08-02">kimi-k2.6</span><span class="dot">·</span><span title="the last run settled at 14:09">last run 14:09</span><span class="dot">·</span><button type="button" class="act" title="how she is set up · one layer down">setup</button><span class="dot">·</span><button type="button" class="act" title="the live runs finish, nothing new starts">pause</button>
+            <button type="button" class="foldg" title="fold the rail to the edge · r">›</button>
+          </div>
+
+          <div class="fold" title="the live runs, unfolded to their helpers">work</div>
+          <div class="run" data-agent="eiri">
+            <div class="rt"><a class="title" href="m4-run.html" title="open the run · its own thread">The COO intro</a><button type="button" class="act" title="settles at the next breakpoint · the helpers stop with it">stop</button></div>
+            <div class="kid done" title="4.1k tokens · ¥3"><span class="kt">· read the site · 13:58</span><span class="cost">4.1k · ¥3</span></div>
+            <div class="kid" title="2.8k tokens so far · ¥2"><span class="kt">· drafting · 12m</span><span class="cost">2.8k · ¥2</span></div>
+            <div class="kid need" title="the LinkedIn reach waits on your answer, below"><span class="live-dot" aria-hidden="true"></span><span class="kt">reaching the COO · needs you</span></div>
+          </div>
+          <div class="run recede" data-agent="eiri">
+            <div class="rt"><a class="title" href="#" title="open the run">The scope thread</a><button type="button" class="act" title="settles at the next breakpoint">stop</button></div>
+            <div class="kid" title="a watch · no tokens until a reply lands"><span class="kt">· watching Hokuei ops · 2h 47m</span></div>
+          </div>
+
+          <div class="fold after" title="the threads she holds with the world">conversations</div>
+          <div class="conv" title="LINE · the quote reply waits in your inbox"><span class="who">Mika Tanaka</span><span class="last">LINE · 14:02</span></div>
+          <div class="conv" title="email · the pilot scope summary, sent and verified"><span class="who">Hokuei ops</span><span class="last">email · 11:20</span></div>
+          <div class="conv" title="Slack · the register note"><span class="who">Yurii</span><span class="last">Slack · 09:40</span></div>
+
+          <div class="fold after" title="settled runs today · the Mika reply, the scope send, the Mika claim, the register check">earlier · 4</div>
+        </div>
+        <button type="button" class="edge" title="the rail · open it"><span class="emark"><span class="live-dot" aria-hidden="true"></span>2 working · 1 needs you</span></button>
+      </aside>
+    </section>
+  </div>
+</div>
+</main>
+</div>
+<script src="mock.js"></script>
+</body>
+</html>

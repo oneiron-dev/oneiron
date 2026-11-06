@@ -18,9 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-/// Persisted-row structural ceiling; a decoder must accept every row we write.
-pub(crate) const MAX_PARAGRAPH_JUDGMENTS: usize = 4096;
-
 /// One answered paragraph, bound to its native comment and the exact source
 /// version. Settlement keeps it with the consume-once receipt. Its hashes
 /// are hex on a JSON wire (FIX 9342).
@@ -73,11 +70,7 @@ impl Vault {
         ask.validate()?;
         request.labels.validate()?;
         let author = request.author.trim();
-        if author.is_empty()
-            || author.len() > 256
-            || request.blocks.is_empty()
-            || request.blocks.len() > MAX_PARAGRAPH_JUDGMENTS
-        {
+        if author.is_empty() || author.len() > 256 || request.blocks.is_empty() {
             return Err(invalid("invalid paragraph ask selection"));
         }
         // A document with a live body is read there at its head, pinned with
@@ -331,10 +324,7 @@ fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
         .get("ops")
         .and_then(Value::as_array)
         .ok_or_else(mismatch)?;
-    if proposal.format != OfficeFormat::Docx
-        || rows.len() > MAX_PARAGRAPH_JUDGMENTS
-        || ops.len() != rows.len()
-    {
+    if proposal.format != OfficeFormat::Docx || ops.len() != rows.len() {
         return Err(mismatch());
     }
     let text = |op: &Value, key: &str| op.get(key).and_then(Value::as_str).map(str::to_owned);

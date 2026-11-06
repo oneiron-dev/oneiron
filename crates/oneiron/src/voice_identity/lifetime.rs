@@ -38,7 +38,7 @@ pub(crate) fn erase_recognition_for_subject_in_txn(
     }
     for subject in active_print_subjects(store, wtxn)? {
         if read_active_print(store, wtxn, &subject)?
-            .is_some_and(|print| print.contact_ref == Some(*id))
+            .is_some_and(|print| print.metadata.contact_ref == Some(*id))
         {
             delete_voice_prints_in_txn(store, wtxn, &subject)?;
         }

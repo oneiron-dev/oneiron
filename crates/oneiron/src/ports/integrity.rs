@@ -35,27 +35,7 @@ pub(crate) fn record_dependency_in_txn(
     source: SourceSpan,
     dependent: &EntityId,
 ) -> Result<()> {
-    if source.document == *dependent {
-        return Err(Error::InvariantViolation("self dependency"));
-    }
-    let visibility = super::TombstoneStoreRead::port_deletion_state(store, txn, &source.document)?;
-    if visibility.deleted || visibility.stale {
-        return Err(Error::EntityNotFound);
-    }
-    let key = [source_prefix(source).as_slice(), dependent.as_bytes()].concat();
-    let admitted = store.vault_meta().get(txn, &key)?.is_none();
-    store.vault_meta().put(txn, &key, &[])?;
-    let reverse = [
-        super::regeneration::reverse_prefix(dependent).as_slice(),
-        source.document.as_bytes(),
-        &source.frontier.to_be_bytes(),
-    ]
-    .concat();
-    store.vault_meta().put(txn, &reverse, &[])?;
-    if admitted {
-        super::dependent_walk::settle_admitted_in_txn(store, txn, source, dependent)?;
-    }
-    Ok(())
+    super::dependency_registration::record(store, txn, source, dependent, None)
 }
 pub(super) fn list_by_source(
     store: &impl ManifestDbs,
@@ -99,6 +79,18 @@ pub(crate) fn stale_in_txn(
 /// progress by this, never by what a pending walk says.
 fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
+}
+/// The room's explicit withdrawal mark in this exact overlay snapshot.
+pub(crate) fn marked_stale_in_overlay(
+    snapshot: &crate::session_overlay::OverlaySnapshot,
+    id: &EntityId,
+) -> bool {
+    snapshot
+        .staged_value(
+            crate::session_overlay::OverlayKeyspace::VaultMeta,
+            &stale_key(id),
+        )
+        .is_some()
 }
 /// Whether a source `dependent` is recorded as derived from no longer stands
 /// in this snapshot. It needs no mark from the deletion, so a failed or
@@ -278,49 +270,67 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
     withdraw_words_in_txn(store, txn, summary, &worlds)
 }
 
-/// Withdraws one direct epoch summary or ASSET_TEXT dependent of `source`
-/// before the room deletes that source (FIX 12029). Only the overlay stale
-/// mark and projection deindexes are room-valid: base worlds, body scrubs,
-/// downstream walks, caches and durable jobs stay out of the session.
+/// A room withdrawal's remaining stale mark, with the revision read before
+/// its projection rows and source go. The caller stages it after source
+/// cleanup, in the same writer (FIX 12704).
+pub(crate) struct RoomStaleMark {
+    id: EntityId,
+    revision: u64,
+}
+
+impl RoomStaleMark {
+    pub(crate) fn stage_in_txn(
+        self,
+        view: &SessionStoreView<'_>,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
+        view.vault_meta
+            .put(txn, &stale_key(&self.id), &self.revision.to_be_bytes())?;
+        Ok(())
+    }
+}
+
+/// Withdraws one direct epoch summary or ASSET_TEXT dependent's projections
+/// before the room deletes its source (FIX 12029). Returns the stale mark
+/// the caller must stage after source cleanup, in this same writer. Only
+/// these overlay writes are room-valid: base worlds, body scrubs, downstream
+/// walks, caches and durable jobs stay out of the session.
 pub(crate) fn withdraw_from_lost_source_in_session_txn(
     view: &SessionStoreView<'_>,
     txn: &mut RwTxn<'_>,
     summary: &EntityId,
     _source: &EntityId,
-) -> Result<()> {
+) -> Result<Option<RoomStaleMark>> {
     let epoch = epoch_summary_in(view, txn, summary)?;
     if !epoch {
         if super::EntityStoreRead::port_entity_record(view, txn, summary)?
             .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT)
             && !marked_stale_in(view, txn, summary)?
         {
-            mark_room_stale_in_txn(view, txn, summary)?;
+            return prepare_room_stale_in_txn(view, txn, summary).map(Some);
         }
-        return Ok(());
+        return Ok(None);
     }
     if marked_stale_in(view, txn, summary)? {
-        return Ok(());
+        return Ok(None);
     }
-    mark_room_stale_in_txn(view, txn, summary)?;
+    let mark = prepare_room_stale_in_txn(view, txn, summary)?;
     if view.entities.stages_row(summary.as_bytes())
         && super::EntityStoreRead::port_entity_raw(view.read().base(), txn, summary)?.is_none()
     {
         crate::batch::delete_short_id_rows_for_id(view, txn, summary)?;
         crate::vault::entity_revision::remove_entity_revisions(view, txn, summary)?;
     }
-    Ok(())
+    Ok(Some(mark))
 }
 
-/// The room half of the stale mark and index sheds, without base-only
-/// dreamer, weave, provenance, PPR, pending-embedding or version work.
-/// The stale mark stages last (FIX 12704, PARTIAL): the deindex and vector
-/// frees below land first, so a room near its byte budget keeps a
-/// net-shrinking source delete instead of refusing the new mark key.
-fn mark_room_stale_in_txn(
+/// Keeps the native deindex and HNSW reconciliation order, but defers the
+/// stale-key allocation until the source cleanup has freed its rows.
+fn prepare_room_stale_in_txn(
     view: &SessionStoreView<'_>,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<RoomStaleMark> {
     let revision = view
         .entities
         .get(txn, id.as_bytes())?
@@ -339,8 +349,11 @@ fn mark_room_stale_in_txn(
     // the reconciled count instead of the stale advisory one.
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
-        view.hnsw_meta
-            .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+        view.hnsw_meta.put(
+            txn,
+            crate::store::vector_index::keys::COUNT_KEY,
+            &count.to_le_bytes(),
+        )?;
         // A room can outlive base's entry point: base deleted its sole node
         // while the overlay still holds neighbor rows. Seed the missing
         // entry point from the composed graph so the strict delete finds
@@ -367,9 +380,7 @@ fn mark_room_stale_in_txn(
     crate::hnsw::hnsw_deindex(&write_view, txn, id)?;
     view.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
-    view.vault_meta
-        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
-    Ok(())
+    Ok(RoomStaleMark { id: *id, revision })
 }
 
 /// Whether epoch summary `id` still holds words here of a generation at or
@@ -611,7 +622,7 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     if had_vector {
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &[])?;
     // Withdrawn words are never embedded: a queued or leased fill finds no
     // current marker, so it neither sends them out nor writes a vector back.
     store.clear_pending_embedding(txn, id)?;

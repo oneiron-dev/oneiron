@@ -14,6 +14,9 @@
 //! through it again from the start each `CATCH_UP_RESCAN` after a pass ends,
 //! so a pair kept for want of the Coach's Grant runs once that Grant is
 //! minted (FIX 7031).
+mod wake;
+pub(super) use wake::{WakeExecutor, WakeHost};
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -89,6 +92,10 @@ pub(crate) fn spawn(
     publisher: Arc<[PublisherCandidate]>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    let _ = server
+        .ai
+        .coach_heal_wake
+        .set(WakeHost::new(Arc::clone(&publisher)));
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -180,7 +187,7 @@ fn round(server: &Arc<SyncServer>, publisher: &[PublisherCandidate]) -> oneiron:
     Ok(())
 }
 
-fn run_one(
+pub(super) fn run_one(
     server: &Arc<SyncServer>,
     admitted: &DreamerAdmittedAttempt,
     publisher: &[PublisherCandidate],

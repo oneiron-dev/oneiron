@@ -76,18 +76,22 @@ mod compaction;
 mod delivery;
 mod hook_ask;
 mod hooks;
+mod model_call;
+mod next_turn;
 mod recall;
 mod segments;
 pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
+pub(crate) use sources::TurnSources;
 
-pub(crate) use answer::{begin_answer, chat_request};
+pub(crate) use answer::{begin_answer, begin_sourced_answer_with_fallback, chat_request};
 pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
 };
 pub(crate) use hooks::{after_turn, turn_generate_pre};
+pub(crate) use model_call::model_call_keeps_no_record;
 
 use admission::start_turn;
 use answer::begin_sourced_answer;
@@ -615,6 +619,11 @@ pub(crate) struct Answer {
     pub(crate) funding: Option<PayerPerson>,
     pub(crate) budget_units: u64,
     pub(crate) credential: TurnCredential,
+    /// The actual admitted requester, independent of the answer's author and payer.
+    pub(crate) model_call_caller: EntityId,
+    /// The native room the request or queued action resolved before generation.
+    pub(crate) model_call_room: Option<EntityId>,
+    pub(crate) model_call_no_record_at_arrival: bool,
     pub(crate) keepalive: Duration,
     /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
     /// the caller took before the first read its request was assembled from,
@@ -808,4 +817,5 @@ struct Producer {
     wakes: EntryWakes,
     /// The reply's host-side records, stamped on its terminal.
     assertions: ReplyAssertionCollector,
+    model_call: model_call::Capture,
 }

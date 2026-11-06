@@ -1,7 +1,8 @@
 //! A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the
 //! call's messages in the order the turn assembled them (instructions,
-//! resident craft where the session layout puts it, the log, the board,
-//! the newest user message), set on the call once it is admitted and only
+//! resident craft where the session layout puts it, the log, the board's
+//! state part, the newest user message, then the board's query part and the
+//! turn's opener, I1 = C), set on the call once it is admitted and only
 //! when it describes the admitted messages exactly; and, once the reply is
 //! committed, the hand-off of the turn to the model session coordinator
 //! with what it was admitted under.
@@ -39,8 +40,8 @@ use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
 use crate::models::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, turn_admitted,
 };
 pub(crate) use actions::ActionSession;
 
@@ -109,14 +110,34 @@ impl Reader {
     }
 }
 
+/// The board as the turn placed it (I1 = C turn order).
+pub(super) struct BoardView {
+    /// The text and sections of its state part, right before the newest
+    /// user message, or its omission's note, with no section.
+    pub(super) state: (String, Vec<BoardSectionSource>),
+    /// The message right after the newest user message, when the turn has
+    /// one.
+    pub(super) tail: Option<TurnTail>,
+}
+
+/// The User message that closes a turn whose board rides: the board's query
+/// part, then the turn's opener.
+pub(super) struct TurnTail {
+    pub(super) text: String,
+    /// The query part's sections; none when the tail is the opener alone.
+    pub(super) sections: Vec<BoardSectionSource>,
+    /// Whether the turn's now-time opener closes it.
+    pub(super) opener: bool,
+}
+
 /// What the turn assembled, for its manifest.
 pub(super) struct Assembled<'a> {
     pub(super) layout: Layout,
     pub(super) self_chat: Option<&'a SelfChat>,
     /// The messages before the board went in.
     pub(super) messages: &'a [LlmMessage],
-    /// The board's text and sections, when it rides.
-    pub(super) board: Option<&'a (String, Vec<BoardSectionSource>)>,
+    /// The board, when it rides, or its omission's note.
+    pub(super) board: Option<&'a BoardView>,
     /// The answering agent, and the craft notes it was shown, when it was.
     pub(super) agent: EntityId,
     pub(super) craft: Option<&'a [ManifestEntry]>,
@@ -211,7 +232,11 @@ fn admitted_with_sources(
         context.fence = TrustFence::Guest;
         segments.push(context);
     }
-    if let Some((block, sections)) = assembled.board {
+    if let Some(BoardView {
+        state: (block, sections),
+        ..
+    }) = assembled.board
+    {
         let at = messages
             .iter()
             .rposition(|message| message.role == LlmMessageRole::User)?;
@@ -227,6 +252,24 @@ fn admitted_with_sources(
         SegmentClock::Live,
         newest,
     ));
+    // The tail right after the newest user message (I1 = C): the board's
+    // query part, one segment per section, and the opener, a host line of
+    // the live turn. All of it ephemeral.
+    if let Some(tail) = assembled.board.and_then(|board| board.tail.as_ref()) {
+        let at = newest + 1;
+        if at != messages.len() {
+            return None;
+        }
+        messages.push(text_message(LlmMessageRole::User, tail.text.clone()));
+        if !tail.sections.is_empty() {
+            segments.extend(board_segments(&tail.sections, at));
+        }
+        if tail.opener {
+            let mut opener = Segment::whole(SegmentKind::HostSection, SegmentClock::Live, at);
+            opener.class = SegmentClass::Ephemeral;
+            segments.push(opener);
+        }
+    }
     // The authority generation first: a revoke between the two reads
     // leaves the key read after it.
     let (revocation, read_key) = crate::server::blocking(|| {
@@ -320,7 +363,13 @@ impl PathDependencies {
         let recalled = assembled
             .board
             .into_iter()
-            .flat_map(|(_, sections)| sections)
+            .flat_map(|board| {
+                board
+                    .state
+                    .1
+                    .iter()
+                    .chain(board.tail.iter().flat_map(|tail| &tail.sections))
+            })
             .flat_map(|section| &section.dependencies)
             .filter_map(|locator| match locator {
                 SegmentLocator::Memory { id, .. } | SegmentLocator::Skill { id, .. } => Some(*id),
@@ -561,12 +610,15 @@ impl CheckpointAuthority for ChatAuthority {
 /// The turn's authority is held until the outcome ends even when the turn
 /// wrote no rows, so a restore for its call rechecks under it instead of
 /// running cold; only the commit handoff still needs `written` (FIX 11287).
+/// With `next`, what the conversation's next turn is known to start with,
+/// the session prepares that once the successor is published (I1 = C).
 pub(super) fn commit_on_answer(
     segments: Option<TurnSegments>,
     reader: &Reader,
     credential: &TurnCredential,
     written: Option<&[EntityId]>,
     turn: EntityId,
+    next: Option<Arc<dyn NextTurnSource>>,
     answering: Answering,
 ) -> Answering {
     let Some(segments) = segments else {
@@ -633,15 +685,17 @@ pub(super) fn commit_on_answer(
                     crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
                 })
                 .unwrap_or(turn);
-            reply_committed(
-                &segments.manifest,
-                ReplyCommit {
-                    head,
-                    message,
-                    text,
-                },
-                Arc::new(authority),
-            );
+            let commit = ReplyCommit {
+                head,
+                message,
+                text,
+            };
+            match next {
+                Some(next) => {
+                    reply_committed_preparing(&segments.manifest, commit, Arc::new(authority), next)
+                }
+                None => reply_committed(&segments.manifest, commit, Arc::new(authority)),
+            }
         }
     });
     Answering {

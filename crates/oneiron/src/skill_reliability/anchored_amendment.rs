@@ -142,10 +142,14 @@ pub(super) fn effective_evidence_in_txn(
                 AnchoredEffect::Record(evidence)
             })
         }
-        // Only a credited win's masses can move to nothing; a failed
-        // credit that never named this subject is not this leaf's row to
-        // judge.
-        None if credit.succeeded => Ok(AnchoredEffect::Withdraw),
+        // Failed direct credit moves to nothing only after its seating
+        // judgments are explicitly displaced. An unrelated failed credit
+        // is still not this leaf's row to judge.
+        None if row.pack_attribution.is_some()
+            && (credit.succeeded || credit.direct_subjects.contains(&Some(held.subject))) =>
+        {
+            Ok(AnchoredEffect::Withdraw)
+        }
         None => Ok(AnchoredEffect::Stand),
     }
 }

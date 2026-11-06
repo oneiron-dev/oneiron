@@ -201,6 +201,7 @@ pub use claims::{
     CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, ClaimClassDescriptorRow,
     claim_class_descriptors, is_calendar_claim_predicate,
 };
+pub(crate) use connectors::calendar_connector_write_accepts_masked;
 pub use connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB,
     CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig,
@@ -226,6 +227,7 @@ pub use inbox_card::{
     CalendarInboxCard, CheckInReAsk, run_calendar_card_pass,
 };
 pub(crate) use inbox_card::{calendar_inbox_card_lens, calendar_inbox_items};
+pub(crate) use ingest::calendar_ics_feed_cursor_accepts_masked;
 pub use ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
     IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse,

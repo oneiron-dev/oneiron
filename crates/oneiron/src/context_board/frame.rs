@@ -582,6 +582,174 @@ fn render_candidate(
     lines.join("\n")
 }
 
+/// Which part of a split board a section rides (I1 = C, ARCH-0067 turn
+/// order): the state-only part, which reads no new message and goes right
+/// before it, or the query part, which holds the rows read for that message
+/// and goes right after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoardPart {
+    State,
+    Query,
+}
+
+/// One board rendered as its two parts, under one budget and one shed
+/// ladder over both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitBoardRender {
+    /// The one settled frame: its views in frame order, its metadata, and
+    /// as its text the state part, then a newline and the query part when
+    /// there is one, the text the budget counted.
+    pub render: BoardRender,
+    /// The state part: its wrapper with the scope and the budget, the
+    /// legend, the `you:` line, the changed line and every state section.
+    pub state: String,
+    /// The query part: its own wrapper with the epoch, which advances with
+    /// each retrieval, and every query section; `None` when no section rides
+    /// it.
+    pub query: Option<String>,
+}
+
+/// [`render_board_block`] for a turn whose board rides in two parts: the
+/// section at each index rides `parts`' part at that index (a section past
+/// its end rides the state part). The cap is resolved once and the shed
+/// ladder runs once, over the tokens of both parts together, so a split
+/// board spends no more than the one frame would. The epoch rides the query
+/// part, so the state part reads nothing the new message changes.
+#[must_use]
+pub fn render_split_board_block(
+    frame: &BoardFrame<'_>,
+    parts: &[BoardPart],
+    request: BoardBudgetRequest,
+) -> SplitBoardRender {
+    let budget = resolve_board_budget(request);
+    let mut sections: Vec<ShedSection> = frame
+        .sections
+        .iter()
+        .map(|section| ShedSection::of(section, SectionView::Full))
+        .collect();
+    let (mut state, mut query) = render_split_candidate(frame, &budget, &sections, parts);
+    let mut text = joined_parts(&state, query.as_deref());
+    let mut rendered_tok = count_context_pack_tokens(&text);
+    let mut applied = Vec::new();
+    for rank in SHED_ORDER {
+        if rendered_tok <= budget.cap_tok {
+            break;
+        }
+        collapse_rank(frame.sections, &mut sections, rank);
+        applied.push(rank);
+        (state, query) = render_split_candidate(frame, &budget, &sections, parts);
+        text = joined_parts(&state, query.as_deref());
+        rendered_tok = count_context_pack_tokens(&text);
+    }
+    SplitBoardRender {
+        render: BoardRender {
+            metadata: BoardRenderMetadata {
+                budget_tok: budget.cap_tok,
+                budget_source: budget.source,
+                explicit_override_tok: request.explicit_override_tok,
+                rendered_tok,
+                floor_exceeds_cap: rendered_tok > budget.cap_tok,
+            },
+            text,
+            shed: ShedOutcome {
+                sections,
+                applied,
+                rendered_tok,
+                floor_exceeds_cap: rendered_tok > budget.cap_tok,
+            },
+        },
+        state,
+        query,
+    }
+}
+
+/// The two parts as one text, the way the budget counts them.
+fn joined_parts(state: &str, query: Option<&str>) -> String {
+    match query {
+        Some(query) => format!("{state}\n{query}"),
+        None => state.to_owned(),
+    }
+}
+
+/// The state and query parts of one candidate: each its own wrapper, its
+/// first-party sections inside it in frame order and its foreign sections
+/// after it as guest evidence, the structure [`render_candidate`] gives the
+/// one frame.
+fn render_split_candidate(
+    frame: &BoardFrame<'_>,
+    budget: &BoardBudget,
+    sections: &[ShedSection],
+    parts: &[BoardPart],
+) -> (String, Option<String>) {
+    let part = |index: usize| parts.get(index).copied().unwrap_or(BoardPart::State);
+    let mut state = vec![
+        format!(
+            "<memory surface=\"board\" part=\"state\" scope=\"{}\" budget_tok=\"{}\">",
+            xml_attr_token(&frame.header.scope),
+            budget.cap_tok
+        ),
+        format!("legend: {}", xml_text_token(frame.legend.as_str())),
+    ];
+    if let Some(you) = frame.you {
+        state.push(xml_text_token(you));
+    }
+    if let Some(changes) = frame.changes {
+        state.extend(changes.render().iter().map(|line| xml_text_token(line)));
+    }
+    part_lines(&mut state, frame, sections, |index| {
+        part(index) == BoardPart::State
+    });
+    let state = state.join("\n");
+    if !(0..sections.len()).any(|index| part(index) == BoardPart::Query) {
+        return (state, None);
+    }
+    let mut query = vec![format!(
+        "<memory surface=\"board\" part=\"query\" epoch=\"{}\">",
+        frame.header.epoch
+    )];
+    part_lines(&mut query, frame, sections, |index| {
+        part(index) == BoardPart::Query
+    });
+    (state, Some(query.join("\n")))
+}
+
+/// Appends the sections `rides` keeps: the first-party ones, then the
+/// wrapper's close, then each foreign one as guest evidence.
+fn part_lines(
+    lines: &mut Vec<String>,
+    frame: &BoardFrame<'_>,
+    sections: &[ShedSection],
+    rides: impl Fn(usize) -> bool,
+) {
+    let kept: Vec<(&ShedSection, &BoardSection)> = sections
+        .iter()
+        .zip(frame.sections)
+        .enumerate()
+        .filter(|(index, _)| rides(*index))
+        .map(|(_, pair)| pair)
+        .collect();
+    for (section, original) in &kept {
+        if original.foreign_host.is_some() {
+            continue;
+        }
+        lines.push(xml_text_token(&section.name));
+        lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
+    }
+    lines.push("</memory>".to_owned());
+    for (section, original) in &kept {
+        let Some(host) = original.foreign_host.as_deref() else {
+            continue;
+        };
+        lines.push(format!(
+            "<evidence role=\"guest\" host=\"{}\" consolidatable=\"false\">",
+            xml_attr_token(host)
+        ));
+        lines.push(xml_text_token(&section.name));
+        lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
+        lines.push("</evidence>".to_owned());
+    }
+}
+
 fn rows_tok(rows: &[String]) -> usize {
     count_context_pack_tokens(&rows.join("\n"))
 }

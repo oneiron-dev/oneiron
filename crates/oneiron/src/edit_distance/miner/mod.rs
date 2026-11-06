@@ -100,7 +100,9 @@ pub use self::config::PREDICATE_PREFERENCE_PHRASING;
 pub(crate) use self::erase::{erase_principal_decision_entity_in_txn, erase_source_claim_in_txn};
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
-pub(in crate::edit_distance) use self::hunks::hunk_substitution_ranges;
+pub(in crate::edit_distance) use self::hunks::{
+    hunk_substitution_ranges, reconstructed_hunk_ranges,
+};
 pub use self::influence::mined_preferences_for_principal;
 pub(crate) use self::influence::{is_mined_preference, preference_receipts_in_force};
 pub use self::mining::{
@@ -116,7 +118,9 @@ pub use self::store::{
     mined_skill_edit, miner_watermark, pending_substitution_skill_edits, resolve_mined_skill_edit,
 };
 pub use self::target::CompilationTarget;
-pub(crate) use self::target::{is_compiled_preference, validate_compiled_preference};
+pub(crate) use self::target::{
+    CompilationTargetValidation, is_compiled_preference, validate_compiled_preference,
+};
 
 // The flat miner.rs module used to provide these names to the sibling test
 // module through `use super::*`: every miner-internal item the tests name

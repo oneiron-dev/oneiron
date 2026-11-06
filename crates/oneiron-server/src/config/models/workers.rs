@@ -80,6 +80,11 @@ pub(super) struct WorkerFile {
     server: Option<PathBuf>,
     server_sha256: Option<String>,
     endpoint: Option<String>,
+    /// The SHA-256 of the exact bytes of the `--launch-manifest` file an
+    /// external EXL3 worker was started with (FIX 9296): the manifest
+    /// file's digest, never the `expected.runtime` build digest it names.
+    /// Only an external EXL3 row's answers are checked against it.
+    launch_manifest_sha256: Option<String>,
     device: Option<String>,
     #[serde(default)]
     args: Vec<String>,
@@ -129,6 +134,11 @@ pub struct WorkerConfig {
     /// Where an external worker's probe goes; `None` is its provider's
     /// `base_url`.
     pub endpoint: Option<String>,
+    /// The operator-pinned SHA-256 of the `--launch-manifest` file's exact
+    /// bytes (FIX 9296): the manifest file's digest, never the
+    /// `expected.runtime` build digest it names. Only an external EXL3
+    /// row's answers are checked against it.
+    pub launch_manifest_sha256: Option<CacheDigest>,
 }
 
 /// What a managed worker's supervisor installs and runs.
@@ -288,6 +298,15 @@ impl WorkerFile {
             );
         }
         let expected = self.expected.resolve(&field("expected"))?;
+        let launch_manifest_sha256 = self
+            .launch_manifest_sha256
+            .clone()
+            .map(|hex| {
+                CacheDigest::new(hex).map_err(|error| {
+                    anyhow::anyhow!("{}: {error}", field("launch_manifest_sha256"))
+                })
+            })
+            .transpose()?;
         let launch = match mode {
             WorkerMode::Managed => {
                 anyhow::ensure!(
@@ -324,6 +343,7 @@ impl WorkerFile {
             expected,
             launch,
             endpoint: self.endpoint,
+            launch_manifest_sha256,
         })
     }
 

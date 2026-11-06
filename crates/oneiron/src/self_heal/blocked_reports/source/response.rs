@@ -13,9 +13,12 @@
 //! as it is.
 
 use super::{SOURCE, STEPS, StepSourceKey};
-use crate::EntityId;
 use crate::side_table::SideKey;
-use crate::store::{ResponseCarriage, ResponseScan};
+use crate::store::{
+    ResponseCarriage, ResponseDb, ResponseScan, Store, bind_retained_response_owner_in_txn,
+    response_carrier,
+};
+use crate::{EntityId, Result, Vault};
 
 /// Which kind of replay-source row the full key `key` names: a step row
 /// (`true`) or a receipt row (`false`); `None` for neither.
@@ -56,4 +59,41 @@ pub(crate) fn blocked_capture_scan(key: &[u8], value: &[u8]) -> ResponseScan {
 /// receipt or the run. None for a row that does not decode.
 pub(crate) fn blocked_capture_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> {
     owners_of(key, value).unwrap_or_default()
+}
+
+/// Who owns a replay-source row's request, read with its witnesses (FIX 6734): the pure
+/// decoded owners plus every owner witnessed for the row's exact step key, sorted and
+/// deduped. A receipt row reads exactly as [`blocked_capture_owners`]: only step rows gain
+/// witnesses. A row keyed as neither kind still names none.
+pub(crate) fn blocked_capture_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    value: &[u8],
+) -> Result<Vec<EntityId>> {
+    let mut owners = blocked_capture_owners(key, value);
+    let step = key
+        .strip_prefix(SOURCE.decl().prefix)
+        .and_then(StepSourceKey::decode_key);
+    if let Some(step) = step {
+        owners.extend(super::ownership::owners_of_capture_in(store, txn, &step)?);
+        owners.sort_unstable();
+        owners.dedup();
+    }
+    Ok(owners)
+}
+
+/// Every retained image of these captures owes the terminal claim immediately,
+/// including earlier values whose instances only historical obligations name.
+pub(super) fn bind_capture_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    keys: &[&StepSourceKey],
+    claim: EntityId,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let carriers: Vec<_> = keys
+        .iter()
+        .map(|key| response_carrier(ResponseDb::VaultMeta, &STEPS.key_bytes(key)))
+        .collect();
+    bind_retained_response_owner_in_txn(&vault.store, txn, &carriers, claim)
 }

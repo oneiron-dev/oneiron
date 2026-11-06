@@ -333,8 +333,10 @@ async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
         // next probe instead of parking until its config changes.
         return Err(failed(WorkerFailure::Unreachable, None));
     }
-    let warm = serde_json::from_slice::<WarmTarget>(&ready.body)
+    let warm = serde_json::from_slice::<JsonValue>(&ready.body)
         .ok()
+        .and_then(|ready| WarmTarget::from_ready(ready).ok())
+        .map(|(warm, _)| warm)
         .filter(|warm| warm.validate().is_ok())
         .ok_or_else(|| failed(WorkerFailure::InvalidReply, None))?;
     let target = json!({

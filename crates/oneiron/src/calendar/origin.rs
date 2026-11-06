@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::memory::MemoryResult;
 use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityStore, EntityStoreRead};
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -241,6 +241,24 @@ impl Vault {
                 Value::from(actor.entity_ref().to_hex()),
             ),
         ]));
+        // Blind-review P1a (REVIEW-4389): the constructor's scope_facet is
+        // the EVENT's substrate id — a derived id, not a stored FACET — so
+        // the CLAIM birth edge the put stamps would fail InvalidFacet. The
+        // engine-generated origin claim takes the EVENT's own stored birth
+        // facet (its put above wrote the FacetOf edge in this txn), else the
+        // vault default, as the provenance wrappers do (FIX 7757).
+        let event_facet = crate::federation::record_scope::birth_facet(&self.store, txn, event)?;
+        claim.scope_facet = match event_facet {
+            Some(facet)
+                if self
+                    .store
+                    .port_entity_record(txn, &facet)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+            {
+                facet
+            }
+            _ => crate::claim::default_facet_in(&self.store, txn)?,
+        };
         self.put_reserved_claim_in_txn(txn, &self.store.clock.entity_id()?, &claim, occurred, at)?;
         self.batch_in()
             .put(&event, ENTITY_TYPE_EVENT, occurred, at, &body)

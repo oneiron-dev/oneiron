@@ -115,8 +115,8 @@ pub const DREAMER_TURN_PROGRAM_ATTEMPT_KIND: &str = "dreamer.turn_program";
 
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
-/// dispatch: the wake driver never admits it; a host Coach leases it with
-/// [`crate::dreamer_runner::DreamerRunnerStore::admit_next_coach_heal`].
+/// dispatch: a host Coach or an explicitly opted-in wake executor leases it
+/// with [`crate::dreamer_runner::DreamerRunnerStore::admit_next_coach_heal`].
 /// Doubles as the payload `job_type`.
 pub const COACH_HEAL_ATTEMPT_KIND: &str = "coach.heal";
 

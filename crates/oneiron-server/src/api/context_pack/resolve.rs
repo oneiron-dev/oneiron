@@ -79,9 +79,6 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
-    // An over-large limit is served at the ceiling, before anything sizes
-    // work from it.
-    req.clamp_limits();
     // Every ref the request names resolves under the caller's own read: a
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
@@ -163,6 +160,12 @@ pub(crate) async fn run_context_pack(
     } else {
         embed_media_seeds(server, media, query).await?
     };
+    let (mut media_memory, media) = (server.memory.empty_lease(), media);
+    media_memory.materialized(
+        0,
+        (media.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+    );
 
     let mut builder = server
         .vault

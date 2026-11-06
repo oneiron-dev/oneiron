@@ -42,6 +42,7 @@ impl fmt::Debug for ServeArgs {
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
+            .field("preview_socket", &self.preview_socket)
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)

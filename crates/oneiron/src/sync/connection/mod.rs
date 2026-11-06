@@ -211,11 +211,11 @@ impl SyncConnection {
 
     /// Publishes the count of valid run-buffer updates an explicit leave arm
     /// discards unqueued (OF-158), then clears that buffer as the explicit
-    /// owner discard. Runs AFTER the arm's single-try `queue_on_exit`:
-    /// remaining valid-key entries never landed in `q:` (a Pause writes
-    /// nothing), so the durable discard cannot recount them; an admitted
-    /// flush drained the buffer, so this adds 0 and only the durable count
-    /// stands. Additive (`fetch_add`, never a storing overwrite) plus the
+    /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
+    /// writes nothing; an admitted flush drains the buffer, so this adds 0.
+    /// A leave that interrupts a send publishes its owned buffer directly,
+    /// without another queue admission. Additive (`fetch_add`, never a
+    /// storing overwrite) plus the
     /// synchronous clear means a later arm seeing the emptied buffer adds 0
     /// without touching the earlier publication. Non-waiting; runs BEFORE any
     /// `Close`/cleanup await. Leave arms only; non-leave shutdown never
@@ -684,8 +684,8 @@ impl SyncConnection {
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
-    /// missing earlier ACK retains the rest of that window's rows, delete
-    /// markers included. Windows are separate documents, so a row the home
+    /// missing earlier ACK or a Held reply retains the rest of that window's
+    /// rows, delete markers included. Windows are separate documents, so a row the home
     /// never acknowledged (a window it refused to grant again, say) holds
     /// back only its own window. A row a device-only world keeps here is
     /// never sent, so never acknowledged: it clears, and its operations stay
@@ -712,8 +712,16 @@ impl SyncConnection {
                 held_back.insert(queued.window_key);
                 continue;
             };
-            if *ack != *blake3::hash(&queued.encoded).as_bytes() {
+            if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
                 return Err("home residence acknowledgment digest mismatch".into());
+            }
+            if !ack.is_durable()
+                && client.update_verdict(&queued.window_key, &queued.encoded)
+                    != crate::sync::window::UpdateVerdict::Withheld
+            {
+                retained.insert(queued.seq);
+                held_back.insert(queued.window_key);
+                continue;
             }
             confirmed.push(queued.seq);
         }

@@ -74,6 +74,8 @@ pub(super) fn carry_current_authority(
     // The copy keeps the generations the image keeps (FIX 11824).
     let copy = crate::store::CopyGenerations::of_rows(&databases["sync_state"]);
     let live = current_rows(current, &classes, &copy)?;
+    let claim_row_floor = super::claim_order::floor(&databases["vault_meta"])?
+        .max(super::claim_order::floor(&live.rows["vault_meta"])?);
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
     // different id is another vault.
@@ -150,6 +152,12 @@ pub(super) fn carry_current_authority(
         merged.extend(live_rows.iter().filter(|row| is_live(row)).cloned());
         *rows = merged.into_iter().collect();
     }
+    super::claim_order::set_floor(
+        databases
+            .get_mut("vault_meta")
+            .ok_or_else(super::codec_error)?,
+        claim_row_floor,
+    );
     Ok((classes.home_notes(), live.pad_objects))
 }
 

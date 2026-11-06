@@ -19,11 +19,43 @@ const ACCESS_PATH: &str = "/__oneiron_preview_access";
 const ACCESS_COOKIE: &str = "oneiron_preview_access";
 
 pub(super) async fn serve_connection(socket: TcpStream, shared: Arc<SharedPreview>) {
-    let closed = shared.closed.triggered();
+    let origin = shared.local_origin();
+    let closed = shared.closed.clone();
+    serve(socket, closed, move |_| {
+        Some((Arc::clone(&shared), origin.clone()))
+    })
+    .await;
+}
+
+pub(super) async fn serve_hosted_connection(
+    socket: tokio::net::UnixStream,
+    routes: Arc<super::PreviewRoutes>,
+    stop: crate::managed::ManagedShutdown,
+) {
+    serve(socket, stop, move |request| {
+        let authority = request.headers().get(HOST)?.to_str().ok()?;
+        let shared = routes.resolve(authority)?;
+        let origin = shared.hosted_origin()?;
+        Some((shared, origin))
+    })
+    .await;
+}
+
+async fn serve<S, Resolve>(socket: S, stop: crate::managed::ManagedShutdown, resolve: Resolve)
+where
+    S: super::PreviewIo + 'static,
+    Resolve: Fn(&Request<Incoming>) -> Option<(Arc<SharedPreview>, super::PreviewOrigin)>
+        + Send
+        + Sync
+        + 'static,
+{
     let service = hyper::service::service_fn(move |request| {
-        let shared = Arc::clone(&shared);
+        let resolved = resolve(&request);
         async move {
-            let mut response = handle(request, shared).await;
+            let mut response = match resolved {
+                Some((shared, origin)) => handle(request, shared, origin).await,
+                None => refusal(),
+            };
             response
                 .headers_mut()
                 .insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
@@ -50,21 +82,26 @@ pub(super) async fn serve_connection(socket: TcpStream, shared: Arc<SharedPrevie
         .with_upgrades();
     tokio::select! {
         biased;
-        () = closed => {},
+        () = stop.triggered() => {},
         _ = connection => {},
     }
 }
 
-async fn handle(request: Request<Incoming>, shared: Arc<SharedPreview>) -> Response<Body> {
-    // The listener has one random .localhost authority, not a catch-all for
-    // arbitrary DNS names or absolute-form proxy requests.
+async fn handle(
+    request: Request<Incoming>,
+    shared: Arc<SharedPreview>,
+    origin: super::PreviewOrigin,
+) -> Response<Body> {
+    // Each ingress answers only its exact live binding, never a catch-all
+    // authority or an absolute-form proxy destination.
     let valid_host = request
         .headers()
         .get(HOST)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|host| host.eq_ignore_ascii_case(&shared.authority));
+        .is_some_and(|host| host.eq_ignore_ascii_case(&origin.authority));
     if !valid_host
         || !shared.is_live()
+        || origin.stopped.is_triggered()
         || request.uri().authority().is_some()
         || request.uri().scheme().is_some()
         || request.method() == Method::CONNECT
@@ -72,19 +109,19 @@ async fn handle(request: Request<Incoming>, shared: Arc<SharedPreview>) -> Respo
         return refusal();
     }
     if request.uri().path() == ACCESS_PATH {
-        return bootstrap(&request, &shared);
+        return bootstrap(&request, &shared, &origin);
     }
     if request
         .headers()
         .get("origin")
-        .is_some_and(|origin| origin.as_bytes() != shared.endpoint.local_url.as_bytes())
+        .is_some_and(|header_origin| header_origin.as_bytes() != origin.url.as_bytes())
     {
         return refusal();
     }
     let Some(token) = cookie_token(request.headers()) else {
         return refusal();
     };
-    let Some(access) = Access::authorize(&shared, &token) else {
+    let Some(access) = Access::authorize(&shared, &token, &origin) else {
         return refusal();
     };
     tokio::select! {
@@ -98,7 +135,11 @@ async fn handle(request: Request<Incoming>, shared: Arc<SharedPreview>) -> Respo
     }
 }
 
-fn bootstrap(request: &Request<Incoming>, shared: &Arc<SharedPreview>) -> Response<Body> {
+fn bootstrap(
+    request: &Request<Incoming>,
+    shared: &Arc<SharedPreview>,
+    origin: &super::PreviewOrigin,
+) -> Response<Body> {
     if request.method() != Method::GET {
         return refusal();
     }
@@ -109,11 +150,20 @@ fn bootstrap(request: &Request<Incoming>, shared: &Arc<SharedPreview>) -> Respon
     else {
         return refusal();
     };
-    if Access::authorize(shared, token).is_none() {
+    if Access::authorize(shared, token, origin).is_none() {
         return refusal();
     }
+    let secure = if origin
+        .url
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
+    {
+        "; Secure"
+    } else {
+        ""
+    };
     let Ok(cookie) = HeaderValue::from_str(&format!(
-        "{ACCESS_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax"
+        "{ACCESS_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax{secure}"
     )) else {
         return refusal();
     };
@@ -224,11 +274,7 @@ async fn forward(
         strip_hop_headers(response.headers_mut());
     }
     isolate_cookies(response.headers_mut());
-    rewrite_location(
-        response.headers_mut(),
-        declared_port,
-        &access.shared.endpoint.local_url,
-    );
+    rewrite_location(response.headers_mut(), declared_port, &access.origin.url);
     Ok(response.map(Body::new))
 }
 

@@ -1,22 +1,23 @@
-//! A judgment answer's typed-question copies under body custody (FIX 11236).
+//! A judgment answer's typed-question copies under body custody (FIX 11236, 11237).
 //!
 //! An answer row, its outcome labels and its closed window copy the bound
 //! `judgment.answer` claim FIX 9918 erases them with: the claim's erase
 //! deletes every one of those rows live, at both delete doors. A checkpoint
-//! carries each as a row-held response owned by the answer claim, its unit
-//! and its receipt's principal, so the erase of any of the three retires
-//! every image's copy too; a retired copy leaves nothing, as the live row
-//! goes. A label or a closed window keeps its claim owner alone: it names
-//! no unit or principal of its own. The question's own rows (its versions,
-//! head, backfills and ask-history mark) hold no answer copy and travel as
-//! they are. Erasing by unit or by principal is the FIX's second half, in
-//! the erase scrub beside this one.
+//! carries each as a row-held response. At first bind, a decoded answer
+//! names its claim, unit and receipt principal; a decoded label or window
+//! joins those owners from its answer in the same transaction. An opaque
+//! copy or one without a decodable answer keeps its claim owner alone.
+//! Existing unchanged bindings keep their prior owners. An owner's erase
+//! retires the instances bound to it; a retired copy leaves nothing. The
+//! question's own rows (its versions, head, backfills and ask-history mark)
+//! hold no answer copy and travel as they are. The live erase scrub remains
+//! beside this custody handling.
 
 use super::store::{AnswerKey, LabelKey, QUESTION_ANSWER, QUESTION_LABEL};
 use super::windows::{QUESTION_WINDOW, WindowKey};
 use crate::entity_id::EntityId;
 use crate::side_table::{self, SideKey};
-use crate::store::{ResponseCarriage, ResponseScan};
+use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 /// The answer claim the copy row `key` holds a copy of, by its key alone:
 /// an answer row's, a label's or a closed window's claim; `None` for any
@@ -65,12 +66,11 @@ pub(crate) fn typed_question_carriage(key: &[u8], value: &[u8]) -> ResponseScan 
     })
 }
 
-/// Who owns the typed-question row `key`'s copies: an answer row's, its
-/// claim, its answer's unit and its receipt's principal, as the erasers
-/// delete it by; a label's or a closed window's, its claim alone, by its
-/// key; none for any other row of the table, or one whose key does not
-/// decode. An answer row that does not decode keeps its claim owner, as
-/// its opaque carriage does.
+/// Owners proved by the copy's own key and value: an answer's claim, unit
+/// and receipt principal, or a label's or closed window's claim alone.
+/// Other rows have none. An undecodable answer keeps its claim owner, as
+/// its opaque carriage does. Decoded labels and windows join their answer
+/// owners through `typed_question_copy_owners_in_txn` at binding time.
 pub(crate) fn typed_question_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> {
     let Some(rest) = key.strip_prefix(side_table::TYPED_QUESTION.prefix) else {
         return Vec::new();
@@ -89,4 +89,45 @@ pub(crate) fn typed_question_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> {
         return owners;
     }
     copy_claim(key).into_iter().collect()
+}
+
+/// Owners of a copy at bind time, including a decoded label's or window's
+/// answer unit and receipt principal (FIX 11237). Opaque copies and copies
+/// without a decodable answer keep their key-proved owners alone.
+///
+/// # Errors
+///
+/// Storage errors while reading the answer in the binding transaction.
+pub(crate) fn typed_question_copy_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    value: &[u8],
+) -> crate::Result<Vec<EntityId>> {
+    let mut owners = typed_question_owners(key, value);
+    let Some(rest) = key.strip_prefix(side_table::TYPED_QUESTION.prefix) else {
+        return Ok(owners);
+    };
+    if AnswerKey::decode_key(rest).is_some() || !copy_decodes(key, value) {
+        return Ok(owners);
+    }
+    let (question, claim) = if let Some(label) = LabelKey::decode_key(rest) {
+        (label.question, label.claim)
+    } else if let Some(window) = WindowKey::decode_key(rest) {
+        (window.question, window.claim)
+    } else {
+        return Ok(owners);
+    };
+    let Some(answer) = QUESTION_ANSWER.get_lenient(store, txn, &AnswerKey { question, claim })?
+    else {
+        return Ok(owners);
+    };
+    if !owners.contains(&answer.unit) {
+        owners.push(answer.unit);
+    }
+    let principal = answer.decision.receipt.principal;
+    if !owners.contains(&principal) {
+        owners.push(principal);
+    }
+    Ok(owners)
 }

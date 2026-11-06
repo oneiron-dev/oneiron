@@ -37,7 +37,7 @@ use std::sync::Arc;
 mod http;
 mod request;
 
-pub(crate) const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+pub(crate) use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 

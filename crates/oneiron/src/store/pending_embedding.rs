@@ -26,7 +26,7 @@ const SEALED_PENDING_EMBEDDING_MARKER_VERSION: u8 = 3;
 
 const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 
-pub(super) const ENTITY_BODY_OFFSET: usize = 25;
+pub(super) const ENTITY_BODY_OFFSET: usize = crate::batch::ENTITY_METADATA_HEADER_LEN;
 
 /// Typed door for the `pe:` marker family. The value stays `Vec<u8>`: every
 /// reader compares the stored bytes against a freshly computed token rather

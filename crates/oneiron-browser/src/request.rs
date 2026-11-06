@@ -53,6 +53,13 @@ impl BrowserBody for Cursor<Vec<u8>> {
     }
 }
 
+#[cfg(feature = "driver")]
+impl BrowserBody for Cursor<bytes::Bytes> {
+    fn len(&self) -> u64 {
+        self.get_ref().len() as u64
+    }
+}
+
 /// A handler's response whose body can be read in pieces.
 #[cfg(feature = "driver")]
 pub struct SpooledResponse {

@@ -31,6 +31,8 @@ pub(super) struct OverlaySink<'a, 'v> {
     session: &'a OffRecordSession<'v>,
     route: &'a SessionWriteRoute,
     overlay: Arc<SessionOverlay>,
+    /// Immutable instance metadata, captured before the base writer opens.
+    room: Option<EntityId>,
     /// The session-only SUMMARY: its id, encoded body and text.
     summary: Option<(EntityId, Vec<u8>, &'a str)>,
     /// The room's one shell-staging claim, when this witness holds it.
@@ -47,7 +49,7 @@ impl OverlaySink<'_, '_> {
 
     /// The room this stretch runs in; `None` for the owner's 1:1.
     pub(super) fn room(&self) -> crate::error::Result<Option<EntityId>> {
-        self.session.room()
+        Ok(self.room)
     }
 
     /// The shell row is in the room now, so the claim is spent for good.
@@ -108,10 +110,12 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: None,
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -188,10 +192,12 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -243,10 +249,12 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: Some(room),
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -278,10 +286,12 @@ impl Memory<'_> {
             turn,
             WitnessTarget::Session {
                 session,
+                route: None,
                 summary,
                 admit: Some(&admit),
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
             || {
@@ -416,11 +426,15 @@ impl Memory<'_> {
         // on a witness that never staged the shell row, leaving later witnesses
         // to hang `PartOf`/`BelongsTo` edges off a conversation id with no
         // entity row.
+        // Promotion holds session state while taking the base writer. Never
+        // acquire that state mutex from an overlay guard inside the writer.
+        let room = session.room()?;
         let shell = session.reserve_overlay_conversation_shell()?;
         Ok(OverlaySink {
             session,
             route,
             overlay: session.overlay(),
+            room,
             summary,
             shell,
             turn_vector,
@@ -437,6 +451,11 @@ impl Memory<'_> {
         sink: &OverlaySink<'_, '_>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<(TxnSegmentGuard, Vec<(String, u8)>)> {
+        if sink.session.read_view()?.read().base().open_nonce != self.vault.store.open_nonce {
+            return Err(MemoryError::bad_request(
+                "the off-record session belongs to another vault open",
+            ));
+        }
         let scope = JournalScope::new(plan.conversation_id, plan.turn_id);
         let entry = |role: JournalRole, op: BatchOp| JournalEntry {
             scope,
@@ -451,6 +470,7 @@ impl Memory<'_> {
             entity_type,
             occurred: plan.occurred,
             learned_at: plan.learned_at,
+            row_version: None,
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,

@@ -4,6 +4,7 @@
 //! the one default below. A missing mode is never recovered from that
 //! default: the snapshot codec requires it on every entry.
 use crate::error::{CodeError, Error, Result};
+use crate::store::code_tree_blob::MODE_GITLINK;
 
 /// The mode of an ordinary new file: a regular, non-executable blob.
 pub const DEFAULT_CODE_FILE_MODE: u32 = 0o100_644;
@@ -14,18 +15,18 @@ const MODE_EXECUTABLE: u32 = 0o100_755;
 const MODE_SYMLINK: u32 = 0o120_000;
 
 /// Whether `mode` is one a code snapshot keeps: a regular file, an
-/// executable or a symbolic link. A submodule link is no snapshot file.
+/// executable, symbolic link or opaque gitlink. A gitlink keeps only its OID.
 ///
 /// # Errors
 /// Any other mode.
 pub(crate) fn validate_code_file_mode(mode: u32) -> Result<()> {
     if matches!(
         mode,
-        DEFAULT_CODE_FILE_MODE | MODE_EXECUTABLE | MODE_SYMLINK
+        DEFAULT_CODE_FILE_MODE | MODE_EXECUTABLE | MODE_SYMLINK | MODE_GITLINK
     ) {
         return Ok(());
     }
     Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-        "file mode must be 100644, 100755 or 120000",
+        "file mode must be 100644, 100755, 120000 or 160000",
     )))
 }

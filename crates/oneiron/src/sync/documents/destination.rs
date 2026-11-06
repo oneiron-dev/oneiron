@@ -61,8 +61,9 @@ pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
     document_frame_withheld_for(vault, PeerMachine::Unknown, frame)
 }
 
-/// Recheck immediately before release. Requests and ACKs carry no text;
-/// every state, update, operation and receipt is subject to the same policy.
+/// Recheck immediately before release. Requests, ACKs and a publication's
+/// Refused receipt carry no text; every state, update, operation and other
+/// receipt is subject to the same policy.
 pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8]) -> bool {
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
@@ -73,8 +74,16 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
     if matches!(
         document.kind,
         document_sub_tags::REQUEST | document_sub_tags::ACK
-    ) {
+    ) || (document.kind == document_sub_tags::ARTIFACT_RECEIPT
+        && matches!(
+            crate::artifact_hosting::ArtifactPublicationOutcome::from_receipt(document.payload),
+            Some(crate::artifact_hosting::ArtifactPublicationOutcome::Refused)
+        ))
+    {
         return false;
+    }
+    if document.kind == document_sub_tags::WAITED_OUT {
+        return crate::sync::transport::decode_document_waited_out(document.payload).is_err();
     }
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();

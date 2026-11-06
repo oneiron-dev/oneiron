@@ -376,7 +376,7 @@ fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality)
     }
     Ok(())
 }
-fn effective_route(
+pub(super) fn effective_route(
     manifest: &ModelManifest,
     routes: &BTreeMap<ModelSlot, ModelLocality>,
     slot: ModelSlot,

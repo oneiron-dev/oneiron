@@ -69,9 +69,6 @@ pub(crate) const MEMORY_REASON_DEFAULT_LIMIT: usize = 10;
 /// Default request budget, matching the engine's own recall budget.
 pub(crate) const MEMORY_REASON_DEFAULT_TOKEN_BUDGET: usize = 4_000;
 
-/// Ceiling on the complete request budget a caller may request.
-pub(crate) const MEMORY_REASON_MAX_TOKEN_BUDGET: usize = 65_536;
-
 /// The wire values `depth` accepts, derived from the engine enum so the
 /// contract cannot drift from the type it describes.
 pub(crate) const RETRIEVAL_EFFORT_VALUES: [Effort; 5] = [
@@ -149,11 +146,12 @@ pub(crate) struct MemoryReasonRequest {
     #[serde(default = "standard_effort")]
     #[schema(value_type = String, default = "medium", example = "medium")]
     pub(crate) depth: Effort,
-    /// Evidence rows to retrieve. Omitted means `10`; must be at least 1. A
-    /// limit past 1,000 is served at 1,000 and `limitClamped` says so.
+    /// Evidence rows to retrieve. Omitted means `10`; must be at least 1.
+    /// Past `[limits].memory_reason_evidence_rows`, ask and serve the full count.
     #[schema(example = 10)]
     pub(crate) limit: Option<usize>,
-    /// Total decompose + rerank + compose budget, `1..=65536` tokens; default `4000`.
+    /// Positive total decompose + rerank + compose budget; default `4000`.
+    /// Past `[limits].memory_reason_tokens`, ask and use the full budget.
     ///
     /// A BUDGET, never the reported spend: `tokensUsed` in the response is
     /// what the backend actually spent, which for the model-free tiers is 0
@@ -227,7 +225,8 @@ pub(crate) struct MemoryReasonResponse {
     pub(crate) degradation: Vec<RetrievalDegradation>,
     #[schema(value_type = f32, example = -0.15)]
     pub(crate) confidence_adjustment: ConfidenceAdjustment,
-    /// The request's `limit` was past 1,000 and was served at 1,000.
+    /// Whether the request's row count was reduced. This route serves the
+    /// full positive count, so this is false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) limit_clamped: bool,
     /// Evidence rows whose bodies passed `[limits].projection_body_bytes`:
@@ -397,6 +396,16 @@ pub(crate) async fn companion_memory_reason(
     let admission = admit_deep_retrieval(&server, request.depth)?;
 
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    server.vault.measure_limit_for(
+        oneiron::limit_ask::EngineLimit::MemoryReasonEvidenceRows,
+        limit as u64,
+        auth.principal_entity(),
+    );
+    server.vault.measure_limit_for(
+        oneiron::limit_ask::EngineLimit::MemoryReasonTokens,
+        token_budget as u64,
+        auth.principal_entity(),
+    );
     let depth_request = DepthSearchRequest {
         deadline: None,
         probe: SearchProbe::Text {
@@ -478,8 +487,8 @@ fn reason_response(
     }
 }
 
-/// The evidence rows to retrieve, and whether the caller's limit was served
-/// at the ceiling. A zero limit is refused, as it always was here.
+/// The full evidence count to retrieve. A zero limit is refused, as it
+/// always was here; positive counts are never clamped.
 fn resolve_limit(limit: Option<usize>) -> Result<(usize, bool), ApiError> {
     let limit = limit.unwrap_or(MEMORY_REASON_DEFAULT_LIMIT);
     if limit == 0 {
@@ -488,16 +497,16 @@ fn resolve_limit(limit: Option<usize>) -> Result<(usize, bool), ApiError> {
             Some("limit"),
         ));
     }
-    Ok(oneiron::memory::caps::clamp_search_limit(limit))
+    Ok((limit, false))
 }
 
 fn validate_token_budget(token_budget: Option<usize>) -> Result<usize, ApiError> {
     let token_budget = token_budget.unwrap_or(MEMORY_REASON_DEFAULT_TOKEN_BUDGET);
-    if (1..=MEMORY_REASON_MAX_TOKEN_BUDGET).contains(&token_budget) {
+    if token_budget > 0 {
         Ok(token_budget)
     } else {
         Err(ApiError::bad_request(
-            format!("tokenBudget must be between 1 and {MEMORY_REASON_MAX_TOKEN_BUDGET}"),
+            "tokenBudget must be at least 1",
             Some("tokenBudget"),
         ))
     }

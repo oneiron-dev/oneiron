@@ -45,6 +45,7 @@ mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
+mod task_settlement;
 mod team_submit;
 mod type_diagnostics;
 mod types;
@@ -91,8 +92,8 @@ pub(crate) use self::consent_wait::{
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
     ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
-    ContributionReplayUnavailable, ForkMismatch, ForkScoring, ForkTreatment, ReplayAnchor,
-    ScoredFork, contribution_fork_receipts, run_contribution_forks,
+    ContributionReplayUnavailable, ForkMismatch, ForkScoring, ForkScoringIdentity, ForkTreatment,
+    ReplayAnchor, ScoredFork, contribution_fork_receipts, run_contribution_forks,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
@@ -101,7 +102,9 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
-pub(crate) use self::model_call::erase_model_call_actor_in_txn;
+pub(crate) use self::model_call::{
+    erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
+};
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -143,6 +146,10 @@ pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
     bind_wait_trap, park_and_bind_wait_trap,
 };
+pub use self::storage::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
@@ -166,12 +173,15 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
-    step_replay_capsules_in_txn,
+    erase_contribution_forks_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
+pub(crate) use self::storage::{
+    drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
@@ -245,9 +255,10 @@ pub use self::types::{
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult, SelfSkillCall,
-    SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
+    SelfSpeechResult, SelfTaskRefusalResult, SelfTaskRefuseCall, SelfWakePolicyWriteCall,
+    peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
@@ -289,6 +300,8 @@ pub(crate) use self::storage::code_run_continuation_accepts_masked;
 pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_replay_record_accepts_masked;
+pub(crate) use self::storage::code_run_summary_memo_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 
 pub use self::dispatcher::{

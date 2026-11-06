@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::media::{MediaPart, MediaRequest};
 use oneiron::{FatalLlmError, LlmResult};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::prepare::{EmbedPlan, embed_content, with_params};
@@ -26,7 +27,8 @@ const COHERE_EMBED_PATH: &str = "/v2/embed";
 const COHERE_DOCUMENT: &str = "search_document";
 
 /// How an embedding endpoint takes a call's documents (FIX 866).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EmbedShape {
     /// vLLM's multimodal embedding models: each image or audio part as its
     /// own chat-form document (`messages`).

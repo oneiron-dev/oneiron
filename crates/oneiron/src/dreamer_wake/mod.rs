@@ -97,6 +97,7 @@ pub(crate) fn erase_in_txn(
     id: &crate::EntityId,
 ) -> crate::Result<()> {
     crate::dreamer_consolidation::erase_person_about_in_txn(store, txn, id)?;
+    sieve::forget_audit_candidate_in_txn(store, txn, id)?;
     let turns = text_turns_in_txn(store, txn, id)?;
     for turn in &turns {
         sieve::erase_turn_in_txn(store, txn, turn)?;

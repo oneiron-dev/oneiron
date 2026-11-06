@@ -5,13 +5,13 @@
 use super::{
     Answer, AnswerOpen, AnswerRefused, Arc, ChatTurnRequest, CoreAuth, CoreScope, EntityId,
     HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage, LlmMessageRole,
-    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, SessionHint, Started,
-    StatusCode, StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall,
-    WITNESS_ROW, WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant,
-    begin_sourced_answer, compaction, credential_memory, hook_ask, hook_stopped, invocation,
-    keepalive_every, mark_history_end, principal, recall, refused, resolve_entity_ref,
-    room_launch_funding, segments, sitting, sources, text_message, turn_generate_pre,
-    verb_hook_boundary, witness_through_row, witness_turn,
+    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started, StatusCode,
+    StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall, WITNESS_ROW,
+    WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant, begin_sourced_answer,
+    compaction, credential_memory, hook_ask, hook_stopped, invocation, keepalive_every,
+    mark_history_end, principal, recall, refused, resolve_entity_ref, room_launch_funding,
+    segments, sitting, sources, text_message, turn_generate_pre, verb_hook_boundary,
+    witness_through_row, witness_turn,
 };
 use crate::api::ai::room_place::{reply_place, stamp_reply};
 
@@ -157,6 +157,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }
         None => (None, None),
     };
+    // Where the craft rides after the history, when the layout puts it
+    // there (I1 = C: then it, not the board, follows the history).
+    let craft_in_tail = turn_context;
     // A role admission this turn meets or refuses with, early and late
     // (FIX 6924): the same refusal, whichever snapshot judges it.
     let role_refused = |refusal: RoleRefusal| match refusal {
@@ -182,9 +185,17 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // before any board hydrates. A preflight only, never a send ticket: the
     // admitted call is decided fresh below, after hydration, on the current
     // route/policy snapshot.
-    recall::admit(&server.ai, &vault, &seat, auth, messages.clone(), Ok(None))
-        .call
-        .map_err(&role_refused)?;
+    recall::admit(
+        &server.ai,
+        &vault,
+        &seat,
+        auth,
+        messages.clone(),
+        Ok(None),
+        None,
+    )
+    .call
+    .map_err(&role_refused)?;
     // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
@@ -196,6 +207,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // it creates carries that origin to the agent that realizes it; a ref
     // that does not resolve binds none, and the witness refuses it.
     let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
+    let model_call_no_record_at_arrival =
+        super::model_call_keeps_no_record(&vault, actor, auth.off_record_session(), origin, None);
     // A turn in a room bills the payer whose consent on the answering
     // agent's join funds that room (FIX 805), resolved before anything is
     // written: a turn with no payer to bill is refused, typed. A turn that
@@ -302,6 +315,18 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // sitting; its witness and stream still bind the key (FIX 5564).
     let signals = sitting::signals_sitting(&vault, &hooked());
 
+    // FIX 8132: the reply is bound, before generation, to the conversation
+    // its own turn is written into, so its newcomer wakes and every
+    // publication check read the conversation that receives its text: the
+    // destination the assistant's turn below writes to, the request's ref,
+    // resolved once above (`origin`), never the user's witnessed MESSAGE,
+    // which a pre-hook may have moved. A destination in no conversation
+    // answers standalone, as before; one whose placement was not read binds
+    // the destination itself, where its stream is written anyway. Only a
+    // ref that names nothing is refused, before any model is called: no
+    // conversation would hold its reply.
+    let destination = origin.ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
+
     // FIX 6924: the board hydrates here — after the funding, hook-stop,
     // keepalive and session-key refusals above — so those refusals advance
     // no MEMORIES cursor and consumes no observations, disclosures or hook
@@ -327,11 +352,34 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let board_at = messages
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User);
+    // The turn's now-time opener (I1 = C turn order), sampled once, here at
+    // the turn's final boundary, after its board was read: it closes a
+    // call its board rides.
+    let opener = match settings.turn_opener {
+        crate::config::models::TurnOpener::Clock => Some(oneiron::context_board::turn_opener_line(
+            vault.now_recorded_ms(),
+        )),
+        crate::config::models::TurnOpener::Off => None,
+    };
     // DESIGN-V2 R2: the messages and the board as assembled, for the call's
-    // segment manifest.
+    // segment manifest: its state part, and the tail its query part and
+    // opener make (I1 = C).
     let assembled = messages.clone();
     let read_board = board.as_ref().ok().and_then(Option::as_ref);
-    let board_view = read_board.map(|board| (board.block.clone(), board.sections.clone()));
+    let board_view = read_board.map(|board| segments::BoardView {
+        state: (board.block.clone(), board.sections.clone()),
+        tail: recall::turn_tail(board.query.as_ref(), opener.as_deref()).map(|text| {
+            segments::TurnTail {
+                text,
+                sections: board
+                    .query
+                    .as_ref()
+                    .map(|query| query.sections.clone())
+                    .unwrap_or_default(),
+                opener: opener.is_some(),
+            }
+        }),
+    });
     let board_rows = read_board.map(|board| board.rows.clone());
     let recall::AdmittedTurn {
         call: admitted,
@@ -339,20 +387,31 @@ pub(in crate::api::ai::chat) async fn start_turn(
         context,
         omitted,
         noted,
-    } = recall::admit(&server.ai, &vault, &seat, auth, messages, board);
+    } = recall::admit(
+        &server.ai,
+        &vault,
+        &seat,
+        auth,
+        messages,
+        board,
+        opener.as_deref(),
+    );
     let turn_context = turn_context.or(board_at.filter(|_| recalled || noted));
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
     }
     // The board's place holds the board, or the note of its omission, which
-    // the call's segments name as one unnamed board section.
+    // the call's segments name as one unnamed board section, with no tail.
     let board_view = if recalled {
         board_view
     } else {
         omitted
             .filter(|_| noted)
-            .map(|omission| (omission.note(), Vec::new()))
+            .map(|omission| segments::BoardView {
+                state: (omission.note(), Vec::new()),
+                tail: None,
+            })
     };
     let mut admitted = admitted.map_err(&role_refused)?;
     if self_chat.is_some() {
@@ -411,10 +470,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // Nor its context's records (FIX 6921): a session-only turn keeps none.
     let context = context.filter(|_| generate_session.is_none() && witness_session.is_none());
     if signals {
-        // A turn carries no deadline, so none bounds the hint's wait.
-        server
-            .ai
-            .session_hint(session_key, SessionHint::AppOpen, None);
+        // A turn carries no deadline, so none bounds the hint's wait. The
+        // apply's effect is advisory: every outcome continues the SAME
+        // witness below.
+        let _applied: Option<oneiron_driver::SessionHintEffect> =
+            server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
     let user = crate::server::blocking(|| {
@@ -436,17 +496,6 @@ pub(in crate::api::ai::chat) async fn start_turn(
     .map_err(|stop| hook_stopped(&stop))?;
     // FIX 7004: the MESSAGE row the user's words were witnessed into.
     sources.add(written.as_deref());
-    // FIX 8132: the reply is bound, before generation, to the conversation
-    // its own turn is written into, so its newcomer wakes and every
-    // publication check read the conversation that receives its text: the
-    // destination the assistant's turn below writes to, the request's ref,
-    // resolved once above (`origin`), never the user's witnessed MESSAGE,
-    // which a pre-hook may have moved. A destination in no conversation
-    // answers standalone, as before; one whose placement was not read binds
-    // the destination itself, where its stream is written anyway. Only a
-    // ref that names nothing is refused, before any model is called: no
-    // conversation would hold its reply.
-    let destination = origin.ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
     let conversation = crate::server::blocking(|| vault.record_container(destination))
         .unwrap_or(Some(destination));
     // The caller's view of the receipt, which a hook may have redacted.
@@ -503,6 +552,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
             funding,
             budget_units: settings.turn_budget_units,
             credential: credential.clone(),
+            model_call_caller: actor,
+            model_call_room: origin,
+            model_call_no_record_at_arrival,
             keepalive,
             mark,
             breakpoint: self_chat.map(|chat| {
@@ -536,13 +588,24 @@ pub(in crate::api::ai::chat) async fn start_turn(
         answering,
     );
     // DESIGN-V2 R2: once the reply lands whole, the session coordinator
-    // stages its canonical successor.
+    // stages its canonical successor; I1 = C: then prepares the next turn's
+    // state part beside it, when that part is the message right after the
+    // history: the board rode, and no resident craft rides there.
+    let next = (recalled && craft_in_tail.is_none()).then(|| {
+        Arc::new(super::next_turn::ChatNextTurn {
+            server: Arc::clone(server),
+            auth: auth.clone(),
+            credential: credential.clone(),
+            conversation: origin,
+        }) as Arc<dyn crate::models::NextTurnSource>
+    });
     let answering = segments::commit_on_answer(
         turn_segments,
         &session_reader,
         &credential,
         written.as_deref(),
         turn,
+        next,
         answering,
     );
     Ok(Started {

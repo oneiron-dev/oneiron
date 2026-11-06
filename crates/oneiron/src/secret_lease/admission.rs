@@ -68,6 +68,8 @@ pub(super) fn admit_record_use(
 /// reach T1, and so must the widest binding the record carries: a record
 /// with no binding (a masked secret) is capped by its floor alone, and one
 /// whose every binding is doored is used at its door and never revealed.
+/// A handle-only private copy never enters a model context, regardless of
+/// the class's floor or an effector's use binding.
 pub(crate) fn reveal_tier_admission(
     rec: &SecretCustodyAdmission,
     floor: &SecretCustodyFloor,
@@ -75,6 +77,11 @@ pub(crate) fn reveal_tier_admission(
     if rec.status != SecretCustodyStatus::Active {
         return Err(Error::Secret(SecretError::SecretCustodyNotActive {
             name: rec.name.clone(),
+        }));
+    }
+    if !rec.model_reveal_allowed {
+        return Err(Error::Secret(SecretError::SecretDoorPolicyRefused {
+            reason: "this secret is available to agents by handle only",
         }));
     }
     let requested = CustodyTier::T1Leased;

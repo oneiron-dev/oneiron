@@ -423,6 +423,7 @@ impl Vault {
                 put_by.entry(*id).or_insert_with(|| entry.scope.turn());
             }
         }
+        let _bodies = self.pin_all_result_bodies();
         let rtxn = self.store.env.read_txn()?;
         let view = session.read_view()?;
         let gate = egress

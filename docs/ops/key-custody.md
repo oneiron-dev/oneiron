@@ -20,8 +20,10 @@ target set, then advances the anchor:
   its own vault, never inside it or its backups.
 - **Declared hosted holders**: `backup.custody_targets` (`ONEIRON_CUSTODY_TARGETS`,
   comma-separated) names hosted members such as `wasabi:offsite`, `s3:<name>`, `r2:<name>`,
-  `shelf:<name>` or `outbox:<name>`. This build has no adapter for them yet: each stays
-  `custody_target_pending` with reason `no_adapter`, never green.
+  `shelf:<name>` or `outbox:<name>`. `wasabi:`/`s3:`/`r2:`/`shelf:` have no adapter yet:
+  each stays `custody_target_pending` with reason `no_adapter`, never green. An `outbox:`
+  member ships through the Hypnos outbox below on a managed host whose supervisor names
+  one; without it, it stays `no_adapter` too.
 
 A member holds a head only once it shows that every older head, stage and temporary copy it
 kept is gone, and stores an acknowledgement saying so before it answers. The vault keeps each
@@ -32,6 +34,53 @@ dropped from the set, and nothing turns green on a timer.
 Passes run right after every backup (`oneiron backup`, the `[backup]` schedule and
 `POST /v1/owner/backups`), when `serve` starts, and every minute while anything is pending, on a
 managed host too. A save or a backup never waits on a pass and never fails because of one.
+
+An Owners' vault deletion keeps the automatic folder beside the configured backups until
+`backup_retain_until` on the vault's clock. A standing legal hold defers the drop. After that
+deadline without a hold, the folder's copy of this lineage goes: its sealed head, keyless log,
+stages and temporary files. Its automatic publisher does not recreate it. The shared parent,
+other lineages, local keys and independent targets stay untouched. The target stays registered,
+but its current acknowledgement is cleared and its status says pending; this is not a member
+drain, a deletion acknowledgement or completion of outstanding custody obligations.
+
+## The Hypnos outbox
+
+On a managed host, the engine stages a declared `outbox:<name>` member's exact batch
+under `custody/` in the supervisor-named escrow outbox (made when missing), for Hypnos
+to ship to the control plane. The file contract returns the control plane's acknowledgement
+to the engine. `meta.json` names the kind `hypnos_outbox`; staging alone is not an ack.
+
+Layout (directories owner-only, files `0600`, links never followed):
+
+- `<outbox>/custody/<namespace hex>.<vault hex>/<target id hex>/` is the member's slot:
+  the host-owned directory plus the slot locator key, the hex of the full `outbox:<name>`
+  id. A slot holds at most one outstanding batch.
+- `b.<operation id hex>.r<set revision>/` is the batch: `meta.json` (version, the
+  supervisor-given vault name, target id/kind/scope, set revision, position, head object
+  id, operation id, whether the head is data-key wrapped — ids, positions and digests
+  only), the exact sealed `head` (none for a log-only member), `log/f<seq hex16>` frames
+  the member lacks with their `frames.jsonl` inventory (`{"seq":N,"length":M}` per frame),
+  and the empty `READY` marker, written last. The shipper must wait for `READY`.
+- The control plane answers inside the batch directory: `ack.json` is its acknowledgement
+  (target id, set revision, position, head object id and operation id covered, deletion
+  evidence, attester), which must name this member and this batch exactly — anything else
+  stays pending as failed; `pending.json` is an optional note Hypnos writes while no ack
+  is there.
+
+The engine records the outstanding batch (position, head object id, set revision, data-key
+wrap — no key) in the lineage journal before staging a byte, so a restart takes the
+original batch's ack in without sealing it again, and never takes an ack against another
+batch. A pass takes an ack in before it reads the acks: the ack is checked against the
+record, kept, every local copy of the batch is removed and synced, and only then does the
+journal accept it. Anything that does not go through stays pending by name — `offline`
+(steady-state reads "awaiting CP custody acknowledgement"), `locked`, or `failed` with
+the reason in words — and the next pass retries; nothing here refuses a save, backup,
+restore or start. Removal deletes `READY` first, then the key-bearing head, then the
+rest, syncing after; directories and stages the journal does not record are swept.
+
+An acked outbox position records the control plane's acknowledgement and deletion evidence;
+it is not independent delivery proof, and the outbox is no restore source — a restore
+still reads the head beside the backup.
 
 ## The anchor
 
@@ -94,6 +143,27 @@ keys, claim keys and body instance keys alike: `custody: {"state": ..., "pending
 holds: its key retires with that holder's release. `recall` says bytes already read before the
 erase cannot be recalled. The erase itself is done and stays done on this host from the moment it
 returns; `custody` says where the old copies stand.
+
+## Credential values in an image
+
+A checkpoint or backup copies credential rows in their stored, sealed form. It never opens a
+credential value or carries its custody key. New captures use image format 4 and may record
+that a credential's exact generation had no live source key during capture. The observation
+is taken under the existing custody read guard and the same row snapshot. It binds the
+credential id, generation and digest of the captured row. A present entry is not proof that
+the value was readable, and a custody fault records no observation.
+
+A restore or side copy using required custody still leaves an unreadable credential sealed
+or withheld, pending. If the exact row has this capture-time observation, its pending note
+also says the source key was already unavailable. It does not claim when a key was lost.
+Without matching evidence the existing pending note is unchanged. These observations never
+decide whether a restore is allowed or authorize an erase. Re-entry, reissue and the existing
+pending-batch retry and confirmation remain available.
+
+Observations for rows moved into an owner-only payload compartment are omitted from the
+image-wide metadata, so it exposes neither their identities nor their key state. Their
+capture-time diagnostics remain incomplete. New-host/head routes and archived-vault
+activation keep their existing diagnostics.
 
 ## Body instances
 

@@ -508,7 +508,7 @@ impl SyncServer {
 
     /// The query's vector, or `None` when no embedder is serving.
     fn recall_query_vector(&self, query: &str) -> Option<Vec<f32>> {
-        match self.embedder.as_ref()?.embed_query(query) {
+        match self.embedder_slot()?.embed_query(query) {
             Ok(vector) => Some(vector),
             // The model is still loading; the worker logs its own progress.
             Err(EmbedQueryRefusal::NotReady | EmbedQueryRefusal::NotConfigured) => None,

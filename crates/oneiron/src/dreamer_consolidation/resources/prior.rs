@@ -20,7 +20,7 @@ impl BranchResources<'_> {
         self.priors.keys().copied().collect()
     }
 
-    pub(super) fn admit_priors(&mut self) -> Result<()> {
+    pub(super) fn admit_priors(&mut self, context_only: &BTreeSet<EntityId>) -> Result<()> {
         // Only explicit exact document rights can introduce persisted heads.
         // Signal/output projections never grant a stored-head write right.
         let documents: BTreeSet<_> = self
@@ -34,7 +34,7 @@ impl BranchResources<'_> {
             })
             .collect();
         for id in documents {
-            if self.sources.contains_key(&id) {
+            if self.sources.contains_key(&id) || context_only.contains(&id) {
                 continue;
             }
             let (kind, learned_at, bytes) = if let Some(wake) = self.prepared_wake {

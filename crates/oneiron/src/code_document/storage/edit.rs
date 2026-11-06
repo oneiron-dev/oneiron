@@ -14,6 +14,7 @@ use super::{
     generation_key, lift, load_head, op_stamp, path_generation, save_snapshot,
 };
 use crate::Vault;
+use crate::code_document::CodeOpProvenanceValidation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;

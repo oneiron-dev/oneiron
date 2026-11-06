@@ -64,12 +64,12 @@ impl Vault {
         // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         self.store
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, wtxn, id)?;
@@ -98,6 +98,9 @@ impl Vault {
                 &self.store,
                 wtxn,
                 id,
+            )?;
+            crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                self, wtxn, id,
             )?;
             // An erased pad row takes its key's pad out of custody, never
             // another of its world's (KS-5, FIX 7192): every caller wrote
@@ -181,6 +184,7 @@ impl Vault {
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act.
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
+            crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
         }
         let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
             &self.store,
@@ -255,7 +259,7 @@ impl Vault {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         self.store
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;
@@ -285,6 +289,7 @@ impl Vault {
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act (first consume carries).
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
+            crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -295,7 +300,7 @@ impl Vault {
             .delete_guards
             .reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, wtxn, id)?;
@@ -391,7 +396,7 @@ impl Vault {
         )?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
-        crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
+        crate::store::pending_comm_stop::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
         let Some(entity_record) =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {

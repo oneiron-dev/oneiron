@@ -6,8 +6,8 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
 
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store
 /// key. `CrossTypeSquatter` is NOT a rejection — see

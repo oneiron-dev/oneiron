@@ -12,10 +12,10 @@ pub(in crate::store) const CRITICAL_CONFIRM_EXPIRY_CURSOR_KEY: &[u8] =
     b"gate_pending:critical_confirm_expiry_cursor:v1";
 
 pub(in crate::store) const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] =
-    b"gate_pending:run_index:v1:";
+    b"gate_pending:run_index:v2:";
 
 pub(in crate::store) const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] =
-    b"gate_pending:group_index:v1:";
+    b"gate_pending:group_index:v2:";
 
 /// Production reads/writes of the hash index go through this module's own
 /// typed door; the raw prefix stays only for `store::tests`' fixtures.
@@ -50,7 +50,7 @@ pub(in crate::store) fn pending_gate_consent_upper_bound() -> Vec<u8> {
 }
 
 pub(super) fn pending_gate_consent_run_index_prefix(run_id: &str) -> Vec<u8> {
-    string_index_prefix(PENDING_GATE_CONSENT_RUN_INDEX_PREFIX, run_id)
+    hashed_string_index_prefix(PENDING_GATE_CONSENT_RUN_INDEX_PREFIX, run_id)
 }
 
 pub(super) fn pending_gate_consent_run_index_key(run_id: &str, claim_id: &[u8; 16]) -> Vec<u8> {
@@ -58,7 +58,7 @@ pub(super) fn pending_gate_consent_run_index_key(run_id: &str, claim_id: &[u8; 1
 }
 
 pub(super) fn pending_gate_consent_group_index_prefix(group_key: &str) -> Vec<u8> {
-    string_index_prefix(PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX, group_key)
+    hashed_string_index_prefix(PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX, group_key)
 }
 
 pub(super) fn pending_gate_consent_group_index_key(
@@ -69,6 +69,35 @@ pub(super) fn pending_gate_consent_group_index_key(
         &pending_gate_consent_group_index_prefix(group_key),
         claim_id,
     )
+}
+
+/// Fixed-size lookup bucket for an unbounded string. Callers join the
+/// indexed row and compare its full string; the digest is not identity.
+pub(in crate::store) fn hashed_string_index_prefix(prefix: &[u8], value: &str) -> Vec<u8> {
+    let digest = blake3::hash(value.as_bytes());
+    let mut key = Vec::with_capacity(prefix.len() + digest.as_bytes().len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(digest.as_bytes());
+    key
+}
+
+/// Whether a joined row belongs to this exact query. A different string
+/// is a harmless candidate only when its digest really shares the bucket.
+pub(crate) fn hashed_string_index_matches(
+    actual: Option<&str>,
+    expected: &str,
+    index_name: &'static str,
+) -> Result<bool> {
+    let Some(actual) = actual else {
+        return Err(Error::CorruptedIndex(index_name));
+    };
+    if actual == expected {
+        return Ok(true);
+    }
+    if blake3::hash(actual.as_bytes()) != blake3::hash(expected.as_bytes()) {
+        return Err(Error::CorruptedIndex(index_name));
+    }
+    Ok(false)
 }
 
 pub(in crate::store) fn string_index_prefix(prefix: &[u8], value: &str) -> Vec<u8> {

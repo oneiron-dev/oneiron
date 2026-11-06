@@ -48,7 +48,7 @@ impl SecretCustodyStatus {
 ///
 /// In memory, `value_bytes` is the opened value, which NEVER leaves this
 /// record into claims / CRDT / export / receipts / logs. `Debug` redacts it.
-/// At rest (stored schema 2, KS-6) the value is sealed under its
+/// At rest (stored schema 4, KS-6) the value is sealed under its
 /// generation's erasable custody key (`storage_seal`); this record is the
 /// opened form, stamped as its plaintext DTO is.
 /// `policy_floor_snapshot` records the floor at register time for audit;
@@ -72,6 +72,9 @@ pub struct SecretCustodyRecord {
     /// needs no migration; enforcement (replication locality) is ONE-1865's.
     /// On a `cross-vault` record this is stored-but-inert.
     pub device_only: bool,
+    /// Whether a model may receive plaintext through the reveal doors.
+    /// Private copies keep this false independently of their class and bindings.
+    pub model_reveal_allowed: bool,
     /// The secret value bytes (plaintext under the DEK plane; redacted in
     /// `Debug`; never serialized into logs/receipts/claims/CRDT).
     ///
@@ -111,6 +114,7 @@ impl fmt::Debug for SecretCustodyRecord {
             .field("name", &self.name)
             .field("class", &self.class)
             .field("device_only", &self.device_only)
+            .field("model_reveal_allowed", &self.model_reveal_allowed)
             .field(
                 "value_bytes",
                 &format_args!("<redacted {} bytes>", self.value_bytes.len()),
@@ -182,8 +186,8 @@ impl SecretCustodyRecord {
 // Body codec — a MessagePack key map named by SECRET_CUSTODY_BODY_KEYS
 // ---------------------------------------------------------------------------
 
-/// The body's MessagePack keys, in field order. `13 keys = 13 fields`.
-pub const SECRET_CUSTODY_BODY_KEYS: [&str; 13] = [
+/// The body's MessagePack keys, in field order.
+pub const SECRET_CUSTODY_BODY_KEYS: [&str; 14] = [
     "schema_version",
     "name",
     "class",
@@ -197,22 +201,22 @@ pub const SECRET_CUSTODY_BODY_KEYS: [&str; 13] = [
     "manifest_ref",
     "declared_paths",
     "policy_floor_snapshot",
+    "model_reveal_allowed",
 ];
 
 /// The schema version of a record and of its plaintext DTO, the body with
 /// its value in the clear under `value_bytes`: the owner archive's, a
 /// register's protected input's and a transition's body; never a row at
-/// rest, nor a checkpoint image's (KS-6 part 2). Unchanged by KS-6, so every
-/// carrier wire stays byte for byte as before (CUSTODY_CARRIER_LEAF_WIRE
-/// off).
-pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 1;
+/// rest, nor a checkpoint image's (KS-6 part 2). Version 3 requires the
+/// record's model-reveal policy on every native reconstruction.
+pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 3;
 
-/// The schema version a stored custody row is stamped with (KS-6, CALLS
-/// `KS-6 credential schema 2`): its value sealed under its generation's
-/// custody key, under `sealed_value`. Only the stored form takes it; a
+/// The schema version a stored custody row is stamped with: its value sealed
+/// under its generation's custody key, under `sealed_value`, and its required
+/// model-reveal policy. Only the stored form takes it; a
 /// record read from storage comes back stamped
 /// [`SECRET_CUSTODY_SCHEMA_VERSION`], its DTO's.
-pub(crate) const SECRET_CUSTODY_STORED_SCHEMA_VERSION: u16 = 2;
+pub(crate) const SECRET_CUSTODY_STORED_SCHEMA_VERSION: u16 = 4;
 
 /// The `vault_meta` name-index key prefix mapping a live secret name to its
 /// `EntityId` (`"vault_meta: name -> EntityId"`).

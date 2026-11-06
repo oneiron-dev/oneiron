@@ -85,6 +85,14 @@ impl Memory<'_> {
             .and_then(HostWriteOrigin::model_provider)
     }
 
+    /// The durable code run this call's host origin binds, never a caller's
+    /// session label. Unbound external callers have no code-run lifecycle.
+    pub(crate) fn bound_code_run(&self) -> Option<EntityId> {
+        self.host_origin
+            .as_ref()
+            .and_then(HostWriteOrigin::bound_run)
+    }
+
     /// Whether a host bound this surface to generated code's origin. Such a
     /// surface never speaks, answers or assigns in a person's name.
     pub(crate) fn writes_generated(&self) -> bool {
@@ -177,6 +185,7 @@ impl Memory<'_> {
             && self.rewrite_admit.is_none();
         rebuilt.then(|| {
             crate::runtime_hooks::verb::PlainRowResume::of(
+                self.vault,
                 self.session_key,
                 self.room_turn.as_ref().map(|turn| turn.room),
                 self.locality,

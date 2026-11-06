@@ -2,8 +2,9 @@
 mod operations;
 pub mod outline;
 pub mod plan;
+pub mod record;
 
-use crate::edit_roundtrip::deck_create::{
+use crate::blob_artifact::deck_creation::record::{
     ArtifactVersionRef, DeckCreationRecord, DesignSpec, EvidenceChange, KeptOutline,
     OutlineFreshness,
 };

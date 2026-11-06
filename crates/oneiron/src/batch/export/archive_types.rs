@@ -69,6 +69,9 @@ pub enum ArchiveRecordKind {
     /// One row of an allowlisted side table (FIX 2768) beside the record it
     /// indexes, only in a whole-vault archive.
     SideTable,
+    /// One carried row's birth envelope (FIX 1178), masked to the rows the
+    /// archive carries, in a whole-vault or records archive.
+    RowBirth,
 }
 
 impl ArchiveRecordKind {
@@ -89,6 +92,7 @@ impl ArchiveRecordKind {
             Self::SlotBinding => "records/slot_binding.jsonl",
             Self::EpochFloor => "records/epoch_floor.jsonl",
             Self::SideTable => "records/side_table.jsonl",
+            Self::RowBirth => "records/row_birth.jsonl",
         })
     }
 

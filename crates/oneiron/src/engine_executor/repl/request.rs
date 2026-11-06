@@ -2,6 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
+use super::super::store::load_script_context;
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -124,6 +125,15 @@ impl EngineNativeExecutor<'_> {
         let mut holds = Vec::new();
         let mut left = Vec::new();
         let mut past_window = Vec::new();
+        let epochs = self.compaction_epochs(record.run_id)?;
+        if !epochs.is_empty() {
+            self.admit_compaction_read()?;
+        }
+        // A step whose output a fold by kind folded shows the fold's stub:
+        // its body is never read, held or counted against the window.
+        let folded_outputs = epochs
+            .folds
+            .kind_folded_steps(crate::compaction::FoldKind::ReplOutput);
         let views = {
             let share = &self.result_share;
             let watch = self.storage.limit_watch();
@@ -132,6 +142,9 @@ impl EngineNativeExecutor<'_> {
                     let seq = steps
                         .get(&source)
                         .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    if folded_outputs.contains(seq) {
+                        return Ok(None);
+                    }
                     let Some(hold) = share.hold(source.byte_len, watch) else {
                         left.push((*seq, source));
                         return Ok(None);
@@ -157,10 +170,6 @@ impl EngineNativeExecutor<'_> {
             window.map(|tokens| (tokens, past_window.as_slice())),
         );
         self.context_holds = holds.into_iter().map(|(_, hold)| hold).collect();
-        let epochs = self.compaction_epochs(record.run_id)?;
-        if !epochs.is_empty() {
-            self.admit_compaction_read()?;
-        }
         // The replies parked calls resumed with, by the step that parked.
         let resumed: BTreeMap<u64, &CodeRunRawOutput> = record
             .outputs
@@ -168,6 +177,8 @@ impl EngineNativeExecutor<'_> {
             .filter_map(|output| resumed_output_wait(&output.path).map(|(seq, _)| (seq, output)))
             .collect();
         let mut swapped = false;
+        // The folds by kind whose note a shown stub already carries.
+        let mut noted = std::collections::BTreeSet::new();
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
@@ -182,17 +193,33 @@ impl EngineNativeExecutor<'_> {
             let view = view.clone();
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
-            let console = match view.tier {
-                OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
-                    .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
-                OutputTier::Stub => serde_json::to_string(&json!({
-                    "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
-                    "byte_len": view.source.byte_len,
-                    "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
-                }))?,
+            let folded = epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::ReplOutput, seq as u64);
+            let console = match folded {
+                // A fold by kind keeps the program and its say() messages;
+                // the console shows the fold's stub, which keeps the
+                // output's handles (ARCH-0067 §2.2, fold by kind).
+                Some(fold) => fold
+                    .output_stub(seq as u64, noted.insert(fold.fold))
+                    .unwrap_or_default(),
+                None => match view.tier {
+                    OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
+                        .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
+                    OutputTier::Stub => serde_json::to_string(&json!({
+                        "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
+                        "byte_len": view.source.byte_len,
+                        "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                    }))?,
+                },
             };
             let turn = CodeRunHistoryTurn {
-                code: load_context_output(&self.storage, record, &script_output_path(seq as u64))?,
+                code: load_script_context(
+                    &self.storage,
+                    record,
+                    &script_output_path(seq as u64),
+                    None,
+                )?,
                 console,
             };
             messages.push(LlmMessage {

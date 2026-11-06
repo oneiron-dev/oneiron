@@ -298,8 +298,34 @@ pub(crate) fn readmit_held_asset_in_txn(
         return Ok(());
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
-    if super::versions::blob_artifact_asset_entity_id(&hash)? != *asset
-        || !held_by_live_artifact(store, txn, &hash, None)?
+    readmit_held_asset_hash_in_txn(store, txn, asset, &hash)
+}
+
+/// Readmission from facts measured while staging the complete body, without
+/// reading its bytes again. The caller must bind these facts to the actual
+/// staged body, not take a peer's advertised digest as evidence of receipt.
+#[cfg(feature = "sync")]
+pub(crate) fn readmit_held_asset_with_facts_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    asset: &EntityId,
+    facts: crate::store::AssetBodyFacts,
+) -> Result<()> {
+    if !store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
+        return Ok(());
+    }
+    readmit_held_asset_hash_in_txn(store, txn, asset, &facts.blake3)
+}
+
+#[cfg(feature = "sync")]
+fn readmit_held_asset_hash_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    asset: &EntityId,
+    hash: &ContentHash,
+) -> Result<()> {
+    if super::versions::blob_artifact_asset_entity_id(hash)? != *asset
+        || !held_by_live_artifact(store, txn, hash, None)?
     {
         return Ok(());
     }

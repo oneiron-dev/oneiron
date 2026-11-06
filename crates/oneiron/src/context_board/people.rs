@@ -92,6 +92,7 @@ pub struct People {
     vault: String,
     rows: Vec<PersonRow>,
     index: BTreeMap<EntityId, usize>,
+    about_sources: BTreeMap<EntityId, Vec<EntityId>>,
 }
 
 impl People {
@@ -252,7 +253,12 @@ impl People {
                 index.entry(*actor).or_insert(at);
             }
         }
-        Self { vault, rows, index }
+        Self {
+            vault,
+            rows,
+            index,
+            about_sources: BTreeMap::new(),
+        }
     }
 
     /// Applies model-channel name disclosure after the roster's own read.
@@ -271,6 +277,7 @@ impl People {
             if !crate::disclosure::model_names_admitted_in(vault, &txn, reader, band)? {
                 row.name.clone_from(&row.handle);
                 row.about = None;
+                self.about_sources.remove(&row.person);
             }
         }
         Ok(())
@@ -299,15 +306,33 @@ impl People {
         self.rows.iter().find(|row| row.handle == handle)
     }
 
-    /// Sets each person's `about` line from `about(person)`.
+    /// Sets each person's `about` line and its exact contributors from `about(person)`.
     pub fn set_about(
         &mut self,
-        about: &mut dyn FnMut(EntityId) -> Result<Option<String>>,
+        about: &mut dyn FnMut(EntityId) -> Result<Option<(String, Vec<EntityId>)>>,
     ) -> Result<()> {
         for row in &mut self.rows {
-            row.about = about(row.person)?;
+            match about(row.person)? {
+                Some((text, sources)) => {
+                    row.about = Some(text);
+                    self.about_sources.insert(row.person, sources);
+                }
+                None => {
+                    row.about = None;
+                    self.about_sources.remove(&row.person);
+                }
+            }
         }
         Ok(())
+    }
+
+    /// The exact contributors stored with this person's current `about` line.
+    #[must_use]
+    pub(crate) fn about_sources(&self, person: EntityId) -> &[EntityId] {
+        self.about_sources
+            .get(&person)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// The cached prefix's roster for this vault, chosen at an epoch boundary:

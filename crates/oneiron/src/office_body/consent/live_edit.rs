@@ -8,8 +8,10 @@ use super::super::invalid;
 use super::{OFFICE_BODY_EDIT_CLASS, issued_grants};
 use crate::Vault;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentDecision,
-    EffectFacts, GrantBound, StandingConsentGrant, evaluate_consent,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, BoundClass, BoundEnvelope,
+    ComposedEffect, ConsentDecision, EffectFacts, GrantBound, StandingConsentGrant,
+    evaluate_consent, load_active_standing_grants, revoke_standing_grant_in_txn,
+    standing_grant_row_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -193,4 +195,41 @@ pub(crate) fn admit_live_edit_in_txn(
             artifact.to_hex(),
         ))),
     }
+}
+
+/// Retires office-edit authority naming an erased issuer, editor or exact
+/// artifact target, in the erase's own transaction. A wider target envelope
+/// remains available for its other artifacts.
+pub(in crate::office_body) fn revoke_office_edit_grants_naming_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let class = BoundClass::Action(ActionClass::new(OFFICE_BODY_EDIT_CLASS)?);
+    let actor_ref = entity.to_hex();
+    let target = format!("entity:{actor_ref}");
+    for grant in load_active_standing_grants(store, wtxn)? {
+        let bound = grant.bound();
+        if bound.class() != &class {
+            continue;
+        }
+        let editor = bound
+            .actor()
+            .is_some_and(|actor| actor.actor_ref() == actor_ref.as_str());
+        let artifact = match bound.envelope() {
+            BoundEnvelope::Action(envelope) => {
+                envelope.target() == Some(target.as_str())
+                    || (envelope.target().is_none()
+                        && envelope.selectors() == std::slice::from_ref(&target))
+            }
+            BoundEnvelope::Disclosure(_) => false,
+        };
+        let grant_ref = bound.digest().to_hex();
+        let issuer = standing_grant_row_in_txn(store, wtxn, &grant_ref)?
+            .is_some_and(|row| row.owner_stamp.actor == *entity);
+        if editor || artifact || issuer {
+            revoke_standing_grant_in_txn(store, wtxn, &grant_ref)?;
+        }
+    }
+    Ok(())
 }

@@ -146,6 +146,7 @@ pub(super) fn apply_custody_body_in_txn(
             entity_type: ENTITY_TYPE_SECRET_CUSTODY,
             occurred,
             learned_at: occurred_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -200,6 +201,7 @@ impl Vault {
             name: name.to_owned(),
             class: CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: true,
             value_bytes: value.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at,
@@ -528,6 +530,75 @@ pub(crate) fn restore_secret_custody_in_txn(
     }
     register_secret_in_txn(vault, wtxn, id, rec)?;
     Ok(true)
+}
+
+/// Proves an incoming original against this exact MESSAGE part's birth
+/// value, using existing keyed history only. It grants no value read or replay.
+pub(crate) fn message_part_original_matches_in_txn(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    message: &EntityId,
+    index: usize,
+    handle: &str,
+    original: &[u8],
+) -> Result<bool> {
+    use crate::ports::ShortIdStoreRead;
+    use crate::store::known_value_index::KnownValues;
+
+    let place = format!("parts/{index}");
+    for custody in super::found_keys::found_key_custody_in_txn(store, txn, message)? {
+        let own = crate::batch::secret_scan::mask_origin_in_txn(store, txn, &custody)?
+            .is_some_and(|origin| origin.record == *message && origin.place == place);
+        if !own
+            || store
+                .port_short_id_reference(txn, &custody)?
+                .is_none_or(|(reference, _)| reference != handle)
+        {
+            continue;
+        }
+        // Masker::mint records a new whole part at generation zero. Later
+        // rotations do not redefine the immutable MESSAGE's original part.
+        return Ok(KnownValues::load_for_in_writer(store, txn, &custody, &[0])?
+            .is_some_and(|known| known.is_exact_value(original)));
+    }
+    Ok(false)
+}
+
+/// Revokes only custody minted at this MESSAGE's ordered part positions.
+/// The origin inventory remains usable after the MESSAGE body has gone.
+pub(crate) fn revoke_message_part_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    act: Option<&super::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(&vault.store, wtxn, message)? {
+        let part = crate::batch::secret_scan::mask_origin_in_txn(&vault.store, wtxn, &id)?
+            .is_some_and(|origin| {
+                origin.record == *message
+                    && origin
+                        .place
+                        .strip_prefix("parts/")
+                        .is_some_and(|index| index.parse::<usize>().is_ok())
+            });
+        if !part {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(&vault.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &id, cause, at)?;
+        } else {
+            vault.revoke_secret_in_txn(wtxn, &record.name, cause, at)?;
+            if let Some(act) = act {
+                act.carry_revoke_in_txn(vault, wtxn, &record.name, at)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Revokes, in `wtxn`, each custody record the side-row wall minted from the

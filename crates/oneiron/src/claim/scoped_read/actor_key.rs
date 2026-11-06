@@ -653,6 +653,13 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// Whether this key uses the relationship-only grant gate, rather than
+    /// requiring access grants for unscoped rows too. Saved native work keeps
+    /// this basis beside its scope; the flag grants no authority on its own.
+    pub(crate) fn uses_relationship_grants(&self) -> bool {
+        self.enforce_access_grants && self.unscoped_rows_open
+    }
+
     /// A narrower credential of the vault owner's: it reads a relationship's
     /// rows as the owner does only while `owner` is still the vault's bound
     /// owner in the read's own snapshot, so a lane kept past a revocation

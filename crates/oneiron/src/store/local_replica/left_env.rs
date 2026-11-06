@@ -19,7 +19,6 @@ use heed::{RoTxn, RwTxn};
 use super::KeepReason;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
@@ -27,6 +26,7 @@ use crate::ports::EntityStoreStaging;
 use crate::registry;
 use crate::side_table::{self, Named, SideDb, SideTable, SideTableDecl};
 use crate::store::Store;
+use crate::store::embedding::EmbeddingProvenance;
 use crate::store::gate_decision::HeldGateRows;
 
 /// The text each document was indexed with. Key: id16.
@@ -431,15 +431,21 @@ fn keep_reason(
     if let Some(kind) = kind.filter(|kind| LEAVE_KEPT_KINDS.contains(kind)) {
         return Ok(Some(KeepReason::Kind(kind)));
     }
-    if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
+    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
         return Ok(Some(KeepReason::LegalHold));
     }
     // A pad is its world key's erasable half: a hold on the world or on a
     // claim the key seals keeps it, as the delete guard refuses it (OF-470).
     if kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
-        && crate::world_keys::held_pad_world_in_txn(store, txn, raw)?
+        && crate::world_keys::legal_hold_pad_world_in_txn(store, txn, raw)?
     {
         return Ok(Some(KeepReason::LegalHold));
+    }
+    if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?
+        || (kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
+            && crate::world_keys::held_pad_world_in_txn(store, txn, raw)?)
+    {
+        return Ok(Some(KeepReason::Guarded));
     }
     // A guard that cannot read the pin keeps the row too: keeping is safe.
     if carrier

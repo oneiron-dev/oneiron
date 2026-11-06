@@ -434,7 +434,7 @@ fn write_t1_lease_rows_in_txn(
     write_materialization_receipt_in_txn(&vault.store, wtxn, &receipt)?;
     write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
     // A vault that is not running wakes to expire the lease and remove its file.
-    crate::housekeeping::note_wake_in_txn(
+    crate::store::housekeeping_wake::note_wake_in_txn(
         &vault.store,
         wtxn,
         crate::store::housekeeping_schedule::HousekeepingSweep::SecretLeaseExpiry,

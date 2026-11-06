@@ -63,3 +63,44 @@ and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `Parse
 operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
 deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
 writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.
+The non-body story read change (FIX 594, 2026-11-05) adds one public projection in
+`src/view.rs`. It reuses the existing block/segment/table/guard projection for a story's
+local blocks with no body-role lookup: story ids can collide with body ids, and the
+body vocabulary does not assign roles to story paragraphs. No writer or parser changes.
+The default comment-anchor boundary change (2026-11-05, FIX 4) touches
+`src/edit/verbs/comments.rs`. A default cross-segment anchor now opens on the
+text node holding its resolved quote's first character, after preceding breaks,
+bookmarks or comment markers, as the chosen-occurrence path already does. Quote
+selection, single-run placement, range ends and tracked-container widening are
+unchanged.
+
+The non-final tracked-deletion change (2026-11-05) touches `src/edit/mod.rs` and
+`src/tracked_model.rs`. The tracked delete verb can preserve earlier inline
+revisions in an ordinary non-final, unmoved paragraph by lowering its runs
+individually instead of flattening them under one block deletion. Empty,
+numbered, section-bearing and tracked-final paragraphs keep the existing
+validation path, as do moves, replacements and direct edits. The wrapper
+recognizes only its own fully deleted paragraph marks in accepted order;
+imported revisions keep their existing visibility. A surviving physical final
+mark that fails the shared body's order comparison uses the existing
+whole-window default-author projection, not a relaxed order check.
+
+The final-carrier section change (2026-11-05, FIX 13798) touches
+`src/tracked_model.rs`. After a tracked final-paragraph delete carries its
+predecessor's accepted formatting onto the surviving final-mark carrier, it
+clears the copied paragraph section break and section-property revision on that
+carrier. The original predecessor and the document body's final section remain
+unchanged. This prevents a duplicate section boundary and copied revision from
+being serialized on the carrier; no Word-runtime comparison is claimed.
+
+The move-deletion pairing change (2026-11-05, FIX 13294) touches `src/tracked_model.rs`.
+Within one tracked move range, each destination paragraph's inner deletions are
+paired with the source block at the same position, rather than always using the
+first source paragraph. The count includes siblings without inner deletions,
+non-paragraph blocks, and the matching insertion/deletion layer of stacked
+inserted-then-deleted siblings. The final source eligibility gate is unchanged.
+Existing move and deletion gates, resolution order, and
+serialization are unchanged.
+The same pack (FIX 13299) advances the text-overlay cursor over the
+existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
+The non-text inline nodes themselves are preserved unchanged.

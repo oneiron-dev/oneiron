@@ -68,10 +68,10 @@ pub(crate) enum WeaveLensCaller {
     /// A pumped run reads its own agent's lens (FIX 2086): on the agent's
     /// own lane on this device, its step spending on the run's own `line`
     /// when one binds the entry, and its card held for the run, whose end
-    /// closes it. The run holds no credential and borrows none.
+    /// closes it. The run holds no credential and borrows none. Its full
+    /// write actor retains the attempt when the lens needs its own meter.
     Run {
-        actor: EntityId,
-        class: EdgeActorClass,
+        actor: WriteActor,
         run: EntityId,
         line: Option<RunAdmission>,
     },
@@ -171,9 +171,9 @@ impl WeaveLensCaller {
                     .listing_producers(producers),
                 LensReader::Admin(admin),
             ),
-            Self::Run { actor, class, .. } => read(
+            Self::Run { actor, .. } => read(
                 &vault
-                    .memory(*actor, *class)
+                    .memory(actor.entity_ref(), actor.actor_class())
                     .at(reads_at)
                     .listing_producers(producers),
                 LensReader::Bound(None),
@@ -274,21 +274,23 @@ async fn render_listing(
     // An agent that dreams on its own model reads its own lens on that
     // model (OF-490); anyone else on the narrative role's route, else the
     // extraction role's.
-    let own = match &caller {
+    let own_actor = match &caller {
         WeaveLensCaller::Credential {
             actor,
             class: EdgeActorClass::Agent,
             ..
+        } => Some(*actor),
+        WeaveLensCaller::Run { actor, .. } if actor.actor_class() == EdgeActorClass::Agent => {
+            Some(actor.entity_ref())
         }
-        | WeaveLensCaller::Run {
-            actor,
-            class: EdgeActorClass::Agent,
-            ..
-        } => match super::dreamer::own_dreaming_slot(&vault, *actor)? {
+        _ => None,
+    };
+    let own = match own_actor {
+        Some(actor) => match super::dreamer::own_dreaming_slot(&vault, actor)? {
             Some(slot) => super::dreamer::served_slot_model(&vault, runtime, &slot)?,
             None => None,
         },
-        _ => None,
+        None => None,
     };
     let (role, model, locality, ladder) = match own {
         Some((model, locality, ladder)) => (None, model, locality, ladder),
@@ -477,7 +479,17 @@ async fn prepare_live(
         tokio::task::spawn_blocking(move || {
             caller.read(&vault, reads_at, &producers, |memory, reader| {
                 let live = reader.prepare(memory, &request)?;
-                Ok((live, WriteActor::new(memory.actor(), memory.actor_class())))
+                let mut actor = WriteActor::new(memory.actor(), memory.actor_class());
+                // Keep the meter's existing frontier semantics.
+                if let WeaveLensCaller::Run {
+                    actor: run_actor, ..
+                } = &caller
+                    && *run_actor == actor
+                    && let Some(attempt) = run_actor.run_attempt()
+                {
+                    actor = actor.with_run_attempt(attempt);
+                }
+                Ok((live, actor))
             })
         })
         .await

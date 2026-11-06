@@ -1,6 +1,7 @@
 //! A removed device's own routes in the OpenAPI document (OF-150, OF-158,
 //! FIX 1300), moved whole out of `owner_paths`.
 
+use oneiron_vault_contract::BINDING_HEADER;
 use serde_json::{Value, json};
 
 /// A removed device's own routes (OF-150, OF-158, FIX 1300): no bearer, as
@@ -88,7 +89,7 @@ pub(crate) fn merge_left_slip_paths(spec: &mut Value) {
     for (path, summary) in LEFT_SLIP_ROUTES {
         let mut parameters = vec![
             json!({"name": "x-oneiron-left-slip", "in": "header", "required": true, "schema": {"type": "string"}, "description": "The revoked slip this vault minted for the person."}),
-            json!({"name": "x-oneiron-binding", "in": "header", "required": true, "schema": {"type": "string"}, "description": "The slip holder's proof over the request's timestamp and nonce."}),
+            json!({"name": BINDING_HEADER, "in": "header", "required": true, "schema": {"type": "string"}, "description": "The slip holder's proof over the request's timestamp and nonce."}),
         ];
         if path.ends_with("{receipt_id}") {
             parameters.push(json!({"name": "receipt_id", "in": "path", "required": true, "schema": {"type": "string"}, "description": "The removal receipt's id, 32 hex."}));

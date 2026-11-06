@@ -55,3 +55,25 @@ impl BrokerFile {
         }
     }
 }
+
+impl BrokerConfig {
+    /// The supervisor's explicit argv binding, checked by the file's own
+    /// broker validator. No flags leave the existing configuration alone.
+    pub(crate) fn from_args(args: &crate::config::ServeArgs) -> anyhow::Result<Option<Self>> {
+        if args.broker_socket.is_none()
+            && args.broker_uid.is_none()
+            && args.broker_program.is_none()
+            && args.broker_extra_roots.is_none()
+        {
+            return Ok(None);
+        }
+        BrokerFile {
+            socket: args.broker_socket.clone(),
+            uid: args.broker_uid,
+            program: args.broker_program.clone(),
+            extra_roots: args.broker_extra_roots.clone().unwrap_or_default(),
+        }
+        .resolve()
+        .map(Some)
+    }
+}

@@ -105,8 +105,75 @@ pub fn project_entity_parts(
     body: &[u8],
     view: View,
 ) -> Value {
+    project_entity_fields(
+        id,
+        entity_type,
+        updated_at,
+        decode_body_fields(entity_type, body),
+        view,
+    )
+}
+
+/// Projects only a native asset ladder body, after the scoped read admitted it.
+/// ImageFormBody's base64 pixels are binary content, not credential text; all
+/// of its other fields still pass through the ordinary release filter.
+pub(crate) fn project_hydrated_asset_parts(
+    id: &EntityId,
+    updated_at: u64,
+    asset: &oneiron::memory::HydratedAsset,
+    view: View,
+) -> Option<Value> {
+    let oneiron::memory::HydratedAsset::Served { body, form, .. } = asset else {
+        return None;
+    };
+    let entity_type = oneiron::registry::ENTITY_TYPE_ASSET;
+    let fields = match form.rung() {
+        oneiron::receipt::ServedRung::Full | oneiron::receipt::ServedRung::Thumbnail => {
+            hydrated_image_fields(body, view)
+        }
+        _ => None,
+    };
+    Some(match fields {
+        Some(fields) => project_entity_fields(id, entity_type, updated_at, fields, view),
+        None => project_entity_parts(id, entity_type, updated_at, body, view),
+    })
+}
+
+fn hydrated_image_fields(body: &[u8], view: View) -> Option<Map<String, Value>> {
+    let mut cursor = body;
+    let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    // This is the field of the native ImageFormBody, not a stored-body allowlist.
+    let index = fields
+        .iter()
+        .position(|(key, value)| key.as_str() == Some("bytes") && value.as_str().is_some())?;
+    let (_, pixels) = fields.remove(index);
+    let pixels = pixels.as_str()?;
+    let mut metadata = Vec::new();
+    rmpv::encode::write_value(&mut metadata, &rmpv::Value::Map(fields)).ok()?;
+    match oneiron::batch::export::redacted_memory_body(&metadata) {
+        Value::Object(mut fields) => {
+            if !matches!(view, View::Summary) {
+                fields.insert("bytes".to_owned(), Value::String(pixels.to_owned()));
+            }
+            Some(fields)
+        }
+        value => Some(Map::from_iter([("body".to_owned(), value)])),
+    }
+}
+
+fn project_entity_fields(
+    id: &EntityId,
+    entity_type: u8,
+    updated_at: u64,
+    fields: Map<String, Value>,
+    view: View,
+) -> Value {
     let id_hex = id.to_hex();
-    let fields = decode_body_fields(entity_type, body);
     let label = label_from_fields(&fields).unwrap_or_else(|| id_hex.clone());
 
     match view {

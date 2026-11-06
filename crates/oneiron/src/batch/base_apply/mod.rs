@@ -167,14 +167,16 @@ struct BatchApplyState {
     claim_materializations: VecDeque<ClaimMaterialization>,
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    pending_auto_probes: HashMap<crate::store::GateDecisionId, super::gate_mode::PendingAutoProbe>,
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
-    nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
     masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
     habit_streak_candidates: BTreeSet<EntityId>,
     had_graph_mutation: bool,
     had_vector_mutation: bool,
     materialized_entity_ids: BTreeSet<EntityId>,
+    question_arrival_ids: BTreeSet<EntityId>,
     local_materialized_ids: BTreeSet<EntityId>,
     deleted_entity_ids: BTreeSet<EntityId>,
     project_edge_endpoints: BTreeSet<EntityId>,
@@ -270,6 +272,7 @@ pub(super) fn apply_ops_with_authority_beside(
     require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
     let mut preflight_gate_decision_ids =
         std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
+    let pending_auto_probes = std::mem::take(&mut gate_mode.pending_auto_probes);
     let mut pre_analyzed_text = std::mem::take(&mut gate_mode.pre_analyzed_text);
     let mut nsw_plans = std::mem::take(&mut gate_mode.nsw_plans);
 
@@ -284,7 +287,9 @@ pub(super) fn apply_ops_with_authority_beside(
         wtxn,
         &mut ops.ops,
         text_index_trusted,
-        !replay,
+        !replay
+            || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
+                if grant.selected_saver().is_some()),
         mutation_recorded_at,
     )?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
@@ -370,6 +375,7 @@ pub(super) fn apply_ops_with_authority_beside(
         claim_materializations,
         claim_transitions,
         preflight_gate_decision_ids,
+        pending_auto_probes,
         pre_analyzed_text,
         nsw_plans,
         masked_files,
@@ -378,6 +384,7 @@ pub(super) fn apply_ops_with_authority_beside(
         had_graph_mutation,
         had_vector_mutation,
         materialized_entity_ids,
+        question_arrival_ids: BTreeSet::new(),
         local_materialized_ids,
         deleted_entity_ids,
         project_edge_endpoints,
@@ -416,6 +423,7 @@ pub(super) fn apply_ops_with_authority_beside(
                 entity_type,
                 occurred,
                 learned_at,
+                row_version,
                 data,
                 allow_maintenance,
                 allow_reserved_predicate,
@@ -432,6 +440,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     entity_type,
                     occurred,
                     learned_at,
+                    row_version,
                     data,
                     allow_maintenance,
                     allow_reserved_predicate,

@@ -26,6 +26,7 @@
 //!   receipts remain the always-on audit trail.
 
 mod actions;
+pub mod compilation_target;
 mod list;
 mod model;
 mod notification;
@@ -39,9 +40,7 @@ mod traversal;
 mod unified;
 
 pub use self::actions::NotificationAction;
-pub use self::list::{
-    INBOX_PAGE_DEFAULT, INBOX_PAGE_MAX, NotificationMark, NotificationPage, NotificationRow,
-};
+pub use self::list::{INBOX_PAGE_DEFAULT, NotificationMark, NotificationPage, NotificationRow};
 pub use self::notification::{
     NOTIFICATION_PRODUCER_CONNECTOR, NOTIFICATION_PRODUCER_DOCS_IMPORT,
     NOTIFICATION_PRODUCER_FINDING, NOTIFICATION_PRODUCER_JOB, NotificationBody, NotificationEvent,

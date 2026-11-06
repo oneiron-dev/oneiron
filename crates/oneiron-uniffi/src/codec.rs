@@ -21,12 +21,12 @@ use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
 use crate::dto::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
-    DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
-    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
-    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
+    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
+    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
+    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
     ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
     RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
@@ -1049,6 +1049,19 @@ impl Lower<sdk::ReadBlobVersionRequest> for (String, u64) {
     }
 }
 
+impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
+    fn lift(value: engine::BlobVersionAppendOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::BlobVersionAppendOutcome::Landed(view) => Self::Landed {
+                view: BlobVersionView::lift(view)?,
+            },
+            engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
+                proposal: lift_record("vault.artifacts.append", &proposal)?,
+            },
+        })
+    }
+}
+
 impl Lift<engine::BlobVersionView> for BlobVersionView {
     fn lift(value: engine::BlobVersionView) -> Result<Self, OneironError> {
         Ok(Self {
@@ -1235,6 +1248,27 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
 impl Lift<engine::MemoryItem> for MemoryItem {
     fn lift(item: engine::MemoryItem) -> Result<Self, OneironError> {
         Ok(Self {
+            asset_ref: item.asset_ref,
+            embedding_matches: item
+                .embedding_matches
+                .into_iter()
+                .map(|evidence| {
+                    let kind = |kind| match kind {
+                        oneiron::store::embedding::InputKind::Text => crate::InputKind::Text,
+                        oneiron::store::embedding::InputKind::Image => crate::InputKind::Image,
+                        oneiron::store::embedding::InputKind::Audio => crate::InputKind::Audio,
+                    };
+                    crate::EmbeddingMatchEvidence {
+                        space: evidence.space,
+                        embedding_kind: kind(evidence.embedding_kind),
+                        query_kind: kind(evidence.query_kind),
+                        score: f64::from(evidence.score),
+                        floor: f64::from(evidence.floor),
+                        strong: f64::from(evidence.strong),
+                        matched: evidence.matched,
+                    }
+                })
+                .collect(),
             short_id: item.short_id,
             source_revision_ref: item.source_revision_ref,
             kind: item.kind,

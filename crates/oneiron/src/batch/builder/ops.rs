@@ -28,6 +28,7 @@ pub(super) fn replicated_put_op(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: Option<u64>,
     data: &[u8],
 ) -> BatchOp {
     BatchOp::Put {
@@ -35,6 +36,7 @@ pub(super) fn replicated_put_op(
         entity_type,
         occurred,
         learned_at,
+        row_version,
         data: data.to_vec(),
         allow_maintenance: true,
         allow_reserved_predicate: true,

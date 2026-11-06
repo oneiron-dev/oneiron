@@ -149,6 +149,34 @@ carries the slip, a holder proof with its key, and this machine's own proof.
   stands until serve starts again. Pair the machine again: with the vault stopped, remove both
   device-sync files and run `oneiron device enrol` with a new link.
 
+## Publication diagnostics
+
+For a pending sealed-bundle publication, the executor's
+`GET /v1/owner/owner-work/{request}/diagnostics` reply includes
+`device_sync_start` once a device-sync start outcome was observed on this open
+vault session. Clones of that session share the observation. Closing it loses the
+observation; it is not restored or synced. An absent field means no outcome was
+recorded, not that device sync is unconfigured.
+
+Its `state` is one of:
+
+- `not_configured`: neither a device-sync section nor an enrolled home was found.
+- `configuration_failed`: resolving the configuration or enrolment failed.
+- `frozen_for_reap`: reap preparation did not admit that managed start.
+- `open_failed`: opening the sync connection failed. Its
+  `archive_receiver_running` boolean says only whether the archive receiver had
+  started before that failure; it does not report current receiver health.
+- `started`: opening succeeded then. It does not prove that the connection still
+  runs, is connected, or has reached this publication's home.
+
+The existing `relay` field separately reports what each pass observed for this
+request. `relay.state: "unknown"` still means no pass has observed it on this
+session. A recorded start outcome now distinguishes that from a start which found
+no home, was not admitted, or failed. Neither field changes publication admission,
+the named executor, pending work, or relay behavior. Full failure details stay in
+the existing operator logs; this reply carries only closed reasons, not paths,
+URLs or credentials.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).
@@ -252,5 +280,4 @@ first.
     machine dials the home at `home_url`;
   - bootstrapping a fresh vault from the home, rather than a copy of it;
   - moving to a new home when the election changes;
-  - managed (Hypnos) serve;
   - the apps.

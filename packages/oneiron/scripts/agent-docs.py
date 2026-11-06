@@ -85,7 +85,7 @@ def artifacts():
         "docs/agent-sdk/facade-types.md": "# Memory Wire facade types\n\nThe Python stubs carry the same names in the generated `facade_types.pyi`.\n\n```ts\n" + facade_ts + "```\n",
         "docs/agent-sdk/errors.md": error_doc,
         "docs/agent-sdk/verbs.md": census,
-        "llms.txt": "# Oneiron — Memory Wire\n\n> Actor-bound memory for agents. Start with vault.witness, vault.recall and vault.receipts.\n> The mirror below is full fidelity, generated from shipped SDK sources.\n\n## Memory Wire SDK\n\n- [Complete quickstarts and API](docs/agent-sdk/quickstart.md): JS/Python, embedded/remote, complete imports and typed errors.\n- [Type declarations](docs/agent-sdk/types.md): full TypeScript DTOs and Python stubs.\n- [Facade types](docs/agent-sdk/facade-types.md): generated verb wire types.\n- [Error catalogue](docs/agent-sdk/errors.md): stable codes, suggestions and remediation.\n- [Verb census](docs/agent-sdk/verbs.md): authoritative shipped facade and stable names.\n- [Vercel AI SDK tools](packages/oneiron-ai-sdk/README.md): thin three-verb satellite and runnable agent sample.\n- [LangGraph BaseStore](packages/oneiron-langgraph/README.md): exact actor-owned long-term keyed memory, not checkpoints.\n- [HTTP API](oneiron.skills.md): endpoint activation index, endpoint details and error schemas.\n",
+        "llms.txt": (ROOT / "scripts/sdk/llms.txt.in").read_text(),
     }
 
 if __name__ == "__main__":

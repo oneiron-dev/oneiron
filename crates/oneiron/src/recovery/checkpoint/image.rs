@@ -12,9 +12,11 @@ use super::{
 use crate::Result;
 use crate::store::DB_MANIFEST;
 
-/// The image format: 3 carries every body sealed under its instance's key
-/// and inline bodies out of their rows (KS-2A).
-pub(super) const IMAGE_VERSION: u16 = 3;
+/// The image format: 5 records both live and unavailable exact-row source
+/// custody-key observations.
+/// Every body remains sealed under its instance's key, with inline bodies
+/// out of their rows (KS-2A).
+pub(super) const IMAGE_VERSION: u16 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +24,11 @@ pub(super) struct CheckpointImage {
     pub(super) version: u16,
     pub(super) created_at: u64,
     pub(super) databases: BTreeMap<String, CanonicalRows>,
+    /// Source key state observed under this snapshot's custody guard,
+    /// bound to exact credential row bytes. Missing evidence proves nothing;
+    /// a live entry proves neither value readability, current custody, nor
+    /// when anything changed. Never restore or erase authority.
+    pub(super) credential_source_keys: Vec<super::credential_custody::SourceKeyObservation>,
     /// Each body file the rows name: its BLAKE3 and length.
     pub(super) bodies: Vec<([u8; 32], u64)>,
     /// Each one's instance and the length of the envelope it travels in, by

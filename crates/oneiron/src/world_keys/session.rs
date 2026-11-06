@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron_keystore::DeviceKeystore;
 
-use super::owner_work::PublishObserved;
+use super::owner_work::{DeviceSyncStart, PublishObserved};
 use super::{WorldKey, WorldKeyId};
 use crate::authority::{AuthorityEntryHash, MAX_PARENTS};
 use crate::entity_id::EntityId;
@@ -75,6 +75,9 @@ pub(crate) struct WorldKeySession {
     /// pending list.
     pub(crate) publications:
         Mutex<BTreeMap<(AuthorityEntryHash, Option<EntityId>), PublishObserved>>,
+    /// The last device-sync start outcome this open session observed, shared
+    /// by its clones. `None` until a host records one; never current health.
+    pub(crate) device_sync_start: Mutex<Option<DeviceSyncStart>>,
     /// Held while a sealed window's mirror is read, extended and written back.
     #[cfg(feature = "sync")]
     pub(crate) sealing: Mutex<()>,

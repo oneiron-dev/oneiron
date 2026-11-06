@@ -74,8 +74,16 @@ pub(in crate::sync) use self::admission::{
 pub use self::authorize::authorize_sync_selector;
 pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
 pub(crate) use self::born_with::{
-    carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
+    CarriedText, carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
+
+/// Keeps the native text retained beside a staged artifact's admitted rows.
+pub(crate) fn keep_carried_born_with(
+    vault: &crate::Vault,
+    carried: &[CarriedText],
+) -> crate::error::Result<()> {
+    born_with::keep_carried(vault, carried)
+}
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,

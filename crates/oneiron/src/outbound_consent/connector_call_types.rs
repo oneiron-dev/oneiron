@@ -213,10 +213,14 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// host that keeps no questions ignores it.
     fn abandon_awaiting_input(&mut self, _handle: &str) {}
 
-    /// The live questions `handle` names are kept on the call `call_ref`'s
-    /// row (FIX 3837): the host keeps that row current as the exchange goes
-    /// on. A host that keeps no questions ignores it.
+    /// Binds live questions to the row the engine is about to keep, before
+    /// that writer can publish their reply. This is in-memory only: no vault
+    /// writer or durable resume persistence. A failed commit abandons them.
     fn bind_awaiting_call(&mut self, _handle: &str, _call_ref: EntityId) {}
+
+    /// The row and its reply committed. Durable resume state may now be kept
+    /// beside that row. A host that keeps no resume state ignores it.
+    fn awaiting_call_committed(&mut self, _handle: &str, _call_ref: EntityId) {}
 
     /// Takes the custody record the last `send` presented, as its door
     /// resolved it (FIX 5455): an empty list when it presented none, `None`

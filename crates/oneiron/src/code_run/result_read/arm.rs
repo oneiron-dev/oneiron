@@ -47,6 +47,10 @@ impl ResultBody for ArmBody<'_> {
     }
 
     fn line_index(&self) -> Option<Vec<u64>> {
+        // Arm windows stay scan-only; a whole arm keeps its index.
+        if self.base != 0 {
+            return None;
+        }
         self.store.line_index(self.output.output_ref())
     }
 

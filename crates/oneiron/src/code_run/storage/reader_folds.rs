@@ -25,6 +25,10 @@ const FOLDS: SideTable<(EntityId, EntityId), ReaderFoldReceipt, Raw> =
 pub(super) const MEMOS: SideTable<[u8; 32], SummaryMemo, Raw> =
     SideTable::new(&side_table::CODE_RUN_SUMMARY_MEMO);
 
+pub(crate) fn code_run_summary_memo_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<SummaryMemo, Raw>(bytes)
+}
+
 pub(crate) use crate::store::reader_fold_receipt::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree, SummaryMemo,

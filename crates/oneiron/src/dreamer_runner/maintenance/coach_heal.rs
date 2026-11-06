@@ -27,8 +27,9 @@ use super::coach_diagnostic::{
     COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, COACH_ISSUE_RESOLUTION_PREDICATE, ProducerFixDraft,
     ProducerTarget,
 };
+pub use super::coach_environment::{CoachEnvironmentDraft, EnvironmentGrantTarget};
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
-use super::proposals;
+use super::{coach_environment, proposals};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::blocked::{BlockedReceipt, read_blocked_receipt};
 use crate::dreamer_runner::{
@@ -199,6 +200,19 @@ pub trait CoachHealAuthor {
         target: &ProducerTarget,
         cause: &HealEvidenceContext,
     ) -> Result<ProducerFixDraft>;
+
+    /// Proposes grant-environment repair DATA for a failed case. Targets are
+    /// actual native grants of its agent, including terminal terms, not proof
+    /// that a grant caused the failure or permission to change it. Returning
+    /// `None` leaves the heal route-only; the default host is unchanged.
+    fn draft_environment(
+        &self,
+        _case: &HealerCase,
+        _targets: &[EnvironmentGrantTarget],
+        _cause: &HealEvidenceContext,
+    ) -> Result<Option<CoachEnvironmentDraft>> {
+        Ok(None)
+    }
 }
 
 /// What one Issues run did.
@@ -348,6 +362,7 @@ impl Vault {
             "untrusted_cause_context": cause.value(),
         });
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
+        let mut environment_repair = None;
         let repair = match route {
             HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
                 &case,
@@ -357,7 +372,11 @@ impl Vault {
                 attempt.status.attempt.id,
                 now,
             )?),
-            HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
+            HealRoute::Environment => {
+                environment_repair = Some(coach_environment::draft(self, &case, &cause, author)?);
+                None
+            }
+            HealRoute::PromptInject | HealRoute::Person => None,
         };
         let mut value = json!({
             "case": case_ref,
@@ -396,6 +415,10 @@ impl Vault {
                 )?
             {
                 value["repair"] = stale;
+            }
+            if let Some(repair) = &environment_repair {
+                value["repair"] =
+                    coach_environment::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
             }
             let proposal = proposals::emit_in_txn(
                 self,

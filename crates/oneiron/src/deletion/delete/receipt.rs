@@ -81,6 +81,7 @@ impl Vault {
         // The custody revokes the actor sweeps make reach the owner's other
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.as_ref().and_then(GatedDeletion::owner_act);
+        let pending_cloud_revokes = self.cloud_registration_revokes_before_local_erase(&wtxn, id);
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -153,6 +154,8 @@ impl Vault {
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             wtxn.commit()?;
+            pending_cloud_revokes.publish();
+            self.notify_local_delete_materialized(&[*id]);
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -280,6 +283,7 @@ impl Vault {
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         wtxn.commit()?;
+        pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash
         // marker has served its purpose. In non-`sync` builds the marker

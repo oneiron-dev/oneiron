@@ -250,11 +250,13 @@ impl EsignState {
             EsignEvent::Sealed {
                 rejected,
                 item_sha256,
+                item_profiles,
             } => {
                 if !self.ready_to_seal()
                     || *rejected != self.rejection.is_some()
                     || item_sha256.len() != self.document.items.len()
                     || item_sha256.contains(&[0; 32])
+                    || item_profiles.len() != item_sha256.len()
                 {
                     return Err(invalid("seal outcome is not justified"));
                 }

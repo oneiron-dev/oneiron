@@ -15,9 +15,8 @@ use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::model::{
-    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_PAGE_ENTRIES, GRAPH_FS_MAX_SCAN_ROWS,
-    GRAPH_FS_PROJECTION_VERSION, GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions,
-    GraphFsPage, GraphFsResolver,
+    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GRAPH_FS_PROJECTION_VERSION, GraphFsEntry,
+    GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
@@ -327,9 +326,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// The vault's worlds this reader may walk into, base first, then each
     /// WORLD row by id ([`Self::world_visible`]), all judged in one snapshot.
     /// A manifest grant never lists a world of its own: it only says where a
-    /// reader other than the owner may read. A page can end inside a run of
-    /// worlds this reader may not see, so its cursor is sealed and names none
-    /// of them. A reader that could read no row in that snapshot (a dead
+    /// reader other than the owner may read. Only visible worlds count
+    /// toward a page, and its sealed cursor resumes after the last listed
+    /// world. A reader that could read no row in that snapshot (a dead
     /// credential, one that reads nothing, or a peer of either) lists
     /// nothing, not even a cursor that would say how many worlds it passed
     /// over.
@@ -353,30 +352,25 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         }
 
         let after = after.and_then(|position| position.0);
-        let rows = self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_WORLD, after)?
-            .take(GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1))
-            .collect::<Result<Vec<_>>>()?;
-        let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
+        let rows = self.scoped_read.vault().store.port_entity_ids_by_type(
+            &rtxn,
+            ENTITY_TYPE_WORLD,
+            after,
+        )?;
         let mut next_cursor = None;
-        let (mut last_listed, mut last_scanned) = (after, after);
-        for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if self.world_visible(&rtxn, &policy, Some(id))? {
-                if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
-                    next_cursor = builder
-                        .last_entry_name()
-                        .map(|_| scope.seal(&WorldPosition(last_listed)));
-                    break;
-                }
-                last_listed = Some(id);
+        let mut last_listed = after;
+        for entry in rows {
+            let id = entry?;
+            if !self.world_visible(&rtxn, &policy, Some(id))? {
+                continue;
             }
-            last_scanned = Some(id);
-        }
-        if next_cursor.is_none() && has_more_rows {
-            next_cursor = Some(scope.seal(&WorldPosition(last_scanned)));
+            if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+                next_cursor = builder
+                    .last_entry_name()
+                    .map(|_| scope.seal(&WorldPosition(last_listed)));
+                break;
+            }
+            last_listed = Some(id);
         }
         Ok(builder.finish(next_cursor))
     }
@@ -556,7 +550,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         self.listdir_claim_days_with_scan_cap(path, cursor, GRAPH_FS_MAX_SCAN_ROWS)
     }
 
-    /// The days that hold a row this reader may read, oldest first.
+    /// The days that hold a CLAIM this reader may read, oldest first.
     pub(super) fn listdir_claim_days_with_scan_cap(
         &self,
         path: &str,
@@ -598,7 +592,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &rtxn,
                 &policy,
                 &temporal.id,
-            ))? {
+            ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+            {
                 continue;
             }
             let day = day_of(temporal);
@@ -658,7 +653,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &rtxn,
                 &policy,
                 &temporal.id,
-            ))? {
+            ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+            {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
@@ -705,7 +701,11 @@ fn lane_walks_world(
             continue;
         }
         matched = true;
-        if crate::gate::scoped_read_grant_reads_world(grant, world, key.authority_scope()) {
+        if lane.vault().store.gate_hooks.scoped_read_grant_reads_world(
+            grant,
+            world,
+            key.authority_scope(),
+        ) {
             return Ok(true);
         }
     }

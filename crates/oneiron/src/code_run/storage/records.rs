@@ -43,6 +43,10 @@ pub(super) use self::bodies::{
 pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
 
+pub(crate) fn code_run_replay_record_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CodeRunReplayRecord, Raw>(bytes)
+}
+
 impl StoredBody {
     /// This body as a row that holds it on its own when `held`.
     pub(super) fn holding(&self, held: bool) -> Self {
@@ -174,6 +178,17 @@ impl Vault {
         Ok(wtxn.commit()?)
     }
 
+    /// Persists `record` in the caller's txn; no generation check (FIX 587).
+    pub(crate) fn put_code_run_replay_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &CodeRunReplayRecord,
+    ) -> Result<()> {
+        let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
+        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
+        Ok(())
+    }
+
     /// Persists the replay record only if the stored row still matches `expected`.
     pub fn put_code_run_replay_record_if_generation(
         &self,
@@ -212,6 +227,26 @@ impl Vault {
         healed_model: Option<&ModelId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_code_run_replay_record_if_generation_prepared(
+            record,
+            expected,
+            healed_model,
+            |_| Ok(()),
+            also,
+        )
+    }
+
+    /// The same compare-and-put with preparation after the generation check
+    /// but before the erase fence. Owned saves stamp their first owner here;
+    /// the generic `also` callback still runs after the record and heal rows.
+    pub(super) fn put_code_run_replay_record_if_generation_prepared(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         let mut wtxn = self.store.env.write_txn()?;
@@ -229,6 +264,7 @@ impl Vault {
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
+        prepare(&mut wtxn)?;
         let record = record.over_held(current.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, &mut wtxn, record)?;
@@ -580,11 +616,7 @@ impl Vault {
     /// the occurrence the scan marked only.
     pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
         let rtxn = self.store.env.read_txn()?;
-        RAW_OUTPUT_SECRETS
-            .scan(&self.store, &rtxn)?
-            .into_iter()
-            .map(|(key, detector_reason)| lift_proposal(&key, detector_reason))
-            .collect()
+        self.code_run_secret_lift_proposals_in_txn(&rtxn)
     }
 
     /// Marks `at`, the occurrence `output` is, with the secret scan's
@@ -646,7 +678,10 @@ impl Vault {
 }
 
 /// The lift proposal of the secret mark at `key`.
-fn lift_proposal(key: &str, detector_reason: String) -> Result<CodeRunSecretLiftProposal> {
+pub(super) fn lift_proposal(
+    key: &str,
+    detector_reason: String,
+) -> Result<CodeRunSecretLiftProposal> {
     let (handle, occurrence) = ResultOccurrence::parse_mark_key(key)?;
     Ok(CodeRunSecretLiftProposal {
         suggested_secret_name: format!(

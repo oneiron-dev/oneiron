@@ -47,6 +47,10 @@ pub enum HousekeepingSweep {
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
+    /// Rebuilds whole-body line indexes reads found missing or short (FIX
+    /// 1186b): a read notes the body, this sweep streams it once and
+    /// publishes the derived sidecar.
+    BodyLineIndexRebuild,
     /// Moves anchored comments with their artifact's live DOCX or XLSX body
     /// (FIX 2460), off every edit's and export's answer: stamps a body anchor
     /// on a thread on a version the body holds, lands it on the newest export
@@ -107,7 +111,7 @@ pub(crate) const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -122,6 +126,7 @@ impl HousekeepingSweep {
         Self::SecretLiftHistory,
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
+        Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::EsignReminders,
         Self::ConsultSettlement,
@@ -148,6 +153,7 @@ impl HousekeepingSweep {
             Self::SecretLiftHistory => "secret_lift_history",
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
+            Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
@@ -172,8 +178,9 @@ impl HousekeepingSweep {
     /// VAD work runs at open, for an approval a stopped process left, and
     /// every fifteen minutes, behind the payment worker each write wakes
     /// (FIX 11702). The found-key drain looks for due notices every
-    /// fifteen minutes. Comments follow their live body every minute and at
-    /// open, so a stopped process leaves none behind.
+    /// fifteen minutes. The line-index rebuild drain looks for queued bodies
+    /// every fifteen minutes. Comments follow their live body every minute
+    /// and at open, so a stopped process leaves none behind.
     pub(crate) const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -190,7 +197,8 @@ impl HousekeepingSweep {
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
             | Self::SecretLiftHistory
-            | Self::FoundKeyNotices => engine(15 * MINUTE),
+            | Self::FoundKeyNotices
+            | Self::BodyLineIndexRebuild => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
