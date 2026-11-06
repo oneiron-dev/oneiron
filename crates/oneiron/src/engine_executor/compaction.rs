@@ -1009,6 +1009,18 @@ pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<
     }))?)
 }
 
+/// The text one speech call dispatched: a hook's rewrite where one rewrote
+/// it, else the guest's own request.
+pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
+    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("text"))
+        .and_then(|(_, value)| value.as_str())
+}
+
 /// Every stored result's read path `text` names.
 pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<String>) {
     let mut rest = text;
