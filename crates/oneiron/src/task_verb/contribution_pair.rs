@@ -2,10 +2,12 @@
 //!
 //! The Coach asks the vault owner about one pending pair in its own name.
 //! The question, with the frozen criterion and the task, is witnessed as a
-//! System TURN in the owner's conversation with the Coach, and each of the
-//! two blinded answers as a TURN of its own there. The ask carries the
-//! question TURN, with the two answer TURNs as its context, offers five
-//! options and holds by default. The pair's own row is its route, bound in
+//! TURN the Coach speaks in the owner's conversation with the Coach, and
+//! each of the two blinded answers as a TURN of its own there. A new TURN
+//! needs a speaker, so each part speaks as the companion, and only the
+//! Coach's pair permit lands it. The ask carries the question TURN, with
+//! the two answer TURNs as its context, offers five options and holds by
+//! default. The pair's own row is its route, bound in
 //! the ask's admission by a composed effect, so a held ask binds it as the
 //! owner's approval releases it. The TURN and MESSAGE ids are reserved with
 //! the pair, so a retry lands the same question and replays the same ask.
@@ -38,7 +40,8 @@ use crate::code_run::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::memory::{
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
+    WitnessTurn,
 };
 use crate::{EntityId, Vault};
 
@@ -180,7 +183,8 @@ fn pair_ask_spec(pair: &OwnerPair) -> MemoryResult<TaskAskSpec> {
 /// that has not landed, with `texts`, then admits the ask with the pair's
 /// route composed beside it. A retry replays the same ask. It never fails
 /// its caller: a refusal (the Coach's reach revoked, a pair no longer open)
-/// is logged, and the next pass asks again.
+/// is logged quietly, any other failure is logged as a warning, and the
+/// next pass asks again (FIX 3609).
 pub(crate) fn ask_contribution_pair(vault: &Vault, pair: &OwnerPair, texts: &OwnerPairTexts) {
     let issued = vault
         .coach_authority()
@@ -189,8 +193,22 @@ pub(crate) fn ask_contribution_pair(vault: &Vault, pair: &OwnerPair, texts: &Own
             let memory = vault.memory(issuer.entity_ref(), issuer.actor_class());
             issue(vault, &memory, pair, texts)
         });
-    if let Err(error) = issued {
-        tracing::debug!(code = %error.code, "contribution pair ask not issued");
+    match issued {
+        Ok(()) => {}
+        Err(error) if error.code == MEMORY_CODE_FORBIDDEN => {
+            tracing::debug!(
+                pair = %pair.handle.to_hex(),
+                code = %error.code,
+                "contribution pair ask refused"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                pair = %pair.handle.to_hex(),
+                code = %error.code,
+                "contribution pair ask not issued"
+            );
+        }
     }
 }
 
@@ -216,7 +234,9 @@ fn issue(
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
-                author: WitnessAuthor::System,
+                // A new TURN needs one non-system speaker: the Coach speaks
+                // to its owner as the companion (FIX 3609).
+                author: WitnessAuthor::Companion,
                 message_type: CONTRIBUTION_PAIR_QUESTION_TYPE.to_owned(),
                 content: part.text(texts).to_owned(),
                 parts: None,
@@ -469,9 +489,10 @@ pub(super) fn resolve_answer_in(
 }
 
 /// The owner's definitive word `result` cut on: a counted Human word
-/// selected First, given by `proven` itself, with coverage met, no fallback
-/// and not stale, naming one of the pair's options; never a word given for
-/// the owner, an inform or a soft confirm.
+/// selected First, given by `proven` itself, with coverage met, no fallback,
+/// cut neither at its deadline nor stale, naming one of the pair's options;
+/// never a word given for the owner, an inform or a soft confirm. A word
+/// that lands past the deadline closes the pair with no score (FIX 3609).
 fn owner_word(
     result: &TaskAskResult,
     proven: Option<EntityId>,
@@ -482,7 +503,10 @@ fn owner_word(
     let settlement = &result.settlement;
     if !result.coverage.met
         || result.fallback.is_some()
-        || settlement.reason == TaskAskSettlementReason::Stale
+        || matches!(
+            settlement.reason,
+            TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
+        )
         || proven != Some(answer.actor_ref)
     {
         return None;
