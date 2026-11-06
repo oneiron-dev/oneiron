@@ -44,6 +44,7 @@ impl EngineNativeExecutor<'_> {
         // FIX 4465 B: every paid call of a self-written pass is filed before
         // anything lands, so a landing that is refused keeps its steps too.
         self.file_self_passes(&mut finished);
+        self.mark_self_written_summaries(&finished);
         if let Some((_, byline, _)) = seat.swap_seat() {
             self.land_folds(byline, finished.folds, finished.kind_folds);
         }
