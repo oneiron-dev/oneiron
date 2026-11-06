@@ -93,7 +93,7 @@ pub(crate) async fn action_board(
 /// door. It must still name the requester at its class and grant a read.
 /// An attested owner's is the owner the vault records as live now. `None`,
 /// logged, for a native action or one whose credential no longer does.
-fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
+pub(crate) fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
     let binding = match &action.authority {
         TurnActionAuthority::Slip { binding } => binding,
         // The owner the vault records as live now, when he is the requester

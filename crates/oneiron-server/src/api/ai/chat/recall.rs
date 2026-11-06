@@ -97,7 +97,7 @@ pub(super) async fn turn_board(
     } else {
         CallerLocality::OffDevice
     };
-    let board = match crate::api::context_board::chat_turn_board(
+    let board = match crate::api::context_board::chat_turn_board_deferred(
         server,
         auth.clone().at(reads_at),
         conversation,
