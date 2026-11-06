@@ -20,7 +20,7 @@ pub(super) fn page_lines(
     max_lines: usize,
     reader: &ContainerReader,
     scan_bytes: usize,
-    mut prefix: impl FnMut(&str) -> Option<String>,
+    mut prefix: impl FnMut(&str) -> Result<Option<String>>,
 ) -> Result<(usize, Option<LinePosition>)> {
     let mut finished = 0;
     let mut at = from;
@@ -36,7 +36,7 @@ pub(super) fn page_lines(
         };
         let mut text = String::new();
         lossy_for_each(line, reader, scan_bytes, |chunk| text.push_str(chunk))?;
-        if let Some(prefix) = prefix(&text) {
+        if let Some(prefix) = prefix(&text)? {
             if let Some(printed) = out.push_line_parts(&[&prefix, &text, "\n"], at.printed) {
                 at.printed = printed;
                 return Ok((finished, Some(at)));
@@ -68,6 +68,41 @@ fn line_end(bytes: &[u8], reader: &ContainerReader, scan_bytes: usize) -> Result
         offset += chunk.len();
     }
     Ok(None)
+}
+
+/// Searches bounded text windows for needles within the existing scan quantum.
+/// Longer needles keep the native whole-text search.
+pub(super) fn contains_literal(
+    text: &str,
+    pattern: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<bool> {
+    checkpoint(reader)?;
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    if pattern.is_empty() {
+        return Ok(true);
+    }
+    if pattern.len() > quantum {
+        return Ok(text.contains(pattern));
+    }
+    let mut start = 0;
+    while start < text.len() {
+        checkpoint(reader)?;
+        let mut next = start.saturating_add(quantum).min(text.len());
+        while !text.is_char_boundary(next) {
+            next -= 1;
+        }
+        let mut end = next.saturating_add(pattern.len() - 1).min(text.len());
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+        if text[start..end].contains(pattern) {
+            return Ok(true);
+        }
+        start = next;
+    }
+    Ok(false)
 }
 
 /// Emits whole-input lossy UTF-8 without splitting a sequence at a scan boundary.
