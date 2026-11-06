@@ -2092,7 +2092,7 @@
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -2172,7 +2172,7 @@
      "path": "src/anchored_annotation/recovery.rs",
      "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 4,
       "struct": 2
      }
