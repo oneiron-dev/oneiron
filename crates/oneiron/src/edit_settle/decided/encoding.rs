@@ -24,35 +24,10 @@ impl EncodedAnswers {
         row: &DecidedSheetAnswers,
         deadline: Instant,
     ) -> Result<Self> {
-        let mut count = EncodedLength::default();
-        encode(row, &mut count, deadline)?;
-        check_deadline(deadline)?;
-        let resources = document_resources_until(Some(deadline));
-        let mut hold = resources
-            .reserve(wide(count.0))
-            .map_err(machine_memory_refused)?;
-        check_deadline(deadline)?;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(count.0)
-            .map_err(|error| Error::Io(io::Error::new(io::ErrorKind::OutOfMemory, error)))?;
-        hold.take(wide(bytes.capacity().saturating_sub(count.0)))
-            .map_err(machine_memory_refused)?;
-        bytes.resize(count.0, 0);
-        // The live reading now carries the allocation. Without one the port
-        // keeps the allocated lease until this operation's Resources drops.
-        drop(hold);
-        let written = {
-            let mut target = Cursor::new(bytes.as_mut_slice());
-            encode(row, &mut target, deadline)?;
-            target.position()
-        };
-        if written != wide(count.0) {
-            return Err(unencodable());
-        }
+        let encoded = encode_buffer(row, deadline)?;
         Ok(Self {
-            staged: DECIDED.stage_encoded(key, bytes),
-            _resources: resources,
+            staged: DECIDED.stage_encoded(key, encoded.bytes),
+            _resources: encoded.resources,
             deadline,
         })
     }
@@ -61,6 +36,61 @@ impl EncodedAnswers {
         check_deadline(self.deadline)?;
         self.staged.put(store, txn)
     }
+}
+
+// Fields drop in order: the buffer before the fallback allocated lease.
+struct EncodedBuffer {
+    bytes: Vec<u8>,
+    resources: Resources,
+}
+
+pub(crate) struct ExpectedAnswers {
+    encoded: EncodedBuffer,
+    deadline: Instant,
+}
+
+impl ExpectedAnswers {
+    pub(super) fn new(row: &DecidedSheetAnswers, deadline: Instant) -> Result<Self> {
+        Ok(Self {
+            encoded: encode_buffer(row, deadline)?,
+            deadline,
+        })
+    }
+
+    pub(super) fn decode(&self) -> Result<DecidedSheetAnswers> {
+        check_deadline(self.deadline)?;
+        DECIDED.decode_value(&self.encoded.bytes)
+    }
+}
+
+fn encode_buffer(row: &DecidedSheetAnswers, deadline: Instant) -> Result<EncodedBuffer> {
+    let mut count = EncodedLength::default();
+    encode(row, &mut count, deadline)?;
+    check_deadline(deadline)?;
+    let resources = document_resources_until(Some(deadline));
+    let mut hold = resources
+        .reserve(wide(count.0))
+        .map_err(machine_memory_refused)?;
+    check_deadline(deadline)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(count.0)
+        .map_err(|error| Error::Io(io::Error::new(io::ErrorKind::OutOfMemory, error)))?;
+    hold.take(wide(bytes.capacity().saturating_sub(count.0)))
+        .map_err(machine_memory_refused)?;
+    bytes.resize(count.0, 0);
+    // The live reading now carries the allocation. Without one the port
+    // keeps the allocated lease until this operation's Resources drops.
+    drop(hold);
+    let written = {
+        let mut target = Cursor::new(bytes.as_mut_slice());
+        encode(row, &mut target, deadline)?;
+        target.position()
+    };
+    if written != wide(count.0) {
+        return Err(unencodable());
+    }
+    Ok(EncodedBuffer { bytes, resources })
 }
 
 fn encode(row: &DecidedSheetAnswers, target: &mut impl Write, deadline: Instant) -> Result<()> {

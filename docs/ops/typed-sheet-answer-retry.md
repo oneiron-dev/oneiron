@@ -88,6 +88,14 @@ before the grouped writer transaction starts. The original side-row admission
 wall still commits the encoded value; the operation stays alive until the staged
 bytes are gone. A refusal leaves the previously stored prefix and decision intact.
 
+The expected prefix kept across each unit is an owned snapshot in the same
+admitted encoding, not a full typed-row clone held across the paid call.
+Advancing decodes it with the same strict Named codec and still compares the
+whole typed row, including generation and original inputs, before and inside
+the writer. No hash-only or cursor-only comparison replaces that check. The
+serialized snapshot owns its operation until its bytes are gone. The decoded
+comparison row is local to advancement and is not yet full-heap admitted.
+
 These checks are cooperative, not preemption: source snapshots, parsers,
 hashing, clones, serializer work between output writes, individual copies and
 database waits can run between checkpoints. Local prefix clones, decoded rows,

@@ -2,6 +2,8 @@
 
 mod encoding;
 
+pub(crate) use encoding::ExpectedAnswers as DecidedSheetExpected;
+
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
@@ -201,10 +203,12 @@ impl Vault {
     pub(crate) fn advance_decided_sheet_answers(
         &self,
         artifact: &EntityId,
-        expected: &DecidedSheetAnswers,
+        expected: &DecidedSheetExpected,
         row: DecidedSheetAnswers,
         deadline: Instant,
     ) -> Result<DecidedSheetAnswers> {
+        let decoded_expected = expected.decode()?;
+        let expected = &decoded_expected;
         let key = settlement_key_parts(artifact, &row.request.run_ref);
         {
             let txn = self.store.env.read_txn()?;
@@ -290,6 +294,10 @@ impl Vault {
 }
 
 impl DecidedSheetAnswers {
+    pub(crate) fn expected(&self, deadline: Instant) -> Result<DecidedSheetExpected> {
+        DecidedSheetExpected::new(self, deadline)
+    }
+
     fn matches(&self, request: &DecidedSheetRequest, unmasked: bool) -> Result<()> {
         if &self.request != request || (self.unmasked && !unmasked) {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
