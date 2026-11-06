@@ -14,8 +14,8 @@ use super::frames::{
 };
 use super::wake::WakeEnvelope;
 
-/// Pending wakes of one kind (TASK or review) one connection holds before
-/// the oldest of that kind is dropped.
+/// Pending wakes of one kind (TASK, review or room) one connection holds
+/// before the oldest of that kind is dropped.
 const PENDING_WAKES_CAP: usize = 256;
 
 #[derive(Debug)]
@@ -32,11 +32,12 @@ pub struct StreamConnectionState {
 impl StreamConnectionState {
     /// Queues `wake` behind the others. Wakes wait for a host-side adapter
     /// that may never come: past [`PENDING_WAKES_CAP`] wakes of its own kind
-    /// the oldest of that kind goes first, so a review never evicts a TASK
-    /// wake, nor a TASK wake a review.
+    /// the oldest of that kind goes first, so no kind evicts another's wake:
+    /// a TASK wake, a review or a room wake (FIX 15647).
     fn queue_wake(&mut self, wake: WakeEnvelope) {
-        let review = wake.review_ref.is_some();
-        let same_kind = |queued: &WakeEnvelope| queued.review_ref.is_some() == review;
+        let kind = |queued: &WakeEnvelope| (queued.review_ref.is_some(), queued.room_ref.is_some());
+        let own = kind(&wake);
+        let same_kind = |queued: &WakeEnvelope| kind(queued) == own;
         let held = self
             .wakes
             .iter()
@@ -56,6 +57,7 @@ pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) published_tasks: super::publish::PublishedTasks,
     pub(super) published_reviews: super::review::PublishedReviews,
+    pub(super) published_room_wakes: super::room_wake::PublishedRoomWakes,
     attached: Arc<Notify>,
 }
 
@@ -74,6 +76,7 @@ impl BoardStreamRegistry {
                 SubscriptionScope::MyChildren,
                 SubscriptionScope::ConsultsToMe,
                 SubscriptionScope::DiaryReviews,
+                SubscriptionScope::RoomTurns,
             ]
             .into_iter()
             .filter(|x| allowed.contains(x))
@@ -81,8 +84,9 @@ impl BoardStreamRegistry {
             BoardRenderMode::Resident => allowed.clone(),
         };
         // Re-attaching over a live connection replaces its state and queue,
-        // so the reviews queued for it are owed again.
+        // so the reviews and room wakes queued for it are owed again.
         self.published_reviews.forget(&c);
+        self.published_room_wakes.forget(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -110,6 +114,7 @@ impl BoardStreamRegistry {
     pub fn detach(&mut self, c: &StreamConnectionId) {
         self.connections.remove(c);
         self.published_reviews.forget(c);
+        self.published_room_wakes.forget(c);
     }
 
     fn change(
@@ -263,6 +268,7 @@ impl BoardStreamRegistry {
                 }
                 BoardEvent::ChildDone { event, .. } => st.actor_ref == event.parent_actor_ref(),
                 BoardEvent::DiaryReviewPending { event, .. } => st.actor_ref == event.agent_ref(),
+                BoardEvent::RoomTurnAddressed { event, .. } => st.actor_ref == event.agent_ref(),
                 _ => false,
             };
             if !matches {
@@ -278,6 +284,8 @@ impl BoardStreamRegistry {
                         actor_ref: event.actor_ref().into(),
                         line: super::one_line_token(&line),
                         review_ref: None,
+                        room_ref: None,
+                        turn_ref: None,
                     });
                     o.wake_enqueued += 1;
                 }
@@ -289,6 +297,21 @@ impl BoardStreamRegistry {
                         actor_ref: event.agent_ref().into(),
                         line: super::one_line_token(&line),
                         review_ref: Some(event.request_ref().into()),
+                        room_ref: None,
+                        turn_ref: None,
+                    });
+                    o.wake_enqueued += 1;
+                }
+                BoardEvent::RoomTurnAddressed { event, line } => {
+                    // The room turn stays in the vault as the durable mailbox.
+                    st.queue_wake(WakeEnvelope {
+                        event_ref: event.event_ref().into(),
+                        task_ref: String::new(),
+                        actor_ref: event.agent_ref().into(),
+                        line: super::one_line_token(&line),
+                        review_ref: None,
+                        room_ref: Some(event.room_ref().into()),
+                        turn_ref: Some(event.turn_ref().into()),
                     });
                     o.wake_enqueued += 1;
                 }
