@@ -53,6 +53,9 @@ impl Memory<'_> {
         exclude: &EntityId,
         beside_stated: bool,
     ) -> crate::Result<Option<EntityId>> {
+        let set_answer = SET_CARDINALITY_PREDICATES
+            .contains(&key.input.predicate.as_str())
+            .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
             if id == *exclude {
@@ -61,7 +64,11 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim_in_txn(rtxn, &id)? else {
                 continue;
             };
-            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            if !key.stands(&body)
+                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+                || set_answer
+                    .as_ref()
+                    .is_some_and(|answer| !answers_agree(answer, &body.value))
             {
                 continue;
             }
