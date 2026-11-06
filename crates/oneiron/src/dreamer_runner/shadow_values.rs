@@ -2,7 +2,7 @@
 
 use crate::compaction::output::OutputRef;
 use crate::dreamer_runner::step_replay::{
-    CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule,
+    CapsuleRequest, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StoredRungBinding,
 };
 use crate::store::result_manifest::CodeRunRawOutput;
 use crate::{EntityId, LlmUsage};
@@ -70,7 +70,8 @@ impl ShadowStepIdentity {
 
 /// A captured request's digest, saying which copy it is of (FIX 6144): the
 /// request as it was sent, or its copy as stored, each secret in it masked
-/// into its custody handle. A replay of a masked copy is never "as sent".
+/// into its custody handle. A replay of a masked copy is never "as sent",
+/// nor is one whose route prompt is masked (FIX 6255).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "of", content = "digest", rename_all = "snake_case")]
 pub enum ShadowRequestDigest {
@@ -125,10 +126,11 @@ impl ShadowBodyRef {
 
 /// The model an arm's call goes to: the rung that answered the captured
 /// call, and the route it went out on. A strict call goes out on exactly
-/// these, or not at all.
+/// these, or not at all. The rung names its route prompt by its capsule's
+/// body and digest only (FIX 6255): no prompt text is in a pin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowModelPin {
-    pub captured: CapsuleRungBinding,
+    pub captured: StoredRungBinding,
     pub route: ReplayRoutePin,
 }
 
@@ -378,11 +380,13 @@ impl ShadowArmLease {
 impl ShadowRequestDigest {
     /// The digest of the copy of its request `capsule` keeps: the request as
     /// sent, or its masked copy as stored; `None` for a request the wall
-    /// withheld (FIX 6254).
+    /// withheld (FIX 6254). A capsule whose route prompt is masked keeps no
+    /// call as sent ([`StepReplayCapsule::as_sent`], FIX 6255), so its
+    /// request's digest is the stored copy's, though it is the sent one.
     #[must_use]
     pub fn of_capsule(capsule: &StepReplayCapsule) -> Option<Self> {
         match &capsule.request {
-            CapsuleRequest::Kept { stored_hash, .. } if *stored_hash == capsule.request_hash => {
+            CapsuleRequest::Kept { .. } if capsule.as_sent() => {
                 Some(Self::AsSent(capsule.request_hash))
             }
             CapsuleRequest::Kept { stored_hash, .. } => Some(Self::AsStored(*stored_hash)),

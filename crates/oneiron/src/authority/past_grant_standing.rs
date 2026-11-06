@@ -173,6 +173,11 @@ fn preserved_one(
             AuthorityOp::SlipGrantRevoke { grant_ref } if *grant_ref == grant => {
                 return Ok(None);
             }
+            AuthorityOp::MembershipExecution(record)
+                if record.withdrawn_grants.binary_search(&grant).is_ok() =>
+            {
+                return Ok(None);
+            }
             _ => {}
         }
     }
