@@ -154,6 +154,21 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // FIX 12113: which machine wrote the MESSAGE row just staged, for the
+    // reverse scan to vouch for its exact bytes beside it: this one for a
+    // local put, the lane's verified writer for a replicated one.
+    #[cfg(feature = "sync")]
+    if fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+        crate::sync::note_message_put_in_txn(
+            store,
+            wtxn,
+            &fixed.id,
+            fixed.replicated,
+            fixed
+                .own_device
+                .and_then(|lane| lane.proof_for(&fixed.id, data)),
+        )?;
+    }
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,
