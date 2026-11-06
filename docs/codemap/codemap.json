@@ -17772,7 +17772,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -51482,7 +51482,7 @@
      "path": "src/merge_queue/check_tree.rs",
      "purpose": "A pinned Git tree as a queue check's input (FIX 6868): read from the object store through the shipped…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -51494,6 +51494,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/composition.rs",
+     "purpose": "Line composition of disjoint same-file proposals (FIX 4360)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -51593,7 +51603,7 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -62114,7 +62124,7 @@
      "path": "src/repo_mutation/document.rs",
      "purpose": "Review-approved repository file updates lower to idempotent document edits",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62426,6 +62436,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/queue/apply.rs",
+     "purpose": "The execution body of one queued repository mutation (moved from `queue.rs`, FIX 4360): authorize, prepare…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -62459,10 +62479,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/repo_mutation/reviewed_composition.rs",
+     "purpose": "Same-file composition inside a reviewed stack (FIX 4360)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/repo_mutation/reviewed_file.rs",
      "purpose": "The tested stack's per-member checks (moved from `reviewed_stack.rs`, G4 PR2): the tested change is exactly…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -62472,7 +62502,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -91235,7 +91265,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91459,7 +91489,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 52,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91944,7 +91974,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6464,
+   "source_files": 6467,
    "test_files": 895
   },
   "oneiron-android": {
