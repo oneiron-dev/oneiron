@@ -54,7 +54,7 @@ impl ClaimHold {
     /// Enters `record`, owned, in `held`, replacing an older entry of that row.
     fn new(vault: &crate::Vault, held: &HeldSet, record: &AttemptRecord) -> Self {
         let room_turns = MarkerPayload::decode(&record.payload)
-            .map(|payload| payload.hint_read.hold_room_turns(vault))
+            .map(|payload| payload.hint_read.hold_room_turns(&vault.store))
             .unwrap_or_default();
         let mut entries = lock_held(held);
         entries.retain(|entry| entry.record.id != record.id);

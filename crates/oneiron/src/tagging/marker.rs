@@ -98,6 +98,26 @@ impl MarkerPayload {
     }
 }
 
+/// Own the exact original terms until this row's real transaction settles.
+/// The same door serves generic queue mutations, including store-only ones.
+pub(crate) fn stage_marker_room_turns_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+) {
+    if record.kind != TAGGING_MARKER_KIND {
+        return;
+    }
+    let terms = if record.state.is_terminal() {
+        Vec::new()
+    } else {
+        MarkerPayload::decode(&record.payload)
+            .map(|payload| payload.hint_read.hold_room_turns(store))
+            .unwrap_or_default()
+    };
+    store.queued_room_hints.stage(txn, record.id, terms);
+}
+
 /// Whether two marker payloads name one marker: the same turn, checkpoint
 /// and stack, whatever class each carries, so a try a live write promoted
 /// still retries the one before it. A payload this build cannot read names

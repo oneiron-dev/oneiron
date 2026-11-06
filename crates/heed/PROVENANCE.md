@@ -142,6 +142,21 @@ declared, assigned, null-checked, freed and returned by `mdb_env_get_path`
 through `mdb_fname_init` (`mdb.c:5228`). The line numbers in the audit below
 are the earlier library's.
 
+## Queued original-room custody (FIX 10374)
+
+`src/txn.rs` adds `RwTxn::on_commit` for transaction-owned Rust values used
+by queued tagging markers. Its `Send + 'static` callback stays owned by the
+real transaction. A successful nested commit moves callbacks into the parent;
+only a successful root commit invokes them. An abort or failed commit drops
+the captured owners without invoking callbacks. No LMDB row, format,
+dependency or existing transaction result changes.
+
+Callbacks run after LMDB releases its writer and must not open another writer.
+Queue custody therefore registers exact weak provisional nodes before commit.
+A later successful update or retirement can retire those nodes before an older
+callback runs; an older callback cannot restore them. This changes no caller's
+postcommit ordering or group-commit discipline.
+
 ## FIX 1910: vendored `lmdb-master3-sys` 0.2.6 and the page-key wipe
 
 mdb.master3 copies the page key into its own heap (`MDB_env.me_enckey`, set

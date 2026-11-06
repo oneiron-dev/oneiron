@@ -433,6 +433,7 @@ fn flush_rewrites_in_txn(
         store
             .attempt_records
             .put(txn, record.id.as_bytes(), &after)?;
+        crate::tagging::stage_marker_room_turns_in_txn(store, txn, &record);
         crate::vault_cleanup::refresh_archived_attempt_in_txn(
             store, txn, record.id, &before, &after,
         )?;

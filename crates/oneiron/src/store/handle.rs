@@ -220,6 +220,8 @@ pub struct StoreCore {
     /// handle on it. An owner proof binds to it, so a proof minted before a
     /// close never acts on another vault opened later at the same path.
     pub(crate) open_nonce: [u8; 16],
+    /// Same-open original room terms, shared with store-only queue doors.
+    pub(crate) queued_room_hints: crate::memory::QueuedRoomHintRuntime,
     #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,

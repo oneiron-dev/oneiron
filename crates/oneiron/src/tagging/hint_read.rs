@@ -61,14 +61,17 @@ impl QueuedHintRead {
         }
     }
 
-    pub(super) fn hold_room_turns(&self, vault: &Vault) -> Vec<crate::claim::TurnTerms> {
+    pub(super) fn hold_room_turns(
+        &self,
+        store: &crate::store::Store,
+    ) -> Vec<crate::claim::TurnTerms> {
         match self {
             Self::Caller {
                 readers,
                 unknown: false,
             } => readers
                 .iter()
-                .filter_map(|reader| reader.hold_room_turn(vault))
+                .filter_map(|reader| reader.hold_room_turn(store))
                 .collect(),
             _ => Vec::new(),
         }

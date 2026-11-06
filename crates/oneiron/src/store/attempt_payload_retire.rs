@@ -26,6 +26,7 @@ pub(crate) fn retire_attempt_payload_in_txn(
     let id = AttemptId::from_bytes(key)?;
     let before = store.attempt_records.get(wtxn, key)?.map(Cow::into_owned);
     store.attempt_records.put(wtxn, key, stub)?;
+    store.queued_room_hints.stage(wtxn, id, Vec::new());
     if let Some(before) = before {
         crate::store::attempt_archive_mark::refresh_archived_attempt_in_txn(
             store, wtxn, id, &before, stub,

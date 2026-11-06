@@ -80,7 +80,6 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
-    pub(crate) queued_room_hints: crate::memory::QueuedRoomHintRuntime,
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,

@@ -78,6 +78,7 @@ impl AttemptQueue<'_> {
             self.delete_entries_naming(wtxn, &record)?;
             crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &record)?;
             self.store.attempt_records.delete(wtxn, id.as_bytes())?;
+            self.store.queued_room_hints.stage(wtxn, id, Vec::new());
             crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &record)?;
             pruned += 1;
             next = record.retry_of;
@@ -148,6 +149,7 @@ impl AttemptQueue<'_> {
                 self.delete_entries_naming(wtxn, &row)?;
                 crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &row)?;
                 self.store.attempt_records.delete(wtxn, row.id.as_bytes())?;
+                self.store.queued_room_hints.stage(wtxn, row.id, Vec::new());
                 crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &row)?;
                 deleted += 1;
                 gap = gap.saturating_add(1).saturating_add(row.folded_retries);

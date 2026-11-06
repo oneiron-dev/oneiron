@@ -67,10 +67,12 @@ impl<'a> AttemptQueue<'a> {
         // the write that settles it, whichever door settles it.
         super::result::settle_terminal_exhaust(record);
         observe_event_bytes(self.store, wtxn, record);
-        match self.vault {
+        let encoded = match self.vault {
             Some(vault) => super::encoding::encode_admitted_record(vault, wtxn, record),
             None => super::encoding::encode_admitted_record(self.store, wtxn, record),
-        }
+        }?;
+        crate::tagging::stage_marker_room_turns_in_txn(self.store, wtxn, record);
+        Ok(encoded)
     }
 }
 
