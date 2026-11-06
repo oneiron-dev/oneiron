@@ -24,6 +24,8 @@ use crate::error::{Error, Result};
 ///   from `EdgeKind::default_weight`.
 pub const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
     match kind {
+        // Source-code relations are not shared-vault PPR relevance.
+        EdgeKind::Calls | EdgeKind::Imports | EdgeKind::Refs => None,
         EdgeKind::AuthoredBy => Some(0.9),
         EdgeKind::ScopedTo => Some(0.7),
         EdgeKind::PartOf => Some(0.8),
@@ -79,7 +81,8 @@ pub const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
 
 pub fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
     match kind {
-        EdgeKind::Mentions
+        EdgeKind::Calls | EdgeKind::Imports | EdgeKind::Refs
+        | EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
         | EdgeKind::Opposes

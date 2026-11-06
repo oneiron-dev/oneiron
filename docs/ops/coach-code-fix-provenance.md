@@ -56,3 +56,34 @@ outcome learning remain open; this matching fix closes neither. Current-format
 work rows carry the new field directly: there is no compatibility reader,
 legacy wildcard, work-key change or migration. No live replay or runtime proof
 is asserted by this source change.
+
+## Native embedding: associate an exported result with local input
+
+Native hosts can use the public
+`dreamer_runner::maintenance::code_fix::publisher_candidates_with_refs`
+helper to reconstruct references from their complete `PublisherCandidate` slice.
+It uses the same implementation as initial replay and catch-up. Do not construct
+references from a filtered missing-candidate list or compare a label alone.
+
+For each retained `CodeFixWork.settled`, call
+`CodeFixSettled::publisher_candidates_for_result(result_id, full_candidates)`.
+It returns borrowed pairs of the local `CandidateRun` and its matching publisher
+input for a `CodeFixExport::FixResult` id. Invented-example ids do not select a
+candidate run. It requires both the run's queued public record id and the exact local
+label/reference match. It returns all matches, never an assumed unique input.
+A Coach draft or withheld run cannot match. A current slice without that input
+returns no association; historical association requires the corresponding kept
+input slice. Removing identical occurrences can change their local addresses.
+
+The result id alone does not prove origin. The local work row binds that id to
+its candidate reference in the same write that queues the export. A delivery
+acknowledgement removes the queue row, not this work binding. The owner's erase
+or cleanup can still remove local work. This view does not prove a record is
+still eligible to send, that it was delivered, or that a replay succeeded by an
+independent measure. Use the existing export doors for sending.
+
+This API reads only the local objects the caller supplies. It changes no export
+bytes, consent, record version, queue state or publisher identity. A remote
+receiver without the retained work and input slice still has no self-describing
+input association. Independently anchored outcome learning remains open. No SDK
+verb or generated wire shape is added, and no setting or numeric default changes.
