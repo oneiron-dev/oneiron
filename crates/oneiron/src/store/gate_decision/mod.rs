@@ -18,7 +18,7 @@ mod read_items;
 mod retention;
 mod retention_policy;
 mod retention_scope;
-mod write_mode;
+use oneiron_store::gate_decision::write_mode;
 
 #[cfg(test)]
 pub(crate) use super::key_custody::arm_before_retire_lock;

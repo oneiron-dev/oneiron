@@ -46,16 +46,17 @@ enum Reach {
 ///
 /// Storage errors.
 pub(crate) fn erase_source_claim_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let is_claim = record_in_txn(store, &*txn, id)?
         .is_some_and(|record| record.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
     if !is_claim {
         return Ok(());
     }
-    erase_teaching_copies_in_txn(store, txn, id, Reach::SourceClaim)
+    erase_teaching_copies_in_txn(write, txn, id, Reach::SourceClaim)
 }
 
 /// The decision table's declared scrub: an actor's erase, and a restored
@@ -69,7 +70,12 @@ pub(crate) fn erase_principal_decision_entity_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    erase_teaching_copies_in_txn(&vault.store, txn, id, Reach::Entity)
+    erase_teaching_copies_in_txn(
+        &crate::secret_custody::CustodyWrite::of(&vault),
+        txn,
+        id,
+        Reach::Entity,
+    )
 }
 
 /// Whether every receipt `cluster` cites still holds its decision, read in
@@ -89,11 +95,12 @@ pub(super) fn receipts_stand_in_txn(
 }
 
 fn erase_teaching_copies_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     reach: Reach,
 ) -> Result<()> {
+    let store = write.store;
     let mut receipts = BTreeSet::new();
     let mut actors = BTreeSet::new();
     // The claim's teaching receipts come from the index alone (FIX 11347): no
@@ -187,7 +194,7 @@ fn erase_teaching_copies_in_txn(
     for copy in copies {
         // A mined claim is MACHINE-signed: its history controls go with it.
         let (_, vector, graph, neighbors) =
-            crate::batch::deindex_entity_with_machine_history(store, txn, &copy)?;
+            crate::batch::deindex_entity_with_machine_history(write, txn, &copy)?;
         crate::batch::stage_cascade_tombstone_in_txn(store, txn, &copy)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &copy, &neighbors)?;
         if graph {

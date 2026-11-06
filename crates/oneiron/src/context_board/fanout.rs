@@ -20,14 +20,30 @@ const FANOUT_ACTION_ROWS_CAP: usize = 8;
 /// no row.
 #[must_use]
 pub fn fanout_action_rows(launches: &[FanoutLaunchReceipt]) -> Vec<String> {
+    fanout_action_rows_within(launches, FANOUT_ACTION_ROWS_CAP)
+}
+
+/// The rows a board whose layout gives TASKS a share shows for `launches`:
+/// [`fanout_action_rows`] at the share's row allotment instead of the fixed
+/// cap (BOARD-LAYOUT), never fewer than the fixed cap.
+#[must_use]
+pub fn fanout_action_rows_for(
+    launches: &[FanoutLaunchReceipt],
+    layout: &super::BoardLayout,
+    cap_tok: usize,
+) -> Vec<String> {
+    fanout_action_rows_within(
+        launches,
+        layout.row_allotment("tasks", cap_tok, FANOUT_ACTION_ROWS_CAP),
+    )
+}
+
+/// [`fanout_action_rows`] with at most `cap` rows before the count row.
+fn fanout_action_rows_within(launches: &[FanoutLaunchReceipt], cap: usize) -> Vec<String> {
     let mut ranked: Vec<(u8, String)> = launches.iter().filter_map(fanout_action_row).collect();
     ranked.sort_by_key(|(rank, _)| *rank);
-    let omitted = ranked.len().saturating_sub(FANOUT_ACTION_ROWS_CAP);
-    let mut rows: Vec<String> = ranked
-        .into_iter()
-        .take(FANOUT_ACTION_ROWS_CAP)
-        .map(|(_, row)| row)
-        .collect();
+    let omitted = ranked.len().saturating_sub(cap);
+    let mut rows: Vec<String> = ranked.into_iter().take(cap).map(|(_, row)| row).collect();
     if omitted > 0 {
         rows.push(format!("fanout_rows_omitted: {omitted}"));
     }

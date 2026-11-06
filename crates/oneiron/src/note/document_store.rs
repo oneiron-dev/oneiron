@@ -4,8 +4,7 @@ use super::document::{
     NoteDocument, NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome,
     NoteSpanResolution, frontier, invalid,
 };
-use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
-use super::side_keys::HexHexHash;
+use super::pin_index::NOTE_PIN_SOURCE;
 use super::{NoteBody, NoteKind, encode_note_body};
 use crate::batch::secret_scan::{
     Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
@@ -19,7 +18,6 @@ use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
-use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
 /// The snapshot row's key, for a test that plants one by hand.
@@ -138,13 +136,9 @@ fn persist_structural_with_origin(
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
     super::validate_markdown(&markdown)?;
-    // No body length refuses a NOTE (rule 5, FIX 10345). Its snapshot still
-    // goes whole in one STATE document frame, an 18-byte head and the
-    // snapshot within the transport's 8 MiB frame
-    // (`sync::transport::encode_document`); this bound protects that frame.
-    if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
-        return Err(invalid("NOTE snapshot exceeds wire bound"));
-    }
+    // Preserve snapshot validation here; document delivery splits the logical
+    // payload into bounded wire frames (FIX 12244), without a NOTE length cap.
+    let _ = doc.snapshot()?;
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
@@ -158,18 +152,7 @@ fn persist_structural_with_origin(
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
-    for pin in doc.pins()? {
-        let value = NOTE_PIN_SOURCE.encode_value(&pin)?;
-        let hash = blake3::hash(&value).to_hex().to_string();
-        let index = HexHexHash(HexId(pin.document), HexId(doc.id), hash.clone());
-        let index_bytes = NOTE_PIN_SOURCE.key_bytes(&index);
-        NOTE_PIN_SOURCE.put(&vault.store, txn, &index, &pin)?;
-        let claim_index = HexHexHash(HexId(pin.claim), HexId(doc.id), hash.clone());
-        NOTE_PIN_CLAIM.put(&vault.store, txn, &claim_index, &index_bytes)?;
-        let citing = HexHexHash(HexId(doc.id), HexId(pin.document), hash);
-        NOTE_PIN_CITING.put(&vault.store, txn, &citing, &index_bytes)?;
-    }
-    Ok(())
+    super::pin_index::index_pins(&vault.store, txn, doc.id, &doc.pins()?)
 }
 
 /// The live text and title as the NOTE stores them (OF-067; ARCH-0069
@@ -610,6 +593,11 @@ impl Memory<'_> {
                     .export(loro::ExportMode::shallow_snapshot(&through))
                     .map_err(|_| invalid("NOTE history purge failed"))?;
                 let shallow = NoteDocument::load(note, &snapshot)?;
+                let selected = doc
+                    .doc
+                    .frontiers_to_vv(&through)
+                    .ok_or(invalid("NOTE purge frontier unavailable"))?;
+                super::proposals::purge_stored_history(self.vault(), txn, note, &selected)?;
                 super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
                 let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
                 self.vault().store.port_document_shallow_since_put(
@@ -714,7 +702,13 @@ pub(crate) fn deck_outline_document_in_txn(
     if body.kind != NoteKind::Plugin("brief".to_owned()) {
         return Err(invalid("a deck outline is a brief NOTE"));
     }
-    load(vault, txn, note)?.view()
+    let mut view = load(vault, txn, note)?.view()?;
+    for record in &mut view.authorship {
+        if record.operation == note && record.actor == super::NoteActor::Erased {
+            record.actor = body.author_ref.erased_here(vault, txn)?;
+        }
+    }
+    Ok(view)
 }
 
 pub(crate) fn resolve_deck_pin_in_txn(

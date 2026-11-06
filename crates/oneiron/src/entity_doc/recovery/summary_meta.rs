@@ -1,19 +1,13 @@
-//! The scope-summary meta a canonical EntityDoc row carries beside its
-//! editable metadata (FIX 756): a SUMMARY document's purpose and derivation,
-//! the typed values its meta map keeps as encoded bytes. Neither is an
-//! editable field (`ports::document_fields` names neither), so they ride a
-//! field of their own and are written back as they were captured.
+//! Core half of `entity_doc::recovery::summary_meta`: its store-layer items live in `oneiron_store::entity_doc::recovery::summary_meta` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use loro::LoroDoc;
+pub(crate) use oneiron_store::entity_doc::recovery::summary_meta::*;
 
 use super::super::document::{map_get_bytes, map_insert_bytes};
 use super::invalid;
 use crate::Result;
-
-/// The meta keys a summary document keeps its typed values under.
-const SUMMARY_META: [&str; 2] = ["purpose", "derivation"];
+use loro::LoroDoc;
+use std::collections::BTreeMap;
 
 /// The summary meta `doc` holds, by key: empty for any other document.
 pub(super) fn bytes(doc: &LoroDoc) -> BTreeMap<String, Vec<u8>> {
