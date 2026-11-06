@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 use super::live_exchange::AnswerReceipts;
 use super::*;
 
+mod data_line;
 mod event_body;
 mod first_answer;
 
@@ -34,7 +35,8 @@ pub(super) enum StreamEvent {
 
 /// A reply stream read event by event, each message whole whatever its size
 /// (FIX 8227). The first tools/call read spools normalized data fields when
-/// possible; control and later reads keep their in-memory data. Past
+/// possible, without a whole data-line String; control and later reads
+/// keep their in-memory data. Past
 /// `deadline`, the rest of a round is unreadable. In-memory foreign bytes
 /// are wiped once read past or dropped (FIX 8309, L10 09:30): the reader's
 /// buffer, the line, event data and ids, and dropped messages. Event files
@@ -59,7 +61,7 @@ impl EventStream {
         self.read_event(id, None, None)
     }
 
-    /// The first tools/call read can place each complete event before parsing it.
+    /// The first tools/call read spools normalized data fragments before parsing.
     pub(super) fn next_spooled(&mut self, id: u64, vault: &Vault) -> Result<StreamEvent, ()> {
         self.read_event(id, None, Some(vault))
     }
@@ -84,15 +86,19 @@ impl EventStream {
         vault: Option<&Vault>,
     ) -> Result<StreamEvent, ()> {
         loop {
-            let n = match self.reader.read_line(&mut self.line) {
-                Ok(n) => n,
-                Err(error)
-                    if timed_out(&error)
-                        && waiting.is_some_and(|waiting| waiting.load(Ordering::Acquire)) =>
-                {
-                    continue;
-                }
-                Err(_) => return Err(()),
+            let n = if let Some(vault) = vault {
+                data_line::read(&mut self.reader, &mut self.data, &mut self.line, vault)?
+            } else {
+                Some(match self.reader.read_line(&mut self.line) {
+                    Ok(n) => n,
+                    Err(error)
+                        if timed_out(&error)
+                            && waiting.is_some_and(|waiting| waiting.load(Ordering::Acquire)) =>
+                    {
+                        continue;
+                    }
+                    Err(_) => return Err(()),
+                })
             };
             let line = std::mem::take(&mut self.line);
             if self
@@ -101,6 +107,9 @@ impl EventStream {
             {
                 return Err(());
             }
+            let Some(n) = n else {
+                continue;
+            };
             let end = n == 0;
             let trimmed = line.trim_end_matches(['\r', '\n']);
             if end || trimmed.is_empty() {
