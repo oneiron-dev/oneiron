@@ -13,11 +13,13 @@
 //! metadata values, text splices, head and quote equality/hash, container sort,
 //! retained-parent and workflow checks still run whole. Encoding yields between
 //! top-level named fields and source rows, and within entity blobs, edge/tombstone
-//! values, custody carriers, room turn/side rows and document pin byte arrays.
-//! Their fixed prefixes, keys and other scalar and nested row serializers still
-//! run whole. The envelope checksum
-//! and outer canonical digest yield
-//! between BLAKE3 chunks.
+//! values, custody carriers, room turn/side rows, document pins, head receipts,
+//! row births and ASSET body-reference byte arrays. NOTE and EntityDoc current
+//! text copies also yield within their native UTF-8 bodies, after the whole
+//! string's original budget admission and capacity reservation. Fixed prefixes,
+//! keys, other scalar and nested row serializers and that reservation still
+//! run whole. The envelope checksum and outer canonical digest yield between
+//! BLAKE3 chunks.
 //! NOTE scope and immutable plan lookups yield between source rows; store-bound
 //! workflow checks and the aborted-transaction preflight still run whole. Manifest construction
 //! yields between whole packs and within each chunk hash.
