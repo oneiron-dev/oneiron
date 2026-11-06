@@ -105,7 +105,7 @@ impl Vault {
     }
 
     /// Projects only admitted rows in the caller's snapshot. Obligation ids and
-    /// bodies use `store`; contact and identity labels still use the vault base.
+    /// bodies and contact/identity labels use the same captured `store`.
     pub(crate) fn commitment_ledger_for_counterparty_in_txn(
         &self,
         store: &crate::store::StoreRead<'_>,
@@ -116,6 +116,7 @@ impl Vault {
         let (contact, contact_heads) =
             crate::counterparty_contact::counterparty_contact_label_sources_in_txn(
                 self,
+                store,
                 txn,
                 contact_ref,
             )?
@@ -126,7 +127,7 @@ impl Vault {
             }
         }
         let identity_heads = crate::channel_identity::channel_identity_correctable_head_ids_in_txn(
-            &self.store,
+            store,
             txn,
             &contact.identity_ref,
         )?;
@@ -155,7 +156,7 @@ impl Vault {
             }
         }
         let facts = crate::channel_identity::channel_identity_facts_in_txn(
-            &self.store,
+            store,
             txn,
             &contact.identity_ref,
         )?

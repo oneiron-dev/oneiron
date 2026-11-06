@@ -24,9 +24,13 @@ The commitment scan takes its entity ids and bodies from the serving lane's nati
 store reader, not from a separate vault-base cursor. A session-backed lane therefore
 uses its captured overlay/base union for those obligations, with the same admission
 and projected-text callbacks. The unrestricted wrapper still uses the base reader.
-Contact and identity label selection remains base-only, and the public
-`Memory::calendar_prep` entry still opens its canonical lane. This is not a claim
-that calendar prep is served through an off-record session route.
+Contact and identity labels use that same captured reader, including the contact's
+native claim reconstruction and the channel's existing live-head selection. The
+shared CLAIM reader keeps its canonical decoding, source-withdrawal checks and
+vault-authoritative MACHINE-history projection. Standing party STOP still folds
+from the canonical vault; staged content never becomes grant or control authority.
+The public `Memory::calendar_prep` entry still opens its canonical lane. This is not
+a claim that calendar prep is served through an off-record session route.
 
 All new evidence must have been learned by the supplied fire instant. The existing
 eligibility, EVENT/attendee PPR seeds, three-hop walk, 64-candidate PPR limit, nine

@@ -438,7 +438,7 @@ fn contact_claims_match_class(
 /// removes the row and keeps the contact, so row presence can never be the
 /// deletion question.
 pub(super) fn contact_deleted_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<bool> {
