@@ -311,7 +311,9 @@ impl<'work> TombstoneBatch<'work> {
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
-            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value) {
+            if let Err(fence_err) =
+                vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value)
+            {
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
@@ -336,10 +338,7 @@ impl<'work> TombstoneBatch<'work> {
         // applies (mirrors set_remat_marker_in_txn parent bookkeeping).
         for work in staged.iter().filter(|work| !work.hard) {
             if let Err(marker_err) = quarantine::enqueue_tombstone_reassert_marker_in_txn(
-                vault,
-                parent,
-                window_key,
-                &work.id,
+                vault, parent, window_key, &work.id,
             ) {
                 tracing::error!(
                     tombstone = %work.crdt_key,

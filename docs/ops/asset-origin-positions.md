@@ -81,9 +81,23 @@ staged confirmation compute that identity before import. A bound body
 reference supplies the carried facts; a native descriptor selects stored
 file facts. Manifest-looking inline bytes never select the file path.
 Checks therefore keep the origin across inline/file/reference echoes,
-including before the echo lands. Wire-map digests, copy/stale checks and
-exact removed-carrier cleanup remain unchanged. Other kinds retain their
-32-byte exact-byte records. There is no old ASSET-record reader or migration.
+including before the echo lands. A new pending carrier does not replace the
+origin of the ASSET still stored locally. Before recording that carrier, the
+writer retains only an existing peer entry matching the current canonical
+ASSET's native logical identity. The latest carrier's entry follows it;
+when no distinct canonical entry is needed, the record holds just the latest
+entry. Repeated pending replacements therefore preserve the stored row's
+origin without accumulating earlier pending entries. This also applies when
+the latest carrier is a different kind and has not replaced the stored ASSET.
+
+A canonical comparison checks both entries and never deletes a different
+pending carrier's origin. Exact carrier removal drops only entries with that
+wire digest. Actual local re-authoring still clears every origin for that
+id. The next carrier writer rechecks which recorded ASSET, if any, is still
+canonical. Wire-map digests and copy/stale checks remain unchanged. Other
+kinds retain their 32-byte exact-byte entries; a distinct retained canonical
+ASSET entry is 64 bytes and precedes the latest entry in the same local
+record. There is no old ASSET-record reader or migration.
 
 Only the existing native BASE/default scope shape can be installed. An
 existing immutable stamp always wins, including one current edges do not

@@ -678,7 +678,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/request.rs` | src | s | 16 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
 | `src/batch/secret_scan.rs` | src | L | 1 enum · 1 re-export · 48 crate-vis | SecretScanMode | Secret detection and custody filtering at batch and release boundaries |
-| `src/batch/secret_scan/container.rs` | src | s | 15 crate-vis | — | Core half of `batch::secret_scan::container`: its store-layer items live in… |
+| `src/batch/secret_scan/container.rs` | src | s | 16 crate-vis | — | Core half of `batch::secret_scan::container`: its store-layer items live in… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 2 crate-vis | — | Core half of `batch::secret_scan::container::archive`: its store-layer items live in… |
 | `src/batch/secret_scan/container/pdf.rs` | src | s | 3 crate-vis | — | Core half of `batch::secret_scan::container::pdf`: its store-layer items live in… |
 | `src/batch/secret_scan/container/projection_edit.rs` | src | s | 2 crate-vis | — | Core half of `batch::secret_scan::container::projection_edit`: its store-layer items live in… |
@@ -689,7 +689,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/carriers.rs` | src | m | 7 crate-vis | — | Carriers no door rewrites |
 | `src/batch/secret_scan/lift_history/frontier.rs` | src | s | 2 crate-vis | — | A typed body's text at an earlier frontier holding a key no mark places (OF-067, FIX 8996) |
 | `src/batch/secret_scan/lift_history/loro_blocks.rs` | src | s | 3 crate-vis | — | Core half of `batch::secret_scan::lift_history::loro_blocks`: its store-layer items live in… |
-| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 1 re-export · 6 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
+| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 1 re-export · 7 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
 | `src/batch/secret_scan/lift_history/notice.rs` | src | s | 2 crate-vis | — | The needs-you notice of the lift proposals (OF-067) |
 | `src/batch/secret_scan/lift_history/projection.rs` | src | s | 1 fn · 1 crate-vis | — | The lift sweep's state as a caller toward one destination may read it (FIX 8165): its proposals and their… |
 | `src/batch/secret_scan/lift_history/proposals.rs` | src | m | 8 crate-vis | — | Closing a lift proposal (OF-067) |
@@ -706,12 +706,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask/carrier.rs` | src | m | 22 crate-vis | — | The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine… |
 | `src/batch/secret_scan/mask/changed_scan.rs` | src | s | 2 crate-vis | — | Core half of `batch::secret_scan::mask::changed_scan`: its store-layer items live in… |
 | `src/batch/secret_scan/mask/file_plane.rs` | src | s | 1 crate-vis | — | Body files with keys in them (FIX 5507) |
-| `src/batch/secret_scan/mask/known_marks.rs` | src | s | 4 crate-vis | — | A file's marks for the values custody came to know after it was stored (FIX 2781) |
+| `src/batch/secret_scan/mask/known_marks.rs` | src | s | 5 crate-vis | — | A file's marks for the values custody came to know after it was stored (FIX 2781) |
 | `src/batch/secret_scan/mask/known_note.rs` | src | s | 1 crate-vis | — | The found-key notice for a known value in a file (FIX 2780): a file's key custody already holds is marked… |
 | `src/batch/secret_scan/mask/leaf_keys.rs` | src | s | 1 crate-vis | — | The keys a file's leaf holds (OF-560, owner ruling G04 binary = C2): what the door's text rules and its… |
 | `src/batch/secret_scan/mask/promoted_message_parts.rs` | src | s | 1 crate-vis | — | Seals fresh MESSAGE parts only when their room is explicitly saved |
 | `src/batch/secret_scan/mask/retained_repo.rs` | src | m | 10 crate-vis | — | The mark of each key a retained repository blob holds (FIX 7608, owner ruling SECRETS-IN-REPOS = A) |
-| `src/batch/secret_scan/mask/retained_repo/read.rs` | src | s | 1 crate-vis | — | The masked copy a reader gets of a marked retained repository blob (FIX 7608 slice 2a) |
+| `src/batch/secret_scan/mask/retained_repo/read.rs` | src | s | 5 crate-vis | — | The masked copy a reader gets of a marked retained repository blob (FIX 7608 slice 2a) |
 | `src/batch/secret_scan/mask/side_row.rs` | src | m | 11 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
 | `src/batch/secret_scan/mask/spool.rs` | src | m | 12 crate-vis | — | The spool-aware admission adapter (FIX 5718 part 3, Engine ruling 3; CALLS C5718-19) |
 | `src/batch/secret_scan/mask/stream_known.rs` | src | s | 6 crate-vis | — | Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER) |
@@ -4952,11 +4952,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/canonical/capture.rs` | src | m | 1 fn · 5 crate-vis | — | One coordinated capture of a quiescent canonical window |
 | `src/recovery/canonical/peer_origins.rs` | src | s | 1 struct · 2 crate-vis | CanonicalPeerOrigin | The peer origins a window carries (FIX 2902), through canonical capture and rebuild (FIX 4550) |
 | `src/recovery/canonical/rebuild.rs` | src | s | 1 fn · 4 crate-vis | — | Layer 1 rebuilt from a canonical snapshot's values, never by importing an old CRDT snapshot |
-| `src/recovery/canonical/row_births.rs` | src | s | 1 struct · 4 crate-vis | CanonicalRowBirth | The row births a window carries (ARCH-0035 Rule A), through canonical capture and rebuild (FIX 3069) |
+| `src/recovery/canonical/row_births.rs` | src | s | 1 struct · 6 crate-vis | CanonicalRowBirth | The row births a window carries (ARCH-0035 Rule A), through canonical capture and rebuild (FIX 3069) |
 | `src/recovery/canonical/snapshot_ops.rs` | src | s | 4 fn | — | Public validation and codec entry points for canonical snapshots |
 | `src/recovery/canonical/validation_work.rs` | src | s | 3 crate-vis | — | Ordered canonical validation groups shared by synchronous and turn-based recovery |
 | `src/recovery/canonical/vocabulary.rs` | src | s | 11 struct · 1 re-export | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalSchemaManifest +3 | CRDT-independent canonical snapshot values and document history vocabulary |
-| `src/recovery/canonical/withdrawn_cutoffs.rs` | src | s | 1 enum · 5 crate-vis | CanonicalCutoff | The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical… |
+| `src/recovery/canonical/withdrawn_cutoffs.rs` | src | s | 1 enum · 7 crate-vis | CanonicalCutoff | The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical… |
 | `src/recovery/canonical_tests.rs` | test | XL | — | — | Caller-visible canonical carry-list, bounded ladder and forward-rebuild laws |
 | `src/recovery/checkpoint/admission.rs` | src | m | 1 fn · 2 re-export · 1 crate-vis | — | The engine's half of a cold managed restore (LC FIX 5384/5385; the contract is… |
 | `src/recovery/checkpoint/admission/facts.rs` | src | s | 10 struct · 5 enum · 1 re-export | AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact, CustodyRouteFact, RecipientAdmissionFacts, RecipientRetirementDisposition +7 | What a cold managed restore is asked to do and what it verified (LC FIX 5384/5385): the plan's expected… |
@@ -5062,8 +5062,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/snapshot_writer.rs` | src | s | 2 fn | — | Off-hot-path publication of canonical Layer-1 window artifacts |
 | `src/recovery/soft_shell.rs` | src | s | 2 crate-vis | — | Retained soft-delete headers on the standard forward recovery path |
 | `src/recovery/tests.rs` | test | s | — | — | — |
-| `src/recovery/validation.rs` | src | m | 7 crate-vis | — | Fail-closed whole-payload validation before a recovery mutation |
+| `src/recovery/validation.rs` | src | m | 8 crate-vis | — | Fail-closed whole-payload validation before a recovery mutation |
 | `src/recovery/validation/documents.rs` | src | m | 3 crate-vis | — | Ordered NOTE document row checks over one immutable canonical snapshot |
+| `src/recovery/validation/entity_documents.rs` | src | s | 3 crate-vis | — | Generic EntityDoc validation with owned indexes over one canonical snapshot |
+| `src/recovery/validation/manifest.rs` | src | s | 3 crate-vis | — | Owned resumable manifest and order checks over one immutable canonical snapshot |
 | `src/recovery/validation/window_rows.rs` | src | m | 3 crate-vis | — | Window row validation with owned indexes and a cursor between admitted turns |
 | `src/recovery/work.rs` | src | m | 8 crate-vis | — | A canonical window recovery as resumable work (Rule 5, FIX 8821) |
 | `src/registry/export.rs` | src | s | 2 struct · 1 fn | RegistrySnapshot, ZoneRow | Engine-owned kind/family/zone export (FIX 7830) |
@@ -5983,7 +5985,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_encoding.rs` | src | s | 3 fn · 2 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders, and… |
 | `src/store/known_history.rs` | src | L | 21 crate-vis | — | The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's… |
 | `src/store/known_history/writer_ids.rs` | src | s | 2 crate-vis | — | A writer's known-value history read with the ids it was read from (FIX 12210): what a later pass in the same… |
-| `src/store/known_value_index.rs` | src | m | 1 const · 24 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
+| `src/store/known_value_index.rs` | src | L | 1 const · 25 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
 | `src/store/known_value_index/entries.rs` | src | s | 1 crate-vis | — | The shared value-print matcher builder |
 | `src/store/known_value_index/rolling.rs` | src | s | 1 crate-vis | — | Core half of `store::known_value_index::rolling`: its store-layer items live in… |
 | `src/store/known_value_index/run.rs` | src | s | 7 crate-vis | — | Run-local PERSON prints alongside the custody matcher (FIX 4974) |
