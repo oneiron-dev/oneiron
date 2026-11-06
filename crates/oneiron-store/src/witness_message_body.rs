@@ -51,8 +51,13 @@ const MAX_WITNESS_MESSAGE_TYPE_BYTES: usize = 128;
 /// reader consumes and a decode cost every reader pays.
 const MAX_WITNESS_METADATA_DEPTH: usize = 8;
 
-/// Total metadata nodes (keys plus values, recursively).
+/// Total metadata nodes (keys plus values, recursively), counted apart for
+/// the `import` entry and for the rest ([`valid_metadata_map`]).
 const MAX_WITNESS_METADATA_NODES: usize = 512;
+
+/// The metadata key an import's provenance rides under: the transcript
+/// importer's and an archive import's (ARCH-0027, FIX 7777).
+const METADATA_KEY_IMPORT: &str = "import";
 
 /// Metadata key length bound.
 const MAX_WITNESS_METADATA_KEY_BYTES: usize = 128;
@@ -61,7 +66,8 @@ const MAX_WITNESS_METADATA_KEY_BYTES: usize = 128;
 /// Counted as UTF-8 bytes, not Unicode scalar values.
 const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 
-/// Canonical MessagePack bytes for the complete metadata map. The recursive
+/// Canonical MessagePack bytes for the metadata map, counted apart for the
+/// `import` entry and for the rest ([`valid_metadata_map`]). The recursive
 /// validator first bounds every string and the aggregate key/value text, so
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
@@ -160,15 +166,10 @@ pub fn witness_message_envelope_denial(
     if envelope.author == WITNESS_AUTHOR_USER && !envelope.is_visible {
         return malformed;
     }
-    if let Some(metadata) = &envelope.metadata {
-        let mut nodes = 0_usize;
-        let mut text_bytes = 0_usize;
-        if !matches!(metadata, Value::Map(_))
-            || !valid_metadata(metadata, 0, &mut nodes, &mut text_bytes)
-            || encoded_metadata_len(metadata).is_none_or(|len| len > MAX_WITNESS_METADATA_BYTES)
-        {
-            return malformed;
-        }
+    if let Some(metadata) = &envelope.metadata
+        && !valid_metadata_map(metadata)
+    {
+        return malformed;
     }
 
     // The BIND. Everything above authorized the AXES; this proves the bytes the
@@ -317,6 +318,27 @@ fn valid_message_type(message_type: &str) -> bool {
         && message_type
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/' | '+'))
+}
+
+/// Whether `metadata` is a metadata map within its bounds. Its `import`
+/// entry, an import's provenance, is bounded on its own beside the other
+/// entries (FIX 7777): an archive import adds it to a source row whose own
+/// metadata may already fill the bounds, and neither pushes the other out.
+/// Each part keeps every bound [`valid_metadata`] and the encoded size set.
+fn valid_metadata_map(metadata: &Value) -> bool {
+    let Value::Map(entries) = metadata else {
+        return false;
+    };
+    let (import, rest): (Vec<_>, Vec<_>) = entries
+        .iter()
+        .cloned()
+        .partition(|(key, _)| key.as_str() == Some(METADATA_KEY_IMPORT));
+    [Value::Map(import), Value::Map(rest)].iter().all(|part| {
+        let mut nodes = 0_usize;
+        let mut text_bytes = 0_usize;
+        valid_metadata(part, 0, &mut nodes, &mut text_bytes)
+            && encoded_metadata_len(part).is_some_and(|len| len <= MAX_WITNESS_METADATA_BYTES)
+    })
 }
 
 /// Recursive metadata validation: bounded depth, node count, individual string

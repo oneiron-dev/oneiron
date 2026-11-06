@@ -21,6 +21,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::memory::{ArchivedMessage, ArchivedMessageLink};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
@@ -118,6 +119,37 @@ pub(super) fn index_message_containers<R: Read + Seek>(
         archive
             .index
             .put(Tag::MessageContainer, conversation.target.as_bytes(), &[])?;
+    }
+    Ok(())
+}
+
+/// Checks that archived MESSAGE `id`, which matched a row already stored
+/// here, has the stored row's membership: its one `PartOf` TURN and one
+/// `BelongsTo` CONVERSATION are the archive's, so the edge pass gives it no
+/// second parent.
+pub(super) fn validate_stored_message<R: Read + Seek>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+) -> Result<()> {
+    let (turn, conversation) = message_links(archive, id)?;
+    for (kind, target) in [
+        (EdgeKind::PartOf, turn.target),
+        (EdgeKind::BelongsTo, conversation.target),
+    ] {
+        let mut stored = Vec::new();
+        for edge in vault
+            .store
+            .port_edges(txn, id, EdgeDirection::Out, Some(kind), None)?
+        {
+            stored.push(edge?.target);
+        }
+        if stored != [target] {
+            return Err(invalid(
+                "an archived MESSAGE's membership differs from the stored row's",
+            ));
+        }
     }
     Ok(())
 }

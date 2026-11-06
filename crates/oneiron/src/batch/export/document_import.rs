@@ -242,6 +242,11 @@ impl Vault {
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -253,6 +258,11 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
