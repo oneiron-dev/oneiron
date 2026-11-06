@@ -313,9 +313,10 @@ side_tables! {
     CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored [accepts: crate::code_run::code_run_continuation_accepts_masked];
     /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
     /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
-    /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
-    /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
-    /// string(row: `with_skill`, `without_skill` or `unavailable`).
+    /// outcome, goal revision and axis it was scored for, and its score), why the pair is
+    /// unavailable for good, or an owner verdict's pending owner pair (FIX 3609). Key: hash32(attempt
+    /// receipt, outcome, goal revision, axis, target) + string(row: `with_skill`, `without_skill`,
+    /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches

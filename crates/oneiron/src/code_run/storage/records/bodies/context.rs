@@ -70,7 +70,7 @@ impl Vault {
         {
             return Ok(Err("withheld"));
         }
-        if self.result_erased_in_txn(rtxn, Some(run))? {
+        if self.result_erased_in_txn(rtxn, Some(run), actual)? {
             return Ok(Err("response_erased"));
         }
         let (refs, secret) = self.result_marks_in_txn(rtxn, Some(run), actual)?;
