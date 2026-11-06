@@ -105,6 +105,8 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm: None,
+            trusted_contact: None,
+            seat_claim: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }
