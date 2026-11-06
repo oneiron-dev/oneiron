@@ -544,9 +544,6 @@ impl RemoteClient {
     }
 }
 
-/// The slip and connection key a holder signs each request's proof with,
-/// parsed once from `bearer`; `None` for a bare bearer such as the host
-/// secret. Its claims are never read.
 fn credential_headers_for(
     authorization: &HeaderValue,
     holder: Option<&(CapabilitySlip, SigningKey)>,
@@ -564,6 +561,9 @@ fn credential_headers_for(
     Ok(headers)
 }
 
+/// The slip and connection key a holder signs each request's proof with,
+/// parsed once from `bearer`; `None` for a bare bearer such as the host
+/// secret. Its claims are never read.
 fn slip_holder(
     bearer: &str,
     holder: Option<SigningKey>,
