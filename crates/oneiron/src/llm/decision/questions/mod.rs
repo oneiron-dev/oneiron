@@ -86,7 +86,7 @@ pub use store::{
     create_question, create_question_with_lane, edit_question, edit_question_with_lane,
     pause_question, read_question, read_question_schedule,
 };
-pub(crate) use store::{read_question_in_txn, read_question_version};
+pub(crate) use store::{read_question_in_txn, read_question_version, read_question_version_in_txn};
 pub(crate) use task_ask::{TaskAnswerBinding, bind_task_answer_in_txn, validate_task_answer_unit};
 pub use windows::{
     SILENCE_OUTCOME, close_due_outcome_windows, closed_outcome_windows,

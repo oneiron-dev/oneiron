@@ -60,6 +60,10 @@ pub struct QuestionHeadTrial {
     /// opened, `None` when none was: the answerer it was paired with. A bind
     /// takes the trial only while that is still so.
     pub incumbent_head: Option<EntityId>,
+    /// The pin of every rung the host's ladder held when the trial opened:
+    /// the configured answerer the head was paired with. An evaluated bind
+    /// takes the trial only while the host's ladder holds the same.
+    pub answerer: Vec<ProviderPin>,
     /// `None` while the host has not recorded its reads.
     pub measured: Option<QuestionTrialMeasure>,
 }
@@ -326,8 +330,11 @@ impl Vault {
     ///
     /// # Errors
     ///
+    /// `answerer` is the pin of every rung the host's ladder holds now.
+    ///
     /// A role run, a run not scored, an evaluation with no temperature, no
-    /// such question version, a question that is not yes/no, a cohort that
+    /// such question version (or one erased while it opened), a question that
+    /// is not yes/no, a cohort that
     /// no longer holds the held-out rows, a stale owner proof, or storage
     /// errors.
     pub fn open_question_head_trial(
@@ -336,6 +343,7 @@ impl Vault {
         id: &EntityId,
         question: EntityId,
         question_version: u32,
+        answerer: Vec<ProviderPin>,
     ) -> Result<QuestionTrialInput> {
         self.recheck_owner(owner)?;
         let run = self
@@ -402,11 +410,26 @@ impl Vault {
         let held_out_jsonl = self.read_training_artifact(&run.corpus.held_out)?;
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            // The question may have been erased since it was read: its trial
+            // is never written then (the erase dropped its trials already).
+            if crate::llm::decision::questions::read_question_version_in_txn(
+                self,
+                txn,
+                question,
+                question_version,
+            )?
+            .is_none()
+            {
+                return Err(invalid(
+                    "the typed question was erased while its trial opened",
+                ));
+            }
             let opened = QuestionHeadTrial {
                 question,
                 question_version,
                 exposure: release.exposure.clone(),
                 incumbent_head: bound_run_in_txn(&self.store, txn, question, question_version)?,
+                answerer: answerer.clone(),
                 measured: None,
             };
             QUESTION_TRIALS.put(&self.store, txn, id, &opened)

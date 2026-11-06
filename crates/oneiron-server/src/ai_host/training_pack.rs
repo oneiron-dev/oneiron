@@ -38,7 +38,7 @@ mod trainer;
 mod wire;
 
 pub(crate) use question_serving::QuestionHeadRung;
-pub(crate) use question_trial::run_question_head_trial;
+pub(crate) use question_trial::{answerer_pins, run_question_head_trial};
 use trainer::QuestionHeadTrainer;
 pub(crate) use trainer::{TrainingInputCleanup, cleanup_training_job_inputs};
 

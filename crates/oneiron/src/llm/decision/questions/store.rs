@@ -268,9 +268,18 @@ pub(crate) fn read_question_version(
     id: EntityId,
     version: u32,
 ) -> Result<Option<QuestionRecord>> {
-    let txn = vault.store.env.read_txn()?;
+    read_question_version_in_txn(vault, &vault.store.env.read_txn()?, id, version)
+}
+
+/// [`read_question_version`] in the caller's transaction.
+pub(crate) fn read_question_version_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    version: u32,
+) -> Result<Option<QuestionRecord>> {
     let record: Option<QuestionRecord> =
-        QUESTION_VERSION.get(&vault.store, &txn, &VersionKey { id, version })?;
+        QUESTION_VERSION.get(&vault.store, txn, &VersionKey { id, version })?;
     if let Some(record) = &record {
         if record.schema_version != 1 {
             return Err(invalid("unsupported question schema"));

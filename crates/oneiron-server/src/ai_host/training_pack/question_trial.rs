@@ -161,6 +161,24 @@ impl Incumbent<'_> {
     }
 }
 
+/// The pin of every rung the host's decision ladder holds, in rung order:
+/// the configured answerer a trial is paired with, which an evaluated bind
+/// checks is still the one the host runs.
+pub(crate) fn answerer_pins(server: &SyncServer) -> Vec<ProviderPin> {
+    let ladder = server.decision_ladder();
+    [
+        &ladder.rule,
+        &ladder.local,
+        &ladder.system_one,
+        &ladder.escalation,
+        &ladder.big,
+    ]
+    .into_iter()
+    .flatten()
+    .map(|provider| provider.pin())
+    .collect()
+}
+
 /// The owner's trial of question run `run`'s head against typed question
 /// `question` at `question_version`: open, read every held-out row, record.
 /// Answers the recorded trial.
@@ -177,7 +195,13 @@ pub(crate) fn run_question_head_trial(
     question_version: u32,
 ) -> oneiron::Result<QuestionHeadTrial> {
     let vault = server.vault();
-    let input = vault.open_question_head_trial(owner, run, question, question_version)?;
+    let input = vault.open_question_head_trial(
+        owner,
+        run,
+        question,
+        question_version,
+        answerer_pins(server),
+    )?;
     let rows = held_out_rows(&input.held_out_jsonl)?;
     let head = {
         let export = checkpoint_upload(vault, &input.checkpoint)?;
