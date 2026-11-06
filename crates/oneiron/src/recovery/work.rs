@@ -20,7 +20,7 @@
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality resumes between rows and within
 //! entity blobs, current document text, titles, field names, receipt bytes and
-//! fork and proposal payloads.
+//! fork and proposal payloads, and record-field vectors.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
