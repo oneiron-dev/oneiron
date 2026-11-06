@@ -317,7 +317,7 @@ pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use leave_notice_continuity::LeaveNoticeContinuity;
 #[cfg(feature = "sync")]
-pub(crate) use leave_notice_continuity::NoticeSignerStanding;
+pub(crate) use leave_notice_continuity::{LeaveNoticeDelegationRows, NoticeSignerStanding};
 pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{

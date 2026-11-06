@@ -12,6 +12,13 @@
 //! this code, has none: nothing is inferred or backfilled, so it bridges no
 //! root for a leave notice.
 //!
+//! The delegations follow the vault's home: a home move carries them
+//! ([`home_rows`]), so a new home answers a removed person's notices with
+//! every delegation the old one held. They name keys and hashes and no
+//! actor, so an actor's erase leaves them as the log it binds is left; no
+//! signed byte is ever edited. An archive export carries none, as its import
+//! restores no authority log row for them to bind.
+//!
 //! A delegation hands on leave-notice verification only. The env that judges
 //! one anchors at a live Owner of its own, unconflicted fold and verifies every
 //! link from there to the notice's signer; it writes no authority row and
@@ -27,6 +34,13 @@ use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+
+// The adapter a home move carries the delegations through (L01 20:19 (6)).
+#[cfg(feature = "sync")]
+mod home_rows;
+
+#[cfg(feature = "sync")]
+pub(crate) use home_rows::LeaveNoticeDelegationRows;
 
 /// One delegation's canonical bytes. Key: its digest.
 const DELEGATIONS: SideTable<[u8; 32], Vec<u8>, Raw> =
