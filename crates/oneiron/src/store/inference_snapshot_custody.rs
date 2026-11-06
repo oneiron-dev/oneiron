@@ -73,7 +73,11 @@ impl Store {
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let id = snapshot_subject(custody.binding(), catalog_id)?.at(0);
-        let bytes = Zeroizing::new(wrapped.to_bytes());
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(wrapped.bytes.len())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        bytes.extend_from_slice(&wrapped.bytes);
         debug_assert_eq!(bytes.len(), INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES);
         let secret = CustodySecret::from_bytes(bytes);
         custody.publish_minted(&id, &secret)
