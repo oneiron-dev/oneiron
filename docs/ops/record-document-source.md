@@ -49,3 +49,11 @@ A native put's real `AppliedRecordDocument` now stays owned through the entity s
 If the outer grouped writer reports an error, the observer compares each real native result with one committed read view: the physical row, head, all document rows and ordered updates, FIRST origins, and refinement control. The read view closes before the existing retry-marker writes. A mismatch or read error leaves that entity for replay. A later error can occur after commit, so an error alone is not proof that the native write was lost.
 
 Only the exact native `(entity, raw row)` uses this complete-output comparison. Other operations keep the original physical parity and echo handling, with comparison before de-duplication. A match is retry bookkeeping, not native admission or an outer commit receipt. Successful materializer outputs and watch/revision handling stay unchanged.
+
+## SKILL checkpoint content codec
+
+`sync::skill_docs::checkpoint` can split one exact historical carried head with its captured row and parts. The snapshot uses the existing whole-history entity-document actor codec. FIRST stays the exact immutable Candidate row under the SKILL owner, following the generic entity-row getter. Its revision and permanent body hash still validate.
+
+The content keeps neither leg's original part manifest. Joining fills only the snapshot actors that opened, validates the rebuilt native document against the same row, and re-parts snapshot and FIRST independently. Shared digests and repeated parts keep their per-leg positions. A short final snapshot piece is not concatenated with FIRST. The restored head names the actual rebuilt bytes and their new digests. A history-equivalent Loro encoding can change those digests even when every actor opened.
+
+This codec is not wired into window capture/restore or the root registry yet. Historical head/row association, shared-part slot ownership and changed-content window reconstruction still belong to that integration. The codec alone does not make SKILL roots classified or activate native operations, mirror publication, or checkpoint restore.
