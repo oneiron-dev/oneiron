@@ -198,6 +198,8 @@ caller, and the ordinary connection-receipt wrapper keeps its existing path
 selection; the action handler still supplies its own receipt stamp. Action
 idempotency remains the request body's `idempotencyKey`, not a second header-key
 cache. All codec, receipt and telemetry policies are the existing API policies.
+The existing `limits.request_body_bytes` setting and its refusal-naming
+middleware also apply. The adapter chooses no separate body limit.
 
 ## Remaining work and evidence limits
 
