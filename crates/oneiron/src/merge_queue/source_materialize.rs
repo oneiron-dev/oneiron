@@ -222,13 +222,14 @@ impl Vault {
     /// object store and every row stay. How many copies were erased.
     ///
     /// # Errors
-    /// A store or object store failure.
+    /// The first store or object store failure, after attempting the remaining copies.
     pub fn erase_withheld_queue_sources(&self) -> Result<usize> {
         let dir = self.store.env.path().canonicalize()?.join(QUEUE_SOURCE_DIR);
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return Ok(0);
         };
         let mut erased = 0_usize;
+        let mut first_error = None;
         for entry in entries.flatten() {
             let Some(store) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
@@ -246,20 +247,30 @@ impl Vault {
                     continue;
                 }
             };
-            let git = GitWire::new(self)?;
-            let served = match self.bound_served_store(&git, &bound) {
-                Ok(served) => served,
+            let result = (|| -> Result<Option<String>> {
+                let git = GitWire::new(self)?;
+                let served = match self.bound_served_store(&git, &bound) {
+                    Ok(served) => served,
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), "a queue source's store did not open");
+                        return Ok(None);
+                    }
+                };
+                let _guard = lock_repository(served.common_dir())?;
+                self.erase_withheld_copy(&git, &served, &bound)
+            })();
+            match result {
+                Ok(Some(_)) => erased += 1,
+                Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(kind = ?error.kind(), "a queue source's store did not open");
-                    continue;
+                    first_error.get_or_insert(error);
                 }
-            };
-            let _guard = lock_repository(served.common_dir())?;
-            if self.erase_withheld_copy(&git, &served, &bound)?.is_some() {
-                erased += 1;
             }
         }
-        Ok(erased)
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(erased),
+        }
     }
 
     /// The first file of `bound`'s import that custody now withholds, its

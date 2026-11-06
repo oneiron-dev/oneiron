@@ -258,6 +258,37 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
 
+    /// The engine's `comm::record_comm_thread_event_in_txn`.
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_inbound_reply_in_txn`.
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
+
+    /// The engine's `comm::record_comm_inbound_stop_in_txn`.
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
+
     /// The engine's `identity_topology::forget_claim_reassignments_in_txn`.
     fn forget_claim_reassignments_in_txn(
         &self,
@@ -419,6 +450,15 @@ pub trait StoreRecordHooks: Send + Sync {
 
     /// The engine's `federation::note_authority_row`.
     fn note_authority_row(&self);
+
+    /// The engine's `federation::witness_grant_rulings_in_txn`.
+    fn witness_grant_rulings_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        grant: &EntityId,
+        row: &[u8],
+    ) -> Result<()>;
 
     /// The engine's `skill_attribution::note_direct_derivation_in_txn`.
     fn note_direct_derivation_in_txn(
