@@ -524,8 +524,8 @@ side_tables! {
     /// it refused; the media backfill skips it until they change (OF-370). Key: space key16 +
     /// id16.
     EMBEDDING_MEDIA_REFUSED: VaultMeta b"embedding/media_refused/" Named;
-    /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
-    /// row (OF-370). Key: space key16 + id16.
+    /// One media vector per declared space and entity: input-kind and hash-presence bytes,
+    /// optional embedded-input hash, then the v1 vector row (OF-370). Key: space key16 + id16.
     EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
     /// A kind slot version move, open or concluded, with its last paired probe check (OF-370).
     /// Key: candidate space id string.
