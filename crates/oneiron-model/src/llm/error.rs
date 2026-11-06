@@ -301,6 +301,10 @@ impl SpentKind {
     schemars::JsonSchema,
 )]
 pub enum FatalLlmError {
+    /// The host's persistent producer/writer failed; no provider health or
+    /// exhausted-budget claim is implied. The operation carries no payload.
+    #[error("host storage failed during {operation}")]
+    HostStore { operation: String },
     #[error("invalid request")]
     InvalidRequest,
     /// A request the provider refused, with its message: an HTTP 400's

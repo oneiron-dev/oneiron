@@ -249,6 +249,8 @@ pub struct WakeAttemptMeter {
     /// What the executor's own tally spent before an error left it, with
     /// the terminal steps those units pay for (FIX 7432).
     spent_before_error: Mutex<(u64, Vec<StepReceipt>)>,
+    /// The actual private program result's total and selected native tokens.
+    result_native: Mutex<Option<NativeMeterSnapshot>>,
 }
 
 #[derive(Debug)]
@@ -282,6 +284,17 @@ impl WakeAttemptMeter {
                 .used_units
                 .saturating_sub(line.start_used_units)
         })
+    }
+
+    /// Only the result producer populates this; never sample a current guard
+    /// and infer that an independently reported result used the same population.
+    pub(crate) fn result_native(&self, reported_units: u64) -> Option<NativeMeterSnapshot> {
+        self.result_native
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .filter(|native| native.interval().end_used_units == reported_units)
+            .cloned()
     }
 
     fn lock_spent_before_error(&self) -> std::sync::MutexGuard<'_, (u64, Vec<StepReceipt>)> {
@@ -354,6 +367,25 @@ impl WakeAttemptContext<'_> {
                 original: self.deadline.original_budget_line().cloned(),
             });
         }
+    }
+
+    /// The program reports its actual meter's absolute total, not the
+    /// registered error meter's delta. Capture that total and its native
+    /// population together at the original result producer.
+    pub(crate) fn program_result_units(&self, guard: &BudgetGuard) -> u64 {
+        let Some(meter) = self.spend_meter else {
+            return guard.read().used_units;
+        };
+        let Some(original) = self.deadline.original_budget_line() else {
+            return guard.read().used_units;
+        };
+        let native = original.meter_snapshot(guard, 0);
+        let used = native.interval().end_used_units;
+        *meter
+            .result_native
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(native);
+        used
     }
 
     /// Notes a terminal step newly paid on the registered run line, with its

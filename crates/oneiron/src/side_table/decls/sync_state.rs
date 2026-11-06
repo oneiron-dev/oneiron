@@ -526,6 +526,12 @@ side_tables! {
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
     USAGE_EVENT: SyncState b"usage:event:" Named
         => crate::store::erase_usage_source_in_txn;
+    /// Original admitted usage facts awaiting their native hold terminal.
+    /// Erasure strips nullable source/actor attribution, not money or pending custody.
+    /// Key: run-instance hex32 ":" blake3(lease) hex64, scoped by this vault.
+    USAGE_ADMITTED_CALL: SyncState b"usage:admission:" Named
+        => crate::store::erase_admitted_usage_source_in_txn;
+
     /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
     /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" 20-digit period start.
     USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named;

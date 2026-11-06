@@ -333,6 +333,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => "label_read",
         LlmError::Fatal(FatalLlmError::ResponseErased) => "response_erased",
+        LlmError::Fatal(FatalLlmError::HostStore { .. }) => "host_store",
         LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
@@ -362,6 +363,7 @@ pub(crate) fn ends_call(error: &LlmError) -> bool {
                 | FatalLlmError::ContentFiltered
                 | FatalLlmError::Unsupported(_)
                 | FatalLlmError::ResponseErased
+                | FatalLlmError::HostStore { .. }
         ) | LlmError::BudgetDenied(_)
             | LlmError::Retryable(oneiron::RetryableLlmError::DeviceAdmissionStopped)
     )

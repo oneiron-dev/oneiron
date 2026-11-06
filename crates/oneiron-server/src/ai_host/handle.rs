@@ -504,5 +504,6 @@ impl AiHandle {
             ),
             self.runtime.host_account(),
         )
+        .with_native_allocation(self.runtime.native_allocation())
     }
 }
