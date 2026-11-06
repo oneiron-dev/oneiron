@@ -2648,7 +2648,7 @@ declare namespace Sdk {
   type ExternalImportSource = { host: string; repository: string; source_ref: string; pull_request?: number | null; base_commit: string; head_commit: string };
   type ExternalImportDoor = "raw" | { checkout: { checkout: string; epoch: number } };
   type ExternalImportRequest = { repo: string; code_repo: EntityId; base_revision: EntityId; imported_ref?: string | null; source: ExternalImportSource; source_binding?: string | null; door: ExternalImportDoor };
-  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null };
+  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null; lfs_daemon_residual: boolean };
   type ExternalImportLookup = { repo: string; code_repo: EntityId; import: EntityId; door: ExternalImportDoor };
   type ExternalImportPhase = "pending" | "fetch_refused" | "source_moved" | "held_base" | "door_refused" | "transport_unknown" | "received";
   type ReceivedFileOperation = { operation_id: string; actor_id: string; session_id: string; ref_name: string; path: string; before_hash: number[]; after_hash: number[]; old_mode?: number | null; new_mode?: number | null; document_edit: boolean };
