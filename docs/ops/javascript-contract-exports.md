@@ -57,7 +57,9 @@ redeclare the CommonJS wrapper parameters, including hoisted or repeated
 redeclarations. Direct simple `var` initializers update the same alias state in
 source order. Lexical and function shadows remain distinct from wrapper bindings.
 Destructured, conditional and loop-carried initializer flows are not modeled.
-Rebinding `exports` does not replace the module value. Replacing
+A direct `module = module` or `var module = module` preserves its current
+wrapper identity; assigning an unrelated value does not. This does not infer
+arbitrary alias identities. Rebinding `exports` does not replace the module value. Replacing
 `module.exports` detaches its old `exports` alias; an explicit reassignment to the
 current module value reconnects it. Whole object-literal replacements contribute
 static own keys and replace the preceding declared keys. A colon `__proto__`
