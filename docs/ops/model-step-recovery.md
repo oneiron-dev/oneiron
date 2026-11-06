@@ -62,7 +62,10 @@ still retires the attempt's rows. This extra provenance does not make that row a
 irreversible paid fact or close the late-call accounting gap.
 
 `BudgetGuard::accounting_snapshot` captures its total and selected native lease
-contributions under one lock. A foreign lease with a matching public id has no
+states under one lock. A foreign lease with a matching public id has no
 entry on that guard. The snapshot is accounting data, not a grant or proof that a
 vault budget charge committed. Callers release the guard lock before any vault
 writer runs; no caller callback runs inside it.
+A settled lease's amount keeps its native settlement convention. It is not a
+billing credit or proof that summing selected lease amounts reproduces a meter
+delta, including at counter saturation.
