@@ -1955,6 +1955,7 @@ def outputs():
                 'vault.models.catalog.refresh': 'model_catalog_output::revision',
                 'vault.models.catalog.get': 'model_catalog_output::revision',
                 'vault.models.catalog.diff': 'model_catalog_output::diff',
+                'vault.coach.inspect': 'claim_output::coach',
                 'vault.claims.review': 'claim_output::review',
                 'vault.claims.vetting': 'claim_output::review',
                 'vault.claims.settle': 'claim_output::settlement',
