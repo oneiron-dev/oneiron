@@ -25,22 +25,34 @@ use crate::temporal::TimeRange;
 
 /// The payload the owner's discard of a world copy takes with the members
 /// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
-/// call 4 = A): each one's entity document, a NOTE's text, pending slots
-/// and review workflow (proposal snapshots, waiting forks), and its fetched
-/// read caches. Local only: no receipt, marker or operation. Their custody,
-/// provenance and lifecycle sidecars stay for now.
+/// call 4 = A): each one's entity document and typed body, a NOTE's text,
+/// pending slots, review workflow (proposal snapshots, waiting forks) and
+/// kept deck outline, a BLOB_ARTIFACT's deck creation record and retained
+/// edit proposals, a CLAIM's Gate decisions (left as their retention
+/// skeletons) and pending Gate tray row, and its fetched read caches. Local
+/// only: no receipt, marker or operation. Bodies and files, blob versions,
+/// custody and other lifecycle sidecars stay for now.
 pub(super) fn discard_owned_payload(
     store: &Store,
     txn: &mut RwTxn<'_>,
     ids: &[EntityId],
 ) -> Result<()> {
     let mut notes = BTreeSet::new();
+    let mut claims = BTreeSet::new();
+    let mut artifacts = Vec::new();
     for id in ids {
         let kind = store
             .port_entity_raw(txn, id)?
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
-        if kind == Some(registry::ENTITY_TYPE_NOTE) {
-            notes.insert(*id);
+        match kind {
+            Some(registry::ENTITY_TYPE_NOTE) => {
+                notes.insert(*id);
+            }
+            Some(registry::ENTITY_TYPE_CLAIM) => {
+                claims.insert(*id);
+            }
+            Some(registry::ENTITY_TYPE_BLOB_ARTIFACT) => artifacts.push(*id),
+            _ => {}
         }
     }
     crate::entity_doc::discard_local_copies_in_txn(store, txn, &ids.iter().copied().collect())?;
@@ -48,6 +60,19 @@ pub(super) fn discard_owned_payload(
         crate::note::delete_document_in_txn(store, txn, note)?;
     }
     crate::note::discard_workflow_in_txn(store, txn, &notes)?;
+    for id in ids {
+        crate::typed_body::discard_local_payload_in_txn(store, txn, id)?;
+    }
+    for id in notes.iter().chain(&artifacts) {
+        crate::edit_roundtrip::deck_create::discard_payload_in_txn(store, txn, id)?;
+    }
+    for artifact in &artifacts {
+        crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
+    }
+    store.discard_claim_gate_payload_in_txn(txn, &claims, store.clock.now_recorded_at())?;
+    for claim in &claims {
+        store.discard_pending_gate_consent_in_txn(txn, claim)?;
+    }
     crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
 }
 

@@ -3,9 +3,10 @@
 //! snapshots and its waiting forks, which carry proposed and merged text.
 //! Local only: no receipt, marker, fence or Loro operation. Landing receipts
 //! (ids, verdict, actor, time) stay as identifier-only immutable history; a
-//! review bundle keeps its other notes' forks, and its free-text explainer,
-//! which can quote any member, reads "redacted" once it named a discarded
-//! one, as an erase leaves it.
+//! review bundle keeps its other notes' forks. Its free-text explainer can
+//! quote any member: it reads "redacted", as an erase leaves it, once every
+//! note the bundle names is discarded, and stays as shared content while one
+//! it names stays (call 1 = A).
 
 use std::collections::BTreeSet;
 
@@ -51,11 +52,21 @@ pub(crate) fn discard_workflow_in_txn(
         if !named {
             continue;
         }
+        let shared = bundle
+            .waiting
+            .iter()
+            .any(|fork| !notes.contains(&fork.note))
+            || bundle
+                .landed
+                .iter()
+                .any(|receipt| !notes.contains(&receipt.note));
         bundle.waiting.retain(|fork| !notes.contains(&fork.note));
         if bundle.waiting.is_empty() && bundle.landed.is_empty() {
             NOTE_PROPOSAL_BUNDLE.delete(store, txn, &key)?;
         } else {
-            bundle.explainer = "redacted".to_owned();
+            if !shared {
+                bundle.explainer = "redacted".to_owned();
+            }
             NOTE_PROPOSAL_BUNDLE.put(store, txn, &key, &bundle)?;
         }
     }

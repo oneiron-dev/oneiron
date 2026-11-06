@@ -174,6 +174,47 @@ impl Store {
         Ok(changed)
     }
 
+    /// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34
+    /// call 4 = A): each decision bound to one of `claims`, and each bundle
+    /// whose every constituent is one, becomes its retention skeleton in
+    /// place at `at`, as an erase leaves it: identifier-only immutable
+    /// history. Local only: nothing is owed, and no tray, obligation or key
+    /// is touched. A decision a hold keeps, a bundle that names a claim that
+    /// stays, and a batch preflight's future receipt keep their bytes. The
+    /// number made skeletons.
+    pub(crate) fn discard_claim_gate_payload_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claims: &BTreeSet<EntityId>,
+        at: u64,
+    ) -> Result<usize> {
+        let members: BTreeSet<[u8; 16]> = claims.iter().map(|claim| *claim.as_bytes()).collect();
+        let mut redact = BTreeMap::new();
+        for claim in &members {
+            for (record, held) in self.claim_decisions_in_txn(&*wtxn, claim)? {
+                if held || redact.contains_key(&record.decision_id.bytes) {
+                    continue;
+                }
+                let alone = match record.claim_id {
+                    Some(bound) => members.contains(&bound),
+                    None => {
+                        let refs =
+                            self.gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?;
+                        !refs.is_empty() && refs.iter().all(|claim| members.contains(claim))
+                    }
+                };
+                if alone {
+                    redact.insert(record.decision_id.bytes, record);
+                }
+            }
+        }
+        let count = redact.len();
+        for record in redact.into_values() {
+            self.redact_gate_decision_in_txn(wtxn, record, at)?;
+        }
+        Ok(count)
+    }
+
     /// The unredacted decisions bound to `claim_id` or citing it, each with
     /// whether a legal hold keeps its own partition, all read before anything
     /// changes.
