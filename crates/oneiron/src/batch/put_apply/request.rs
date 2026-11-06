@@ -2,7 +2,7 @@
 //! how it is admitted, and the borrowed context it is judged against.
 
 use super::BaseWriteOrigin;
-use crate::batch::{ApplyOpsGateMode, BatchOp};
+use crate::batch::{ApplyOpsGateMode, BatchOp, NativePublicationContext};
 use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
@@ -194,6 +194,9 @@ impl PutOptions {
 /// What a put is judged against, borrowed from its batch.
 #[derive(Clone, Copy)]
 pub(in crate::batch) struct PutContext<'a> {
+    #[cfg(feature = "sync")]
+    pub(in crate::batch) skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
+    pub(in crate::batch) native_publication: Option<NativePublicationContext<'a>>,
     /// Why this batch may touch the id (ARCH-0052 D2).
     pub(in crate::batch) origin: BaseWriteOrigin<'a>,
     /// The policy snapshot a local claim is gated against.
@@ -216,6 +219,10 @@ pub(in crate::batch) struct PutContext<'a> {
     /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
     /// from batch state (possibly empty), `None` unknown (incomplete).
     pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
+    /// Both prepared record views, still data rather than native admission.
+    #[cfg(feature = "sync")]
+    pub(in crate::batch) record_document:
+        Option<&'a crate::entity_doc::RecordDocumentCandidate<'a, 'a>>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

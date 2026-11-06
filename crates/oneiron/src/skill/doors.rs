@@ -1,5 +1,10 @@
 //! Typed Vault doors for SKILL records.
 
+#[cfg(feature = "sync")]
+mod native_state;
+#[cfg(feature = "sync")]
+pub(crate) use native_state::{SkillStateWrite, SkillSupersessionRead};
+
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
@@ -354,44 +359,7 @@ impl Vault {
         }
         let old = self.read_skill_record_in_txn(wtxn, old_id)?;
         let new = self.read_skill_record_in_txn(wtxn, new_id)?;
-        // A fork takes its own skillId (the one fork law), so its replacement
-        // of its parent is the one cross-skill succession: `new` must name
-        // exactly `old` as the record it forked from (FIX 4463).
-        let replaces_parent = new.forked_from == Some(*old_id);
-        if new.skill_id != old.skill_id && !replaces_parent {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "supersession links two revisions of one skill, or an admitted fork and its parent",
-            )));
-        }
-        if super::resident_of(&old)? != super::resident_of(&new)? {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "supersession cannot cross resident ownership",
-            )));
-        }
-        // A fork starts its own version line, so its label is no revision
-        // of its parent's.
-        if !replaces_parent && new.version == old.version {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "superseding revision must carry a new version",
-            )));
-        }
-        // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
-        // A non-active successor would leave the skillId with no admitted
-        // canon revision at all. Activation itself stays the admission
-        // gate's act (ONE-1449): callers admit first, then supersede.
-        if new.lifecycle_status != SkillLifecycle::Active {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "superseding revision must be admitted (active) before it supersedes",
-            )));
-        }
-        // Explicit Active check, NOT `can_transition(Superseded)`: the table's
-        // self-loop allowance would let an already-superseded revision pass and
-        // mint a second (bogus) succession edge.
-        if old.lifecycle_status != SkillLifecycle::Active {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "only an active skill revision can be superseded",
-            )));
-        }
+        validate_skill_successor(old_id, &old, &new)?;
         let mut frozen = old;
         frozen.lifecycle_status = SkillLifecycle::Superseded;
         let data = encode_skill_record(&frozen)?;
@@ -422,14 +390,7 @@ impl Vault {
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_skill_record_in_txn(&wtxn, id)?;
-        if record.lifecycle_status == SkillLifecycle::Superseded
-            && existing.lifecycle_status != SkillLifecycle::Superseded
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "supersession is supersede_skill_record's act; a bare flip would orphan a frozen revision",
-            )));
-        }
-        validate_skill_update(&existing, record)?;
+        validate_skill_update_door(&existing, record)?;
         // ONE-1892's activation scan consult is deliberately NOT here: it runs
         // at the batch materialization chokepoint every SKILL body converges
         // on (`skill_scan::escalate_activation_approval_in_txn`), so
@@ -607,4 +568,65 @@ impl Vault {
         )?;
         Ok(())
     }
+}
+
+pub(super) fn validate_skill_successor(
+    old_id: &EntityId,
+    old: &SkillRecord,
+    new: &SkillRecord,
+) -> Result<()> {
+    // A fork takes its own skillId (the one fork law), so its replacement
+    // of its parent is the one cross-skill succession: `new` must name
+    // exactly `old` as the record it forked from (FIX 4463).
+    let replaces_parent = new.forked_from == Some(*old_id);
+    if new.skill_id != old.skill_id && !replaces_parent {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "supersession links two revisions of one skill, or an admitted fork and its parent",
+        )));
+    }
+    if super::resident_of(&old)? != super::resident_of(&new)? {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "supersession cannot cross resident ownership",
+        )));
+    }
+    // A fork starts its own version line, so its label is no revision
+    // of its parent's.
+    if !replaces_parent && new.version == old.version {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "superseding revision must carry a new version",
+        )));
+    }
+    // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
+    // A non-active successor would leave the skillId with no admitted
+    // canon revision at all. Activation itself stays the admission
+    // gate's act (ONE-1449): callers admit first, then supersede.
+    if new.lifecycle_status != SkillLifecycle::Active {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "superseding revision must be admitted (active) before it supersedes",
+        )));
+    }
+    // Explicit Active check, NOT `can_transition(Superseded)`: the table's
+    // self-loop allowance would let an already-superseded revision pass and
+    // mint a second (bogus) succession edge.
+    if old.lifecycle_status != SkillLifecycle::Active {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "only an active skill revision can be superseded",
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_skill_update_door(
+    existing: &SkillRecord,
+    record: &SkillRecord,
+) -> Result<()> {
+    if record.lifecycle_status == SkillLifecycle::Superseded
+        && existing.lifecycle_status != SkillLifecycle::Superseded
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "supersession is supersede_skill_record's act; a bare flip would orphan a frozen revision",
+        )));
+    }
+    validate_skill_update(&existing, record)?;
+    Ok(())
 }

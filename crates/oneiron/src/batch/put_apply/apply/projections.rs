@@ -21,16 +21,28 @@ pub(super) fn stage_put_projections(
     evicted_shell_sources: BTreeSet<EntityId>,
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    #[cfg(feature = "sync")] installed_record_document: Option<
+        &crate::entity_doc::InstalledRecordDocument<'_>,
+    >,
 ) -> Result<AppliedPut> {
     let store = write.store;
-    crate::store::skill_refinement_origin::stage_refinement_origin(
-        store,
-        wtxn,
-        &fixed.id,
-        dispatch.decoded_claim_body.as_ref(),
-        dispatch.new_skill_record.as_ref(),
-        data,
-    )?;
+    #[cfg(feature = "sync")]
+    let source_origin = match installed_record_document {
+        Some(installed) => installed.require_in_txn(store, wtxn, &fixed.id, data)?,
+        None => false,
+    };
+    #[cfg(not(feature = "sync"))]
+    let source_origin = false;
+    if !source_origin {
+        crate::store::skill_refinement_origin::stage_refinement_origin(
+            store,
+            wtxn,
+            &fixed.id,
+            dispatch.decoded_claim_body.as_ref(),
+            dispatch.new_skill_record.as_ref(),
+            data,
+        )?;
+    }
     super::super::put_staging::stage_local_proposal_observation(
         store,
         wtxn,
@@ -95,13 +107,14 @@ pub(super) fn stage_put_projections(
         dispatch.authority_entry_observation.as_ref(),
     )?;
 
+    let (stored_occurred, stored_learned_at, _, _) = fixed.storage_body_and_metadata(data)?;
     stage_entity_index_rows(
         store,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        fixed.occurred,
-        fixed.learned_at,
+        stored_occurred,
+        stored_learned_at,
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_TURN && consolidation_dirty {
         crate::dreamer_consolidation::admit_turn_position_in_txn(store, wtxn, &fixed.id)?;
@@ -150,6 +163,10 @@ pub(super) fn stage_put_projections(
         crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
+        #[cfg(feature = "sync")]
+        record_document: None,
+        #[cfg(feature = "sync")]
+        pending_native_skill_put: None,
         portable_agent_source,
         project_revisions,
         touched_projects,

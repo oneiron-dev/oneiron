@@ -6,10 +6,14 @@ mod comm_input;
 mod comm_projection;
 mod commit;
 mod edges;
+#[cfg(feature = "sync")]
+mod native_skill;
 use oneiron_store::batch::builder::ops;
 mod preflight;
 mod puts;
 mod reference_read;
+#[cfg(feature = "sync")]
+mod record_document;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -19,6 +23,10 @@ use crate::off_record::PromoteReplayGrant;
 use super::BaseWriteOrigin;
 use super::vad_postcommit;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::native_skill::NativeSkillFinalInput;
+#[cfg(feature = "sync")]
+pub(crate) use self::record_document::{AppliedRecordDocument, IngestedPutOutcome};
 pub(crate) use self::ops::BatchOp;
 use self::puts::CommitCheck;
 
