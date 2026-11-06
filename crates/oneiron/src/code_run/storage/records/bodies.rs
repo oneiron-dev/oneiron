@@ -283,7 +283,9 @@ impl Vault {
         )?;
         finished.output.producing_step_start = output.producing_step_start;
         finished.output.producing_effect = output.producing_effect.clone();
-        finished.output.text_encoding = output.text_encoding.clone();
+        if output.text_encoding.is_none() {
+            finished.output.text_encoding = None;
+        }
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
