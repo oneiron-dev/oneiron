@@ -89,6 +89,9 @@ pub(super) fn sequence_floor(
 pub(super) struct RenderedResource {
     pub(super) ics: Vec<u8>,
     pub(super) component_hashes: Vec<(EntityId, [u8; 32])>,
+    /// The collection zone that heads the resource because the source names
+    /// no zone (fix list row 19192); `None` when no collection zone heads it.
+    pub(super) collection_zone: Option<String>,
 }
 
 /// Renders the resource for `uid` from the EVENT claims, over `source`.
@@ -123,17 +126,20 @@ pub(super) fn render(
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
     // The source's zone heads the resource again, so its all-day events keep
     // their days through a write-back and its reading back (fix list row
-    // 17868); else the collection's own zone does (fix list row 19192).
-    if let Some(zone) = source
-        .and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid))
-        .or_else(|| {
-            collection_zone
-                .and_then(crate::calendar::ics::plain_zone_name)
-                .map(str::to_owned)
-        })
-    {
+    // 17868); else the collection's own zone does (fix list row 19192), and
+    // the settled write lands that zone as `calendar.tz` too.
+    let source_zone =
+        source.and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid));
+    let collection_zone = if source_zone.is_some() {
+        None
+    } else {
+        collection_zone
+            .and_then(crate::calendar::ics::plain_zone_name)
+            .map(str::to_owned)
+    };
+    if let Some(zone) = source_zone.as_deref().or(collection_zone.as_deref()) {
         out.push_str("X-WR-TIMEZONE:");
-        out.push_str(&zone);
+        out.push_str(zone);
         out.push_str("\r\n");
     }
     for &event in &member_ids {
@@ -230,7 +236,30 @@ pub(super) fn render(
     Ok(RenderedResource {
         ics,
         component_hashes,
+        collection_zone,
     })
+}
+
+/// Whether `event` renders as all-day, read in the caller's writer the way
+/// [`render_component`] reads it: the last live `calendar.time_kind` that
+/// decodes. An all-day member prints DATE values and no zone of its own, so
+/// it takes the zone that heads its resource (fix list row 19192).
+pub(super) fn all_day_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+) -> Result<bool, CalendarConnectorError> {
+    let mut kind = None;
+    for id in vault.claims_for_subject_in_txn(txn, event)? {
+        if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_TIME_KIND
+            && let Ok(value) = decode_time_kind_value(&body.value)
+        {
+            kind = Some(value.kind);
+        }
+    }
+    Ok(kind == Some(CalendarTimeKind::AllDay))
 }
 /// The kind of an all-day or floating series stepping on the UTC carrier
 /// (FIX 16568); `None` for a series anchored at an instant or in a zone,

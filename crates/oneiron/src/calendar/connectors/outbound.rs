@@ -176,6 +176,11 @@ pub struct CalendarWriteOutboxRow {
     /// Per-EVENT hashes captured from the staged resource, before transport I/O.
     /// Receipt settlement uses these members even if local content changes.
     pub component_hashes: Vec<(EntityId, [u8; 32])>,
+    /// The collection zone that heads the staged resource because its source
+    /// names no zone (fix list row 19192). Settlement lands it as each
+    /// all-day member's `calendar.tz`, as a read of the staged bytes does,
+    /// before the passport makes those bytes an echo.
+    pub collection_zone: Option<String>,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -387,6 +392,7 @@ pub fn write_calendar_event(
         sequence,
         content_hash,
         component_hashes: rendered.component_hashes,
+        collection_zone: rendered.collection_zone,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -622,7 +628,41 @@ fn finish_remote_applied_write_in_txn(
         &operation.registration().seat,
         &row.uid,
     );
+    // Fix list row 19192 (review of #6397): the collection zone that heads
+    // the staged bytes is event content, which a read of those bytes admits
+    // as each all-day member's `calendar.tz`. The passport below makes the
+    // next read of the bytes an echo that admits nothing, so the zone lands
+    // here first, under this seat's own property source.
+    let zone_source = row.collection_zone.as_deref().map(|zone| {
+        let prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
+        let record = format!("{prefix}{source_record_id}");
+        (zone, prefix, record)
+    });
     for &(member, content_hash) in &row.component_hashes {
+        if let Some((zone, prefix, record)) = &zone_source
+            && super::resource::all_day_in_txn(vault, txn, &member)?
+        {
+            crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
+                vault,
+                txn,
+                member,
+                zone,
+                prefix,
+                now,
+                |txn, predicate, value| {
+                    admit_screened_in_txn(
+                        vault,
+                        txn,
+                        member,
+                        &CalendarInboundBody::default(),
+                        record,
+                        predicate,
+                        value,
+                        now,
+                    )
+                },
+            )?;
+        }
         // Direction remains approval-blind, while the UID-index gate below
         // still requires an admitted passport for a non-local UID.
         let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
@@ -694,6 +734,8 @@ pub(super) struct StoredOutboxRow {
     sequence: u32,
     content_hash: [u8; 32],
     component_hashes: Vec<([u8; 16], [u8; 32])>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    collection_zone: Option<String>,
     expected_etag: Option<String>,
     href: Option<String>,
     receipt: Option<RemoteWriteReceipt>,
@@ -720,6 +762,7 @@ impl StoredOutboxRow {
                 .iter()
                 .map(|(member, hash)| (*member.as_bytes(), *hash))
                 .collect(),
+            collection_zone: literal::projection(&row.collection_zone)?,
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
             receipt: literal::projection(&row.receipt)?,
@@ -753,6 +796,7 @@ impl StoredOutboxRow {
                     ))
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
+            collection_zone: self.collection_zone,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,
