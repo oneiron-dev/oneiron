@@ -331,13 +331,16 @@ fn shares(a: &VersionVector, b: &VersionVector) -> bool {
 /// proof, for `staged`, a STATE of `entity` (FIX 3553): `Some(true)` once a
 /// restore's successor of the text held here took its place, `Some(false)`
 /// for a copy of the history a restore of the text here replaced, which
-/// changes nothing. `None` where the two are versions of one history or no
-/// proof relates them. A successor the text here stands against is refused.
+/// changes nothing. `None` where the two are versions of one history, no
+/// proof relates them, or the door is not `privileged` (the owner's own
+/// import, never a peer's text grant). A successor the text here stands
+/// against is refused.
 pub(crate) fn take_sync_successor_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     staged: &LoroDoc,
+    privileged: bool,
 ) -> Result<Option<bool>> {
     let Plane::Document(h) = plane_in(vault, txn, entity)? else {
         return Ok(None);
@@ -347,7 +350,7 @@ pub(crate) fn take_sync_successor_in_txn(
     if theirs.is_empty() || held.includes_vv(&theirs) || theirs.includes_vv(&held) {
         return Ok(None);
     }
-    match succession_in_txn(vault, txn, entity, h, &old, staged.fork(), true)? {
+    match succession_in_txn(vault, txn, entity, h, &old, staged.fork(), privileged)? {
         Some(Succeeded::Taken) => Ok(Some(true)),
         Some(Succeeded::Held) => Ok(Some(false)),
         Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
