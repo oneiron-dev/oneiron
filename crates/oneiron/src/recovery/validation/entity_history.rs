@@ -1,6 +1,6 @@
 //! Ordered row history checks over the same frozen canonical document.
 
-use super::{id, invalid, strict, validate_document_metadata_field, validate_summary_meta_field};
+use super::{id, invalid, strict, validate_document_metadata_value, validate_summary_meta_field};
 use crate::error::Result;
 use crate::recovery::canonical::{CanonicalEntityDocument, CanonicalForkStatus};
 use crate::store::canonical_document::CanonicalDocumentTexts;
@@ -95,9 +95,10 @@ impl HistoryValidation {
                     continue;
                 }
                 Stage::HeaderMetadata => {
-                    if !self.metadata.advance(&row.metadata, |field, bytes| {
-                        validate_document_metadata_field(field, bytes, row.field.as_deref())
-                    })? {
+                    if !self
+                        .metadata
+                        .advance_document(&row.metadata, row.field.as_deref())?
+                    {
                         return Ok(false);
                     }
                     self.stage = Stage::HeaderSummary;
@@ -223,9 +224,10 @@ impl HistoryValidation {
                         continue;
                     };
                     let version = &history.versions[index];
-                    if !self.metadata.advance(&version.metadata, |field, bytes| {
-                        validate_document_metadata_field(field, bytes, row.field.as_deref())
-                    })? {
+                    if !self
+                        .metadata
+                        .advance_document(&version.metadata, row.field.as_deref())?
+                    {
                         return Ok(false);
                     }
                     self.stage = Stage::VersionSummary;
@@ -394,9 +396,9 @@ impl HistoryValidation {
                 Stage::ForkMetadata => {
                     let fork = &history().forks[self.next];
                     if let Some(metadata) = &fork.output_metadata
-                        && !self.metadata.advance(metadata, |field, bytes| {
-                            validate_document_metadata_field(field, bytes, row.field.as_deref())
-                        })?
+                        && !self
+                            .metadata
+                            .advance_document(metadata, row.field.as_deref())?
                     {
                         return Ok(false);
                     }
@@ -496,9 +498,39 @@ fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Resul
 struct MetadataRows {
     after: Option<String>,
     pending_key: Option<String>,
+    body_field_byte: usize,
 }
 
 impl MetadataRows {
+    fn advance_document(
+        &mut self,
+        fields: &BTreeMap<String, Vec<u8>>,
+        body_field: Option<&str>,
+    ) -> Result<bool> {
+        let bounds = (self.after.as_deref().map_or(Unbounded, Excluded), Unbounded);
+        let Some((field, bytes)) = fields.range::<str, _>(bounds).next() else {
+            self.after = None;
+            return Ok(true);
+        };
+        if self.pending_key.is_none() {
+            if let Some(body_field) = body_field.filter(|body| body.len() == field.len()) {
+                let start = self.body_field_byte;
+                let end = start.saturating_add(blake3::CHUNK_LEN).min(field.len());
+                if field.as_bytes()[start..end] == body_field.as_bytes()[start..end] {
+                    if end == field.len() {
+                        return Err(invalid("document body duplicated in metadata"));
+                    }
+                    self.body_field_byte = end;
+                    return Ok(false);
+                }
+            }
+            validate_document_metadata_value(field, bytes)?;
+        }
+        self.body_field_byte = 0;
+        self.advance_key(field);
+        Ok(false)
+    }
+
     fn advance(
         &mut self,
         fields: &BTreeMap<String, Vec<u8>>,
