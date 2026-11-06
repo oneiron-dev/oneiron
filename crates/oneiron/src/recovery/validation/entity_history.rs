@@ -30,6 +30,7 @@ enum Stage {
     HistoryHeader,
     Texts,
     Head,
+    HeadMetadata,
     HeadSkillState,
     Versions,
     VersionSummary,
@@ -140,7 +141,6 @@ impl HistoryValidation {
                     continue;
                 }
                 Stage::Head => {
-                    let history = history();
                     let head = self
                         .texts
                         .len()
@@ -154,8 +154,18 @@ impl HistoryValidation {
                         return Ok(false);
                     }
                     self.head_byte = 0;
-                    if history.versions[head].metadata != row.metadata {
-                        return Err(invalid("entity document head version"));
+                    self.stage = Stage::HeadMetadata;
+                    return Ok(false);
+                }
+                Stage::HeadMetadata => {
+                    let history = history();
+                    let head = self.texts.len() - 1;
+                    if !self.metadata.compare_head(
+                        &history.versions[head].metadata,
+                        &row.metadata,
+                        &mut self.head_byte,
+                    )? {
+                        return Ok(false);
                     }
                     self.stage = Stage::HeadSkillState;
                     return Ok(false);
@@ -455,6 +465,31 @@ impl MetadataRows {
             return Ok(true);
         };
         validate(field, bytes)?;
+        self.after = Some(field.clone());
+        Ok(false)
+    }
+
+    fn compare_head(
+        &mut self,
+        actual: &BTreeMap<String, Vec<u8>>,
+        expected: &BTreeMap<String, Vec<u8>>,
+        next: &mut usize,
+    ) -> Result<bool> {
+        if actual.len() != expected.len() {
+            return Err(invalid("entity document head version"));
+        }
+        let bounds = (self.after.as_deref().map_or(Unbounded, Excluded), Unbounded);
+        let Some((field, bytes)) = actual.range::<str, _>(bounds).next() else {
+            self.after = None;
+            return Ok(true);
+        };
+        let expected = expected
+            .get(field)
+            .ok_or(invalid("entity document head version"))?;
+        if !advance_head_bytes(bytes, expected, next)? {
+            return Ok(false);
+        }
+        *next = 0;
         self.after = Some(field.clone());
         Ok(false)
     }
