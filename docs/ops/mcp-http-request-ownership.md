@@ -14,5 +14,7 @@ fallback, send, reply collection, idle limit and absolute deadline are unchanged
 Owner-mode calls still never use HTTP. No new task, channel or callback is added.
 
 Both buffers still coexist while compression runs. The parsed request remains
-alive during the post, and transport or reply buffers can still be retained.
-This is a narrow lifetime change, not a total heap, streaming or runtime bound.
+alive through admission and HTTP send, then its caller releases all but the
+original ID before collecting the body, after the existing first idle anchor.
+Transport or reply buffers can still be retained. This is a narrow lifetime
+change, not a total heap, streaming or runtime bound.

@@ -1,20 +1,32 @@
 # MCP request message lifetime
 
-The stdio MCP bridge keeps the parsed request while `post` runs. Endpoint
-selection, the probe, holder proof, transport admission, fallback, deadlines and
-reply collection keep their existing order.
+The stdio MCP bridge moves the parsed request into a private, caller-owned
+holder without cloning it or dropping its fields before transport admission.
+Endpoint selection, the probe, holder proof and fallback keep their existing
+order. The holder never enters the socket driver, outbound queue or pending map.
 
-After `post` returns, the bridge moves the request's `id` out of that parsed
-message and drops the remaining message before decoding the reply. It does not
-clone the ID or retain the request's other parsed fields during reply decoding.
-The moved ID keeps its original JSON value, including an explicit `null`.
+On the existing socket `Sent` event, the waiting caller moves the original `id`
+out and drops the remaining parsed fields alongside the original fallback body.
+This event follows the same successful socket send. It is not response-byte
+activity and starts or resets no reply idle timer.
 
-A notification still reaches `post` before its missing ID suppresses the stdout
-answer. Failed posts follow the same ID selection before reporting their
-refusal. Pending-call memory and initialize capabilities still use the owned
-values captured before the post and update only from a matching server answer.
+For HTTP, the holder releases those fields only after `send` returns response
+headers and the content-length check passes. The existing first reply idle
+anchor is set before that release, so the release spends the same idle and
+absolute request time. Later chunk idle anchors and reply collection keep their
+existing order. Compression retains its Some-only original-body release.
 
-This removes one request-ID clone and shortens parsed-request retention after
-transport completion. It does not release the parsed request during the post,
-bound transport queues or reply allocation, change the input/reply byte limits,
-or establish a total heap, runtime or full streaming guarantee.
+Before either release point, errors keep the parsed request until `post`
+returns. The caller then extracts the original ID and drops the other fields,
+including after an unsent request, a failed probe or a pre-send timeout. A
+notification still reaches `post` before its missing ID suppresses stdout. An
+explicit `null` or arbitrary JSON ID keeps its value; no ID is cloned.
+
+Pending-call memory and initialize capabilities still use the owned values
+captured before the post and update only from a matching server answer. Reply
+decoding follows the same post-completion ID selection.
+
+This shortens parsed-request retention during reply collection. It does not
+bound transport queues or reply allocation, change input/reply byte limits,
+skip an admitted request, or establish a total heap, runtime or full streaming
+guarantee. The parsed request remains alive during probe, admission and send.

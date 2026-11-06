@@ -59,8 +59,10 @@ mod bridge_auth;
 mod call_meta;
 mod link;
 mod reply_body;
+mod request_id;
 
 use call_meta::{ClientSession, with_invocation};
+use request_id::RequestId;
 
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
@@ -505,10 +507,9 @@ impl Bridge {
             .and_then(|meta| meta.get(INVOCATION_META))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let reply = self.post(body, until, deadline, tool);
-        let id = message.get_mut("id").map(Value::take);
-        drop(message);
-        let id = id?;
+        let mut request_id = RequestId::new(message);
+        let reply = self.post(body, until, deadline, tool, Some(&mut request_id));
+        let id = request_id.into_id()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => {
                 if let Some(key) = key {
@@ -650,6 +651,7 @@ impl Bridge {
                 until,
                 deadline,
                 tool,
+                None,
             )?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
         let Some(result) = answer.get("result").and_then(Value::as_object) else {
@@ -680,7 +682,13 @@ impl Bridge {
         // The wake poll's own cap is inside the global deadline; its error
         // keeps naming that one, as before.
         let answer = self
-            .post(body.to_string().into_bytes(), until, self.deadline, None)?
+            .post(
+                body.to_string().into_bytes(),
+                until,
+                self.deadline,
+                None,
+                None,
+            )?
             .answer_to(&id)?;
         let Some(delivery) = answer.get("result").cloned() else {
             return Err(Refusal::Refused(answer));
@@ -695,9 +703,10 @@ impl Bridge {
         until: Instant,
         deadline: Duration,
         tool: Option<&str>,
+        request_id: Option<&mut RequestId>,
     ) -> Result<Reply, Refusal> {
         let surface = self.endpoint(until, deadline, tool)?;
-        self.post_to(surface, body, until, deadline, tool)
+        self.post_to(surface, body, until, deadline, tool, request_id)
     }
 
     /// One request to `surface` over the bridge's connection, signed for this
@@ -710,6 +719,7 @@ impl Bridge {
         until: Instant,
         deadline: Duration,
         tool: Option<&str>,
+        request_id: Option<&mut RequestId>,
     ) -> Result<Reply, Refusal> {
         if until.saturating_duration_since(Instant::now()).is_zero() {
             return Err(self.refusal_for(surface, link::Cut::Deadline, deadline, tool));
@@ -734,7 +744,7 @@ impl Bridge {
         };
         let exchange = self
             .link
-            .exchange(surface, &credential, body, &bounds)
+            .exchange(surface, &credential, body, &bounds, request_id)
             .map_err(|cut| self.refusal_for(surface, cut, deadline, tool))?;
         Ok(Reply {
             status: exchange.status,
