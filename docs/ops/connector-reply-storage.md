@@ -43,8 +43,12 @@ The first read consumes `data:` payloads in native reader-buffer fragments,
 with only an incomplete UTF-8 suffix carried between buffers. It drops exactly
 one leading space and all trailing CR bytes, keeps internal CR runs without
 a whole repeated-CR String, and joins each field once, including an empty
-field after nonempty data. Non-data lines use the original line reader.
-Invalid UTF-8 still makes any line unreadable; event ids, EOF dispatch,
+field after nonempty data. A prefix that proves a non-data, non-id, nonblank
+line is consumed in UTF-8-validated fragments and discarded, not collected
+as a whole String. Id-leading prefixes, empty lines and prefixes containing
+only CR/LF retain the original line reader, including conservative unknown
+lines in those groups. Invalid UTF-8 still makes any line unreadable;
+event ids, EOF dispatch,
 request classification and the existing post-line deadline are unchanged.
 Control and later stream reads retain their original in-memory path.
 Typed Values, non-data lines and spool-fallback data can still be arbitrarily
@@ -150,8 +154,9 @@ are not selected by this early publisher.
 
 This is not a bounded-memory implementation of the full connector result
 path. Individual typed JSON messages and credential-clearing comparisons
-still hold whole Values, as do non-array clearing inputs. Non-data SSE lines
-and later SSE lines and event data remain in memory. First-read data also
+still hold whole Values, as do non-array clearing inputs. First-read id-leading
+and all-CR/LF-prefix lines, and later SSE lines and event data, remain in memory.
+First-read data also
 stays in memory on a spool fallback. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing within each message, and spool-aware stored replay admission remain separate
