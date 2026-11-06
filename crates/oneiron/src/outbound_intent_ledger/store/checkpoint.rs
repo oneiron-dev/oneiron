@@ -99,10 +99,11 @@ impl RawValue for CallAccountingRow {
 }
 
 /// The accounting a restore kept of call `call_seq` of `attempt_id`, read
-/// in `txn`, when the vault holds no record of it (FIX 12117): `Some` means
-/// the call was admitted before the restore and its compartment did not open,
-/// so it is never admitted again. `None` when it has no accounting row, or
-/// its record stands.
+/// in `txn`, when the vault holds no record of it (FIX 12117), as the
+/// owner's erase of its request leaves a row ([`CallAccounting::erased`]):
+/// `Some` means the call was admitted before the restore and its compartment
+/// did not open, so it is never admitted again. `None` when it has no
+/// accounting row, or its record stands.
 ///
 /// # Errors
 ///
@@ -123,7 +124,7 @@ pub(crate) fn call_accounting_in_txn(
     }
     Ok(CALL_ACCOUNTING
         .get(&vault.store, txn, &call)?
-        .map(|row| row.accounting))
+        .map(|row| row.accounting.erased()))
 }
 
 /// The domain a per-tool bound's digest derives under.

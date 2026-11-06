@@ -570,6 +570,27 @@ pub(crate) struct CallAccounting {
     pub(crate) updated_ms: u64,
 }
 
+impl CallAccounting {
+    /// This accounting as the owner's erase of the call's request leaves
+    /// a row (`erase_call_request_in_txn`, KS7-4b): a restore that cannot
+    /// open the call's compartment holds it after that erase. A send still
+    /// Pending or Deferred stops for [`IntentEscalationReason::OwnerErased`],
+    /// keeping that it may have crossed the wire; a settled send stays as it
+    /// settled.
+    #[must_use]
+    pub(crate) fn erased(mut self) -> Self {
+        if matches!(self.state, IntentState::Pending | IntentState::Deferred) {
+            self.delivery_uncertain |=
+                self.recorded_outcome.is_none() || self.state == IntentState::Deferred;
+            self.state = IntentState::Abandoned;
+            self.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+                IntentEscalationReason::OwnerErased,
+            ));
+        }
+        self
+    }
+}
+
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]
 pub struct IntentLedgerRecord {

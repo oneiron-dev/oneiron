@@ -209,6 +209,21 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of was
+    // admitted before the restore, and its compartment did not open. It
+    // replays as the owner's erase left it: never gated, asked, sent or paid
+    // for again.
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command
+        && let Some(accounting) = crate::outbound_intent_ledger::checkpoint::call_accounting_in_txn(
+            vault,
+            &wtxn,
+            prepared.attempt_id,
+            prepared.call_seq,
+        )?
+    {
+        drop(wtxn);
+        return Ok(super::replay::accounting_result(intent_id, &accounting));
+    }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;

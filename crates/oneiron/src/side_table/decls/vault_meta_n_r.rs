@@ -245,6 +245,11 @@ side_tables! {
     OUTBOUND_DEDUPE_RESERVATION: VaultMeta b"outbound:dedupe:v1:" Raw;
     /// Intent id -> semantic send key's full `outbound:dedupe:v1:` key. Key: hash32.
     OUTBOUND_DEDUPE_INTENT: VaultMeta b"outbound:dedupe_intent:v1:" Raw;
+    /// A call a restore holds no record of, as its record kept its accounting and state outside
+    /// the call's compartment (KS7-5, FIX 12117): the six-entry MessagePack map of its budget
+    /// marker, recorded outcome, delivery uncertainty, state and clocks. Such a call is never
+    /// admitted again. Key: id16(attempt) + u64be(call seq).
+    OUTBOUND_INTENT_ACCOUNTING: VaultMeta b"outbound:intent_accounting:v1:" Raw;
     /// Unique index from one logical dispatch call to its immutable intent id. Key: id16(attempt) +
     /// u64be(call seq).
     OUTBOUND_INTENT_ATTEMPT_INDEX: VaultMeta b"outbound:intent_attempt:v1:" Raw;
@@ -263,11 +268,6 @@ side_tables! {
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
     OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
-    /// A call a restore holds no record of, as its record kept its accounting and state outside
-    /// the call's compartment (KS7-5, FIX 12117): the six-entry MessagePack map of its budget
-    /// marker, recorded outcome, delivery uncertainty, state and clocks. Such a call is never
-    /// admitted again. Key: id16(attempt) + u64be(call seq).
-    OUTBOUND_INTENT_ACCOUNTING: VaultMeta b"outbound:intent_accounting:v1:" Raw;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).

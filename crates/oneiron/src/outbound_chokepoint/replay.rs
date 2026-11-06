@@ -629,19 +629,60 @@ pub(super) fn effect_result(
     replayed: bool,
     escalation_reason: Option<IntentEscalationReason>,
 ) -> OutboundEffectResult {
+    settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_record(record)
+            .expect("validated outbound intent has a resolution"),
+        record.id,
+        record.state,
+        send_outcome,
+        replayed,
+        escalation_reason,
+    )
+}
+
+/// The replay of call `intent_id`, which a restore kept only the accounting
+/// of (KS7-5, FIX 12117), as the owner's erase left it: acked, or stopped
+/// for its reason with whether it may have crossed the wire. A Done or
+/// Abandoned row replays the same way; nothing is gated, sent or charged.
+pub(super) fn accounting_result(
+    intent_id: IntentId,
+    accounting: &crate::outbound_intent_ledger::CallAccounting,
+) -> OutboundEffectResult {
+    let (send_outcome, escalation_reason) = match accounting.recorded_outcome {
+        Some(RecordedOutboundOutcome::Acked) => (Some(OutboundSendOutcome::Acked), None),
+        Some(RecordedOutboundOutcome::Deferred) => (Some(OutboundSendOutcome::Deferred), None),
+        Some(RecordedOutboundOutcome::Abandoned(reason)) => (None, Some(reason)),
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery) | None => (None, None),
+    };
+    settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_accounting(accounting)
+            .expect("validated outbound call accounting has a resolution"),
+        intent_id,
+        accounting.state,
+        send_outcome,
+        true,
+        escalation_reason,
+    )
+}
+
+fn settled_result(
+    resolution: crate::outbound_intent_ledger::IntentResolution,
+    intent_id: IntentId,
+    state: IntentState,
+    send_outcome: Option<OutboundSendOutcome>,
+    replayed: bool,
+    escalation_reason: Option<IntentEscalationReason>,
+) -> OutboundEffectResult {
     OutboundEffectResult {
-        resolution: Some(
-            crate::outbound_intent_ledger::IntentResolution::from_record(record)
-                .expect("validated outbound intent has a resolution"),
-        ),
+        resolution: Some(resolution),
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
-            intent_id: Some(record.id),
-            state: Some(record.state),
+            intent_id: Some(intent_id),
+            state: Some(state),
             send_outcome,
             replayed,
             escalation: escalation_reason.map(|reason| IntentEscalation {
-                intent_id: Some(record.id),
+                intent_id: Some(intent_id),
                 reason,
             }),
         },
