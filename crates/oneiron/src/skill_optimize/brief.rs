@@ -105,7 +105,9 @@ pub struct SkillOptimizeBrief {
     pub source_rows: Option<Vec<EntityId>>,
     /// Partial native-family witness from the original Coach request. It is
     /// not a complete brief/attempt declaration or a downstream read grant.
-    pub(crate) native_verdict_sources: Option<super::coach_read::NativeVerdictSources>,
+    pub(crate) native_verdict_sources: Option<super::coach_read::NativeFamilySources>,
+    /// Partial original discovery scan; not a complete model source declaration.
+    pub(crate) native_discovery_sources: Option<super::coach_read::NativeFamilySources>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -289,7 +291,11 @@ pub(super) fn optimize_brief_with_read_at(
     // deterministic partition the gate reserves by. One that cites nothing
     // cannot show it, so it is not shown either — the durable proposal is
     // untouched, and what changes is only what this READ hands the author.
-    let discovery_proposals: Vec<SkillEditProposal> = pending_edit_proposals(vault)?
+    let (discovery_rows, native_discovery_sources) = match source_read {
+        Some(read) => read.discovery_proposals(vault)?,
+        None => (pending_edit_proposals(vault)?, None),
+    };
+    let discovery_proposals: Vec<SkillEditProposal> = discovery_rows
         .into_iter()
         .filter(|proposal| {
             proposal.skill == candidate.skill
@@ -446,6 +452,7 @@ pub(super) fn optimize_brief_with_read_at(
             source_rows
         },
         native_verdict_sources,
+        native_discovery_sources,
     })
 }
 

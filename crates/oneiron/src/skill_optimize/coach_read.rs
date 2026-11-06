@@ -12,7 +12,7 @@ use super::gate::{
 /// A witnessed native family, not the whole brief's read set and not a grant
 /// to a later reader. It is deliberately absent from the id-only source union.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct NativeVerdictSources {
+pub(crate) struct NativeFamilySources {
     pub(crate) source: crate::store::attempt_sources::NativeReadSource,
     pub(crate) receipt: ScopedReadReceipt,
 }
@@ -34,12 +34,69 @@ impl CoachReadRequest {
         }
     }
 
+    /// The original eager discovery scan, before its brief filters. Every
+    /// decoded row, including a later rejected candidate, is witnessed.
+    pub(super) fn discovery_proposals(
+        &self,
+        vault: &Vault,
+    ) -> Result<(
+        Vec<crate::skill_attribution::SkillEditProposal>,
+        Option<NativeFamilySources>,
+    )> {
+        use crate::skill_attribution::{
+            CanonicalSkillEditProposal, canonical_skill_edit_proposals_in_txn,
+            pending_edit_proposals,
+        };
+        let unknown = || pending_edit_proposals(vault).map(|rows| (rows, None));
+        let Some(key) = &self.key else {
+            return unknown();
+        };
+        let lane = vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        if lane.persist_grant_clock().is_err() {
+            return unknown();
+        }
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+        let Ok(_custody) = vault.store.gate_custody_read_guard() else {
+            return unknown();
+        };
+        let txn = vault.store.env.read_txn()?;
+        let (rows, prefix) = canonical_skill_edit_proposals_in_txn(vault, &txn)?;
+        let captured = rows.iter().all(|row| {
+            matches!(
+                lane.native_skill_edit_proposal_admitted_in_txn(&txn, row),
+                Ok(true)
+            )
+        });
+        let receipt = captured
+            .then(|| lane.read_projected_in_txn(&txn, &[], None, |_, _| Ok(())))
+            .and_then(std::result::Result::ok)
+            .map(|read| read.receipt);
+        let sources = receipt.map(|receipt| NativeFamilySources {
+            source: crate::store::attempt_sources::NativeReadSource::SkillEditProposalScan {
+                prefix: prefix.to_vec(),
+                rows: rows
+                    .iter()
+                    .map(CanonicalSkillEditProposal::source)
+                    .collect(),
+            },
+            receipt,
+        });
+        Ok((
+            rows.into_iter()
+                .map(CanonicalSkillEditProposal::into_proposal)
+                .collect(),
+            sources,
+        ))
+    }
+
     /// The brief's actual verdict read, with its original reader. Only the
     /// capture is optional: primary/marker scan and decode errors propagate.
     pub(super) fn verdicts(
         &self,
         vault: &Vault,
-    ) -> Result<(Vec<HeldOutVerdict>, Option<NativeVerdictSources>)> {
+    ) -> Result<(Vec<HeldOutVerdict>, Option<NativeFamilySources>)> {
         let unknown = || skill_edit_verdicts(vault).map(|verdicts| (verdicts, None));
         let Some(key) = &self.key else {
             return unknown();
@@ -72,7 +129,7 @@ impl CoachReadRequest {
             let verdicts = rows.iter().map(|row| row.verdict().clone()).collect();
             Ok((
                 verdicts,
-                Some(NativeVerdictSources {
+                Some(NativeFamilySources {
                     source: crate::store::attempt_sources::NativeReadSource::SkillEditVerdictScan {
                         prefix: prefix.to_vec(),
                         rows: rows.iter().map(CanonicalSkillEditVerdict::source).collect(),
