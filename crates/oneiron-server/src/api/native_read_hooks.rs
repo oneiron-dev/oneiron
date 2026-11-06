@@ -254,10 +254,10 @@ fn released_stop(
 /// facade's release of a kept answer ([`replayed_value`]): a row the
 /// caller's credential no longer reads, a row erased since, or a row a
 /// world withheld from where the answer goes keeps the result on this
-/// device. Off this device, a result saved with no rows is withheld too,
-/// because its rows are unknown. A withheld result is the content-free word
-/// that the call ran ([`details_on_device`]). On this device, a result with
-/// no rows is released as it was saved.
+/// device. A result saved with no rows is withheld on this device too: its
+/// rows are unknown, so the caller's current read of them cannot be checked.
+/// A withheld result is the content-free word that the call ran
+/// ([`details_on_device`]).
 fn released_completed(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -275,7 +275,7 @@ fn released_completed(
             .ok()
             .flatten()
     });
-    if producers.is_none() && auth.destination().is_off_device() {
+    if producers.is_none() {
         return details_on_device();
     }
     let release = InvocationRelease {
