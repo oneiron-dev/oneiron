@@ -424,8 +424,9 @@ impl ScopedChildCallContext<'_, '_> {
         &self,
         reference: &str,
     ) -> Result<std::result::Result<ScopedInputRead, &'static str>> {
-        let Some((name, source)) = scoped_child_input(self.spec, true, reference)
-            .or_else(|| scoped_child_input(self.spec, false, reference))
+        let inputs = &self.spec.inputs;
+        let Some((name, source)) = scoped_child_input(inputs, true, reference)
+            .or_else(|| scoped_child_input(inputs, false, reference))
         else {
             return Ok(Err("unknown_handle"));
         };
@@ -544,21 +545,21 @@ pub(crate) fn scoped_child_service_admission(
         })
 }
 
-/// `scoped_child_input` (CALLS, open): the lent input `reference` names, by
-/// its name (`by_name`) or by its handle, with the name it is read by. Only
-/// the job's named inputs resolve; no other handle of the parent's does.
+/// `scoped_child_input` (CALLS, open): the lent input `reference` names
+/// among a scoped job's `inputs`, by its name (`by_name`) or by its handle,
+/// with the name it is read by. Only the job's named inputs resolve; no
+/// other handle of the parent's does.
 pub(crate) fn scoped_child_input<'s>(
-    spec: &'s ScopedChildSpec,
+    inputs: &'s BTreeMap<String, DelegatedSource>,
     by_name: bool,
     reference: &str,
 ) -> Option<(&'s str, &'s DelegatedSource)> {
     if by_name {
-        return spec
-            .inputs
+        return inputs
             .get_key_value(reference)
             .map(|(name, source)| (name.as_str(), source));
     }
-    spec.inputs
+    inputs
         .iter()
         .find(|(_, source)| source.handle == reference)
         .map(|(name, source)| (name.as_str(), source))
