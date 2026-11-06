@@ -19,6 +19,8 @@ use super::route::ArtifactRoute;
 use super::{ArtifactServeQuery, CoreAuth, CoreScope, SyncServer};
 use crate::error::{ApiError, EnvelopedApiError};
 
+#[path = "backend_cookies.rs"]
+mod cookies;
 #[path = "backend_runtime.rs"]
 mod runtime;
 
@@ -134,6 +136,8 @@ async fn serve(
     // No owner/read credential, link capability, forwarding attestation or
     // host cookie crosses the guest boundary. The original Body is moved.
     strip_hop_headers(&mut parts.headers);
+    let cookies = cookies::AppCookies::new(prefix);
+    let app_cookies = cookies.request_header(&parts.headers);
     let private_headers: Vec<_> = parts
         .headers
         .keys()
@@ -149,6 +153,9 @@ async fn serve(
     for name in private_headers {
         parts.headers.remove(name);
     }
+    if let Some(value) = app_cookies {
+        parts.headers.insert("cookie", value);
+    }
     parts
         .headers
         .insert(HOST, HeaderValue::from_static("artifact.invalid"));
@@ -159,7 +166,7 @@ async fn serve(
     parts.extensions.clear();
     let mut response = runtime::forward(profile, staged, Request::from_parts(parts, body)).await?;
     strip_hop_headers(response.headers_mut());
-    response.headers_mut().remove("set-cookie");
+    cookies.rewrite_response(response.headers_mut(), &target);
     // CSP ignores source paths after a redirect. App redirects therefore
     // resolve inside this admitted app, never into another artifact's path.
     if let Some(location) = response

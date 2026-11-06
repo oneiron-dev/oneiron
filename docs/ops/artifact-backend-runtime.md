@@ -116,10 +116,30 @@ parent remains private on the host; only the readable child enters the guest.
 
 No owner/read Authorization, binding proof, engine headers, forwarding
 attestation, incoming host cookie or link capability is passed to the guest.
-This first per-request transport does not forward cookies or accept app
-Set-Cookie responses. Application-cookie namespace/path isolation remains
-separate work; it must not reuse host authentication cookies. Hop-by-hop
-headers are rebuilt. Backend responses are no-store and use a path-scoped
+Server-set application cookies can round-trip across per-request guests. The
+host stores each cookie under `oneiron_app_<hash>_<guest-name>`, where the full
+BLAKE3 hash is domain-separated over the admitted canonical app root (including
+its selector and any link-token path). Only names in that exact namespace are
+unwrapped into the guest request. All incoming host cookies are still removed;
+app cookie values are ordinary client input, never engine credentials or grants.
+
+Guest cookie paths are relative to the app root. The host rebases an explicit
+`Path` inside that root, or uses the original request's application-relative
+RFC default path when `Path` is absent or invalid. It removes `Domain`, so the
+browser cookie is host-only. It preserves separate `Set-Cookie` headers, their
+order, expiry/deletion values, Secure, HttpOnly, SameSite, Partitioned and other
+attributes. The same name/path rewrite handles deletion. Valid browser-reserved
+names such as `__Host-session` are supported by enforcing their original
+Secure/HttpOnly/explicit-root/no-Domain requirements before wrapping the name;
+none is silently downgraded for plain HTTP. Browser acceptance and retention
+still follow its normal cookie rules. No cookie jar, expiry timer or size/count
+limit is added on the host.
+
+This is a server `Set-Cookie`/`Cookie` transport, not a transparent rewrite of
+`document.cookie`. JavaScript sees the stored names, and direct browser cookie
+APIs or DOM storage do not gain per-app origin isolation on this shared listener.
+An application's cookies do not authenticate engine actions. Hop-by-hop headers
+are rebuilt. Backend responses are no-store and use a path-scoped
 connect/form CSP for this app, with no frames or workers. This does not relax
 the API-origin or static-artifact policies.
 
@@ -141,8 +161,9 @@ scoped capability issuance and dispatcher join; an app label, snapshot hash,
 reader federation grant or owner credential is not that authority. There is
 no permissive egress proxy in this runtime.
 
-Persistent/declared-port applications, application cookies, automatic cloud
-app-host dispatch and grant-bearing engine calls remain work under OF-356.
+Persistent/declared-port applications, direct browser cookie and DOM-storage
+isolation, automatic cloud app-host dispatch and grant-bearing engine calls
+remain work under OF-356.
 This implementation does not claim that the whole published-backend row is
 complete. Static source inspection and formatting are not runtime, isolation
 or compiler evidence. Publication still needs the Engine's passing production
