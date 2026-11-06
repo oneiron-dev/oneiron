@@ -27,7 +27,7 @@
 //! recipient and attachments are refused, not dropped.
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
-//! row 17644, [`super::reply_ask`]); the Ask clears when that revision is
+//! row 17644, `reply_ask`); the Ask clears when that revision is
 //! approved, discarded or drafted again.
 
 use serde::{Deserialize, Serialize};
