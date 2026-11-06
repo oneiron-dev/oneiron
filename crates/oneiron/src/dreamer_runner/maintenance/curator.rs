@@ -518,6 +518,7 @@ fn demote_in_place_in_txn(
             end: now,
         },
         learned_at: header.learned_at,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
