@@ -56,7 +56,7 @@ use oneiron::outbound_consent::{
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
-    RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll,
+    RemoteTaskClientCapabilities, RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll,
 };
 use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -72,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+mod initialize;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -81,12 +82,13 @@ mod reply_read;
 mod resume;
 mod sent;
 mod stream_pump;
+use initialize::{check_issuer, initialize};
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
-pub(crate) use remote_task_poll::poll_remote_tasks;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
 
@@ -240,7 +242,8 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
+        let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation)
+        else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         // FIX 11023: a grant's redemption or a run's record cannot be
@@ -380,7 +383,12 @@ impl OutboundResultSender for ServedConnectorCallHost {
             RemoteTaskCredential::Record(custody) => Some(custody),
             RemoteTaskCredential::Route => None,
         };
-        let route = match self.vault.route_connector_call(view.server()).ok().flatten() {
+        let route = match self
+            .vault
+            .route_connector_call(view.server())
+            .ok()
+            .flatten()
+        {
             Some(route) => route,
             None => return,
         };
@@ -603,6 +611,7 @@ struct Exchange<'a> {
     tool: &'a str,
     arguments: Value,
     tool_headers: HeaderMap,
+    capabilities: RemoteTaskClientCapabilities,
     /// The elicitation this send declares, if any.
     elicitation: Option<Declared<'a>>,
     /// The call's issuer binding, kept independently of elicitation: a
@@ -648,6 +657,11 @@ impl<'a> Exchange<'a> {
                     .collect(),
             ),
             tool_headers,
+            capabilities: RemoteTaskClientCapabilities {
+                elicitation: elicitation
+                    .as_ref()
+                    .map(|declared| declared.capability.clone()),
+            },
             elicitation,
             issuer: view
                 .key_ref()
@@ -657,101 +671,26 @@ impl<'a> Exchange<'a> {
         })
     }
 
-    /// The client capabilities `initialize` declares: elicitation alone,
-    /// when this send declares it.
-    fn capabilities(&self) -> Value {
-        match &self.elicitation {
-            Some(declared) => json!({ "elicitation": declared.capability }),
-            None => json!({}),
-        }
-    }
-
     /// Rechecks the issuer before a session sends with its kept credential.
     fn check_issuer(&self) -> Result<(), Sent> {
-        let Some((vault, key_ref, tool)) = &self.issuer else {
-            return Ok(());
-        };
-        match vault.connector_issuer_hold(key_ref, tool) {
-            Ok(None) => Ok(()),
-            Ok(Some(reason)) => Err(Sent::held(reason)),
-            Err(error) => {
-                tracing::warn!(%error, "connector issuer binding not read");
-                Err(Sent::not_sent(
-                    OutboundFailureKind::TransportNotStarted,
-                    None,
-                ))
-            }
-        }
+        check_issuer(self.issuer)
     }
 
     /// One send, its answer cleared of `value` when it presents one.
     fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         // Everything before `tools/call` leaves is certain non-delivery.
-        let initialize = json!({
-            "jsonrpc": "2.0",
-            "id": INITIALIZE_ID,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": self.revision,
-                "capabilities": self.capabilities(),
-                "clientInfo": { "name": "oneiron", "version": env!("CARGO_PKG_VERSION") },
-            },
-        });
-        let posted = post_json(
+        let live = match initialize(
             self.client,
             self.endpoint,
-            &initialize,
-            auth.as_ref(),
-            None,
-            Some(HANDSHAKE_TIMEOUT),
-        )
-        .send();
-        let response = match posted {
-            Ok(response) => response,
-            Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
-        };
-        if !response.status().is_success() {
-            return Sent::not_sent(
-                OutboundFailureKind::Rejected,
-                Some(response.status().as_u16()),
-            );
-        }
-        let session = response.headers().get(SESSION_HEADER).cloned();
-        let initialized = match read_reply(response, INITIALIZE_ID) {
-            Ok(Some((message, _))) => message,
-            _ => return Sent::not_sent(OutboundFailureKind::Rejected, None),
-        };
-        // The key pinned one revision; a server that answers another is not
-        // the connector the owner approved.
-        if initialized.get("error").is_some()
-            || initialized
-                .pointer("/result/protocolVersion")
-                .and_then(Value::as_str)
-                != Some(self.revision)
-        {
-            return Sent::not_sent(OutboundFailureKind::Rejected, None);
-        }
-        let live = LiveSession {
-            client: self.client.clone(),
-            endpoint: self.endpoint.to_owned(),
-            protocol: self.protocol.clone(),
-            session,
+            self.revision,
+            &self.protocol,
             auth,
+            &self.capabilities,
+            self.issuer,
+        ) {
+            Ok(live) => live,
+            Err(failure) => return failure.sent,
         };
-        if let Err(held) = self.check_issuer() {
-            return held;
-        }
-        let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
-            Ok(response) if response.status().is_success() => {}
-            Ok(response) => {
-                return Sent::not_sent(
-                    OutboundFailureKind::Rejected,
-                    Some(response.status().as_u16()),
-                );
-            }
-            Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
-        }
 
         let call = json!({
             "jsonrpc": "2.0",
@@ -926,6 +865,7 @@ impl<'a> Exchange<'a> {
                         .map(str::to_owned),
                     protocol: open.protocol.to_str().unwrap_or_default().to_owned(),
                     credential: RemoteTaskCredential::Route,
+                    capabilities: self.capabilities.clone(),
                 });
             }
             return Sent::deferred(handle, body);
