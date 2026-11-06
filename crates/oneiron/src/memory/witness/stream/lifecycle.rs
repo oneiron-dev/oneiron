@@ -236,17 +236,29 @@ impl Vault {
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
         state.check(handle)?;
-        self.close_withheld(&mut state)?;
-        let receipt = commit_terminal(
-            self,
-            &mut state,
-            outcome,
-            finish_reason,
-            assertions,
-            parts,
-            false,
-            gate,
-        )?;
+        let closed = self.close_withheld(&mut state).and_then(|()| {
+            commit_terminal(
+                self,
+                &mut state,
+                outcome,
+                finish_reason,
+                assertions,
+                parts,
+                false,
+                gate,
+            )
+        });
+        let receipt = match closed {
+            Ok(receipt) => receipt,
+            // An erase that committed over the stream while it closed retires
+            // it (FIX 9973); any other refusal keeps its output.
+            Err(error) => {
+                if self.retire_stream_if_erased(entry, &mut state)? {
+                    return Err(MessageStreamError::StreamNotFound);
+                }
+                return Err(error);
+            }
+        };
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
         #[cfg(feature = "sync")]
@@ -283,12 +295,23 @@ impl Vault {
             // Keep this entry locked from the deadline decision through commit:
             // an append cannot make the decision stale while we wait for LMDB.
             let mut state = lock(&entry)?;
-            if state.terminal
-                || now.saturating_sub(state.last_op_at_ms) < state.seed.idle_timeout_ms
-            {
+            if state.terminal {
                 continue;
             }
             let handle = state.handle();
+            // A stream an erase committed over is retired at once, idle or
+            // not, with no terminal write (FIX 9973).
+            match self.retire_stream_if_erased(&entry, &mut state) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    report.refused.push((handle.message, error));
+                    continue;
+                }
+            }
+            if now.saturating_sub(state.last_op_at_ms) < state.seed.idle_timeout_ms {
+                continue;
+            }
             let reason = if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
                 StreamFinalityReason::IdleTimeout30s
             } else {
@@ -315,7 +338,13 @@ impl Vault {
                     self.message_streams.remove(handle)?;
                     report.finalized.push(receipt);
                 }
-                Err(error) => report.refused.push((handle.message, error)),
+                // An erase that committed while the terminal waited retires the
+                // stream silently (FIX 9973); any other refusal is reported.
+                Err(error) => match self.retire_stream_if_erased(&entry, &mut state) {
+                    Ok(true) => {}
+                    Ok(false) => report.refused.push((handle.message, error)),
+                    Err(recheck) => report.refused.push((handle.message, recheck)),
+                },
             }
         }
         Ok(report)
