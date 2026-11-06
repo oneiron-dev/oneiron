@@ -473,7 +473,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
       value: { kind: "string", value: "opaque-placeholder-never-sent" }, confidence: c.opaqueControl.confidence,
       source: c.opaqueControl.source, worldId: c.opaqueControl.worldId, scopeFacetId: c.opaqueControl.scopeFacetId,
       scopeRelationshipId: c.opaqueControl.scopeRelationshipId, scopeProjectId: c.opaqueControl.scopeProjectId,
-      evidenceTurnIds: c.opaqueControl.evidenceTurnIds };
+      ...(c.opaqueControl.evidenceTurnIds === undefined ? {} : { evidenceTurnIds: c.opaqueControl.evidenceTurnIds }) };
     // Stock claimInput sends row.value.value; the opaque control overrides with the whole
     // fixture object through the real `value: unknown` typed boundary (no cast, no second door).
     const opaqueInput: ClaimInput = { ...claimInput(w, opaqueBase, inputId("MEMORY-02:opaque-http")), value: c.opaqueControl.value };
