@@ -151,6 +151,7 @@ mod signal_extraction;
 mod structural;
 mod subscriptions;
 mod support;
+pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
 pub use oneiron_web_fetch::web_acquisition;
