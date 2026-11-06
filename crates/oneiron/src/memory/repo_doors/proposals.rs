@@ -23,9 +23,9 @@ use std::collections::BTreeSet;
 use super::symbols::symbol_run;
 use super::work::{RepoOwnWork, open_local_repo, resolve_repo_queue_target};
 use super::{
-    NO_PATHS, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoProposalSubmitInput,
-    RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunAnswer, RepoRunBinding, RepoRunStamp,
-    refusal_error, repo_target,
+    NO_PATHS, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoProposalResolveInput,
+    RepoProposalSubmitInput, RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunAnswer,
+    RepoRunBinding, RepoRunStamp, refusal_error, repo_target,
 };
 use crate::code_document::CodeOpProvenance;
 use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
@@ -231,7 +231,7 @@ impl Memory<'_> {
         policy: Option<&dyn RepoReviewPolicy>,
         sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
-        self.repo_proposal_submit(binding, input, policy, sources, None)
+        self.repo_proposal_submit(binding, input, policy, sources, None, None)
     }
 
     /// A fresh run-bound review of an approved file's proved redacted
@@ -245,7 +245,27 @@ impl Memory<'_> {
         policy: Option<&dyn RepoReviewPolicy>,
         sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
-        self.repo_proposal_submit(binding, input, policy, sources, Some(original))
+        self.repo_proposal_submit(binding, input, policy, sources, Some(original), None)
+    }
+
+    /// Proposes one typed conflict resolution under this run's own work,
+    /// lease, declaration and provenance. Nothing is approved or landed here.
+    pub fn repo_proposal_resolve_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoProposalResolveInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        let conflict = (input.branch_subject, input.conflict, input.branch);
+        let change = RepoProposalSubmitInput {
+            work: input.work,
+            path: input.path,
+            content: input.content,
+            message: input.message,
+            declaration: input.declaration,
+        };
+        self.repo_proposal_submit(binding, change, policy, sources, None, Some(conflict))
     }
 
     fn repo_proposal_submit(
@@ -255,6 +275,7 @@ impl Memory<'_> {
         policy: Option<&dyn RepoReviewPolicy>,
         sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
         original: Option<EntityId>,
+        conflict: Option<(EntityId, EntityId, String)>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         let own = self.repo_own_work(
             binding,
@@ -309,10 +330,22 @@ impl Memory<'_> {
                 path: folder.clone(),
                 commit: own.stamp.base_green.clone(),
             },
-            RepoMutationOperation::CommitFile {
-                path: input.path.clone(),
-                content: input.content,
-                message: input.message,
+            match conflict {
+                Some((branch_subject, open_conflict_claim_id, branch_name)) => {
+                    RepoMutationOperation::ResolveConflictFile {
+                        branch_subject,
+                        open_conflict_claim_id,
+                        branch_name,
+                        path: input.path.clone(),
+                        content: input.content,
+                        message: input.message,
+                    }
+                }
+                None => RepoMutationOperation::CommitFile {
+                    path: input.path.clone(),
+                    content: input.content,
+                    message: input.message,
+                },
             },
         )
         .with_write_actor(binding.actor)

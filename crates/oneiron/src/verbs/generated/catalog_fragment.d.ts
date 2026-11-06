@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1307 code-mode rows (1267 host rows, 40 run rows), 4604 declarations.
-// Replies: 1120 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1308 code-mode rows (1267 host rows, 41 run rows), 4605 declarations.
+// Replies: 1121 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -3095,7 +3095,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen" | "RepoSymbolsDeclare" | "RepoSymbolsRenew" | "RepoSymbolsRelease" | "RepoProposalSubmit" | "RepoProposalResolve" | "RepoMergeQueueEnqueue" | "RepoCheckoutBind" | "RepoExport";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -4587,6 +4587,7 @@ declare namespace Sdk {
   type SpawnUnapplied = { field: SpawnAskField; reason: SpawnUnappliedReason };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
+  type RepoProposalResolveInput = { work: EntityId; branch_subject: EntityId; conflict: EntityId; branch: string; path: string; content: number[]; message: string; declaration?: EntityId | null };
   type LeaderAdviceInput = { top?: number | null };
   type TaskTypeRef = { node_id: string; tree_version: number };
   type SpawnOverride<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
@@ -4912,6 +4913,7 @@ declare namespace self {
       enqueue(input: Sdk.RepoMergeQueueEnqueueInput): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       observe(input: Sdk.RepoMergeQueueObserveInput): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
     };
+    proposal_resolve(input: Sdk.RepoProposalResolveInput): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
     proposal_submit(input: Sdk.RepoProposalSubmitInput): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
     snapshots: {
       get(input: Sdk.RepoSnapshotsGetInput): Promise<Sdk.RepoSnapshotsGetOutput | StoredResult>;
