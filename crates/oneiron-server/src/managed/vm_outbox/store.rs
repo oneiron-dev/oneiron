@@ -413,3 +413,59 @@ fn write_whole(dir: &File, name: &str, bytes: &[u8]) -> std::io::Result<()> {
     rustix::fs::renameat(dir, temporary.as_str(), dir, name)?;
     dir.sync_all()
 }
+
+/// A kind's set journal in the store directory, `set-<kind>.json`
+/// ([`super::journal`], FIX 7543): the set of that kind this end is
+/// publishing, or has still to finish. One kind has at most one.
+fn set_journal_name(kind: VmOutboxKind) -> String {
+    format!("set-{}.json", kind.as_str())
+}
+
+impl Store {
+    /// Writes `kind`'s set journal whole, as a record is written.
+    pub(super) fn write_set_journal(
+        &self,
+        kind: VmOutboxKind,
+        bytes: &[u8],
+    ) -> std::io::Result<()> {
+        write_whole(&self.dir, &set_journal_name(kind), bytes)
+    }
+
+    /// Deletes `kind`'s set journal, when there is one, and syncs the store
+    /// directory.
+    pub(super) fn remove_set_journal(&self, kind: VmOutboxKind) -> std::io::Result<()> {
+        match rustix::fs::unlinkat(&self.dir, set_journal_name(kind).as_str(), AtFlags::empty()) {
+            Ok(()) => self.dir.sync_all(),
+            Err(Errno::NOENT) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// `kind`'s set journal, read whole, since only this end writes it and
+    /// a set is not capped; `None` when there is none.
+    pub(super) fn read_set_journal(&self, kind: VmOutboxKind) -> std::io::Result<Option<Vec<u8>>> {
+        let name = set_journal_name(kind);
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let file = match rustix::fs::openat(&self.dir, name.as_str(), flags, Mode::empty()) {
+            Ok(file) => file,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut file = File::from(file);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Each set journal the store holds, by kind, as it reads.
+    pub(super) fn read_set_journals(&self) -> Vec<(VmOutboxKind, std::io::Result<Vec<u8>>)> {
+        VmOutboxKind::ALL
+            .into_iter()
+            .filter_map(|kind| match self.read_set_journal(kind) {
+                Ok(None) => None,
+                Ok(Some(bytes)) => Some((kind, Ok(bytes))),
+                Err(error) => Some((kind, Err(error))),
+            })
+            .collect()
+    }
+}

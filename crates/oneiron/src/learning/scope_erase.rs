@@ -250,6 +250,7 @@ fn rescope_heads_in_txn(
                             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                             occurred: range,
                             learned_at: header.learned_at,
+                            row_version: None,
                             data: crate::claim::encode_claim_body(&body)?,
                             allow_maintenance: false,
                             allow_reserved_predicate: true,

@@ -120,6 +120,7 @@ impl AgentDispatcher<'_> {
             Option<AttemptConfession>,
         )>,
     {
+        self.vault.store.authorization_now()?;
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
         let wrapper = queue
@@ -131,6 +132,12 @@ impl AgentDispatcher<'_> {
             return self.advance_workflow(root, now);
         }
         let active = queue.retry_tip_in_txn(&txn, record.active)?;
+        if super::workflow::tool_wait::settle_erased_in_txn(self.vault, &mut txn, &active, now)? {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+            self.vault.store.notify_notification_updates();
+            return self.advance_workflow(root, now);
+        }
         match active.state {
             AttemptState::Queued | AttemptState::Scheduled => {}
             AttemptState::Leased | AttemptState::Landing | AttemptState::Paused => {
@@ -175,6 +182,7 @@ impl AgentDispatcher<'_> {
         else {
             return Ok(WorkflowProgress::Waiting(active.id));
         };
+        super::workflow::tool_wait::adopt_claim_in_txn(self.vault, &mut txn, &active, &attempt)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         let status = AgentDispatchStatus { attempt, input };
@@ -244,6 +252,7 @@ impl AgentDispatcher<'_> {
                 tracing::warn!(kind = ?error.kind(), "workflow output entity was not prepared");
             }
         }
+        super::workflow::tool_wait::clear_in_txn(self.vault, &mut txn, &status.attempt)?;
         crate::ports::JobQueue::port_job_complete(
             self.vault,
             &mut txn,

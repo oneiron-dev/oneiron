@@ -144,6 +144,7 @@ impl BatchBuilder<'_> {
             .with_births(std::mem::take(&mut self.births))
             .with_asset_files(std::mem::take(&mut self.asset_files))
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
+            .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
         let mut original_bodies = Vec::new();
         let taken = if actor.is_some() {
@@ -276,6 +277,7 @@ pub(super) fn admit_federated_puts(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             data,
             ..
         } = &mut ops[*index]
@@ -285,6 +287,7 @@ pub(super) fn admit_federated_puts(
             blob.extend_from_slice(&occurred.start.to_be_bytes());
             blob.extend_from_slice(&occurred.end.to_be_bytes());
             blob.extend_from_slice(&learned_at.to_be_bytes());
+            blob.extend_from_slice(&row_version.unwrap_or(0).to_be_bytes());
             blob.extend_from_slice(data);
             let admitted = crate::sync::selector::admit_federated_entity_blob(
                 vault,

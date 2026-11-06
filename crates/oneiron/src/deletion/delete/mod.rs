@@ -5,7 +5,7 @@ mod guard;
 mod headerless;
 mod impact;
 mod markers;
-mod outcome;
+use oneiron_store::deletion::delete::outcome;
 mod plan;
 mod preflight;
 mod preview;

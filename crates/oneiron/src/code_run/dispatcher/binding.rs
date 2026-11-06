@@ -117,6 +117,7 @@ impl<'a> HostSelfDispatcher<'a> {
             read_worlds: Cell::default(),
             caller_task: false,
             repo_review_policy: None,
+            git_door_base: None,
             spawn_capture: spawn_capture::SpawnCapture::default(),
         })
     }
