@@ -294,8 +294,14 @@ pub(super) fn run_bound(
     // would on any other host.
     // A planned child's live admission sees its plan's binding (Engine C5).
     let mut compaction = match &planned {
-        Some(planned) => provider.planned_compaction(caller, key, metered.as_ref(), planned),
-        None => provider.compaction(caller, key, metered.as_ref()),
+        Some(planned) => provider.planned_compaction(
+            caller,
+            key,
+            metered.as_ref(),
+            Some(status.attempt.id),
+            planned,
+        ),
+        None => provider.compaction(caller, key, metered.as_ref(), Some(status.attempt.id)),
     };
     // The host's root key signs a leader's subproject spawn (OF-389): the
     // managed issuer, else this install's own self-host root (FIX-LIST 3018).

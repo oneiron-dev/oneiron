@@ -30,7 +30,8 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{ModelId, ModelLocality, ModelTierRef};
 use oneiron::{
-    BudgetGuard, CompactionOwnership, EdgeActorClass, LlmRequest, MemoryProfile, Vault, WriteActor,
+    AttemptId, BudgetGuard, CompactionOwnership, EdgeActorClass, LlmRequest, MemoryProfile, Vault,
+    WriteActor,
 };
 
 use super::CHAT_ROLE;
@@ -304,8 +305,11 @@ impl CodeModeCompaction {
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
         provider.with_compaction(Arc::new(
-            move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
-                let seat = self.for_run(host, credential, spend, &live);
+            move |host: CompactionHostBinding,
+                  credential: &str,
+                  spend: Option<&SpendScopeId>,
+                  owner_attempt: Option<AttemptId>| {
+                let seat = self.for_run(host, credential, spend, owner_attempt, &live);
                 // The live slot, read at each birth: a run created after
                 // first-run setup compacts with the serving embedder.
                 match slots.load().embedder.clone() {
@@ -330,6 +334,7 @@ impl CodeModeCompaction {
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        owner_attempt: Option<AttemptId>,
         admission: &Arc<dyn LiveAdmission>,
     ) -> RunCompaction {
         let live = match self {
@@ -343,7 +348,10 @@ impl CodeModeCompaction {
         let scoped;
         let registry = match (definition, spend) {
             (Some(definition), _) => {
-                let meter = spend.map(|scope| CompactionMeter::Scope(scope.clone()));
+                let meter = spend.map(|scope| CompactionMeter::Scope {
+                    scope: scope.clone(),
+                    owner_attempt,
+                });
                 match live.self_registry(&profile, definition, host, meter, admission) {
                     Ok(registry) => {
                         scoped = registry;
@@ -356,7 +364,7 @@ impl CodeModeCompaction {
                 }
             }
             (None, None) => &live.registry,
-            (None, Some(scope)) => match live.scoped_registry(scope) {
+            (None, Some(scope)) => match live.scoped_registry(scope, owner_attempt) {
                 Ok(registry) => {
                     scoped = registry;
                     &scoped
@@ -392,11 +400,18 @@ impl LiveCompaction {
     /// The registry a run that spends under `scope` compacts on: each served
     /// backend, its calls metered on `scope` in place of code mode's.
     #[cfg(feature = "code-sandbox-wasmtime")]
-    fn scoped_registry(&self, scope: &SpendScopeId) -> oneiron::Result<CompactionBackendRegistry> {
+    fn scoped_registry(
+        &self,
+        scope: &SpendScopeId,
+        owner_attempt: Option<AttemptId>,
+    ) -> oneiron::Result<CompactionBackendRegistry> {
         let mut registry = CompactionBackendRegistry::new();
         for backend in &self.served {
             registry.register(Arc::new(ServedCompactionBackend {
-                meter: CompactionMeter::Scope(scope.clone()),
+                meter: CompactionMeter::Scope {
+                    scope: scope.clone(),
+                    owner_attempt,
+                },
                 ..ServedCompactionBackend::clone(backend)
             }))?;
         }
@@ -598,7 +613,10 @@ enum CompactionMeter {
     /// A run's spend scope: each call takes a fresh guard on the scope and
     /// books what it used once it returns, paid or failed, so a pass that
     /// outlives its run still books.
-    Scope(SpendScopeId),
+    Scope {
+        scope: SpendScopeId,
+        owner_attempt: Option<AttemptId>,
+    },
     /// `chat_compaction_meter` (FIX 4465 D): a chat turn's flight spends on
     /// its own guard on the chat actor's budget line and bills the payer the
     /// turn resolved (`None` is the vault owner, as a turn's is). Each call

@@ -461,10 +461,11 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        owner_attempt: Option<oneiron::AttemptId>,
     ) -> Option<RunCompaction> {
         self.compaction
             .as_ref()
-            .map(|seat| seat(host, credential, spend))
+            .map(|seat| seat(host, credential, spend, owner_attempt))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease
@@ -553,11 +554,12 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        owner_attempt: Option<oneiron::AttemptId>,
         planned: &PlannedModel,
     ) -> Option<RunCompaction> {
         match &self.pinned_compaction {
-            Some(seat) if planned.exact => Some(seat(host, credential, spend)),
-            _ => self.compaction(host, credential, spend),
+            Some(seat) if planned.exact => Some(seat(host, credential, spend, owner_attempt)),
+            _ => self.compaction(host, credential, spend, owner_attempt),
         }
     }
     fn reader_window_tokens(&self) -> Option<u64> {

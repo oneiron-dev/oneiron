@@ -302,3 +302,26 @@ These are partial historical observations of the executed native workflow
 caller, not provider coverage, per-attempt token totals, child-scope closure or
 measured RSI settlement. Original receipt forwarding and warning-only capture
 handling stay in place. Other native suppliers still need their own real ports.
+
+## Scoped compaction captures
+
+A resident attempt supplies its actual `AttemptRecord.id` through the compaction
+seat and provider into the pass's native scope meter. The scope and optional
+owner travel together. They are observation data, not a new caller credential
+or a value inferred from a scope string, actor, run label or token count.
+
+Each pass keeps its existing fresh scope guard and separate booking watermark.
+A pass can outlive its parent entry, so it never borrows that entry's shared
+once-only booking ledger. Scoped calls use the actual backend's owned vault and
+that same fresh guard for their funded run, receipt observations and lease.
+An unknown owner does not hide an otherwise real scoped run. Unscoped and chat
+compaction keep their original funded path.
+
+The existing Walk, Exact and WhileWarm ladder futures retain their dispatch and
+result handling. Return is recorded after the actual invoked future returns,
+including an error or WhileWarm returning no response. This is not evidence of
+provider bytes, admission or an answer. A ready-stage or automatic fallback
+that returns before run construction creates no entry or future-return record.
+Original sources, context, errors, payer checks and financial booking stay in
+place. These partial captures still do not prove all physical use, close a
+scope or supply measured RSI settlement.
