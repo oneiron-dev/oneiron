@@ -415,28 +415,6 @@ impl RunInner {
         })
     }
 
-    /// Whether the allocation a host-paid call is about to hold on, whose
-    /// host-delivered wallet is `wallet`, may fund this run (FIX 7766): any
-    /// allocation when no owner's agent Grant funds the run; else only one
-    /// the host named that Grant's wallet for. Judged on the exact
-    /// allocation the hold then takes, before anything is reserved: the
-    /// live one here, and the one a persistent allocation ledger's reserve
-    /// writer selected, inside that writer, before it freezes the hold.
-    pub(in crate::llm::run_admission) fn funding_admits(
-        &self,
-        wallet: Option<&crate::federation::WalletRef>,
-    ) -> Result<(), RunDenied> {
-        match &self.funding {
-            Some(funding) if wallet != Some(&funding.wallet_ref) => {
-                Err(RunDenied::AllocationWalletMismatch {
-                    expected: funding.wallet_ref.clone(),
-                    live: wallet.cloned(),
-                })
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// The unmetered lease of a call that is [`free_work`], taken before any
     /// price, policy row or exhaustion check (FIX 9482): it reserves nothing
     /// and is charged nothing, and still starts only for `binding`, once.
@@ -496,7 +474,7 @@ impl RunInner {
                 None => RunDenied::NoAllocation,
             });
         };
-        self.funding_admits(wallet.as_ref())?;
+        funding_admits_allocation(self.funding.as_ref(), wallet.as_ref())?;
         let units = priced(native_units, native, &unit, rates)?;
         let lease = meter
             .admit_reserve(units)
@@ -529,6 +507,31 @@ impl RunInner {
                 resident,
             },
         )))
+    }
+}
+
+/// Whether the allocation a host-paid call is about to hold on, whose
+/// host-delivered wallet identity is `wallet`, may fund a run whose frozen
+/// funding binding is `funding` (FIX 7766, Engine 19:59 W-D): any allocation
+/// when no owner's agent Grant funds the run; else only one the host named
+/// that Grant's wallet for, compared byte for byte. Judged on the exact
+/// allocation the hold then takes, before anything is reserved or written:
+/// the live one in [`RunInner::hold_allocation`], and the one a persistent
+/// allocation ledger's reserve writer selected, inside that writer, before
+/// it freezes the hold. A mismatch, or an allocation with no wallet named,
+/// is [`RunDenied::AllocationWalletMismatch`], never a default wallet.
+pub(crate) fn funding_admits_allocation(
+    funding: Option<&crate::agent_dispatch::GrantSpendBinding>,
+    wallet: Option<&crate::federation::WalletRef>,
+) -> Result<(), RunDenied> {
+    match funding {
+        Some(funding) if wallet != Some(&funding.wallet_ref) => {
+            Err(RunDenied::AllocationWalletMismatch {
+                expected: funding.wallet_ref.clone(),
+                live: wallet.cloned(),
+            })
+        }
+        _ => Ok(()),
     }
 }
 
