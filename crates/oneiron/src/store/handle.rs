@@ -318,6 +318,10 @@ pub struct StoreCore {
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
     pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
+    /// The host that serves this vault's drafter bindings on its own managed
+    /// worker, none until one attaches (FIX 14976,
+    /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
+    pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -358,6 +362,9 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// Committed consent answers wake this vault's connector-call settler.
+    /// Content-free and in memory only; the durable answer is re-read.
+    pub(crate) consent_answers: tokio::sync::Notify,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -435,6 +442,9 @@ pub struct StoreOwner {
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.
 pub struct Store {
+    /// This handle's live carrier leaves, asks and refusals. Kept outside the
+    /// shared core and wiped before the environment's owner drops.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases

@@ -113,6 +113,7 @@ pub(in crate::code_run::storage) fn erase_spawn_prefixes_in_txn(
         capsule.start = Some(ExecutorStepStart {
             body,
             digest: *blake3::hash(&changed.bytes).as_bytes(),
+            erased: false,
             ..start
         });
         CAPSULES.put(store, wtxn, &key, &capsule)?;
@@ -128,6 +129,9 @@ pub(super) fn start_bytes_in_txn(
     run: EntityId,
     start: &ExecutorStepStart,
 ) -> Result<Option<Vec<u8>>> {
+    if start.erased {
+        return Ok(None);
+    }
     let output = CodeRunRawOutput {
         path: start.path.clone(),
         ..CodeRunRawOutput::of_ref(start.body)
