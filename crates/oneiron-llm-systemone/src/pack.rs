@@ -134,6 +134,18 @@ impl<'seat> PreparedSystemOnePackRead<'seat> {
 }
 
 impl SystemOneSeat {
+    /// Sends every question in one request, with one aggregate token measurement.
+    pub async fn ask_pack(
+        &self,
+        request: SystemOnePackRequest,
+        lease: &BudgetLease,
+        time_left: Duration,
+    ) -> LlmResult<SystemOnePackAnswer> {
+        self.ask_pack_recorded(request, lease, time_left, None)
+            .await
+            .result
+    }
+
     /// Validates every question by the existing single-seat contract and builds
     /// one shared set of transformed assets. No lease, credential or I/O.
     pub async fn prepare_pack_read(
