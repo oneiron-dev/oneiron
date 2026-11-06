@@ -418,12 +418,13 @@ impl SlotRelay<'_> {
                     .ok_or_else(refused)?;
                 let manager = Arc::clone(self.manager);
                 let opened = self.mode == SyncResidenceMode::Opened;
-                let (took, bundle, pads) = tokio::task::spawn_blocking(move || {
-                    let took = manager.take_sealed_bundle(&bundle, &pads, holder, opened);
-                    (took, bundle, pads)
-                })
-                .await
-                .map_err(|error| TransportError::Storage(error.to_string()))?;
+                let (took, bundle, pads) =
+                    crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
+                        let took = manager.take_sealed_bundle(&bundle, &pads, holder, opened);
+                        (took, bundle, pads)
+                    })
+                    .await
+                    .map_err(|error| TransportError::Storage(error.to_string()))?;
                 match took {
                     Ok((take, awaiting)) => {
                         cursor.taken = Some(newest);

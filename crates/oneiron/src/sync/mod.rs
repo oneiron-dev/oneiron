@@ -79,6 +79,7 @@ mod sweep_fence;
 mod tests;
 pub mod transport;
 pub mod types;
+pub(crate) mod upkeep_jobs;
 pub mod window;
 pub(crate) mod window_rows;
 pub(crate) mod withdrawn_cutoffs;

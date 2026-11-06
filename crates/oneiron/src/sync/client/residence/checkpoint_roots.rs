@@ -141,10 +141,11 @@ async fn settle_kept(
     awaiting: Vec<AuthorityKey>,
 ) -> Result<(), TransportError> {
     let vault = Arc::clone(vault);
-    let settled =
-        tokio::task::spawn_blocking(move || vault.settle_root_attestations(home, head, &awaiting))
-            .await
-            .map_err(|_| stopped())?;
+    let settled = crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
+        vault.settle_root_attestations(home, head, &awaiting)
+    })
+    .await
+    .map_err(|_| stopped())?;
     if let Err(error) = settled {
         tracing::warn!(kind = ?error.kind(), "the kept root attestations did not settle");
     }
@@ -189,7 +190,7 @@ async fn attest_home_head(
     {
         Ok(_) => {
             let vault = Arc::clone(vault);
-            let delivered = tokio::task::spawn_blocking(move || {
+            let delivered = crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
                 vault.root_attestation_delivered(home, &root, id)
             })
             .await
@@ -223,7 +224,7 @@ async fn sign_home_head(
     let attest = {
         let vault = Arc::clone(vault);
         let signer = Arc::clone(signer);
-        tokio::task::spawn_blocking(move || {
+        crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
             vault.attest_home_checkpoint_as_root(home, id, &image, signer.as_ref())
         })
         .await
@@ -295,7 +296,7 @@ async fn ask_home_countersign(
     let reply: CountersignReply = serde_json::from_value(reply).map_err(|_| refused())?;
     let home = rpc.home;
     let vault = Arc::clone(vault);
-    tokio::task::spawn_blocking(move || {
+    crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
         let mut kept = 0;
         for attestation in &reply.attestations {
             match vault.import_device_checkpoint_attestation(home, image, attestation) {
