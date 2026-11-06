@@ -6,19 +6,32 @@
 //! is named absent: it is never filled from the owner's memory or another
 //! agent's diary. Home words go to the writing call only; they are not the
 //! summary's evidence, which stays the span's retained turns.
+//!
+//! FIX 4570: the self-model is the SUMMARY the agent's binding names, read
+//! through its own scoped SUMMARY read ([`self_model`]). FIX 4817: every row
+//! a part was read from keeps the live revision its words were read at, in
+//! the same snapshot, so what wore it lands, serves and keeps its words only
+//! while each row still reads at it ([`crate::compaction::CompactionHomeRef`]).
+
+mod self_model;
+
+pub(crate) use self_model::{bound_self_model_in, erase_self_model_binding_actor_in_txn};
 
 use crate::authority::VerifiedSlip;
 use crate::claim::{
     CallerLocality, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimReadStatus, ClaimSubject,
     PointRead, ReadRow, decode_claim_body,
 };
-use crate::compaction::{CompactionHomeRef, HOME_PART_WORN, SelfCompactionUnavailable};
+use crate::compaction::{
+    CompactionHomeRef, HOME_PART_SELF_MODEL, HOME_PART_WORN, SelfCompactionUnavailable,
+};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::DiaryReadOutcome;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::subject_model::SubjectKind;
 use crate::tokenizer::count_context_pack_tokens;
+use crate::vault::RevisionRef;
 use crate::{Vault, WriteActor};
 
 /// The reason a home read gives the diary door's log.
@@ -127,18 +140,19 @@ impl HomePart {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Voice => "voice",
-            Self::SelfModel => "self_model",
+            Self::SelfModel => HOME_PART_SELF_MODEL,
             Self::Diary => "diary",
             Self::Lessons => "lessons",
         }
     }
 }
 
-/// One home part and every row its text was read from.
+/// One home part and every row its text was read from, each with the live
+/// revision it was read at (FIX 4817).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeItem {
     part: HomePart,
-    rows: Vec<EntityId>,
+    rows: Vec<(EntityId, Option<RevisionRef>)>,
     text: String,
 }
 
@@ -178,11 +192,13 @@ pub const fn compaction_home_budget(
 }
 
 /// Reads `host`'s home through the existing doors under its own Grant
-/// (FIX 4465): its voice through the persona compile, its lessons as the
-/// admitted active `actor.lesson` and `actor.failure_mode` claims about it,
-/// its diary through the diary door as its own reader. No self-model binding
-/// exists yet, so that part is absent. An actor with no readable identity
-/// holds the flight; any other part it cannot read is absent.
+/// (FIX 4465): its voice through the persona compile, its self-model as the
+/// SUMMARY its binding names through its own scoped SUMMARY read (FIX 4570),
+/// its lessons as the admitted active `actor.lesson` and
+/// `actor.failure_mode` claims about it, its diary through the diary door as
+/// its own reader. Each row keeps the revision its words were read at, read
+/// in that door's own snapshot (FIX 4817). An actor with no readable
+/// identity holds the flight; any other part it cannot read is absent.
 pub fn load_compaction_home(
     vault: &Vault,
     host: &CompactionHostBinding,
@@ -205,18 +221,33 @@ pub fn load_compaction_home(
     match read.compile_persona(&identity.person, None) {
         Ok(persona) => home.items.push(HomeItem {
             part: HomePart::Voice,
-            rows: persona.made_by.inputs,
+            rows: persona
+                .made_by
+                .inputs
+                .into_iter()
+                .zip(persona.input_revisions)
+                .collect(),
             text: persona.value.to_string(),
         }),
         Err(_) => home.absent.push((HomePart::Voice, "no_readable_persona")),
     }
-    home.absent
-        .push((HomePart::SelfModel, "no_self_model_binding"));
+    match self_model::read_self_model_part(vault, &memory, identity.agent) {
+        self_model::SelfModelPart::Worn {
+            summary,
+            revision,
+            text,
+        } => home.items.push(HomeItem {
+            part: HomePart::SelfModel,
+            rows: vec![(summary, revision)],
+            text,
+        }),
+        self_model::SelfModelPart::Absent(why) => home.absent.push((HomePart::SelfModel, why)),
+    }
     let lessons = vault
         .claims_for_subject(&identity.agent)
         .and_then(|ids| {
             let reads: Vec<_> = ids.into_iter().map(PointRead::id).collect();
-            read.read(&reads, None)
+            read.read_revisions(&reads)
         })
         .map(|rows| lessons_of(identity.agent, rows.value.into_iter().flatten()));
     match lessons {
@@ -225,17 +256,23 @@ pub fn load_compaction_home(
         Err(_) => home.absent.push((HomePart::Lessons, "unreadable")),
     }
     drop(read);
-    match memory.read_agent_diary(None, identity.agent, HOME_READ_REASON) {
-        Ok(DiaryReadOutcome::Granted { entries, .. }) if !entries.is_empty() => {
+    match memory.read_agent_diary_pinned(None, identity.agent, HOME_READ_REASON) {
+        Ok((DiaryReadOutcome::Granted { entries, .. }, pins)) if !entries.is_empty() => {
             let mut entries = entries;
             entries.sort_by(|a, b| b.learned_at.cmp(&a.learned_at).then(b.id.cmp(&a.id)));
-            home.items.extend(entries.into_iter().map(|entry| HomeItem {
-                part: HomePart::Diary,
-                rows: vec![entry.id],
-                text: entry.markdown,
+            home.items.extend(entries.into_iter().map(|entry| {
+                let revision = pins
+                    .iter()
+                    .find(|(id, _)| *id == entry.id)
+                    .and_then(|(_, revision)| *revision);
+                HomeItem {
+                    part: HomePart::Diary,
+                    rows: vec![(entry.id, revision)],
+                    text: entry.markdown,
+                }
             }));
         }
-        Ok(DiaryReadOutcome::Granted { .. }) => home.absent.push((HomePart::Diary, "none")),
+        Ok((DiaryReadOutcome::Granted { .. }, _)) => home.absent.push((HomePart::Diary, "none")),
         Ok(_) => home.absent.push((HomePart::Diary, "not_granted")),
         Err(_) => home.absent.push((HomePart::Diary, "unreadable")),
     }
@@ -243,10 +280,13 @@ pub fn load_compaction_home(
 }
 
 /// The admitted, active craft notes about `agent`: its lessons and failure
-/// modes, never a proposed candidate.
-fn lessons_of(agent: EntityId, rows: impl Iterator<Item = ReadRow>) -> Vec<HomeItem> {
+/// modes, never a proposed candidate, each with the revision it was read at.
+fn lessons_of(
+    agent: EntityId,
+    rows: impl Iterator<Item = (ReadRow, Option<RevisionRef>)>,
+) -> Vec<HomeItem> {
     let mut lessons = Vec::new();
-    for row in rows {
+    for (row, revision) in rows {
         let ReadRow {
             id,
             body: Some(data),
@@ -273,7 +313,7 @@ fn lessons_of(agent: EntityId, rows: impl Iterator<Item = ReadRow>) -> Vec<HomeI
         };
         lessons.push(HomeItem {
             part: HomePart::Lessons,
-            rows: vec![id],
+            rows: vec![(id, revision)],
             text: format!("{}: {text}", body.predicate),
         });
     }
@@ -311,10 +351,11 @@ impl CompactionHome {
                 cut = true;
             }
             let state = if fits { HOME_PART_WORN } else { "truncated" }.to_owned();
-            refs.extend(item.rows.iter().map(|row| CompactionHomeRef {
+            refs.extend(item.rows.iter().map(|(row, revision)| CompactionHomeRef {
                 part: item.part.as_str().to_owned(),
                 row: Some(*row),
                 state: state.clone(),
+                revision: *revision,
             }));
         }
         for (part, why) in &self.absent {
@@ -322,6 +363,7 @@ impl CompactionHome {
                 part: part.as_str().to_owned(),
                 row: None,
                 state: format!("absent:{why}"),
+                revision: None,
             });
         }
         RenderedHome { text, refs }

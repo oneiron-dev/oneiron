@@ -265,6 +265,17 @@ pub(crate) trait OutboundTransport {
         false
     }
 
+    /// What the provider's own record says became of `call`, a row the
+    /// ledger holds uncertain (FIX 8814 follow-up): read back from the
+    /// provider, never inferred. By default a transport cannot ask, and the
+    /// row stays uncertain.
+    fn read_back_delivery(
+        &self,
+        _call: &FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        crate::outbound_intent_ledger::DeliveryReadBack::Unknown
+    }
+
     /// Whether this transport's caller holds a paced result and brings the
     /// call back at its `paced_until` (FIX 8686): a new call whose only full
     /// budget rows are count-bound windows that refuse rather than suspend

@@ -307,7 +307,10 @@ fn resolve_proposal(
     let value = json_to_rmpv(&parsed.value);
     let rel = match (corrects, parsed.rel) {
         (Some(prior), _) => prior.body.rel.clone(),
-        (None, None) => scope.relationship.clone(),
+        (None, None) => scope
+            .relationship
+            .as_ref()
+            .map(|ids| ids.iter().copied().collect()),
         // A relationship the call listed, by its label (FIX 7575).
         (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
         // A value that is no listed label is read as before.
@@ -321,7 +324,9 @@ fn resolve_proposal(
     // A bound branch writes inside its relationship set: the whole set or a
     // narrower one, never a relationship outside it or `all`.
     if let Some(bound) = &scope.relationship
-        && !rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+        && !rel
+            .as_ref()
+            .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
     {
         return Err(invalid_consolidation(
             "extraction relationship crossed branch scope",

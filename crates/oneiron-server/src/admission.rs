@@ -93,6 +93,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
             .admit_in_line_observed(key, crate::api::admission_observer())
     }
 
+    /// A permit at this caller's fair turn, without adding a wait deadline.
+    /// Dropping the future removes its place from the same native line.
+    pub(crate) fn admit_untimed(&self, key: K) -> impl Future<Output = Permit> + Send + 'static {
+        self.line
+            .admit_in_line_untimed(key, crate::api::admission_observer())
+    }
+
     /// [`Self::admit`] on this thread, at `key`'s place in the same line, for
     /// work that runs on a blocking worker rather than on the runtime.
     pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
@@ -140,7 +147,6 @@ impl LineCrossing for RowCrossing {
         self.questions.drained(self.row, epoch);
     }
 }
-
 /// What crossing one `[limits]` row with a burst came to: how many callers
 /// were turned away, and whether the row asked. Rule five holds at the row
 /// when nobody was and it did.

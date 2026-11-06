@@ -67,10 +67,14 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
             let file = vault
                 .archive_spool_file()
                 .map_err(|error| refusal(body_spool::create_failed(error)))?;
-            let mut input = Base64FileSink::new(file);
-            let head = spool
-                .object::<H>(&mut [BulkMember::required(INPUT_MEMBER, &mut input)])
-                .map_err(body_spool::reader_memory_refused)?;
+            let mut memory = spool
+                .admit_sealed_decode_buffers()
+                .map_err(body_spool::sealed_decode_memory_refused)?;
+            let mut input = Base64FileSink::new_admitted(file, &mut memory);
+            let head = spool.object_admitted::<H>(
+                &mut [BulkMember::required(INPUT_MEMBER, &mut input)],
+                &mut memory,
+            );
             Ok::<_, ApiError>((head, input.into_field(), spool.into_room()))
         },
     )

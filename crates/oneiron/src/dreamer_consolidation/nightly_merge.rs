@@ -282,7 +282,7 @@ impl ConsolidationExecutor<'_> {
             };
             let mut scope = Scope::default();
             scope.world = first.world;
-            scope.relationship.clone_from(&first.rel);
+            scope.relationship = first.rel.as_ref().map(|ids| ids.iter().copied().collect());
             scope.project = Some(first.scope_project);
             // Each proposal and subject by this call's own labels (FIX
             // 7506): the claims `C<n>` in the order they render, then each

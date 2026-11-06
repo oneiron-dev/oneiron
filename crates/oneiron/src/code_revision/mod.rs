@@ -27,6 +27,10 @@ mod types;
 pub(crate) use self::keys::archive_revision_tables;
 pub(crate) use self::promotion::archive_promotion_table;
 pub(crate) use self::proposals::archive_proposal_table;
+// The author is erasable attribution (FIX 6258).
+pub(crate) use self::commit_metadata::{ArchivedRevisionRow, land_archived_revision_row_in_txn};
+pub(crate) use self::proposals::erase_proposal_author_in_txn;
+pub(crate) use self::storage::erase_revision_author_in_txn;
 
 pub(crate) use self::codec::CODE_REVISION_CLAIM_PREDICATE;
 pub use self::codec::{
