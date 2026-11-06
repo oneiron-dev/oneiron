@@ -422,6 +422,23 @@ fn require_entity_type(
     )
 }
 
+/// [`require_entity_type`] in the route's snapshot `txn`, so the type it
+/// checks is the one the route then admits and serves (FIX 10782).
+fn require_entity_type_in_txn(
+    vault: &oneiron::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    require_entity_type_lookup(
+        vault.get_entity_type_in_txn(txn, id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
 fn require_entity_type_lookup(
     lookup: oneiron::Result<Option<u8>>,
     id: &oneiron::EntityId,
