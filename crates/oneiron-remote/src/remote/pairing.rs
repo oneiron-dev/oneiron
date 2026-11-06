@@ -61,6 +61,27 @@ pub(super) fn credential_string(slip_token: &str, key: &SigningKey) -> Option<St
         .map(|slip| format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())))
 }
 
+/// Keeps the app's existing connection key while adopting a separately issued slip.
+///
+/// This formats a credential; it neither issues nor verifies a slip or grant.
+/// The caller must receive the new slip through its own channel. The server
+/// still checks its signature, binding key, holder and current grant on use.
+pub fn replace_paired_slip(credential: &str, slip_token: &str) -> Result<String, MemoryError> {
+    let (_, key) = parse_credential(credential)?;
+    let key = key.ok_or_else(|| {
+        bad_request(
+            "the key is not a paired credential",
+            &["Pass the app's paired credential so its connection key is retained."],
+        )
+    })?;
+    credential_string(slip_token, &key).ok_or_else(|| {
+        bad_request(
+            "the replacement is not a slip token",
+            &["Pass the slip token issued for this app's binding key."],
+        )
+    })
+}
+
 /// The redeem route's success body.
 #[derive(serde::Deserialize)]
 struct Paired {

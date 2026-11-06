@@ -84,6 +84,13 @@ The response has `token`, `principal_ref`, `grant_ref` and `expires_at`. Treat
 `token` as a credential and give it only to the app whose key it binds. Use
 it with the normal holder proof; possession of the token alone is not proof.
 
+A Rust app can use `oneiron_remote::replace_paired_slip(&credential, &token)`
+to keep its own existing connection key while adopting this separately issued
+slip. The returned value is again one private `v2.cred.` credential. This only
+formats the credential: it issues no token or grant, reads no authority from
+the token and does not widen the bootstrap. The normal server checks still
+verify the new slip's signature, holder, binding key and exact live grant.
+
 The native `Vault::mint_artifact_backend_slip` checks the owner and host issuer,
 then selects exactly that existing live owner-agent Access grant and its native
 app principal in the same writer that signs and logs the slip. Its signed
@@ -132,6 +139,19 @@ it on disk. The direct-HTTP `OneironClient::pair` and `pair_pinned` paths use th
 same preparation and reply validation; the prepared value is for callers that
 provide their own transport. It does not turn the facade client into the guest's
 action transport or supply persistence across backend sessions.
+
+After adopting the app's separately issued grant slip, use
+`oneiron_remote::prepare_app_action(&credential, verb, &action_body)` to prepare
+an existing `InProcessRequest` for the native Fetch relay. Its method, relative
+path, credential-bearing headers and body belong only to that relay. The body
+is the original action JSON: `args`, `idempotencyKey`, and optional `liveRun`,
+not a facade verb input. The caller chooses its idempotency key; this helper
+adds no `Idempotency-Key` header or header cache. Prepare a fresh request for
+each send, including a retry with the same body idempotency key, so the native
+holder proof gets a fresh nonce. This function reuses the ordinary credential
+header builder and JSON encoding. It sends nothing, installs no credential,
+and changes no staged-app, grant, scope or dispatch check. The app handles the
+Fetch response through its own transport.
 
 This is the identity bootstrap and owner-grant join for FIX1116 / OF-356, not backend deployment.
 It starts no process, changes no publication pointer or audience, and exposes
