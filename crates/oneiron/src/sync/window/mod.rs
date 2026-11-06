@@ -56,8 +56,8 @@ pub use self::device_only::{
     raw_update_verdict_for, selector_update_verdict_for_peer,
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
-pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
+pub(crate) use self::egress::{export_history_free_window_snapshot, persisted_window_snapshot};
 pub(in crate::sync) use self::egress::{
     export_scrubbed_window_snapshot, withdrawn_delete_carriers,
 };

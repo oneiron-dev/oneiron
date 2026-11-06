@@ -1,13 +1,12 @@
 //! What one bundle relay moved ([`SealedBundleRelay`]), with what the
 //! generation it took or published leaves for a kit restore (FIX-LIST 11944):
 //! the worlds whose capsule this machine's upload could not seal fresh (FIX
-//! 4497), the worlds a kit restore of that generation still awaits a reader
-//! for (FIX 4496), as the CLI's kit restore names them, and the sections its
-//! upload carries unchanged because they did not merge here (FIX 19525).
+//! 4497), and the worlds a kit restore of that generation still awaits a
+//! reader for (FIX 4496), as the CLI's kit restore names them.
 
 use crate::authority::Destination;
 use crate::sync::residence::{SealedBundleTake, sealed_bundle_awaiting_reader};
-use crate::world_keys::{SealedBundleGeneration, SealedVaultBundle, UnmergedSection};
+use crate::world_keys::{SealedBundleGeneration, SealedVaultBundle};
 use crate::{EntityId, Vault};
 
 /// What one bundle relay moved.
@@ -23,13 +22,6 @@ pub struct SealedBundleRelay {
     /// incomplete (FIX 4497): the latest generation's capsule rides on
     /// unchanged, or none. Empty when nothing was published.
     pub incomplete_authority: Vec<EntityId>,
-    /// Each section of the newest generation that this machine may read and
-    /// that the upload it last assembled carries unchanged, because it did not
-    /// open, decode or merge here (FIX 19525): the erased-actor cleanup did not
-    /// run on it, and the owner repairs it. Set as soon as an upload is
-    /// assembled, so one whose commit is still pending names them too; empty
-    /// when no upload was assembled.
-    pub unmerged_sections: Vec<UnmergedSection>,
     /// The worlds whose authority capsule the generation this relay took or
     /// published last files sealed to no recovery root pinned here now (FIX
     /// 4496): a kit restore of it restores each world's keys only once a
