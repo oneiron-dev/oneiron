@@ -13,12 +13,18 @@
 //!   that is not a whole row filed under its own key, at a snapshot's root,
 //!   in its latest state and in every retained operation.
 //! - Reverse rematerialization writes each window's rows from this vault's
-//!   state, and a door that changed one mirrors it into the live windows
-//!   after its commit. Forward rematerialization and Observer B merge each
-//!   carried row into this vault's.
+//!   state, never over a carried arming that comes later in its
+//!   registration's intent order nor over a decided wake, and a door that
+//!   changed one mirrors it into the live windows after its commit. Forward
+//!   rematerialization and Observer B merge each carried row into this
+//!   vault's, so a replacement's later intent and decided wakes land here
+//!   though no import delta names them.
 //! - A row naming an actor this vault erased leaves the window at egress,
-//!   pinned history-free first; a wake row this vault admitted leaves it;
-//!   an arming a disarm here ended leaves a live window.
+//!   pinned history-free first; a wake this vault admitted is written as
+//!   decided (`Admitted`), which clears the machine that recorded it; an
+//!   arming a later intent here ended leaves a live window.
+
+use std::collections::BTreeMap;
 
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -28,7 +34,7 @@ use super::checkpoint_payload::{Placement, SyncUnclassified};
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
-use crate::dreamer_runner::turn_program_replica::{self as replica, RowMerge};
+use crate::dreamer_runner::turn_program_replica::{self as replica, RowMerge, RowPlacement};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::checkpoint_payload::rows::OwnerRef;
@@ -38,9 +44,6 @@ pub(crate) const TURN_PROGRAM_ARMS_MAP: &str = "turn_program_arms";
 
 /// The base window root map that carries the wakes riding to the home.
 pub(crate) const TURN_PROGRAM_WAKES_MAP: &str = "turn_program_wakes";
-
-/// A row of either map in a checkpoint: it names its actor in its value.
-const NAMES_ACTOR: &str = "a turn program row names its actor";
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("turn program carrier refused: {reason}"))
@@ -154,7 +157,9 @@ fn write_rows(map: &LoroMap, rows: &[(String, Vec<u8>)]) -> Result<bool> {
 }
 
 /// Writes into `doc`, base window `key`'s, the arming rows this vault holds
-/// for its month, and drops each arming row a disarm here ended. Returns
+/// for its month, except where the window carries a row that comes no
+/// earlier in that registration's intent order (the forward merge takes it),
+/// and drops each carried arming row a later intent here ended. Returns
 /// whether it wrote; the caller commits.
 pub(crate) fn mirror_turn_program_armings(
     vault: &Vault,
@@ -164,17 +169,29 @@ pub(crate) fn mirror_turn_program_armings(
     if key.world().is_some() {
         return Ok(false);
     }
+    let carried: BTreeMap<String, Vec<u8>> = if holds_map(doc, TURN_PROGRAM_ARMS_MAP) {
+        rows_of(&doc.get_map(TURN_PROGRAM_ARMS_MAP))
+            .into_iter()
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
     let (rows, ended) = {
         let rtxn = vault.store.env.read_txn()?;
-        let rows = replica::month_arming_rows_in_txn(vault, &rtxn, key)?;
+        let rows: Vec<(String, Vec<u8>)> = replica::month_arming_rows_in_txn(vault, &rtxn, key)?
+            .into_iter()
+            .filter(|(map_key, ours)| {
+                carried
+                    .get(map_key)
+                    .is_none_or(|carried| !replica::arming_row_outranks(carried, ours))
+            })
+            .collect();
         let mut ended = Vec::new();
-        if holds_map(doc, TURN_PROGRAM_ARMS_MAP) {
-            for (map_key, bytes) in rows_of(&doc.get_map(TURN_PROGRAM_ARMS_MAP)) {
-                if replica::arming_row_ended_in_txn(vault, &rtxn, &bytes)?
-                    && !rows.iter().any(|(written, _)| *written == map_key)
-                {
-                    ended.push(map_key);
-                }
+        for (map_key, bytes) in &carried {
+            if !rows.iter().any(|(written, _)| written == map_key)
+                && replica::arming_row_outranked_here_in_txn(vault, &rtxn, bytes)?
+            {
+                ended.push(map_key.clone());
             }
         }
         (rows, ended)
@@ -192,8 +209,9 @@ pub(crate) fn mirror_turn_program_armings(
 }
 
 /// Writes into `doc`, base window `key`'s, the wake rows this vault owes for
-/// TURN `turn` that ride to the home, and drops each wake row of the turn
-/// this vault admitted. Returns whether it wrote; the caller commits.
+/// TURN `turn` that ride to the home, except over a carried row the home
+/// decided, and writes as decided each carried wake of the turn this vault
+/// admitted. Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_turn_program_wakes(
     vault: &Vault,
     doc: &LoroDoc,
@@ -204,31 +222,36 @@ pub(crate) fn mirror_turn_program_wakes(
         return Ok(false);
     }
     let prefix = turn.to_hex();
-    let (rows, admitted) = {
+    let carried: BTreeMap<String, Vec<u8>> = if holds_map(doc, TURN_PROGRAM_WAKES_MAP) {
+        rows_of(&doc.get_map(TURN_PROGRAM_WAKES_MAP))
+            .into_iter()
+            .filter(|(map_key, _)| map_key.starts_with(&prefix))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let rows = {
         let rtxn = vault.store.env.read_txn()?;
-        let rows = replica::turn_wake_rows_in_txn(vault, &rtxn, turn)?;
-        let mut admitted = Vec::new();
-        if holds_map(doc, TURN_PROGRAM_WAKES_MAP) {
-            for (map_key, bytes) in rows_of(&doc.get_map(TURN_PROGRAM_WAKES_MAP)) {
-                if map_key.starts_with(&prefix)
-                    && replica::wake_row_admitted_in_txn(vault, &rtxn, &bytes)?
-                {
-                    admitted.push(map_key);
-                }
+        let mut rows: Vec<(String, Vec<u8>)> = replica::turn_wake_rows_in_txn(vault, &rtxn, turn)?
+            .into_iter()
+            .filter(|(map_key, _)| {
+                carried
+                    .get(map_key)
+                    .is_none_or(|carried| !replica::wake_row_decided(carried))
+            })
+            .collect();
+        for (map_key, bytes) in &carried {
+            if let Some(decided) = replica::admitted_row_in_txn(vault, &rtxn, bytes)? {
+                rows.retain(|(written, _)| written != map_key);
+                rows.push((map_key.clone(), decided));
             }
         }
-        (rows, admitted)
+        rows
     };
-    if rows.is_empty() && admitted.is_empty() {
+    if rows.is_empty() {
         return Ok(false);
     }
-    let map = doc.get_map(TURN_PROGRAM_WAKES_MAP);
-    let mut wrote = write_rows(&map, &rows)?;
-    for map_key in &admitted {
-        map_delete(&map, map_key)?;
-        wrote = true;
-    }
-    Ok(wrote)
+    write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)
 }
 
 /// Merges every row window `key`'s document holds into this vault's, as a
@@ -342,7 +365,7 @@ fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>
 }
 
 /// Deletes from `doc` each row of either map naming an actor this vault
-/// erased, and each wake row this vault admitted. A live doc keeps the old
+/// erased, and writes as decided each wake row this vault admitted. A live doc keeps the old
 /// rows in its history, so `pin` names the window pinned history-free before
 /// an erased actor's row goes; the sweep, whose shallow cut drops that
 /// history, passes `None`. Returns whether a row went, committed.
@@ -357,6 +380,7 @@ pub(crate) fn scrub_turn_programs(
         return Ok(false);
     }
     let mut doomed: Vec<(&'static str, String)> = Vec::new();
+    let mut decided: Vec<(String, Vec<u8>)> = Vec::new();
     let mut erased_any = false;
     {
         let rtxn = vault.store.env.read_txn()?;
@@ -379,13 +403,13 @@ pub(crate) fn scrub_turn_programs(
                 if erased(replica::wake_row_actor(&bytes))? {
                     erased_any = true;
                     doomed.push((TURN_PROGRAM_WAKES_MAP, map_key));
-                } else if replica::wake_row_admitted_in_txn(vault, &rtxn, &bytes)? {
-                    doomed.push((TURN_PROGRAM_WAKES_MAP, map_key));
+                } else if let Some(row) = replica::admitted_row_in_txn(vault, &rtxn, &bytes)? {
+                    decided.push((map_key, row));
                 }
             }
         }
     }
-    if doomed.is_empty() {
+    if doomed.is_empty() && decided.is_empty() {
         return Ok(false);
     }
     // Pin before an erased actor's row leaves the live map, as the egress
@@ -396,24 +420,33 @@ pub(crate) fn scrub_turn_programs(
     for (root, map_key) in &doomed {
         map_delete(&doc.get_map(*root), map_key)?;
     }
+    if !decided.is_empty() {
+        write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &decided)?;
+    }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }
 
-/// Where a row of either map goes in a checkpoint (KS7-3a): it names its
-/// actor in its value, so it stays whole with that actor, named; a row that
-/// does not decode is undecodable.
+/// Where a row of either map goes in a checkpoint (KS7-3a): an arming or
+/// owed wake in its actor's compartment, held while the turn or
+/// conversation it names is, so the actor's erase retires it; a decided
+/// wake is ids alone under its turn. A row that does not decode is
+/// undecodable.
 pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
-    let actor = if root == TURN_PROGRAM_ARMS_MAP {
-        replica::arming_row_actor(value)
+    let placement = if root == TURN_PROGRAM_ARMS_MAP {
+        replica::arming_row_placement(value)
     } else {
-        replica::wake_row_actor(value)
+        replica::wake_row_placement(value)
     };
-    match actor {
-        Some(actor) => Placement::unclassified(
-            Some(OwnerRef::entity(&actor)),
-            SyncUnclassified::ActorSplit(NAMES_ACTOR),
-        ),
+    let entities = |ids: Vec<EntityId>| ids.iter().map(OwnerRef::entity).collect::<Vec<_>>();
+    match placement {
+        Some(RowPlacement::Owned {
+            owner,
+            dependencies,
+        }) => Placement::owned(OwnerRef::entity(&owner), entities(dependencies)),
+        Some(RowPlacement::Structure { dependencies }) => Placement::Structure {
+            dependencies: entities(dependencies),
+        },
         None => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
 }
