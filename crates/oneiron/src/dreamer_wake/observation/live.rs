@@ -224,6 +224,15 @@ impl<'a> StepCalls<'a> {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
             stated_reset: None,
+            _native_meter: self.origin.map(|mut origin| {
+                origin.ordinal = ordinal;
+                NativeMeterCapture {
+                    vault: self.vault,
+                    origin,
+                    guard: guard.clone(),
+                    lease: lease.clone(),
+                }
+            }),
         }
     }
 
@@ -340,6 +349,39 @@ pub(crate) struct ObservedCall<'a> {
     bound: Option<BoundCall>,
     /// The reset the provider limit that refused the call stated.
     stated_reset: Option<u64>,
+    _native_meter: Option<NativeMeterCapture<'a>>,
+}
+
+/// Lives through the original lease's settlement, even without a wake observer.
+/// It keeps the issuing guard and opaque token, not just their printable id.
+struct NativeMeterCapture<'a> {
+    vault: &'a Vault,
+    origin: crate::dreamer_runner::AdmittedCallId,
+    guard: BudgetGuard,
+    lease: BudgetLease,
+}
+
+impl Drop for NativeMeterCapture<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let snapshot = self.guard.accounting_snapshot(&[&self.lease]);
+        let Some(range) = snapshot.meter_ranges[0] else {
+            return;
+        };
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::record_native_call_meter_in_txn(
+                self.vault,
+                wtxn,
+                self.origin,
+                self.lease.id(),
+                range,
+            )
+        }) {
+            skipped(&error, "native call settled meter");
+        }
+    }
 }
 
 struct BoundCall {
