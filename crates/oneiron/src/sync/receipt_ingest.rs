@@ -63,6 +63,7 @@ pub(crate) fn ingest_in_txn(
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                Some(header.row_version),
                 &blob[ENTITY_METADATA_HEADER_LEN..],
             )
             .apply(wtxn)?;

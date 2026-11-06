@@ -58,7 +58,7 @@ criterion = { version = "0.5", default-features = false, features = [
 ] }
 # Same requirement `crates/oneiron/Cargo.toml` states for the `sync` feature,
 # so the bench resolves to exactly the `loro` the engine is built against.
-loro = "1.10"
+loro = { workspace = true }
 parking_lot = "0.12"
 
 [[bench]]
