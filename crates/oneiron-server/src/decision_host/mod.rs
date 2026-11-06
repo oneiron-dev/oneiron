@@ -68,6 +68,7 @@ use crate::server::SyncServer;
 
 mod adapters;
 mod attach;
+mod captured;
 mod claim_merge;
 mod doors;
 mod native_capture;
