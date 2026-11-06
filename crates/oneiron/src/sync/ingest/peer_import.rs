@@ -46,9 +46,9 @@ const PEER_JUDGED_KINDS: [u8; 6] = [
     ENTITY_TYPE_AGENT_DEF,
     ENTITY_TYPE_EMBEDDING_SETUP,
     ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT,
-    ENTITY_TYPE_SKILL,
 ];
 
 /// The latest peer carrier's wire digest and, for ASSET, logical digest.
