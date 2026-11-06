@@ -281,10 +281,13 @@ impl Vault {
 /// Removes an erased export's accepted copy, if any. Registered in
 /// `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(
-    store: &crate::store::Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    COPIES.delete(store, txn, id)?;
+    let place = format!("side:{}", COPIES.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &COPIES.key_bytes(id))?;
+    crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
+    COPIES.delete(write.store, txn, id)?;
     Ok(())
 }

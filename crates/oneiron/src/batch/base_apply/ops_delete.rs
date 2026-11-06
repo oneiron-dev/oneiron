@@ -29,7 +29,12 @@ pub(super) fn apply_delete_arm(
     // a batch-deleted world takes its keys with it (fix 7). There
     // is no soft batch delete; a soft delete keeps the keys.
     crate::world_keys::destroy_world_keys_in_txn(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         id,
         crate::key_material::WorldKeyDestroyCause::BatchDelete,
@@ -61,7 +66,16 @@ pub(super) fn apply_delete_arm(
         )?;
     }
     let (existed, had_vector, deleted_graph_state, neighbors) =
-        deindex_entity_with_machine_history(store, wtxn, &id)?;
+        deindex_entity_with_machine_history(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+        )?;
     claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
     if state.persist_gate_pending_consent {
         store.let_go_pending_gate_consent_in_txn(wtxn, &id, state.mutation_recorded_at)?;
