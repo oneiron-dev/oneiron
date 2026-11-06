@@ -39,6 +39,23 @@ impl DispatchProjection {
     }
 }
 
+/// One physical attempt value the authoritative depth fold actually read.
+/// A hash or an absent value records provenance only, never native permission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TeamDepthParentRead {
+    attempt: AttemptId,
+    value_hash: Option<[u8; 32]>,
+}
+
+impl TeamDepthParentRead {
+    pub(crate) fn observed(attempt: AttemptId, value: Option<&[u8]>) -> Self {
+        Self {
+            attempt,
+            value_hash: value.map(|value| *blake3::hash(value).as_bytes()),
+        }
+    }
+}
+
 /// The native pointer and complete immutable input binding, never a read grant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TeamAttemptSource {
@@ -47,6 +64,7 @@ pub(crate) struct TeamAttemptSource {
     native_attempt: AttemptId,
     birth_hash: [u8; 32],
     type_source: Option<CapturedTeamType>,
+    depth_parent_reads: Vec<TeamDepthParentRead>,
 }
 
 impl TeamAttemptSource {
@@ -157,10 +175,18 @@ impl TeamAttemptCapture {
         parent: &mut heed::RwTxn<'_>,
         status: &AgentDispatchStatus,
         type_selection: Option<&SelectedTeamType>,
+        depth_parent_reads: &[TeamDepthParentRead],
         now: u64,
     ) -> Option<AttemptRecord> {
-        self.capture(vault, parent, &status.attempt, type_selection, now)
-            .ok()
+        self.capture(
+            vault,
+            parent,
+            &status.attempt,
+            type_selection,
+            depth_parent_reads,
+            now,
+        )
+        .ok()
     }
 
     fn capture(
@@ -169,6 +195,7 @@ impl TeamAttemptCapture {
         parent: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
         type_selection: Option<&SelectedTeamType>,
+        depth_parent_reads: &[TeamDepthParentRead],
         now: u64,
     ) -> Result<AttemptRecord> {
         let projection = DispatchProjection {
@@ -205,6 +232,7 @@ impl TeamAttemptCapture {
             native_attempt: record.id,
             birth_hash: birth_hash(record)?,
             type_source,
+            depth_parent_reads: depth_parent_reads.to_vec(),
         };
         let admitted =
             reader.read_projected_in_txn(&child, &[PointRead::id(claim)], None, |_, rows| {
