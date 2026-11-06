@@ -217,8 +217,7 @@ impl FileSpool {
             }
         })?;
         if *hasher.finalize().as_bytes() != digest {
-            self.discard_staged(staged)?;
-            return Err(Error::CorruptedIndex("attached file digest"));
+            return Err(self.discard_failed(staged, Error::CorruptedIndex("attached file digest")));
         }
         let named = crate::entity_id::bytes_to_hex_lower(&digest);
         self.commit_staged(named.clone(), staged)?;
@@ -244,11 +243,19 @@ impl FileSpool {
         let staged = StagedFile { at, bytes };
         match copied {
             Ok(end) if end == at + bytes => Ok(staged),
-            failed => {
-                self.discard_staged(staged)?;
-                Err(failed.err().unwrap_or_else(spool_failed))
-            }
+            failed => Err(self.discard_failed(staged, failed.err().unwrap_or_else(spool_failed))),
         }
+    }
+
+    /// Cuts a failed stage's body off and answers `failure`, the stage's own
+    /// error (FIX 7240): a cut that also fails (an ENOSPC on the buffered
+    /// flush) is logged, never reported in its place. The spool's end stays
+    /// where the body started either way, so the next file writes there.
+    fn discard_failed(&mut self, staged: StagedFile, failure: Error) -> Error {
+        if let Err(error) = self.discard_staged(staged) {
+            tracing::warn!(?error, "export spool could not cut off a failed body");
+        }
+        failure
     }
 
     /// Hands a staged body to `scan` as a reader over exactly its bytes, read
