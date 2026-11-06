@@ -16,6 +16,9 @@ use crate::session_overlay::RouteTarget;
 use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
+mod step_digests;
+pub(super) use self::step_digests::{StepEnd, StepResultDigests};
+
 pub(super) struct LoadedReplayRecord {
     pub(super) record: CodeRunReplayRecord,
     pub(super) generation: Option<CodeRunReplayGeneration>,
@@ -159,6 +162,19 @@ pub(super) fn record_config_marker(
     record_text_output(storage, record, CONFIG_OUTPUT_PATH.to_owned(), &text)
 }
 
+pub(super) fn executor_config_marker_bytes(
+    storage: &ExecutorStorage<'_>,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<Vec<u8>> {
+    Ok(serde_json::to_vec(&ExecutorConfigMarker {
+        schema_version: REPLAY_METADATA_SCHEMA_VERSION,
+        config_hash: executor_config_hash_hex(storage, config, continuation),
+        prompt_fingerprint: prompt_fingerprint.to_owned(),
+    })?)
+}
+
 /// Verifies run identity and reports whether the deployed prompt drifted.
 ///
 /// Identity mismatch is always a refusal, before anything is read or written.
@@ -175,6 +191,48 @@ pub(super) fn validate_executor_config_marker(
     let marker = load_config_marker(storage, record)?.ok_or_else(|| {
         Error::InvalidConfig("engine executor replay missing config marker".to_owned())
     })?;
+    validate_config_marker(storage, &marker, config, prompt_fingerprint, continuation)
+}
+
+/// Validates a canonical marker in the caller's snapshot and custody guard.
+pub(super) fn validate_executor_config_marker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<PromptBinding> {
+    let output = record
+        .outputs
+        .iter()
+        .find(|output| output.path == CONFIG_OUTPUT_PATH)
+        .ok_or_else(|| {
+            Error::InvalidConfig("engine executor replay missing config marker".to_owned())
+        })?;
+    let _pin = vault.pin_result_body(output.raw_blake3);
+    let raw = vault
+        .code_run_result_body_in_txn(txn, output)?
+        .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+    let text = super::store::decode_text_output(raw)?;
+    let marker: ExecutorConfigMarker = serde_json::from_str(&text)
+        .map_err(|_| Error::CorruptedIndex("executor replay config marker"))?;
+    validate_config_marker(
+        &ExecutorStorage::Canonical(vault),
+        &marker,
+        config,
+        prompt_fingerprint,
+        continuation,
+    )
+}
+
+fn validate_config_marker(
+    storage: &ExecutorStorage<'_>,
+    marker: &ExecutorConfigMarker,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<PromptBinding> {
     if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
         return Err(Error::InvalidConfig(
             "engine executor replay config marker schema changed".to_owned(),
@@ -617,40 +675,6 @@ pub(super) fn durable_wait_reason_from_str(
         "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
         "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
         _ => Err(Error::CorruptedIndex("executor replay durable wait reason").into()),
-    }
-}
-
-/// Where a step's calls end and what its guest read beside them, which its
-/// checkpoint binds (FIX 6354, FIX 6351): the run-global bridge position
-/// the step's calls end at, exclusive, and the BLAKE3 of the step's replay
-/// context as captured.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct StepEnd {
-    pub(super) bridge_end: u64,
-    pub(super) context: [u8; 32],
-}
-
-/// What a step's checkpoint hashes of its result: each body's BLAKE3
-/// digest, which its stored manifest already carries, never the body.
-pub(super) struct StepResultDigests {
-    pub(super) observation: [u8; 32],
-    pub(super) done: bool,
-    /// Each file the step wrote, by the guest path it named.
-    pub(super) outputs: Vec<(String, [u8; 32])>,
-    /// Each result name the step bound, with the handle it names, in the
-    /// order the step bound them.
-    pub(super) bindings: Vec<(String, String)>,
-}
-
-impl StepResultDigests {
-    /// The digests of a result held whole in memory.
-    pub(super) fn of(observation: &str, done: bool) -> Self {
-        Self {
-            observation: *blake3::hash(observation.as_bytes()).as_bytes(),
-            done,
-            outputs: Vec::new(),
-            bindings: Vec::new(),
-        }
     }
 }
 
