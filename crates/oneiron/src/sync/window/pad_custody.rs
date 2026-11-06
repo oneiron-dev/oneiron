@@ -110,6 +110,7 @@ impl PreparedWindowPads {
             payload: self.payload.clone(),
             refs: self.refs.clone(),
             sidecar: self.sidecar.clone(),
+            home_claim_copies: Vec::new(),
         }
     }
 
