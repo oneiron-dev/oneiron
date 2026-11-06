@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use heed::RwTxn;
 
-use super::retained::{PreparedHomeClaimResponse, RetainedHomeClaimResponseState};
+use super::retained::RetainedHomeClaimState;
+use super::retained_copy::PreparedHomeClaimCopy;
 use crate::sync::types::WindowKey;
 use crate::{EntityId, Result, Vault};
 
@@ -18,7 +19,7 @@ thread_local! {
 struct CopyScope {
     vault: PathBuf,
     window: String,
-    copies: Vec<Arc<PreparedHomeClaimResponse>>,
+    copies: Vec<Arc<PreparedHomeClaimCopy>>,
     attempts: Vec<HomeClaimCopyAttempt>,
 }
 
@@ -27,7 +28,7 @@ struct CopyScope {
 /// neither this report nor its errors undo Loro or custody-journal effects.
 pub(crate) struct HomeClaimCopyAttempt {
     pub(crate) entity_id: EntityId,
-    pub(crate) result: Result<RetainedHomeClaimResponseState>,
+    pub(crate) result: Result<RetainedHomeClaimState>,
     /// The actual outer writer's returned result, not proof of rollback on Err.
     pub(crate) writer_result: Option<std::result::Result<(), crate::error::ErrorKind>>,
 }
@@ -88,7 +89,7 @@ impl Drop for Restore {
 pub(crate) fn with_copies<T>(
     vault: &Vault,
     window: &WindowKey,
-    copies: &[Arc<PreparedHomeClaimResponse>],
+    copies: &[Arc<PreparedHomeClaimCopy>],
     land: impl FnOnce() -> T,
 ) -> (T, Vec<HomeClaimCopyAttempt>) {
     let scope = (!copies.is_empty()).then(|| CopyScope {
@@ -111,7 +112,7 @@ pub(crate) fn with_copies<T>(
 pub(crate) fn with_home_claim_copies<T>(
     vault: &Vault,
     key: &WindowKey,
-    copies: &[Arc<PreparedHomeClaimResponse>],
+    copies: &[Arc<PreparedHomeClaimCopy>],
     land: impl FnOnce() -> T,
 ) -> T {
     let (landed, attempts) = with_copies(vault, key, copies, land);
@@ -133,7 +134,7 @@ pub(crate) fn copies_for(
     vault: &Vault,
     window: &str,
     id: &EntityId,
-) -> Vec<Arc<PreparedHomeClaimResponse>> {
+) -> Vec<Arc<PreparedHomeClaimCopy>> {
     COPIES.with(|slot| {
         let borrowed = slot.borrow();
         let Some(scope) = borrowed

@@ -50,7 +50,7 @@ impl PreparedHomeClaimResponse {
         &self,
         vault: &Vault,
         txn: &mut RwTxn<'_>,
-    ) -> Result<RetainedHomeClaimResponseState> {
+    ) -> Result<RetainedHomeClaimState> {
         self.received
             .retain_response_in_txn(vault, txn, self.instance.as_ref())
     }
@@ -58,7 +58,7 @@ impl PreparedHomeClaimResponse {
 
 /// A source-only storage result. Every non-stored case keeps the native job;
 /// none refuses or drops the canonical source import.
-pub(crate) enum RetainedHomeClaimResponseState {
+pub(crate) enum RetainedHomeClaimState {
     SourceChanged,
     OtherSource,
     UnboundResponse,
@@ -87,6 +87,26 @@ fn step_claim_carriage(store: &Store, id: &EntityId, source: &[u8]) -> Option<Re
 }
 
 impl ReceivedHomeClaimVector {
+    /// Selects a native custody form without changing the raw delivery.
+    /// Other CLAIM families are not treated as actor-free response copies.
+    pub(crate) fn prepare_retained_copy(
+        self,
+        vault: &Vault,
+    ) -> Result<Option<super::retained_copy::PreparedHomeClaimCopy>> {
+        use super::retained_copy::PreparedHomeClaimCopy;
+
+        if step_claim_carriage(&vault.store, &self.vector.entity_id, &self.vector.source).is_some()
+        {
+            return self
+                .prepare_response_copy(vault)
+                .map(PreparedHomeClaimCopy::Response)
+                .map(Some);
+        }
+        Ok(self
+            .prepare_origin_actor_copy(vault)?
+            .map(PreparedHomeClaimCopy::OriginActors))
+    }
+
     /// Prepares a copy's native lease outside the canonical writer, before
     /// any in-memory world deferral. Failure affects this derived copy only;
     /// it must never be propagated as a refusal of the canonical import.
@@ -117,24 +137,24 @@ impl ReceivedHomeClaimVector {
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         prepared: Option<&BodyInstance>,
-    ) -> Result<RetainedHomeClaimResponseState> {
+    ) -> Result<RetainedHomeClaimState> {
         let Some(facts) = self.source_facts_in_txn(vault, txn)? else {
-            return Ok(RetainedHomeClaimResponseState::SourceChanged);
+            return Ok(RetainedHomeClaimState::SourceChanged);
         };
         // Ordinary actor-bearing sources need their own native split. The
         // response instance is not a substitute for any actor's custody.
         if facts.origin_kind.is_some() {
-            return Ok(RetainedHomeClaimResponseState::OtherSource);
+            return Ok(RetainedHomeClaimState::OtherSource);
         }
         // This port implements the native StepClaim copy's shared lifetime,
         // not every CLAIM response family's ownership rules.
         if step_claim_carriage(&vault.store, &self.vector.entity_id, &self.vector.source).is_none()
         {
-            return Ok(RetainedHomeClaimResponseState::OtherSource);
+            return Ok(RetainedHomeClaimState::OtherSource);
         }
         let (binding, owners) = match facts.response {
             HomeClaimResponseSource::NotResponse => {
-                return Ok(RetainedHomeClaimResponseState::OtherSource);
+                return Ok(RetainedHomeClaimState::OtherSource);
             }
             HomeClaimResponseSource::Unbound { digest, owners } => {
                 let carrier =
@@ -152,7 +172,7 @@ impl ReceivedHomeClaimVector {
                     (binding, history)
                 } else {
                     let Some(prepared) = prepared else {
-                        return Ok(RetainedHomeClaimResponseState::UnboundResponse);
+                        return Ok(RetainedHomeClaimState::UnboundResponse);
                     };
                     pin_body_custody_in_txn(&vault.store, txn)?;
                     let binding = ResponseBinding {
@@ -189,9 +209,9 @@ impl ReceivedHomeClaimVector {
             &self.vector.entity_id,
             &copy,
         )? {
-            Ok(RetainedHomeClaimResponseState::Stored)
+            Ok(RetainedHomeClaimState::Stored)
         } else {
-            Ok(RetainedHomeClaimResponseState::NoPendingJob)
+            Ok(RetainedHomeClaimState::NoPendingJob)
         }
     }
 }

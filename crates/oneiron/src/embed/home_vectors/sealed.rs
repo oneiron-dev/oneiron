@@ -35,7 +35,7 @@ pub(crate) struct PreparedHomeClaimDelivery {
     peer: PeerMachine,
     window: String,
     payload_digest: [u8; 32],
-    copies: Vec<Arc<super::retained::PreparedHomeClaimResponse>>,
+    copies: Vec<Arc<super::retained_copy::PreparedHomeClaimCopy>>,
 }
 
 impl PreparedHomeClaimDelivery {
@@ -44,7 +44,7 @@ impl PreparedHomeClaimDelivery {
         vault: &Vault,
         peer: PeerMachine,
         delivery: &HomeClaimDelivery<'_>,
-    ) -> Vec<Arc<super::retained::PreparedHomeClaimResponse>> {
+    ) -> Vec<Arc<super::retained_copy::PreparedHomeClaimCopy>> {
         if self.vault == vault.store.env.path()
             && self.peer == peer
             && self.window == delivery.window
@@ -142,10 +142,9 @@ impl Vault {
     ) -> PreparedHomeClaimDelivery {
         let mut prepared = Vec::new();
         for received in copies {
-            let result = received.and_then(|received| {
-                received
-                    .map(|received| received.prepare_response_copy(self))
-                    .transpose()
+            let result = received.and_then(|received| match received {
+                Some(received) => received.prepare_retained_copy(self),
+                None => Ok(None),
             });
             match result {
                 Ok(Some(copy)) => prepared.push(Arc::new(copy)),

@@ -6,7 +6,7 @@ use super::base::SyncClient;
 use super::own_device::OwnDeviceImport;
 use crate::EntityId;
 pub(super) use crate::embed::home_vectors::copy_scope::with_home_claim_copies;
-use crate::embed::home_vectors::retained::PreparedHomeClaimResponse;
+use crate::embed::home_vectors::retained_copy::PreparedHomeClaimCopy;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
@@ -18,7 +18,7 @@ pub(crate) struct StagedWorldUpdate {
     pub(crate) key: WindowKey,
     pub(crate) bytes: Vec<u8>,
     pub(crate) from: crate::authority::PeerMachine,
-    pub(crate) copies: Vec<Arc<PreparedHomeClaimResponse>>,
+    pub(crate) copies: Vec<Arc<PreparedHomeClaimCopy>>,
 }
 
 impl SyncClient {
@@ -47,7 +47,7 @@ impl SyncClient {
         payload: &[u8],
         evidence: &std::collections::HashMap<EntityId, (WindowKey, Vec<u8>)>,
         own_device: Option<&OwnDeviceImport>,
-        copies: &[Arc<PreparedHomeClaimResponse>],
+        copies: &[Arc<PreparedHomeClaimCopy>],
     ) -> std::result::Result<(), TransportError> {
         let vault = Arc::clone(&self.vault);
         with_home_claim_copies(&vault, &window.key, copies, || {
