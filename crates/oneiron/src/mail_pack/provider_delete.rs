@@ -12,6 +12,11 @@
 //! writer that scrubs the copy records the rows it still deletes, and each
 //! step resumes an owed forget a failure stopped part-way, so no TURN or
 //! CONVERSATION of a forgotten message stays behind.
+//!
+//! A kept copy's claims are checked again (FIX 15414): the writer that marks
+//! it source-deleted moves its presence generation on and owes the re-check
+//! in that write ([`super::claim_recheck`]); a restore moves the generation
+//! on too, and a re-check still waiting for the old one goes moot.
 
 use serde::{Deserialize, Serialize};
 
@@ -129,7 +134,9 @@ pub(super) fn apply_provider_delete(
             current.scrub(at);
         } else {
             current.presence = MailPresence::SourceDeleted { at };
+            current.presence_generation += 1;
             current.updated_at = at;
+            super::claim_recheck::owe_in_txn(vault, txn, &key, &current, at)?;
         }
         OCCURRENCES.put(&vault.store, txn, &key, &current)?;
         let mut sync = SYNC.get(&vault.store, txn, &source)?.unwrap_or_default();
@@ -268,9 +275,10 @@ pub(super) fn update_labels(
 
 /// Brings back a message the provider took out of its trash or spam again:
 /// a kept source-deleted copy is live again, its body queued again when it
-/// landed with its headers only. A forgotten one stays forgotten: its rows
-/// are gone, and its fence keeps a listing from bringing it back. Answers
-/// whether it was brought back.
+/// landed with its headers only, its presence generation moved on and a
+/// re-check of its claims still waiting moot (FIX 15414). A forgotten one
+/// stays forgotten: its rows are gone, and its fence keeps a listing from
+/// bringing it back. Answers whether it was brought back.
 pub(super) fn restore_from_provider_trash(
     vault: &Vault,
     source: EntityId,
@@ -286,7 +294,9 @@ pub(super) fn restore_from_provider_trash(
             return Ok(false);
         }
         current.presence = MailPresence::Present;
+        current.presence_generation += 1;
         current.updated_at = at;
+        super::claim_recheck::obsolete_rechecks_in_txn(&vault.store, txn, &key, at)?;
         if current.stage == MailStage::Headers {
             BODY_QUEUE.put(
                 &vault.store,

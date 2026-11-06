@@ -289,6 +289,10 @@ pub(super) fn calendar_status_view_in(
         bodies: 0,
         bodies_waiting: 0,
         deleted_at_provider: state.deleted_at_provider,
+        claim_rechecks_pending: 0,
+        claim_rechecks_checked: 0,
+        claim_rechecks_review_needed: 0,
+        claim_rechecks_obsolete: 0,
         last_step_at: state.last_step_at,
         last_error: state.last_error,
     })

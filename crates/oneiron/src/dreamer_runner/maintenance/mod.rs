@@ -12,6 +12,8 @@ pub mod attribution_audits;
 pub mod browser_candidate;
 pub mod browser_programs;
 mod calibration_asks;
+pub mod claim_source_recheck;
+pub use claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET;
 pub mod coach;
 pub mod coach_diagnostic;
 mod coach_environment;
@@ -283,6 +285,12 @@ pub(crate) fn execute(
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
         compaction_check::COMPACTION_CHECK_FACET => return Ok(compaction_check::unlent()),
+        // A provider-deleted, kept message's claims are judged on the host's
+        // lent model (FIX 15414): the wake driver hands the re-check to the
+        // host's executor, so here it can only wait for one.
+        claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET => {
+            return Ok(claim_source_recheck::unlent());
+        }
         // An urgent digest's harm question is asked on the host's shared
         // ladder (OF-194): the wake driver hands it to the host's executor,
         // so here it can only wait for one. Its witnessed answer runs here.
