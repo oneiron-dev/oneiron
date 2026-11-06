@@ -62,6 +62,11 @@ pub struct SlipClaims {
     /// Delegation keeps it unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted_contact: Option<super::TrustedContactSlipBinding>,
+    /// The seat claim (FIX 10624): set only on a seat-child slip, which
+    /// stands only while that exact claim holds. Delegation keeps it
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_claim: Option<super::SeatClaimSlipBinding>,
 }
 
 /// The signed SlipMint payload. The credential signature is not log material.
@@ -150,7 +155,8 @@ impl SlipClaims {
             }
         }
         self.validate_support_delegation()?;
-        self.validate_trusted_contact()
+        self.validate_trusted_contact()?;
+        self.validate_seat_claim()
     }
     /// A support slip (OF-606) is one holder PERSON's own, minted with no
     /// parent, at the human or agent class, under no other grant, org or
@@ -207,6 +213,35 @@ impl SlipClaims {
         }
         Ok(())
     }
+    /// A seat-child slip (FIX 10624) is one per-claim Agent PERSON's own,
+    /// minted with no parent, at the agent class, under no other grant, org,
+    /// invitation, delegation, comm or contact naming, reusable for the run,
+    /// with bottom verbs and no channel authority. Its records name the
+    /// secrets the run may ask for; its binding names the claim.
+    fn validate_seat_claim(&self) -> Result<()> {
+        let Some(binding) = &self.seat_claim else {
+            return Ok(());
+        };
+        binding.validate()?;
+        let holder_is_person = oneiron_contracts::EntityId::from_hex(&self.holder_ref)
+            .is_ok_and(|id| id.to_hex() == self.holder_ref);
+        if !holder_is_person
+            || self.parent_id.is_some()
+            || !matches!(self.actor_class.as_deref(), Some("agent"))
+            || self.single_use
+            || self.org_ref.is_some()
+            || self.grant_ref.is_some()
+            || self.invitation_ref.is_some()
+            || self.delegation.is_some()
+            || self.comm.is_some()
+            || self.trusted_contact.is_some()
+            || !self.channels.is_empty()
+            || !self.scope.verbs.is_bottom()
+        {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
     /// Whether these claims are a full-vault owner-grade instrument, not
     /// merely `core:read`: the vault-wide comm reach (FIX 3899), the top
     /// scope, no org, record or channel bound, and reusable. `oneiron`'s
@@ -222,6 +257,7 @@ impl SlipClaims {
             && self.channels.is_empty()
             && !self.single_use
             && self.trusted_contact.is_none()
+            && self.seat_claim.is_none()
     }
     /// True when `self` is a valid narrowing of `parent`. Public so `oneiron`'s slip
     /// verifier (its one caller outside this crate) checks caveat chains across the line.
@@ -241,6 +277,7 @@ impl SlipClaims {
             && self.share_ref == parent.share_ref
             && self.delegation == parent.delegation
             && self.trusted_contact == parent.trusted_contact
+            && self.seat_claim == parent.seat_claim
             // An absent reach is the vault's, so a child that names none
             // never erases a narrower parent (FIX 3899).
             && super::effective_slip_comm(self.comm) <= super::effective_slip_comm(parent.comm)
