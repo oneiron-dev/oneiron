@@ -165,8 +165,8 @@ impl RunOf {
 }
 
 /// A claimed run: its leased attempt and input, the agent it runs as, what
-/// its task says, the MESSAGE thread its failure asks on, and the objectives
-/// it confesses against (OF-544).
+/// its task says, its failure's Q&A or host-correlation reference, and the
+/// objectives it confesses against (OF-544).
 struct Claimed {
     status: AgentDispatchStatus,
     agent: EntityId,
