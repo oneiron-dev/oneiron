@@ -16,7 +16,9 @@
 //! again: a wait with an admitted origin, sealed and not consumed, whose
 //! reply was delivered, and a run record still parked on that exact wait at
 //! the generation its seal names. Nothing is picked by a prompt, a label or
-//! an answer. A body that is erased or missing authorizes nothing.
+//! an answer. The task is the run's own caller-task body, which its first
+//! entry kept from the admitted request: an MCP run captures no step
+//! capsule. A body that is erased or missing authorizes nothing.
 //!
 //! An automatic re-entry its host refused for good keeps that refusal on the
 //! wait, written once ([`Vault::refuse_code_consent_run_resume`]), so no
@@ -28,11 +30,10 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::authority::InvocationSlipBinding;
 use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, StepStartBody, WaitDeliveries,
-    WaitKey, capsule_start_body, step_replay_capsules_in_txn,
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, WaitDeliveries, WaitKey,
 };
 use crate::edge::EdgeActorClass;
-use crate::engine_executor::{EngineExecutorError, parked_wait_now};
+use crate::engine_executor::{EngineExecutorError, caller_task_in_txn, parked_wait_now};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::runtime_hooks::verb::{
@@ -214,7 +215,8 @@ pub struct CodeConsentParkedRun {
     /// The run's actor and class, as the wait's binding keeps them.
     pub actor: EntityId,
     pub actor_class: EdgeActorClass,
-    /// The task the run carries out, as its own step capsule kept it.
+    /// The task the run carries out, as the run's own caller-task body
+    /// keeps it.
     pub task: String,
 }
 
@@ -225,12 +227,13 @@ impl Vault {
     /// not consumed and carries no refusal of an automatic re-entry, and a
     /// reply was delivered to it. The run's record is parked on that exact
     /// wait, at the generation the seal names, and the seal verifies. The
-    /// task is the one the run's own step capsule kept, read through
-    /// `capsule_start_body`; a run whose capsule holds no start body, as a
-    /// run no attempt lease captured, has none and is not listed. Readiness
-    /// is not authority, and the host's executor config and interpreter
-    /// checks still run on entry. A row or record that does not read lists
-    /// nothing.
+    /// task is the one the run's first entry kept as its own caller-task
+    /// body, from the admitted request's task its host declared the
+    /// caller's own; it is read through the run's own held occurrence, so a
+    /// run whose body is erased, withheld or missing is not listed. On entry
+    /// that task must still be the config marker's, and the host's executor
+    /// config and interpreter checks still run: readiness is not authority.
+    /// A row or record that does not read lists nothing.
     ///
     /// # Errors
     ///
@@ -350,26 +353,14 @@ fn parked_run(vault: &Vault, row: CodeConsentWaitRow) -> Result<Option<CodeConse
     }))
 }
 
-/// The task `record`'s run carries out, as its newest step capsule's start
-/// body keeps it. `None` when the run has no capsule, or the newest one's
-/// start body is erased, released, withheld, not its digest or does not
-/// decode: an older capsule never stands in for it.
+/// The task `record`'s run carries out, as the run's own caller-task body
+/// keeps it (FIX 4606), read in a snapshot of its own under the custody
+/// guard. `None` when the run keeps none, or the body is erased, withheld,
+/// drifted or does not decode.
 fn parked_run_task(vault: &Vault, record: &CodeRunReplayRecord) -> Result<Option<String>> {
+    let _custody = vault.store.gate_custody_read_guard()?;
     let txn = vault.store.env.read_txn()?;
-    let capsules = step_replay_capsules_in_txn(vault, &txn, record.run_id)?;
-    let Some(capsule) = capsules
-        .iter()
-        .rev()
-        .find(|capsule| capsule.run == record.run_id && capsule.start.is_some())
-    else {
-        return Ok(None);
-    };
-    let Some(bytes) = capsule_start_body(vault, &txn, capsule)? else {
-        return Ok(None);
-    };
-    Ok(rmp_serde::from_slice::<StepStartBody>(&bytes)
-        .ok()
-        .map(|body| body.task))
+    caller_task_in_txn(vault, &txn, record)
 }
 
 /// An executor read's error as the engine's own.
