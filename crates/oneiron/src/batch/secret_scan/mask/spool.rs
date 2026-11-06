@@ -22,15 +22,24 @@
 //! A hit the plan cannot place (a recovery phrase, a key its copy still
 //! shows) mints nothing and is [`SpoolAdmission::Unplaceable`]: the writer
 //! names what stands in its place (ruling 4).
+//!
+//! The base vault decides every admission ([`AdmissionCustody`], FIX 6647,
+//! FIX 5718 part 3), wherever the body is published. Its custody door mints
+//! only for a body published in that vault. An off-record room holds no
+//! custody of its own yet: a value base custody holds still takes its handle
+//! there, but a fresh key is not placed, and a reply that holds one is
+//! withheld until room-local custody exists.
 
 use std::sync::Arc;
 
 use heed::RwTxn;
 
 use super::super::{REASON_DETECTED, SecretScanMode, is_container, secret_scan_mode_in_txn};
-use super::side_row::{SidePart, admit_side_parts};
+use super::side_row::{SidePart, admit_decided_parts};
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
+use crate::secret_record::CustodyWrite;
+use crate::side_table::RoutedDbs;
 use crate::store::known_value_index::{KnownSweep, KnownValues};
 use crate::store::{BodyDir, BodyFacts, BodyFile, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES};
 
@@ -221,10 +230,79 @@ impl SpoolAdmission<'_> {
     }
 }
 
+/// Who decides one spool's admission and what mints the custody records it
+/// lifts (FIX 6647, FIX 5718 part 3): the base vault decides, with its
+/// switch, the values its owner kept, the values its custody holds, its live
+/// floor and its clock; its custody door mints only when the admitted body
+/// is published in that vault. A body an off-record room publishes takes no
+/// door, so a fresh key in it is not placed (see the module notes).
+#[derive(Clone, Copy)]
+pub(crate) struct AdmissionCustody<'v> {
+    base: &'v Vault,
+    mints: bool,
+}
+
+impl<'v> AdmissionCustody<'v> {
+    /// A body published in `vault` itself: its own door mints.
+    pub(crate) const fn vault(vault: &'v Vault) -> Self {
+        Self {
+            base: vault,
+            mints: true,
+        }
+    }
+
+    /// A body published along a session's write route over `base`, `write`
+    /// being where that route's transaction writes: an on-record stretch
+    /// writes base and mints through its door; an off-record room's overlay
+    /// mints nothing.
+    pub(crate) fn routed(base: &'v Vault, write: &RoutedDbs<'_>) -> Self {
+        Self {
+            base,
+            mints: matches!(write, RoutedDbs::Base(_)),
+        }
+    }
+
+    /// The values base custody holds, as `wtxn`, the writer that admits a
+    /// body, reads them (KS-3).
+    ///
+    /// # Errors
+    ///
+    /// Storage and custody errors.
+    pub(crate) fn known_in_writer(self, wtxn: &RwTxn<'_>) -> Result<Option<Arc<KnownValues>>> {
+        KnownValues::shared_in_writer(&self.base.store, wtxn)
+    }
+
+    /// Runs `admit` in a savepoint of `wtxn`, a base vault writer. What it
+    /// wrote (the custody records an admission minted) commits into `wtxn`
+    /// only when it answers `true` beside its answer; otherwise the
+    /// savepoint is dropped and none of it stays.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and `admit`'s.
+    pub(crate) fn in_savepoint<T>(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        admit: impl FnOnce(&mut RwTxn<'_>) -> Result<(T, bool)>,
+    ) -> Result<T> {
+        let mut savepoint = self.base.store.env.nested_write_txn(wtxn)?;
+        let (answer, keeps) = admit(&mut savepoint)?;
+        if keeps {
+            savepoint.commit()?;
+        }
+        Ok(answer)
+    }
+
+    /// The door the admission mints through, if the body lands in base.
+    fn door(self) -> Option<CustodyWrite<'v>> {
+        self.mints.then(|| CustodyWrite::of(self.base))
+    }
+}
+
 /// Admits `spool` in `wtxn`, the writer that publishes it (see the module
 /// notes): its own bytes when the door places nothing in them, else the
-/// copy the wall's plan masks, custody minted in `wtxn`. `known` is the
-/// index of the values custody holds as `wtxn` read it
+/// copy the wall's plan masks, custody minted in `wtxn` through `custody`'s
+/// door. `known` is the index of the values custody holds as `wtxn` read it
 /// ([`KnownValues::load_in_writer`], KS-3): the plan places each one where
 /// it reads text, and with `sweeps` one it does not place is still swept to
 /// its handle's text, as a run's result sink swept every body before (a
@@ -237,7 +315,7 @@ impl SpoolAdmission<'_> {
 /// Storage, custody and the spool's read errors. A hit the plan cannot
 /// place is no error: it is [`SpoolAdmission::Unplaceable`].
 pub(crate) fn admit_spool_in_txn<'s>(
-    vault: &Vault,
+    custody: AdmissionCustody<'_>,
     wtxn: &mut RwTxn<'_>,
     at: (&str, &[u8]),
     spool: &'s BodySpool,
@@ -252,7 +330,7 @@ pub(crate) fn admit_spool_in_txn<'s>(
         Some(known) => swept(known, &bytes),
         None => Ok(bytes),
     };
-    let reads_whole = secret_scan_mode_in_txn(vault, wtxn)? == SecretScanMode::On
+    let reads_whole = secret_scan_mode_in_txn(custody.base, wtxn)? == SecretScanMode::On
         && (spool.facts.secret.is_some()
             || holds_known
             || (spool.len() > STREAM_READ_WHOLE && !spool.opaque()));
@@ -264,7 +342,7 @@ pub(crate) fn admit_spool_in_txn<'s>(
         });
     }
     let mut parts = [SidePart::Body(spool.whole()?)];
-    let placed = match admit_side_parts(vault, wtxn, at, &mut parts, |_| true) {
+    let placed = match admit_decided_parts(custody.base, custody.door(), wtxn, at, &mut parts) {
         Ok(placed) => placed,
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
             let reason = reason_codes.last().copied().unwrap_or(REASON_DETECTED);
