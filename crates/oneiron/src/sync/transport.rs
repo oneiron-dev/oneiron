@@ -207,6 +207,8 @@ pub const TAG_BULK_TRANSFER_DONE: u8 = 21;
 pub const TAG_RPC: u8 = 30;
 /// App-tier subscription control/push frames; JSON after the tag byte.
 pub const TAG_SUB: u8 = 31;
+/// Outbound-only request-owned Human ask JSON; no durable arrival number or answer wait.
+pub const TAG_PRIVATE_HUMAN: u8 = 33;
 
 /// Sub-tags within WindowSync messages.
 pub mod window_sub_tags {
