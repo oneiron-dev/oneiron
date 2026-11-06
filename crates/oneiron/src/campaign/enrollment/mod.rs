@@ -33,6 +33,7 @@
 mod approval;
 mod audience;
 mod detection;
+mod held;
 mod home_node;
 mod manual;
 mod outbound_leg;
@@ -53,6 +54,7 @@ pub(crate) use self::reconcile::{
 pub(crate) use self::runner::reentry_dedupe_key;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
+pub use self::held::CampaignEnrollmentHeldCall;
 pub use self::detection::{
     CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection, accept_enrollment_baseline,
     campaign_enrollment_event, detect_enrollment,
