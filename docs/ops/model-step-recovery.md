@@ -414,6 +414,14 @@ write came from the late callback or the existing GROSS inclusion writer. Later
 matching meter writes keep the first source. The old interval comparisons,
 invoice, inclusion, settlement and payment behavior are unchanged.
 
+When the original native admission is first retained before bytes leave, that
+same row also records its actual guard source. The step caller reuses its existing
+held-pair snapshot; the House caller samples its original held guard and lease
+before the write. Failed optional writes keep their existing behavior. Repeated
+registration keeps the first source without adding a guard-id mismatch check or
+replacing the original row. This source is separate from the later meter and
+aggregate sources, and it does not restore a lease or authorize work.
+
 These are guard-source facts, not a unique aggregate settlement id or proof that
 all prior expenses are covered. A matching id does not prove NET payment or
 exclusion, and a different id is not a refusal or a fraud decision. Unknown token

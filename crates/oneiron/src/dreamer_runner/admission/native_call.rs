@@ -28,6 +28,7 @@ struct NativeCallObligation {
     line: String,
     step_hash: [u8; 32],
     boot: [u8; 16],
+    first_admission_guard_id: BudgetGuardId,
     lease: String,
     reserved_units: u64,
     admitted_at: u64,
@@ -136,12 +137,14 @@ pub(crate) fn retain_native_call_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     step_hash: [u8; 32],
     admitted: &WakeOwedCall,
+    guard_id: BudgetGuardId,
 ) -> Result<()> {
     validate_budget_id(&admitted.line)?;
     let row = NativeCallObligation {
         line: admitted.line.clone(),
         step_hash,
         boot: admitted.boot,
+        first_admission_guard_id: guard_id,
         lease: admitted.lease.clone(),
         reserved_units: admitted.reserved_units,
         admitted_at: admitted.at,
@@ -157,6 +160,8 @@ pub(crate) fn retain_native_call_in_txn(
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
+        // A repeat keeps the first source without adding a guard-id gate.
+        original.first_admission_guard_id = row.first_admission_guard_id;
         original.invoice = NativeCallInvoice::Admitted;
         original.terminal_claims.clear();
         original.meter = NativeCallMeter::Unknown;

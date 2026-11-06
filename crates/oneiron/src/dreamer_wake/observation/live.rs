@@ -277,6 +277,7 @@ impl<'a> StepCalls<'a> {
                 wtxn,
                 self.step_hash,
                 &owed,
+                snapshot.guard_id,
             )
         }) {
             skipped(&error, "native call admission");
