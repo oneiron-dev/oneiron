@@ -7,8 +7,10 @@
 //! entry with anything but `AuthenticatedSession` evidence, so supervised
 //! disclosure keys to the session — never to a voice claim or message text.
 
+mod label;
 mod resolve;
 
+use label::InterlocutorLabel;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,8 @@ use crate::Vault;
 use crate::conversation::ContainerAttendee;
 use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment};
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
+    CounterpartyContactRead, CounterpartyContactRecord, CounterpartyContactStatus,
+    CounterpartyFirstTouch,
 };
 use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
@@ -105,7 +108,7 @@ impl PresenceEvidence {
 pub struct Interlocutor {
     class: InterlocutorClass,
     evidence: PresenceEvidence,
-    label: String,
+    label: InterlocutorLabel,
     contact_ref: Option<String>,
     first_touch: Option<CounterpartyFirstTouch>,
     relationship: Option<String>,
@@ -127,10 +130,22 @@ impl Interlocutor {
         label: impl Into<String>,
         first_touch: CounterpartyFirstTouch,
     ) -> Self {
+        Self::known_contact_label(
+            contact_ref,
+            InterlocutorLabel::Owned(label.into()),
+            first_touch,
+        )
+    }
+
+    fn known_contact_label(
+        contact_ref: EntityId,
+        label: InterlocutorLabel,
+        first_touch: CounterpartyFirstTouch,
+    ) -> Self {
         Self {
             class: InterlocutorClass::KnownContact,
             evidence: PresenceEvidence::FirstClaim,
-            label: label.into(),
+            label,
             contact_ref: Some(contact_ref.to_hex()),
             first_touch: Some(first_touch),
             relationship: None,
@@ -161,17 +176,21 @@ impl Interlocutor {
     pub(crate) fn is_unresolved_voice_roster(&self) -> bool {
         self.class == InterlocutorClass::Unknown
             && self.audience_ref.is_none()
-            && self.label == VOICE_ROSTER_UNRESOLVED_LABEL
+            && self.label.as_str() == VOICE_ROSTER_UNRESOLVED_LABEL
     }
 
     /// Builds an unknown-party entry. A spoofed "it's me" arrives here as
     /// `claimed_owner: true` — a display label only, never authority.
     #[must_use]
     pub fn unknown(label: impl Into<String>, claimed_owner: bool) -> Self {
+        Self::unknown_label(InterlocutorLabel::Owned(label.into()), claimed_owner)
+    }
+
+    fn unknown_label(label: InterlocutorLabel, claimed_owner: bool) -> Self {
         Self {
             class: InterlocutorClass::Unknown,
             evidence: PresenceEvidence::FirstClaim,
-            label: label.into(),
+            label,
             contact_ref: None,
             first_touch: None,
             relationship: None,
@@ -191,7 +210,7 @@ impl Interlocutor {
         Self {
             class: InterlocutorClass::Unknown,
             evidence: PresenceEvidence::EnrolledVoicePrint,
-            label: label.into(),
+            label: InterlocutorLabel::Owned(label.into()),
             contact_ref: None,
             first_touch: None,
             relationship: None,
@@ -212,7 +231,7 @@ impl Interlocutor {
         Self {
             class: InterlocutorClass::KnownContact,
             evidence: PresenceEvidence::EnrolledVoicePrint,
-            label: label.into(),
+            label: InterlocutorLabel::Owned(label.into()),
             contact_ref: Some(contact_ref.to_hex()),
             first_touch: Some(first_touch),
             relationship: None,
@@ -230,7 +249,7 @@ impl Interlocutor {
         Self {
             class: InterlocutorClass::Owner,
             evidence: PresenceEvidence::AuthenticatedSession,
-            label: "owner".to_owned(),
+            label: InterlocutorLabel::Owned("owner".to_owned()),
             contact_ref: None,
             first_touch: None,
             relationship: None,
@@ -252,7 +271,7 @@ impl Interlocutor {
 
     #[must_use]
     pub fn label(&self) -> &str {
-        &self.label
+        self.label.as_str()
     }
 
     /// Hex CounterpartyContact entity id when the class is `KnownContact`.
@@ -433,7 +452,7 @@ impl InterlocutorStamp {
             speaker: entry
                 .contact_ref
                 .clone()
-                .unwrap_or_else(|| entry.label.clone()),
+                .unwrap_or_else(|| entry.label().to_owned()),
             class: entry.class,
             claims_not_instructions: entry.class != InterlocutorClass::Owner,
         }
@@ -530,6 +549,24 @@ fn relationship_label_for_contact(
 }
 
 impl Vault {
+    fn contact_read_interlocutor(
+        &self,
+        contact_ref: EntityId,
+        record: CounterpartyContactRead,
+    ) -> Result<Interlocutor> {
+        let status = record.status();
+        let first_touch = record.first_touch();
+        let label = InterlocutorLabel::from_contact_value(record.into_counterparty_value());
+        match status {
+            CounterpartyContactStatus::Active => {
+                let mut entry = Interlocutor::known_contact_label(contact_ref, label, first_touch);
+                entry.relationship = relationship_label_for_contact(self, &contact_ref)?;
+                Ok(entry)
+            }
+            CounterpartyContactStatus::Revoked => Ok(Interlocutor::unknown_label(label, false)),
+        }
+    }
+
     fn known_contact_interlocutor(
         &self,
         contact_ref: EntityId,
