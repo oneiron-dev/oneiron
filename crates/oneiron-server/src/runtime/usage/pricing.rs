@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use oneiron::llm::LlmCatalogCost;
-use oneiron::llm::run_admission::{Payer, PermitFacts};
+use oneiron::llm::ModelRegistryRow;
+use oneiron::llm::run_admission::Payer;
 use oneiron::{EntityId, ModelId};
 
 use crate::usage::{UsageCostRates, catalog_cost_rates};
@@ -33,12 +34,23 @@ const PROVIDER_API_ORIGINS: [&str; 4] = [
 /// route the run admitted, never from the request. A route that names no
 /// web origin (an injected backend's opaque `host`) names no endpoint, so
 /// its call keeps the catalog price it had.
-pub(super) fn custom_endpoint(facts: &PermitFacts) -> bool {
+pub(super) fn custom_endpoint(facts: QuoteIdentity<'_>) -> bool {
     facts.payer == Payer::CustomerKey
         && facts.route.split_once('@').is_some_and(|(_, origin)| {
             (origin.starts_with("https://") || origin.starts_with("http://"))
                 && !PROVIDER_API_ORIGINS.contains(&origin)
         })
+}
+
+/// Only the native fields used to resolve a monetary quote. No lease or
+/// authority is fabricated when the source is a constructed offer.
+#[derive(Clone, Copy)]
+pub(super) struct QuoteIdentity<'a> {
+    pub offer: &'a str,
+    pub model: Option<&'a ModelId>,
+    pub route: &'a str,
+    pub payer: Payer,
+    pub catalog_revision: Option<&'a str>,
 }
 
 /// The vault registry whose list prices meter its admitted model calls.
@@ -59,10 +71,10 @@ impl CatalogPrices {
     /// invented. A failed read never fails the admission.
     pub(super) fn snapshot(
         &self,
-        facts: &PermitFacts,
+        facts: QuoteIdentity<'_>,
     ) -> (Option<UsageCostRates>, Option<Vec<EntityId>>) {
         // A paid connector reads no catalog row.
-        let Some(model) = facts.model.as_ref() else {
+        let Some(model) = facts.model else {
             return (None, Some(Vec::new()));
         };
         let row = match self.vault.model_registry_row(model) {
@@ -77,12 +89,23 @@ impl CatalogPrices {
                 return (None, None);
             }
         };
+        Self::snapshot_row(facts, &row)
+    }
+
+    /// The same catalog projection in a caller's already-open registry snapshot.
+    pub(super) fn snapshot_row(
+        facts: QuoteIdentity<'_>,
+        row: &ModelRegistryRow,
+    ) -> (Option<UsageCostRates>, Option<Vec<EntityId>>) {
+        let Some(model) = facts.model else {
+            return (None, Some(Vec::new()));
+        };
         let rates = row
             .catalog
             .cost
             .as_ref()
             .and_then(|cost| catalog_cost_rates(cost, snapshot_id(facts, model, cost)));
-        (rates, row.source_rows)
+        (rates, row.source_rows.clone())
     }
 }
 
@@ -91,14 +114,14 @@ impl CatalogPrices {
 /// them (an unquoted one included) and the currency it names them in, or
 /// none. Each field is length-prefixed, an absent one marked, so a price- or
 /// currency-only catalog edit changes the id.
-fn snapshot_id(facts: &PermitFacts, model: &ModelId, cost: &LlmCatalogCost) -> String {
+fn snapshot_id(facts: QuoteIdentity<'_>, model: &ModelId, cost: &LlmCatalogCost) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SNAPSHOT_DOMAIN);
     for field in [
-        Some(facts.offer.as_str()),
+        Some(facts.offer),
         Some(model.as_str()),
-        Some(facts.route.as_str()),
-        facts.catalog_revision.as_deref(),
+        Some(facts.route),
+        facts.catalog_revision,
         Some(cost.input_per_million.as_str()),
         Some(cost.output_per_million.as_str()),
         cost.cache_read_per_million.as_deref(),

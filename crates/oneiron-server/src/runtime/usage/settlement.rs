@@ -5,7 +5,7 @@
 use super::{
     AdmittedCall, Payer, PayerAccount, RunEvent, RunReceipt, UnpricedReason, UsageAllocation,
     UsageEvent, UsageEventOrigin, UsageEventType, UsageMode, UsageRun, UsageServiceCost,
-    UsageTokenCounts, VaultUsage, pricing,
+    UsageTokenCounts, VaultUsage,
 };
 
 impl VaultUsage {
@@ -17,20 +17,11 @@ impl VaultUsage {
                 // now; either is frozen on the call. A call on the owner's
                 // own key to a custom endpoint freezes neither and reads no
                 // row: it logs token counts only (FIX 7765).
-                let custom_endpoint = pricing::custom_endpoint(facts);
-                let overridden = self
-                    .provider_rates
-                    .read()
-                    .expect("usage rates lock poisoned")
-                    .get(&facts.offer)
-                    .cloned();
-                // The host's override reads no row; the catalog's price, the
-                // rows its row was read from (FIX 5760).
-                let (rates, price_sources) = match overridden {
-                    _ if custom_endpoint => (None, Some(Vec::new())),
-                    Some(rates) => (Some(rates), Some(Vec::new())),
-                    None => self.catalog.snapshot(facts),
-                };
+                let super::quote::NativeQuote {
+                    rates,
+                    price_sources,
+                    custom_endpoint,
+                } = self.quote_for_facts(facts);
                 // A room-paid call bills its payer PERSON's own account, which
                 // for a live Owner is the vault's; the vault's too when the
                 // owners approved that on its payer-needed ask; a call no
