@@ -626,6 +626,35 @@ pub fn export_promotion_snapshot(
     export_window_replacement_for(vault, key, doc, Some(&newest), withhold)
 }
 
+/// The state-only answer to a version vector, whatever it holds (FIX 4748, ARCH-0023b
+/// `#peer-fetch`: "It serves state-only copies, never history"): the history-free snapshot of
+/// `doc`'s current state for the machine `withhold` names, rooted at its newest root as a
+/// promotion's is ([`export_promotion_snapshot`]) and never before `baseline`, always a
+/// [`WindowExport::Replacement`]. A window withheld from that machine is answered as
+/// [`export_window_since_for`] answers it, with the update that carries nothing. A machine served
+/// as a peer gets this for a window it does not hold
+/// ([`crate::sync::peer_route::peer_export_is_state_only`]), and for every replacement.
+///
+/// # Errors
+/// Typed `HistoryFreeRootUnavailable` when no root at or past both floors passes the history
+/// check; store and export errors.
+pub fn export_window_state_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<WindowExport> {
+    let mut floor = promotion_baseline(doc)?;
+    if let Some(baseline) = baseline {
+        floor.merge(baseline);
+    }
+    match export_window_replacement_for(vault, key, doc, Some(&floor), withhold)? {
+        Some(snapshot) => Ok(WindowExport::Replacement(snapshot)),
+        None => super::device_only::withheld_window_update().map(WindowExport::Update),
+    }
+}
+
 /// What the export scrubs left.
 struct Scrubbed {
     /// The check a pinned window's history must pass; `None` for a window not pinned.

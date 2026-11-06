@@ -71,7 +71,8 @@ pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_remater
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
-    export_window_updates_since, promotion_baseline, update_reaches_below_root,
+    export_window_state_for, export_window_updates_since, promotion_baseline,
+    update_reaches_below_root,
 };
 pub(crate) use self::pad_custody::{PersistedWindowPads, persisted_window_pads_form};
 pub use self::pad_custody::{

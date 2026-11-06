@@ -72,6 +72,11 @@ impl SyncClient {
             .open(frame.entity)
             .map_err(refused)?;
         if doc.is_note().map_err(storage)? {
+            // The NOTE lane is its authority's, the home's: a peer's NOTE
+            // frame imports, receipts and answers nothing (FIX 4748).
+            if self.peer_session.is_some() {
+                return Ok(Vec::new());
+            }
             if self.config.note_session.is_none() || !self.note_session_bound {
                 return Err(TransportError::InvalidPayload(
                     "NOTE authority session is not bound",
@@ -272,15 +277,35 @@ impl SyncClient {
 
     /// An own device's NOTE client subscribes every NOTE row it holds on the
     /// owner lane: at connect, then each row born here or materialized from
-    /// a window.
+    /// a window. A peer session subscribes none: the NOTE lane is the home's
+    /// (FIX 4748).
     pub(super) fn owner_note_requests(&self) -> Result<Vec<Vec<u8>>, TransportError> {
-        if self.config.federation_peer.is_some() || self.config.note_session.is_none() {
+        if self.config.federation_peer.is_some()
+            || self.config.note_session.is_none()
+            || self.peer_session.is_some()
+        {
             return Ok(Vec::new());
         }
         self.manager
             .documents()
             .subscribe_owner_notes()
             .map_err(storage)
+    }
+
+    /// Whether `frame` is a document frame of a NOTE row; one whose row type
+    /// does not read counts as one. The NOTE lane is its authority's, the
+    /// home's: a peer session sends none (FIX 4748).
+    pub(super) fn note_document_frame(&self, frame: &[u8]) -> bool {
+        frame.first() == Some(&transport::TAG_DOCUMENT)
+            && frame
+                .get(1..)
+                .and_then(|payload| transport::decode_document(payload).ok())
+                .is_some_and(|doc| {
+                    !matches!(
+                        self.vault.get_entity_type(&doc.entity),
+                        Ok(Some(kind)) if kind != crate::registry::ENTITY_TYPE_NOTE
+                    )
+                })
     }
 }
 

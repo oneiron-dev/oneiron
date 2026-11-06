@@ -18,8 +18,12 @@
 //! here) never counts its home down.
 //!
 //! The serving side reads [`authority_fold_settled`]: a machine serves a
-//! peer only while its own authority fold is settled. Both ends leave a
-//! [`PeerSyncReceipt`] naming the other machine and the session.
+//! peer only while its own authority fold is settled. It reads
+//! [`peer_export_is_state_only`] at each window export to a peer: a window the
+//! asker does not hold goes as its state-only copy, never as history. Both
+//! ends leave a [`PeerSyncReceipt`] naming the other machine and the session.
+
+use loro::{LoroDoc, VersionVector};
 
 use crate::error::Result;
 use crate::sync::mesh_path::{MeshPathDirection, MeshPathOutcome, MeshPathReceipt, SYNC_ALPN};
@@ -166,6 +170,28 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
         }
     }
     Ok(vault.authority_missing_history()?.is_complete())
+}
+
+/// FIX 4748 engine call (CALLS "FIX 4748 peer state-only export"): whether a
+/// window export to a machine served as a peer while the home is down must be
+/// the window's state-only copy ("It serves state-only copies, never
+/// history"; `window::export_window_state_for`), not updates since `remote`,
+/// the asker's version vector of `doc`.
+///
+/// It must when the asker does not hold the window: `remote` is empty, or
+/// does not cover `doc`'s shallow root or the socket's promotion `baseline`.
+/// An asker that holds the window keeps the ordinary update exchange since its
+/// vector, as the home serves it: that is two replicas of one window syncing,
+/// not a peer fetch.
+#[must_use]
+pub fn peer_export_is_state_only(
+    doc: &LoroDoc,
+    remote: &VersionVector,
+    baseline: Option<&VersionVector>,
+) -> bool {
+    remote.is_empty()
+        || !remote.includes_vv(&doc.shallow_since_vv().to_vv())
+        || baseline.is_some_and(|floor| !remote.includes_vv(floor))
 }
 
 /// The part one end of a peer sync session plays (FIX 4748).

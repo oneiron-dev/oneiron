@@ -53,7 +53,10 @@ impl SyncClient {
             }
             transport::TAG_RPC if self.config.note_session.is_some() => {
                 super::note_session::accept_bind_reply(payload)?;
-                self.note_session_bound = true;
+                // A peer bound the socket's actor only: the NOTE authority is
+                // the home, so a peer session's NOTE lane stays unbound (FIX
+                // 4748).
+                self.note_session_bound = self.peer_session.is_none();
             }
             transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT => {
                 responses.extend(self.handle_asset_body_frame(tag, payload)?);

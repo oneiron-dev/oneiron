@@ -334,13 +334,17 @@ impl SyncClient {
     /// Records `home`, the home's version vector of `window_key`, as this
     /// connection's convergence witness, and keeps a world window's beside
     /// the window (FIX 14534), so an eviction after a restart or a tightening
-    /// still knows what the home holds of it.
+    /// still knows what the home holds of it. A peer session's vector is the
+    /// session's convergence witness only (FIX 4748): what a peer holds says
+    /// nothing of what the home holds, so none is kept as the home's.
     fn note_home_window_vv(
         &mut self,
         window_key: &str,
         home: VersionVector,
     ) -> std::result::Result<(), TransportError> {
-        if WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some()) {
+        if self.peer_session.is_none()
+            && WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+        {
             crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
         }
