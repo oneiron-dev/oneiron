@@ -328,7 +328,8 @@ pub(super) fn fence_released_asset(
     if store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
         return Ok(());
     }
-    crate::deletion::ROW_DELETION_FENCE.put(store, txn, &key, &RELEASE_FENCE.to_vec())
+    crate::deletion::ROW_DELETION_FENCE.put(store, txn, &key, &RELEASE_FENCE.to_vec())?;
+    crate::agent_def::setup_trace::observe_row_fence(store, txn, *asset)
 }
 
 /// Lifts the release fence on a replicated artifact ASSET as its carrier comes in, when an
