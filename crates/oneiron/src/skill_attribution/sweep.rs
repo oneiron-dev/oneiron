@@ -44,12 +44,14 @@ pub trait ReceiptAttributionSource {
     fn facts(&self, receipt: &ReceiptRecord) -> Result<Option<Vec<ReceiptAttributionFacts>>>;
 
     /// A terminal self-report is not an anchor. Return a later held-out,
-    /// owner, world or audit receipt only when that observation has settled.
-    /// Receipts are revisited, so a late outcome need not arrive at capture.
+    /// owner, world or audit receipt only when that observation has settled,
+    /// with the witness of the stored source it was read from (FIX 3611,
+    /// [`super::stored_anchored_outcome`]). Receipts are revisited, so a
+    /// late outcome need not arrive at capture.
     fn anchored_outcome(
         &self,
         _receipt: &ReceiptRecord,
-    ) -> Result<Option<super::AnchoredPackOutcome>> {
+    ) -> Result<Option<super::WitnessedPackOutcome>> {
         Ok(None)
     }
 }
