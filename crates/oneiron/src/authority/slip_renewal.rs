@@ -300,6 +300,9 @@ impl Vault {
         // stays in the original's lineage; still parentless, it narrows
         // nothing and no revocation of the old slip reaches it.
         let renews = Some(original.slip_id);
+        // FIX 11713: the renewed mint's member carries forward unchanged;
+        // the renewing host is never named in its place.
+        let minting_member = mint.action.minting_member;
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             parent_id: None,
@@ -313,8 +316,15 @@ impl Vault {
                 .or_else(|| own_device_grant.map(|grant| grant.to_hex())),
             ..original
         };
-        let slip =
-            self.mint_slip_action_in_txn(&mut txn, issuer, SlipMintAction { claims, renews })?;
+        let slip = self.mint_slip_action_in_txn(
+            &mut txn,
+            issuer,
+            SlipMintAction {
+                claims,
+                renews,
+                minting_member,
+            },
+        )?;
         txn.commit()?;
         Ok(slip)
     }
