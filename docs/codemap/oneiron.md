@@ -636,10 +636,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/export_manifest.rs` | src | m | 5 struct · 31 fn · 1 re-export · 2 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSerializerManifest | Core half of `batch::export::export_manifest`: its store-layer items live in… |
 | `src/batch/export/expression_import.rs` | src | s | 5 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
 | `src/batch/export/expression_import_tests.rs` | test | m | — | — | Native writer fixtures for the Imported-only expression archive adapter |
+| `src/batch/export/foreign_stage/body_work.rs` | src | s | 1 struct · 11 crate-vis | StagedImportBodyProgress | What a confirmed staged import still owes its rows (FIX 12408): the by-reference ASSET bodies its admitted… |
 | `src/batch/export/foreign_stage/content.rs` | src | s | 3 crate-vis | — | Admitted window bytes and their born-with text, retained together while a foreign import is Pending |
 | `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | s | 1 fn · 1 re-export · 3 crate-vis | — | Core half of `batch::export::foreign_stage::export_foreign_receipt`: its store-layer items live in… |
 | `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 8 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
-| `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Sync-gated foreign-import staging submodule |
+| `src/batch/export/foreign_stage/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | Sync-gated foreign-import staging submodule |
 | `src/batch/export/mod.rs` | src | s | 13 re-export · 14 crate-vis | — | — |
 | `src/batch/export/provenance_import.rs` | src | m | 10 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
 | `src/batch/export/receipt_source_tests.rs` | test | m | — | — | Readable task trace sources are data, never local receipt authority |
@@ -6258,7 +6259,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/asset_body/landing.rs` | src | s | 1 crate-vis | — | A received by-reference body lands (FIX 5489): its carrier takes the window's own ingest ladder again, with… |
 | `src/sync/asset_body/references.rs` | src | s | 12 crate-vis | — | The reference a by-reference ASSET body travels under (FIX 5489) |
 | `src/sync/asset_body/send.rs` | src | s | 5 crate-vis | — | The sending side of one by-reference body transfer (FIX 5489): a Want is served only for the exact pair the… |
-| `src/sync/asset_body/session.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 7 crate-vis | AssetBodyLane, AssetBodyPeer, AssetBodySession | One socket's by-reference body transfers (FIX 5489), both directions |
+| `src/sync/asset_body/session.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 9 crate-vis | AssetBodyLane, AssetBodyPeer, AssetBodySession | One socket's by-reference body transfers (FIX 5489), both directions |
 | `src/sync/bridge/app_reads.rs` | src | s | 2 struct · 2 fn | ScopedContinuation, ScopedPage | Bounded-page adapters for authority-scoped app subscription channels |
 | `src/sync/bridge/childof.rs` | src | m | 8 crate-vis | — | ChildOf replay set, component ordering, and ordered edge-op application |
 | `src/sync/bridge/companion_identity.rs` | src | m | 3 fn · 1 re-export · 4 crate-vis | — | Identity topology ingest, endpoint hydration, and edge key/value helpers |
@@ -6302,14 +6303,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/connect.rs` | src | s | 3 fn · 1 re-export | — | Public Connect delivery/rejoin over the production guest admission path |
 | `src/sync/client/documents.rs` | src | m | 3 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/endpoint.rs` | src | s | 4 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
-| `src/sync/client/federated.rs` | src | m | 7 fn · 1 re-export · 6 crate-vis | — | Federated admission and staged vault-import confirmation |
+| `src/sync/client/federated.rs` | src | m | 7 fn · 1 re-export · 7 crate-vis | — | Federated admission and staged vault-import confirmation |
 | `src/sync/client/federation_replay.rs` | src | s | 4 fn | — | Durable inbound federation drain, entered on startup, receive and timer ticks |
 | `src/sync/client/inbound/bulk.rs` | src | s | 2 crate-vis | — | The bulk-transfer message family |
 | `src/sync/client/inbound/mod.rs` | src | s | 3 fn | — | Inbound wire dispatch, window-update import, and bulk history transfer |
 | `src/sync/client/inbound/window_sync.rs` | src | L | 6 crate-vis | — | The window-sync message family |
 | `src/sync/client/leaf_keys.rs` | src | s | 3 crate-vis | — | A sync client's side of the custody carrier leaf-key frames (FIX 11785), on its home's live socket |
 | `src/sync/client/lfs.rs` | src | s | 4 fn · 2 crate-vis | — | Object-scoped have/want state on the existing owner-authenticated sync client |
-| `src/sync/client/mod.rs` | src | s | 8 re-export · 7 crate-vis | — | Client-side sync over WebSocket |
+| `src/sync/client/mod.rs` | src | s | 8 re-export · 8 crate-vis | — | Client-side sync over WebSocket |
 | `src/sync/client/note_session.rs` | src | s | 2 crate-vis | — | The existing app-tier MessagePack auth.bind handshake on the sync socket |
 | `src/sync/client/own_device.rs` | src | s | 5 crate-vis | — | The proof that window bytes this client takes come from one of the owner's own machines (FIX 11709) |
 | `src/sync/client/repo_projection.rs` | src | s | 2 crate-vis | — | A device's admission of the masked repo copies its home sends (FIX 7608 slice 4, LEAF 4.3) |
@@ -6347,9 +6348,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/search_client.rs` | src | s | 2 fn · 1 crate-vis | — | Home search orchestration |
 | `src/sync/client/residence/windows.rs` | src | m | 3 fn · 2 crate-vis | — | Window promote, retain, and demote lifecycle |
 | `src/sync/client/sealed_updates.rs` | src | m | 6 crate-vis | — | A machine's side of the sealed world-update relay (DEC-0005 fix 8: "A my-machines world on it still syncs |
+| `src/sync/client/staged_bodies.rs` | src | m | 4 fn · 2 crate-vis | — | Delivery of the bodies a confirmed staged import still owes (FIX 12408) |
+| `src/sync/client/staged_body_pull.rs` | src | m | 13 crate-vis | — | The automatic producer of the bodies a confirmed staged import still owes (FIX 12408) |
 | `src/sync/client/sync_frames.rs` | src | m | 4 fn · 5 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
 | `src/sync/client/tests.rs` | test | XL | — | — | — |
-| `src/sync/client/types.rs` | src | m | 4 struct · 4 enum · 7 fn · 6 crate-vis | EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential | Sync client configuration, events, and sync_state key constants |
+| `src/sync/client/types.rs` | src | m | 5 struct · 4 enum · 7 fn · 6 crate-vis | EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, StagedImportBodySource, SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus +1 | Sync client configuration, events, and sync_state key constants |
 | `src/sync/client/window_pads.rs` | src | m | 14 crate-vis | — | The device's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/sync/client/window_pads/deferred.rs` | src | m | 9 crate-vis | — | A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads… |
 | `src/sync/connection/batch_admission.rs` | src | m | 1 enum · 1 trait · 1 fn · 3 type · 16 crate-vis | SyncBatchAdmission, SyncBatchVerdict | The host's admission for each batch a sync connection applies or sends (FIX 12036), and the pause that keeps… |
@@ -6544,7 +6547,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/admission/mod.rs` | src | m | 1 fn · 2 re-export · 8 crate-vis | — | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
 | `src/sync/selector/admission/revalidate.rs` | src | s | 1 fn · 2 crate-vis | — | Re-admission over already-admitted bytes |
 | `src/sync/selector/admission/routing.rs` | src | m | 9 crate-vis | — | Routing and world-edge planning of admitted rows |
-| `src/sync/selector/admission/state.rs` | src | m | 23 crate-vis | — | Admitted-update state for one federation import |
+| `src/sync/selector/admission/state.rs` | src | m | 24 crate-vis | — | Admitted-update state for one federation import |
 | `src/sync/selector/authority_beside.rs` | src | s | 4 crate-vis | — | The AUTHORITY_LOG rows one part of a federated import copies, which its door reads beside each one it judges… |
 | `src/sync/selector/authorize.rs` | src | m | 1 fn · 9 crate-vis | — | Grant and pact authorization resolving the requested position under the grant ceiling, guest-share… |
 | `src/sync/selector/authorize/filter.rs` | src | m | 1 crate-vis | — | — |
