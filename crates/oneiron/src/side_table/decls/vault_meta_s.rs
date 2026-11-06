@@ -240,7 +240,8 @@ side_tables! {
     /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
     /// agent's board renders under until it lays out its own, and the override whose sections win
     /// over every agent's own. Absent reads empty. Key: ().
-    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named;
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named
+        => crate::settings::board_layout::erase_board_layout_agent_override_in_txn;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
