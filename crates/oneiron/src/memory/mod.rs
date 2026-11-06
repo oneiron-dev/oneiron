@@ -419,8 +419,8 @@ pub(crate) use witness::{
     witness_message_body,
 };
 pub(crate) use witness::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
+    next_witness_message_order, sole_edge_target, stored_witness_turn_author,
+    taken_witness_message_order, witness_message_order,
 };
 
 // Read-version, revision-change, and publication types are available under

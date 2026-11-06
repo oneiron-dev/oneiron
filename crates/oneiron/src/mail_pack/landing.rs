@@ -293,11 +293,7 @@ impl<'v> Landing<'v> {
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
-                author: if headers.sent_by_mailbox {
-                    WitnessAuthor::User
-                } else {
-                    WitnessAuthor::Counterparty
-                },
+                author: self.revision_author(&turn, headers)?,
                 message_type: format!("import.{stamp_source}"),
                 content: text,
                 parts: None,
@@ -444,5 +440,31 @@ impl<'v> Landing<'v> {
             }
             Ok(())
         })
+    }
+
+    /// The author bucket a revision of a provider message lands under. A
+    /// stored TURN keeps the speaker it was born with: a received message
+    /// whose headers landed as `user` before received mail spoke as a
+    /// counterparty keeps `user` for its later revisions, and no old row is
+    /// rewritten. A new TURN is the user's for mail the mailbox sent, else a
+    /// counterparty's.
+    fn revision_author(
+        &self,
+        turn: &EntityId,
+        headers: &MailHeaders,
+    ) -> MemoryResult<WitnessAuthor> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(
+            match crate::memory::stored_witness_turn_author(&self.vault.store, &txn, turn)? {
+                Some(author @ (WitnessAuthor::User | WitnessAuthor::Counterparty)) => author,
+                _ if headers.sent_by_mailbox => WitnessAuthor::User,
+                _ => WitnessAuthor::Counterparty,
+            },
+        )
     }
 }

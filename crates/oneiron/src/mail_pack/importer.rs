@@ -302,7 +302,7 @@ impl Step<'_> {
     /// Fills in up to `limit` bodies, newest first. A message the provider no
     /// longer holds, or now holds as trash or spam, is deleted at the
     /// provider; a body the write door refuses leaves the message landed by
-    /// its headers and off the queue.
+    /// its headers and off the queue, with a warning that says why.
     fn bodies(&mut self, limit: u32) -> MemoryResult<()> {
         let waiting = {
             let txn = self
@@ -321,6 +321,17 @@ impl Step<'_> {
                     let outcome =
                         self.landing
                             .land(&self.row, &full.headers, Some(&full), false)?;
+                    // A refused body never leaves the queue unseen: the
+                    // message stays landed by its headers, and the warning
+                    // says why.
+                    if let LandOutcome::Refused(reason) = &outcome {
+                        tracing::warn!(
+                            source = %self.source.to_hex(),
+                            provider_id = %provider_id,
+                            %reason,
+                            "a mail body was refused; the message stays landed by its headers"
+                        );
+                    }
                     if matches!(outcome, LandOutcome::Refused(_) | LandOutcome::Same) {
                         self.landing.drop_from_body_queue(&provider_id)?;
                     }
