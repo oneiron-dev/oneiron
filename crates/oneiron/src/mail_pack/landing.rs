@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     BODY_QUEUE, MailOccurrence, MailPresence, MailReplyHeaders, MailStage, OCCURRENCES, SYNC,
-    body_queue_key, occurrence_key, record_occurrence_rows_in_txn,
+    THREAD_EPOCHS, body_queue_key, occurrence_key, record_occurrence_rows_in_txn, thread_hash,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -65,6 +65,22 @@ fn label(text: &str) -> String {
 fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
     let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
     EntityId::derive(domain, &parts)
+}
+
+/// The CONVERSATION a thread's new message lands in: the thread's own, or
+/// after its forgotten ones, the one of its current epoch.
+fn conversation_of(source_hex: &str, thread_key: &str, epoch: u64) -> Result<EntityId> {
+    if epoch == 0 {
+        return derive(
+            derived_domains::MAIL_CONVERSATION,
+            &[source_hex, thread_key],
+        );
+    }
+    let epoch = epoch.to_string();
+    derive(
+        derived_domains::MAIL_CONVERSATION,
+        &[source_hex, thread_key, epoch.as_str()],
+    )
 }
 
 /// The thread a message lands in: the provider's thread id, else the root
@@ -254,8 +270,12 @@ impl<'v> Landing<'v> {
         let text = content(headers, full.and_then(|full| full.body_text.as_deref()));
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let key = occurrence_key(source, &headers.provider_id);
-        let (prior, order) = {
+        let epoch_key = (source, thread_hash(&thread_key));
+        let (prior, order, epoch) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let epoch = THREAD_EPOCHS
+                .get(&vault.store, &txn, &epoch_key)?
+                .unwrap_or(0);
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
             if let Some(prior) = &prior
                 && matches!(prior.presence, MailPresence::Forgotten { .. })
@@ -281,14 +301,11 @@ impl<'v> Landing<'v> {
                 |prior| Ok(prior.turn),
             )?;
             let order = crate::memory::next_witness_message_order(&vault.store, &txn, &turn)?;
-            (prior, order)
+            (prior, order, epoch)
         };
         let conversation = match &prior {
             Some(prior) => prior.conversation,
-            None => derive(
-                derived_domains::MAIL_CONVERSATION,
-                &[&source_hex, &thread_key],
-            )?,
+            None => conversation_of(&source_hex, &thread_key, epoch)?,
         };
         let turn = match &prior {
             Some(prior) => prior.turn,
@@ -350,6 +367,21 @@ impl<'v> Landing<'v> {
                 return Err(MemoryError::new(
                     MEMORY_CODE_INVALID_STATE,
                     "another landing wrote this message first",
+                    &[],
+                ));
+            }
+            // A forget that took the thread's CONVERSATION since the read
+            // above moved the thread on: the message lands in its new one at
+            // the next step, never in the one being forgotten.
+            if prior.is_none()
+                && THREAD_EPOCHS
+                    .get(&vault.store, wtxn, &epoch_key)?
+                    .unwrap_or(0)
+                    != epoch
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the thread was forgotten meanwhile; the message lands at the next step",
                     &[],
                 ));
             }

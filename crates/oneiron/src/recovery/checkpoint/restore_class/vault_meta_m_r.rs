@@ -33,6 +33,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
     (&t::MAIL_PACK_SYNC, CONTENT),
+    // A thread's epoch stands with the conversations it named.
+    (&t::MAIL_PACK_THREAD_EPOCH, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.
