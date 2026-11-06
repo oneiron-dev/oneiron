@@ -681,6 +681,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/owner_work_routes.rs` | src | m | 6 crate-vis | — | `/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736) |
 | `src/api/owner_routes/pack_preview_routes.rs` | src | s | 3 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes.rs` | src | m | 4 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
+| `src/api/owner_routes/pack_routes/gmail_exchange.rs` | src | s | 1 crate-vis | — | Owner-admitted Google authorization codes enter only through credential custody |
 | `src/api/owner_routes/pack_routes/hook_proposals.rs` | src | s | 3 crate-vis | — | `/v1/owner/packs/hooks/proposals`: an agent's hook that asks wider than its own ceiling (ARCH-0080 §10… |
 | `src/api/owner_routes/pack_routes/line_chats.rs` | src | s | 1 crate-vis | — | `/v1/owner/packs/line/chats`: the LINE groups and rooms the served bot was seen in, as optional offers to… |
 | `src/api/owner_routes/pack_routes/native_mail_identities.rs` | src | s | 1 crate-vis | — | `/v1/owner/packs/native_mail/identities`: the owner provisions an agent's native mail identity end to end… |
