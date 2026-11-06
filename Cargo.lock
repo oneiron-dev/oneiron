@@ -6611,6 +6611,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust2"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
+
+[[package]]
 name = "mac-addr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7982,7 +7988,7 @@ dependencies = [
  "libc",
  "lopdf",
  "loro",
- "lzma-rust2",
+ "lzma-rust2 0.16.2",
  "ocrs",
  "oneiron",
  "oneiron-authority",
@@ -8884,7 +8890,7 @@ dependencies = [
  "libc",
  "lopdf",
  "loro",
- "lzma-rust2",
+ "lzma-rust2 0.16.2",
  "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
@@ -8901,6 +8907,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sevenz-rust2",
  "sha2 0.10.9",
  "tar",
  "tempfile",
@@ -10083,6 +10090,12 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+
+[[package]]
+name = "ppmd-rust"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4acc8d264ea385db64ccfdcdfd5909ee9eda0975666723d59f3bfec80b3611"
 
 [[package]]
 name = "ppv-lite86"
@@ -11757,6 +11770,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "stable_deref_trait",
+]
+
+[[package]]
+name = "sevenz-rust2"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30146010a60b5773ef63f7b0033576c7a0487ecc87a30d97b787ca8e27c85140"
+dependencies = [
+ "crc32fast",
+ "js-sys",
+ "lzma-rust2 0.23.0",
+ "ppmd-rust",
+ "wasm-bindgen",
 ]
 
 [[package]]
