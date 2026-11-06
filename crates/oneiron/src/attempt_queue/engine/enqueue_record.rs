@@ -64,6 +64,7 @@ impl AttemptQueue<'_> {
             state: AttemptState::Queued,
             lease_owner: None,
             attempt_count: 0,
+            lease_expirations: Vec::new(),
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
