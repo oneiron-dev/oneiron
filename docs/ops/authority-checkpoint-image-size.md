@@ -31,18 +31,24 @@ chain parents, archive manifests, unresolved rows, or other image fields:
    row parents. Dropped older points cannot re-enter the fitting suffix as an
    admitted tail adds points. The root still checks its own exact-byte rebuild.
 
-Residence eligibility is unchanged: measure the image with replay replaced by
-`AUTHORITY_REPLAY_OVERFLOW`, then drop residence directive and result bodies
-and set `AUTHORITY_RESIDENCE_BODY_OVERFLOW` only if that baseline exceeds the
-trigger. Retaining more replay does not newly drop working residence bodies.
-The residence baseline's existing sensitivity to install-local image metadata
-is separate from the replay selection rule.
+Residence eligibility measures the image with replay replaced by
+`AUTHORITY_REPLAY_OVERFLOW`, the parent link set to `None`, and archive manifests
+plus unresolved `held` and `missing` lists empty. Those fields belong to the
+writing install: the root verifier substitutes the candidate's values only after
+its own rebuild. Excluding them from the sizing view makes both builds choose
+the same residence bodies. The final image retains every original field value.
+
+Drop residence directive and result bodies and set
+`AUTHORITY_RESIDENCE_BODY_OVERFLOW` only if that baseline exceeds the trigger.
+Retaining more replay or writer-local bookkeeping does not newly drop working
+residence bodies. All other unresolved facts and mandatory signed bodies remain
+part of the residence baseline.
 
 An image at or below the trigger keeps both. An image still above it after
 compaction is encoded with all remaining bodies intact. The trigger itself
 does not cause a refusal. Neither compaction drops `AgentGrantAct` bodies.
-Checkpoint fold schema 23 describes this replay representation. There is no
-schema-22 reader or migration.
+Checkpoint fold schema 24 describes this residence baseline and the replay
+representation above. There is no older-schema reader or migration.
 
 ## Transport slicing and stage charge
 
