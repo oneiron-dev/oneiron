@@ -53,11 +53,11 @@ five to the fork by rev:
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "6ebcc621644403589fd6206bd9856a1cbf06aa39" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "6ebcc621644403589fd6206bd9856a1cbf06aa39" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "6ebcc621644403589fd6206bd9856a1cbf06aa39" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "6ebcc621644403589fd6206bd9856a1cbf06aa39" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "6ebcc621644403589fd6206bd9856a1cbf06aa39" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "88d93dba77e4c1f1777ed84ff5ff2b3ba3ef922e" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "88d93dba77e4c1f1777ed84ff5ff2b3ba3ef922e" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "88d93dba77e4c1f1777ed84ff5ff2b3ba3ef922e" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "88d93dba77e4c1f1777ed84ff5ff2b3ba3ef922e" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "88d93dba77e4c1f1777ed84ff5ff2b3ba3ef922e" }
 ```
 
 Fork branch `oneiron/parity` (0.9.3-oneiron.79), over `362becff`:
