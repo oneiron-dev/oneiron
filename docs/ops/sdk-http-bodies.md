@@ -92,3 +92,14 @@ rows, receipts and the remaining native serde fields keep the original codec.
 Native producers, owner checks, catalog validation and input handling are
 unchanged. This does not change the separate UniFFI model-catalog conversion or
 the storage codecs, and does not claim a general depth or memory bound.
+
+
+### Core connector schema and status outputs
+
+`connector.schema` and `connector.call_status` move the native arbitrary JSON
+fields out before the original whole-result codec, then put them back at the
+same paths. This covers approved input schemas, delivered content and optional
+structured/error data, and each awaiting-input question's requested schema.
+The native tags, finite fields, omissions, required nulls and item order stay
+unchanged. This does not change connector admission, source stamps, native
+producers, hooks or the separate UniFFI result conversions.

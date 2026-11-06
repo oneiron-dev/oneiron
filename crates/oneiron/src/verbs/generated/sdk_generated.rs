@@ -25966,8 +25966,10 @@ pub fn invoke(
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "connector.call" => encode(connector_call(memory, decode(value)?)?),
-        "connector.schema" => encode(connector_schema(memory, decode(value)?)?),
-        "connector.call_status" => encode(connector_call_status(memory, decode(value)?)?),
+        "connector.schema" => connector_output::schema(connector_schema(memory, decode(value)?)?),
+        "connector.call_status" => {
+            connector_output::status(connector_call_status(memory, decode(value)?)?)
+        }
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),

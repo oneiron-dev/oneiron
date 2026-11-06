@@ -1886,6 +1886,8 @@ def outputs():
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
             encoder = {
+                'connector.schema': 'connector_output::schema',
+                'connector.call_status': 'connector_output::status',
                 'vault.models.catalog.refresh': 'model_catalog_output::revision',
                 'vault.models.catalog.get': 'model_catalog_output::revision',
                 'vault.models.catalog.diff': 'model_catalog_output::diff',
