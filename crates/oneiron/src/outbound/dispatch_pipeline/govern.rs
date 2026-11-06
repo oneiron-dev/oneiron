@@ -1,6 +1,7 @@
 //! Gate input assembled from the canonical outbound request.
 use crate::Vault;
 use crate::consent::EffectDigest;
+use crate::consent::approval_proof::PinnedApprovalFamily;
 use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateProvenanceHandles,
     LinearMirrorFacts, OutboundSendFacts,
@@ -221,8 +222,20 @@ fn pinned_approval_digest(effect: &ExternalEffectGateInput) -> Option<EffectDige
 /// whose admitted press is recomposed from those bytes, so the ledger's
 /// proof check, a retry and a delivery's link mint recompose the digest the
 /// press approved; a failure-signal batch freezes it whether or not it pins
-/// (FIX 6679). `None` for every other send.
+/// (FIX 6679). Ordinary communication, calendar and HTTP-bundle targets
+/// freeze their existing intent ref too, without changing its selection.
 pub(super) fn frozen_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
     let connector = normalize_key(&request.intent.channel);
-    ApprovalTarget::freezes_send_ref_of(&connector).then(|| approval_send_ref(request, &connector))
+    let ordinary_target = approval_target(request, "", None)
+        .is_some_and(|target| target.pinned_family() == Some(PinnedApprovalFamily::ConnectorSlate));
+    (ApprovalTarget::freezes_send_ref_of(&connector) || ordinary_target)
+        .then(|| approval_send_ref(request, &connector))
+}
+
+/// The stable reference the native Linear target already pins. Only ordinary
+/// Linear requests freeze this supplier; a mirror request needs all its own
+/// operation facts and stays on its existing approval path.
+pub(super) fn frozen_linear_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
+    (normalize_key(&request.intent.channel) == LINEAR_CONNECTOR && request.linear_mirror.is_none())
+        .then(|| stable_send_ref(request))
 }
