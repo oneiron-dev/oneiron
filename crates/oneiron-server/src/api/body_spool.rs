@@ -116,6 +116,18 @@ impl BodySpool {
     }
 }
 
+impl BodySpool {
+    /// The complete spool length, without allocating a reader buffer.
+    pub(in crate::api) fn byte_len(&self) -> io::Result<u64> {
+        self.file.metadata().map(|metadata| metadata.len())
+    }
+
+    /// Reads into caller-owned storage without allocating a reader buffer.
+    pub(in crate::api) fn read_exact_into(&mut self, bytes: &mut [u8]) -> io::Result<()> {
+        self.file.read_exact(bytes)
+    }
+}
+
 impl SpooledField {
     /// Decodes a rewound field under an already-admitted reader lease.
     pub(super) fn json_admitted<T: serde::de::DeserializeOwned>(
