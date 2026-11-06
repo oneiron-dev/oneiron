@@ -502,13 +502,22 @@ impl LimitsConfig {
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
-            (EngineLimit::KeyedNamespaceSegments, keyed_namespace_segments),
+            (
+                EngineLimit::KeyedNamespaceSegments,
+                keyed_namespace_segments,
+            ),
             (EngineLimit::KeyedNamespaceBytes, keyed_namespace_bytes),
             (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
             (EngineLimit::BookingEmailBytes, booking_email_bytes),
             (EngineLimit::BookingIntakeAnswers, booking_intake_answers),
-            (EngineLimit::BookingIntakeValueBytes, booking_intake_value_bytes),
-            (EngineLimit::BookingLocalTimeWindows, booking_local_time_windows),
+            (
+                EngineLimit::BookingIntakeValueBytes,
+                booking_intake_value_bytes,
+            ),
+            (
+                EngineLimit::BookingLocalTimeWindows,
+                booking_local_time_windows,
+            ),
             (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
             (EngineLimit::CoreBatchEntities, core_batch_entities),
             (EngineLimit::LegacyBatchEntities, legacy_batch_entities),
