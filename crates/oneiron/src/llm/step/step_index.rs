@@ -1,12 +1,20 @@
 //! The memo index of terminal `dreamer.step` claims: its keys, its admission
-//! gate, its lookup and its deindex, moved out of `step_claim` unchanged for
-//! FIX 4816. `step_claim` re-exports every name it held.
+//! gate, its lookup and its deindex, moved out of `step_claim` for FIX 4816.
+//! `step_claim` re-exports the names it held.
+//!
+//! FIX 4816: the index admits two producers, each by its stamped surface and
+//! the exact job its value names. The Dreamer runner's durable step is one.
+//! A self-written compaction's paid call, filed with its run's job and run
+//! stamped, is the other, so a job and step hash find it. Only the runner's
+//! own record replays as a memo, settles an owed call or backs a
+//! step-derived effect (`step_claim_is_runner_execution`).
 
 use super::super::ModelId;
 use super::step_claim::{DecodedStepClaim, decode_step_claim_value};
 use super::types::{
-    DREAMER_STEP_PREDICATE, ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
-    KEY_PROGRESSION, STEP_HEX_DIGEST_LEN,
+    COMPACTION_STEP_SURFACE, DREAMER_STEP_PREDICATE, ENVELOPE_PROVENANCE_ATTEMPT_KEY,
+    ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY, KEY_PROGRESSION,
+    STEP_HEX_DIGEST_LEN,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -77,8 +85,9 @@ pub(super) const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
 ///
 /// Active is NOT sufficient (ONE-1344): the memo index decides which stored
 /// response a later `call_as_step` may return without spending, so only a
-/// claim carrying a well-formed model binding AND the runner provenance that
-/// binds it to the attempt its own value names is admitted. Anything else
+/// claim carrying a well-formed model binding AND a producer's provenance
+/// that binds it to the job its own value names is admitted: the runner's,
+/// or a compaction step's (FIX 4816). Anything else
 /// (a forged body, a replicated peer row, a hand-written claim) stays an
 /// ordinary claim and is deindexed here — a tolerant skip, never a write
 /// error, so replay of a peer's write can never fail on local index policy.
@@ -100,7 +109,7 @@ pub(crate) fn index_dreamer_step_claim_for_put(
     let Ok(decoded) = decode_step_claim_value(&body.value) else {
         return Ok(());
     };
-    if !step_claim_binding_is_trusted(&decoded, body) {
+    if step_claim_producer(&decoded, body).is_none() {
         return Ok(());
     }
 
@@ -119,8 +128,9 @@ pub(crate) fn index_dreamer_step_claim_for_put(
 }
 
 /// Read-only consistency check for an ALREADY producer-attested terminal
-/// step. This does not create execution authority; ordinary and replayed
-/// claims may pass this shape check but cannot mint the vault-local witness.
+/// step: the runner's or a compaction step's (FIX 4816). This does not
+/// create execution authority; ordinary and replayed claims may pass this
+/// shape check but cannot mint the vault-local witness.
 pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8; 32], ModelId)> {
     if body.predicate != DREAMER_STEP_PREDICATE
         || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
@@ -131,7 +141,7 @@ pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8
     let decoded = decode_step_claim_value(&body.value).ok()?;
     let finished = matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)|
         key.as_str() == Some(KEY_PROGRESSION) && value.as_str() == Some("finished")));
-    if !finished || !step_claim_binding_is_trusted(&decoded, body) {
+    if !finished || step_claim_producer(&decoded, body).is_none() {
         return None;
     }
     Some((
@@ -141,38 +151,63 @@ pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8
     ))
 }
 
-/// Memo-index admission gate (ONE-1344). A claim is trusted for the index only
-/// when BOTH bindings hold:
+/// The producer a terminal step claim's stamped provenance attests (FIX 4816).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StepClaimProducer {
+    /// The Dreamer runner's durable step: the one producer a memo replays.
+    Runner,
+    /// A self-written compaction's paid call, filed under its run's job.
+    Compaction,
+}
+
+/// Memo-index admission gate (ONE-1344, FIX 4816): the producer a claim
+/// attests, or `None`. A claim is admitted to the index only when BOTH
+/// bindings hold:
 ///
 /// * WITH-WHAT identity present and well formed — a fully revisioned
 ///   `provider/name@revision` model id, a non-empty purpose, and a lowercase
 ///   hex params digest. This is exactly what the memo-hit branch compares the
 ///   live request against, so an unusable identity must never be indexed;
-/// * runner provenance binding — the stamped write-envelope provenance names
-///   the dreamer runner surface AND the SAME attempt id the claim value
-///   carries, so a body cannot buy a memo row for an attempt it does not
-///   belong to.
-pub(super) fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
+/// * producer binding — the stamped write-envelope provenance names a
+///   producer's surface AND the SAME attempt id the claim value carries, so
+///   a body cannot buy a memo row for a job it does not belong to. A
+///   compaction step also carries the run its host stamped.
+pub(super) fn step_claim_producer(
+    decoded: &DecodedStepClaim,
+    body: &ClaimBody,
+) -> Option<StepClaimProducer> {
     if ModelId::new(decoded.model_id.clone()).is_err()
         || decoded.purpose.is_empty()
         || !is_lowercase_hex_digest(&decoded.params_hash)
     {
-        return false;
+        return None;
     }
-    step_claim_provenance_binds_attempt(body, decoded.attempt_id)
+    step_claim_provenance_producer(body, decoded.attempt_id)
 }
 
-/// True iff the claim's stamped write-envelope provenance is a runner-surface
-/// map whose attempt id equals `attempt_id`.
-fn step_claim_provenance_binds_attempt(body: &ClaimBody, attempt_id: AttemptId) -> bool {
+/// The execution gate (FIX 4816): true only for the Dreamer runner's own
+/// record of its attempt's step. A memo replay, an owed call's settlement
+/// and a step-derived effect read only such a claim. An indexed compaction
+/// step is a miss there, never a refusal.
+pub(super) fn step_claim_is_runner_execution(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
+    step_claim_producer(decoded, body) == Some(StepClaimProducer::Runner)
+}
+
+/// The producer the claim's stamped write-envelope provenance attests: a map
+/// whose attempt id equals `attempt_id` and whose surface is the runner's,
+/// or the compaction step's with a non-empty run.
+fn step_claim_provenance_producer(
+    body: &ClaimBody,
+    attempt_id: AttemptId,
+) -> Option<StepClaimProducer> {
     let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
-        return false;
+        return None;
     };
     let provenance = evidence.iter().find_map(|(key, value)| {
         (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
     });
     let Some(Value::Map(entries)) = provenance else {
-        return false;
+        return None;
     };
     let field = |name: &str| {
         entries
@@ -181,8 +216,19 @@ fn step_claim_provenance_binds_attempt(body: &ClaimBody, attempt_id: AttemptId) 
             .and_then(Value::as_str)
     };
     let expected_attempt = bytes_to_hex_lower(attempt_id.as_bytes());
-    field(ENVELOPE_PROVENANCE_SURFACE_KEY) == Some(DREAMER_RUNNER_ATTEMPT_KIND)
-        && field(ENVELOPE_PROVENANCE_ATTEMPT_KEY) == Some(expected_attempt.as_str())
+    if field(ENVELOPE_PROVENANCE_ATTEMPT_KEY) != Some(expected_attempt.as_str()) {
+        return None;
+    }
+    let surface = field(ENVELOPE_PROVENANCE_SURFACE_KEY)?;
+    if surface == DREAMER_RUNNER_ATTEMPT_KIND {
+        Some(StepClaimProducer::Runner)
+    } else if surface == COMPACTION_STEP_SURFACE
+        && field(ENVELOPE_PROVENANCE_RUN_KEY).is_some_and(|run| !run.is_empty())
+    {
+        Some(StepClaimProducer::Compaction)
+    } else {
+        None
+    }
 }
 
 /// True for a BLAKE3 digest rendered as 64 lowercase hex characters.
