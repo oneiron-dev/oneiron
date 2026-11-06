@@ -66,3 +66,16 @@ The review handle, claim metadata, provenance, labels, and finite numeric
 fields keep their original encoding. Native reads, owner checks, input
 decoding, verb hooks, and public result types are unchanged. This selected
 result conversion does not prove end-to-end depth or memory bounds.
+
+## Core scoped, settled, and extracted claims
+
+The core claim list, filtered list, history, filtered read, settlement, and
+signal-extraction result adapters use the same owned claim payload transfer.
+Every returned claim's value and optional scope are removed before the
+existing whole-result codec runs, then restored in their original positions.
+Empty claim lists, absent filtered reads and extraction jobs, null values,
+and optional scopes keep their original JSON representation. The original
+codec still emits the `narrowing` receipt, settlement warnings, job and park
+state, citations, prospective hints, provenance, and all finite fields.
+Native reads, writes, owner checks, input decoding, verb hooks, and public
+result types are unchanged. The host-only core vet call is unchanged.
