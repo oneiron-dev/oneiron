@@ -1174,6 +1174,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.proactivity.digest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ProactivityDigestRequest,
+                >(),
+            ),
+            (
                 "vault.inbox.lens",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_inbox_lens::InboxLensRequest,
@@ -7395,6 +7401,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.weave.digest_feedback.put",
     "vault.weave.owner.digest.render",
     "vault.inbox.concerns.review",
+    "vault.proactivity.digest",
     "vault.inbox.lens",
     "vault.inbox.groups",
     "vault.inbox.groups.resolve",
@@ -8545,6 +8552,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.inbox.concerns.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
         }
+        "vault.proactivity.digest" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        >(),
         "vault.inbox.lens" => {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
         }
@@ -12404,6 +12414,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.inbox.concerns.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.proactivity.digest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19916,6 +19933,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.digest_feedback.put" => validate_input_vault_weave_digest_feedback_put(value)?,
         "vault.weave.owner.digest.render" => validate_input_vault_weave_owner_digest_render(value)?,
         "vault.inbox.concerns.review" => validate_input_vault_inbox_concerns_review(value)?,
+        "vault.proactivity.digest" => validate_input_vault_proactivity_digest(value)?,
         "vault.inbox.lens" => validate_input_vault_inbox_lens(value)?,
         "vault.inbox.groups" => validate_input_vault_inbox_groups(value)?,
         "vault.inbox.groups.resolve" => validate_input_vault_inbox_groups_resolve(value)?,
@@ -22513,6 +22531,11 @@ fn validate_input_vault_weave_owner_digest_render(value: &serde_json::Value) -> 
 #[inline(never)]
 fn validate_input_vault_inbox_concerns_review(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_proactivity_digest(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::ProactivityDigestRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28643,6 +28666,7 @@ pub fn invoke(
         "vault.weave.digest_feedback.put" => invoke_vault_weave_digest_feedback_put(memory, value),
         "vault.weave.owner.digest.render" => invoke_vault_weave_owner_digest_render(memory, value),
         "vault.inbox.concerns.review" => invoke_vault_inbox_concerns_review(memory, value),
+        "vault.proactivity.digest" => invoke_vault_proactivity_digest(memory, value),
         "vault.inbox.lens" => invoke_vault_inbox_lens(memory, value),
         "vault.inbox.groups" => invoke_vault_inbox_groups(memory, value),
         "vault.inbox.groups.resolve" => invoke_vault_inbox_groups_resolve(memory, value),
@@ -31574,6 +31598,13 @@ fn invoke_vault_inbox_concerns_review(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_inbox_concerns_review(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_proactivity_digest(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_proactivity_digest(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_inbox_lens(
@@ -41180,6 +41211,12 @@ pub fn vault_inbox_concerns_review(
         memory,
         &memory.embedded_owner("vault.inbox.concerns.review")?,
     )
+}
+pub fn vault_proactivity_digest(
+    memory: &Memory<'_>,
+    input: crate::memory::ProactivityDigestRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>> {
+    memory.proactivity_digest_as_owner(&memory.embedded_owner("vault.proactivity.digest")?, &input)
 }
 pub fn vault_inbox_lens(
     memory: &Memory<'_>,
