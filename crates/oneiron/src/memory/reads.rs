@@ -17,6 +17,46 @@ use crate::context_pack::source_ranking::{SourceRankingPolicy, clamp_order, sour
 fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
     crate::batch::export::served_messagepack_json(value.clone())
 }
+
+/// Every string `value` holds, its object keys included: the texts a lifted
+/// key of a claim's value or scope is found by (FIX 13735).
+fn claim_texts<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text),
+        serde_json::Value::Array(items) => items.iter().for_each(|item| claim_texts(item, out)),
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields {
+                out.push(key);
+                claim_texts(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `value` with each lifted key `keys` names as its handle, in its strings
+/// and its object keys alike (FIX 13735).
+fn mask_claim_json(keys: &crate::batch::secret_scan::LiftedKeys, value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(masked) = keys.masked(text) {
+                *text = masked;
+            }
+        }
+        serde_json::Value::Array(items) => {
+            items
+                .iter_mut()
+                .for_each(|item| mask_claim_json(keys, item));
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, mut item) in std::mem::take(fields) {
+                mask_claim_json(keys, &mut item);
+                fields.insert(keys.masked(&key).unwrap_or(key), item);
+            }
+        }
+        _ => {}
+    }
+}
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -659,22 +699,21 @@ impl Memory<'_> {
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
         // A claim whose parts read as a secret together serves none of them.
         let secret = crate::batch::export::claim_reads_as_secret(body);
-        let served = |value: &rmpv::Value| {
-            if secret {
-                serde_json::Value::String("[redacted]".to_owned())
-            } else {
-                served_value_json(value)
-            }
+        let (value, scope) = if secret {
+            let redacted = || serde_json::Value::String("[redacted]".to_owned());
+            (redacted(), body.scope.as_ref().map(|_| redacted()))
+        } else {
+            self.lifted_claim_parts(body)?
         };
         let short_ref = self.short_ref_of(id)?;
-        let value = served(&body.value);
         let claim = crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, id, short_ref.as_deref());
-        // The label is the value this view serves: redacted for a secret.
+        // The label is the value this view serves: redacted for a secret,
+        // each lifted key already its handle.
         let claim = match &value {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
-        let view = ClaimView {
+        Ok(ClaimView {
             claim: Some(claim),
             claim_ref: id.to_hex(),
             short_ref,
@@ -690,32 +729,48 @@ impl Memory<'_> {
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(served),
+            scope,
             claim_scope: ClaimScope::of_body(body),
             made_by: self.collection_view(id)?.and_then(|view| view.made_by),
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
-        };
-        // A lifted key its value or scope holds reads as its handle for every
-        // reader but the owner, in the label made from the value too, as a
-        // recall hit's body does (FIX 13735).
-        self.lifted_view(view, || {
-            if secret {
-                return Ok(crate::batch::secret_scan::LiftedKeys::default());
-            }
-            let txn = self.vault.store.env.read_txn()?;
-            let texts = std::iter::once(&body.value)
-                .chain(body.scope.as_ref())
-                .map(served_value_json)
-                .collect();
-            crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
-                &self.vault.store,
-                &txn,
-                &serde_json::Value::Array(texts),
-            )
         })
+    }
+
+    /// A claim's value and scope as the bound reader reads them (FIX 13735):
+    /// for every reader but the owner, each lifted key a string or an object
+    /// key of either holds reads as its handle, as a recall hit's body does.
+    fn lifted_claim_parts(
+        &self,
+        body: &ClaimBody,
+    ) -> MemoryResult<(serde_json::Value, Option<serde_json::Value>)> {
+        let mut value = served_value_json(&body.value);
+        let mut scope = body.scope.as_ref().map(served_value_json);
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        if !self.reads_lifted_keys_masked_in_txn(&txn)? {
+            return Ok((value, scope));
+        }
+        let mut texts = Vec::new();
+        claim_texts(&value, &mut texts);
+        if let Some(scope) = &scope {
+            claim_texts(scope, &mut texts);
+        }
+        let keys =
+            crate::batch::secret_scan::LiftedKeys::of_in_txn(&self.vault.store, &txn, texts)?;
+        if !keys.is_empty() {
+            mask_claim_json(&keys, &mut value);
+            if let Some(scope) = &mut scope {
+                mask_claim_json(&keys, scope);
+            }
+        }
+        Ok((value, scope))
     }
 
     /// The receipt of a structural write of `id`, whose kind the caller does
