@@ -17,7 +17,7 @@ mod runtime;
 mod store;
 mod terminal;
 
-pub use runtime::{AllocationProducer, PersistentAllocation};
+pub use runtime::{AllocationCallIntent, AllocationProducer, PersistentAllocation};
 
 const ACCOUNT: SideTable<(), AccountRow, Named> = SideTable::new(&side_table::BUDGET_HOST_ACCOUNT);
 

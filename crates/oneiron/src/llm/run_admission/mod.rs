@@ -35,9 +35,9 @@ pub use admission::{
     UNRESOLVED_SELECTOR,
 };
 pub use allocation::{
-    AllocationCallKey, AllocationCommit, AllocationProducer, AllocationServingFence,
-    AllocationStoreError, AllocationTerminal, AllocationTerms, DurableAllocationHold,
-    DurableAllocationRead, PersistentAllocation, VaultAllocationLedger,
+    AllocationCallIntent, AllocationCallKey, AllocationCommit, AllocationProducer,
+    AllocationServingFence, AllocationStoreError, AllocationTerminal, AllocationTerms,
+    DurableAllocationHold, DurableAllocationRead, PersistentAllocation, VaultAllocationLedger,
 };
 pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{

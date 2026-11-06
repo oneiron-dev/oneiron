@@ -35,6 +35,18 @@ pub trait AllocationProducer: Send + Sync {
     fn terminal_committed(&self, _terminal: &RunReceipt) {}
 }
 
+/// A caller's original durable intent, committed with its native hold and
+/// the original admitted usage producer. Implementations use only `txn` and
+/// retain the hold's original call key, not a reflected copy of its money.
+pub trait AllocationCallIntent: Send + Sync {
+    fn freeze_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        hold: &DurableAllocationHold,
+        admitted: &RunReceipt,
+    ) -> Result<(), AllocationStoreError>;
+}
+
 /// An explicit backend selection, not a grant or a reflected balance. Grant,
 /// status and retirement remain operations on the same native ledger.
 pub struct PersistentAllocation {
@@ -76,6 +88,7 @@ impl RunInner {
     pub(in crate::llm::run_admission) fn freeze_allocation(
         &self,
         permit: &mut RunPermit,
+        intent: Option<&dyn AllocationCallIntent>,
     ) -> Result<RunReceipt, RunDenied> {
         let Some(account) = self
             .persistent_allocation
@@ -108,6 +121,9 @@ impl RunInner {
                 facts.allocation_reserved_units = Some(hold.reserved_units);
                 let receipt = self.receipt(permit.revision, RunEvent::Admitted(Box::new(facts)));
                 account.producer.freeze_in_write_txn(txn, &receipt)?;
+                if let Some(intent) = intent {
+                    intent.freeze_in_write_txn(txn, hold, &receipt)?;
+                }
                 Ok(receipt)
             },
         );
