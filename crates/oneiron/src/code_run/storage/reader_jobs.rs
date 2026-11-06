@@ -5,6 +5,8 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+mod close;
+pub(crate) use self::close::settle_evaporated_reader_spend;
 mod read;
 mod scoped;
 
