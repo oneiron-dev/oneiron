@@ -390,7 +390,8 @@ impl crate::Vault {
         if !ASSET_FILE_PLANE {
             return Ok(None);
         }
-        Ok(KnownValues::load_in_writer(&self.store, txn)?.map(Arc::new))
+        // One write's passes share the index they read (FIX 12210, 12229).
+        KnownValues::shared_in_writer(&self.store, txn)
     }
 
     /// The body instances ASSET bodies of the lengths `lens` may be filed
