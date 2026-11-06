@@ -109,6 +109,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::provenance::erase_actor_stamp_uses_in_txn(write.store, txn, id),
     #[cfg(feature = "sync")]
     |write, txn, id| erase_carried_born_with_in_txn(write.store, txn, id),
+    // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::forget_message_writer_in_txn(write.store, txn, id),
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
     |write, txn, id| erase_retained_copies_in_txn(write.store, txn, id),

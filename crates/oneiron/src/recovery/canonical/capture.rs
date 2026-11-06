@@ -154,6 +154,9 @@ impl CanonicalCapture {
                 "repo_manifests",
                 "withdrawn_cutoffs",
                 "peer_origins",
+                // A MESSAGE writer's proof is not captured: the reverse scan
+                // files it again beside a rebuilt row (FIX 12113).
+                "message_writers",
                 "asset_body_refs",
                 "source_audiences",
             ]

@@ -157,6 +157,7 @@ mod window {
         "edges",
         "entities",
         "message_docs",
+        "message_writers",
         "note_proposals",
         "peer_origins",
         "pins",
