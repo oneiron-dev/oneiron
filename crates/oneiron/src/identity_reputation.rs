@@ -5,7 +5,6 @@
 //! callers consume the per-identity clamp result before scheduling sends.
 
 use crate::Vault;
-use crate::campaign::send_hygiene::apply_suppression_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::cohort_claims::suppression::{SuppressionCause, SuppressionInput};
@@ -135,19 +134,21 @@ pub(crate) fn project_campaign_email_webhook_in_txn(
         reputation.complaint_rate,
     )?;
     let suppression = match event.disposition {
-        EmailDeliveryDisposition::HardBounce => Some(apply_suppression_in_txn(
-            vault,
-            wtxn,
-            SuppressionCause::HardBounce,
-            &SuppressionInput {
-                person_ref: event.person_ref,
-                campaign_ref: event.campaign_ref,
-                channel: event.channel.clone(),
-                sender_ref: Some(event.identity_ref),
-                evidence_ref: event.evidence_ref,
-                occurred_at: event.observed_at,
-            },
-        )?),
+        EmailDeliveryDisposition::HardBounce => {
+            Some(vault.store.record_hooks.apply_suppression_in_txn(
+                vault,
+                wtxn,
+                SuppressionCause::HardBounce,
+                &SuppressionInput {
+                    person_ref: event.person_ref,
+                    campaign_ref: event.campaign_ref,
+                    channel: event.channel.clone(),
+                    sender_ref: Some(event.identity_ref),
+                    evidence_ref: event.evidence_ref,
+                    occurred_at: event.observed_at,
+                },
+            )?)
+        }
         EmailDeliveryDisposition::Delivered
         | EmailDeliveryDisposition::SoftBounce
         | EmailDeliveryDisposition::Complaint => None,

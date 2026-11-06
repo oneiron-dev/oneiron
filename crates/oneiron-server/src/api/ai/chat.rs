@@ -88,10 +88,11 @@ pub(crate) use sources::TurnSources;
 pub(crate) use answer::{begin_answer, begin_sourced_answer_with_fallback, chat_request};
 pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
-    AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
+    AnswerBreakpoint, ChatReuse, action_breakpoint, live_fork_unavailable, reuse_chat_breakpoint,
 };
 pub(crate) use hooks::{after_turn, turn_generate_pre};
 pub(crate) use model_call::model_call_keeps_no_record;
+pub(crate) use recall::{turn_opener, turn_tail};
 
 use admission::start_turn;
 use answer::begin_sourced_answer;
