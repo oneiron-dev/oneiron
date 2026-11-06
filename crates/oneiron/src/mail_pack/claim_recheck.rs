@@ -155,10 +155,6 @@ fn owe_round_in_txn(
 /// round: the claims it settled stay settled, and its job judges the rest.
 /// A row of a message the provider still holds, or one forgotten, owes
 /// nothing.
-#[expect(
-    dead_code,
-    reason = "the promotion, settlement and attachment writers call it once their lane adds the hooks (FIX 15414 item 6)"
-)]
 pub(crate) fn owe_claim_recheck_for_cited_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
