@@ -9,6 +9,33 @@ pub(crate) fn pin_key(target: EntityId) -> Vec<u8> {
 }
 
 impl Vault {
+    /// Local discovery hints for the optional freshness exchange, not peer authority.
+    pub(crate) fn machine_history_pinned_targets(&self) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::store::EngineScan::MachineHistoryTargetRows,
+            &[],
+        )?;
+        let mut targets = Vec::new();
+        for row in self.store.vault_meta.prefix_iter(&txn, PIN_PREFIX)? {
+            count.row();
+            let (key, raw) = row?;
+            let bytes: [u8; 16] = key[PIN_PREFIX.len()..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("machine history pin"))?;
+            let target = EntityId::from_bytes(bytes)?;
+            let pin = ClaimHistoryHandoff::decode(&raw).map_err(|_| bad())?;
+            if pin.births.len() != 1 || pin.births[0].id != target {
+                return Err(bad());
+            }
+            targets.push(target);
+        }
+        count.defer(&self.store);
+        Ok(targets)
+    }
+
     pub(crate) fn machine_history_pinned(&self, target: &EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         Ok(self

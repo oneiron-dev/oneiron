@@ -389,7 +389,11 @@ fn hard_erase_token_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, token: &EntityId
     else {
         return Ok(());
     };
-    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(&vault.store, wtxn, token)?;
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(
+        &crate::secret_custody::CustodyWrite::of(&vault),
+        wtxn,
+        token,
+    )?;
     crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, token, &neighbors)?;
     if graph {
         crate::store::graph_version::increment_graph_version(&vault.store, wtxn)?;

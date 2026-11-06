@@ -1,15 +1,17 @@
-//! The crate's single git child-process constructor plus its bounded IO and thread-pump helpers.
+//! Core half of `git_wire::process`: its store-layer items live in `oneiron_store::git_wire::process` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::ffi::OsString;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::process::{Child, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+pub(crate) use oneiron_store::git_wire::process::*;
 
 use super::config::{GIT_WIRE_POLL_INTERVAL, GIT_WIRE_READ_CHUNK_BYTES};
 use super::retained_object::{GitSpool, RetainedGitIo, spawn_spool_reader, spawn_spool_writer};
 use super::{GIT_WIRE_CONFIG_POLICY, GIT_WIRE_FIXED_ENV, GitWireProcessEnv};
 use crate::error::Result;
+use std::ffi::OsString;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Child, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 /// Captured result of one git child process.
 #[derive(Debug, Clone)]
@@ -254,89 +256,9 @@ fn spawn_git_child(
     })
 }
 
-type ReaderHandle = std::thread::JoinHandle<(Vec<u8>, bool)>;
-
-fn spawn_stdin_writer(child: &mut Child, payload: &[u8]) -> std::thread::JoinHandle<()> {
-    let mut sink = child.stdin.take();
-    let owned = payload.to_vec();
-    std::thread::spawn(move || {
-        if let Some(pipe) = sink.as_mut() {
-            let _ = pipe.write_all(&owned);
-            let _ = pipe.flush();
-        }
-        drop(sink);
-    })
-}
-
-fn spawn_reader<R>(pipe: R, cap: usize) -> ReaderHandle
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || read_capped(pipe, cap))
-}
-
-fn join_reader(handle: Option<ReaderHandle>) -> (Vec<u8>, bool) {
-    match handle {
-        Some(handle) => handle.join().unwrap_or_else(|_| (Vec::new(), true)),
-        None => (Vec::new(), false),
-    }
-}
-
-/// Reads a pipe to completion under a byte cap. Once the cap is exceeded the
-/// remainder is drained and discarded, so a runaway child is bounded without
-/// being blocked into a deadlock.
-fn read_capped<R: Read>(mut pipe: R, cap: usize) -> (Vec<u8>, bool) {
-    let mut collected = Vec::new();
-    let mut chunk = [0_u8; GIT_WIRE_READ_CHUNK_BYTES];
-    let mut overflowed = false;
-    loop {
-        match pipe.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => {
-                if overflowed || collected.len() + read > cap {
-                    overflowed = true;
-                } else {
-                    collected.extend_from_slice(&chunk[..read]);
-                }
-            }
-        }
-    }
-    (collected, overflowed)
-}
-
-/// Waits for the child under a wall-clock bound, killing and reaping it on
-/// expiry; `None` waits for the child itself. An answer of `None` means the
-/// bound was exceeded.
-fn wait_bounded(
-    child: &mut Child,
-    timeout: Option<Duration>,
-    hub_root: Option<&Path>,
-    isolated: bool,
-) -> Result<Option<ExitStatus>> {
-    let deadline = timeout.map(|timeout| Instant::now() + timeout);
-    loop {
-        if let (Some(root), Some(deadline)) = (hub_root, deadline) {
-            super::hub_read::check_budget(root, deadline)?;
-        }
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            stop_child(child, isolated);
-            return Ok(None);
-        }
-        std::thread::sleep(GIT_WIRE_POLL_INTERVAL);
-    }
-}
-
 /// The fixed environment baseline; `spawn_git` adds the repository search ceiling.
 pub(super) fn child_env(process_env: &GitWireProcessEnv) -> Vec<(String, OsString)> {
     child_env_from(process_env, ambient_env)
-}
-
-/// The only ambient-environment read GitWire performs.
-fn ambient_env(key: &str) -> Option<OsString> {
-    std::env::var_os(key)
 }
 
 /// The environment builder with the ambient lookup injected.
@@ -368,34 +290,4 @@ where
     }
     pairs.extend(config_policy_env());
     pairs
-}
-
-/// The closed config policy rendered as git's command-line-precedence
-/// environment block.
-fn config_policy_env() -> Vec<(String, OsString)> {
-    let mut pairs = Vec::with_capacity(GIT_WIRE_CONFIG_POLICY.len() * 2 + 1);
-    pairs.push((
-        "GIT_CONFIG_COUNT".to_owned(),
-        OsString::from(GIT_WIRE_CONFIG_POLICY.len().to_string()),
-    ));
-    for (index, (key, value)) in GIT_WIRE_CONFIG_POLICY.into_iter().enumerate() {
-        pairs.push((format!("GIT_CONFIG_KEY_{index}"), OsString::from(key)));
-        pairs.push((format!("GIT_CONFIG_VALUE_{index}"), OsString::from(value)));
-    }
-    pairs
-}
-
-fn stop_child(child: &mut Child, isolated: bool) {
-    #[cfg(unix)]
-    if isolated {
-        // SAFETY: the hub and mirror profiles start this child as leader of
-        // its own process group.
-        unsafe {
-            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = isolated;
-    let _ = child.kill();
-    let _ = child.wait();
 }
