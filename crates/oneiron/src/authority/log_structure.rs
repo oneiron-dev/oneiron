@@ -397,6 +397,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
+            AuthorityOp::MembershipExecution(record) => install_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
             AuthorityOp::ExportAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
@@ -480,6 +481,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
+            AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
