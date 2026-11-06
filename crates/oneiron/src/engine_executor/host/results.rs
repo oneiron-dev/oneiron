@@ -687,6 +687,7 @@ impl RecordingJsHost<'_, '_> {
         }
         let site = ExecutorCallSite {
             run_id: self.run_id,
+            executor_run: Some(self.run_id),
             seq: self.next_seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,

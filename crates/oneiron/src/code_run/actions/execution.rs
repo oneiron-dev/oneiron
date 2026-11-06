@@ -282,6 +282,9 @@ impl ActionRegistry {
             .dispatch_for_executor_run(
                 super::ExecutorCallSite {
                     run_id,
+                    executor_run: live_run
+                        .as_ref()
+                        .and_then(crate::task_verb::HostBinding::executor_run),
                     seq: 0,
                     step_start: 0,
                     earlier: &[],

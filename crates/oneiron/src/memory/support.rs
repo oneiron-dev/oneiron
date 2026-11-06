@@ -189,6 +189,9 @@ pub struct HostWriteOrigin {
     /// The running agent attempt the dispatcher bound as the call's TASK
     /// creator (OF-532), read from its live lease, never from the guest.
     task_host: Option<crate::task_verb::HostBinding>,
+    /// The native executor that caused this call, apart from its replay id.
+    /// An observation only, never authority or a TASK creator binding.
+    executor_run: Option<EntityId>,
     /// The model provider the host's ladder served the calling program's
     /// turn from (OF-560), read from the served receipt, never from the
     /// guest. `None` when no ladder stamped the turn.
@@ -235,6 +238,7 @@ impl HostWriteOrigin {
         Self {
             envelope,
             task_host: None,
+            executor_run: None,
             model_provider: None,
             code_consent: None,
             hook_ask: None,
@@ -299,6 +303,17 @@ impl HostWriteOrigin {
     #[must_use]
     pub const fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
         self.task_host.as_ref()
+    }
+
+    /// This origin with the native executor its host observed, if any.
+    pub(crate) const fn with_executor_run(mut self, run: Option<EntityId>) -> Self {
+        self.executor_run = run;
+        self
+    }
+
+    /// The observed native executor, not this call's action or replay id.
+    pub(crate) const fn executor_run(&self) -> Option<EntityId> {
+        self.executor_run
     }
 
     /// The source every claim written under this origin carries.
