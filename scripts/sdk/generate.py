@@ -1938,6 +1938,13 @@ def outputs():
             encoder = {
                 'vault.conversations.create': 'core_write_output::entity',
                 'vault.conversations.turns.create': 'core_write_output::entity',
+                'vault.shape.read': 'shape_output::read',
+                'vault.shape.plan': 'shape_output::plan',
+                'vault.shape.apply': 'shape_output::receipt',
+                'vault.shape.groups': 'shape_output::groups',
+                'vault.shape.groups.resolve': 'shape_output::receipt',
+                'vault.shape.items.receipt': 'shape_output::item',
+                'vault.shape.plan.card': 'shape_output::card',
                 'connector.schema': 'connector_output::schema',
                 'connector.call_status': 'connector_output::status',
                 'vault.models.catalog.refresh': 'model_catalog_output::revision',

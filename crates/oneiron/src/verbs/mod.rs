@@ -71,6 +71,7 @@ mod residence;
 mod retrieval;
 mod root_requests;
 mod saved_query_output;
+mod shape_output;
 mod scratchpad;
 mod secret;
 mod secret_custody;
