@@ -249,6 +249,20 @@ impl Store {
         kind: CustodyKind,
         ready: impl Fn(&RoTxn<'_>, &RetirementIntent) -> Result<bool>,
     ) -> Result<()> {
+        self.finish_custody_retirements_then(kind, ready, |_, _| Ok(()))
+    }
+
+    /// [`Self::finish_custody_retirements`], running `retired` on each
+    /// intent once its generations are retired and before the intent
+    /// clears, under the same locks (FIX 16230). An interruption or error
+    /// before the clear leaves the intent standing, so the next pass runs
+    /// `retired` again: it must be idempotent.
+    pub(crate) fn finish_custody_retirements_then(
+        &self,
+        kind: CustodyKind,
+        ready: impl Fn(&RoTxn<'_>, &RetirementIntent) -> Result<bool>,
+        retired: impl Fn(LocalCustody<'_>, &RetirementIntent) -> Result<()>,
+    ) -> Result<()> {
         let txn = self.env.read_txn()?;
         let pending = retirements_in_txn(self, &txn, kind)?;
         if pending.is_empty() {
@@ -295,6 +309,7 @@ impl Store {
                 }
                 custody.retire_local(&id)?;
             }
+            retired(custody, &intent)?;
             clear_finished_intent_in_txn(self, custody, &mut wtxn, &intent)?;
             wtxn.commit()?;
         }
