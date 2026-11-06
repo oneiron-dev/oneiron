@@ -1,8 +1,8 @@
 //! The verb hooks of a call a run serves in its room (WILL L11-01 S01-2c):
-//! each of the four forwarded reads, and each of the two room writes (FIX
-//! 5426), runs inside its row's boundary, in the room, once per call
-//! (CALLS-10 `session_hook_once_boundary`). What each hook did rides the
-//! call's answer (FIX 5425).
+//! each forwarded read, and each of the two room writes (FIX 5426), runs
+//! inside its row's boundary, in the room, once per call (CALLS-10
+//! `session_hook_once_boundary`). What each hook did rides the call's answer
+//! (FIX 5425).
 
 use serde_json::Value;
 
