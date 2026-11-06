@@ -170,7 +170,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     }
     // FIX 6934: the read set its producers recorded while it ran. None, or
     // an unknown set, stamps nothing: the receipt keeps it unknown.
-    append_pack_source_rows_fields(&mut receipt, record.source_rows())?;
+    append_pack_source_rows_fields(&mut receipt, record.sources().as_ref())?;
     // OF-543: the terminal spawn/task receipt carries the one type stamp
     // the spawn was placed with, and the project it ran in beside it, typed
     // and unattributed runs alike (FIX 6038).

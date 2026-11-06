@@ -12,16 +12,18 @@
 
 use rmpv::Value;
 
+use super::RuleOutcomeReadPosition;
 use super::codec::{decode_value, encode_value, invalid, map_entry, map_str};
 use super::ledger::OutcomeRow;
+use super::rule_outcome_read::{ClassifiedRuleOutcome, classify_rule_outcome};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 
 /// The outcome ledger's rows as a rule skill writes them: the ledger's own
 /// outcome row, which every ledger read decodes, plus its source.
-const RULE_OUTCOME: SideTable<(EntityId, String), RuleOutcomeRow, Raw> =
+pub(super) const RULE_OUTCOME: SideTable<(EntityId, String), RuleOutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
 
 /// The map key a rule row's source rides under; the outcome row's own reader
@@ -39,9 +41,11 @@ pub(crate) struct RuleOutcomeSource {
 }
 
 /// One rule-skill row: the outcome row and its source.
-struct RuleOutcomeRow {
-    outcome: OutcomeRow,
-    source: RuleOutcomeSource,
+pub(super) struct RuleOutcomeRow {
+    pub(super) outcome: OutcomeRow,
+    pub(super) source: RuleOutcomeSource,
+    pub(super) row_id: Option<EntityId>,
+    pub(super) read_position: Option<RuleOutcomeReadPosition>,
 }
 
 impl RawValue for RuleOutcomeRow {
@@ -59,6 +63,16 @@ impl RawValue for RuleOutcomeRow {
                 (Value::from("card"), Value::from(self.source.card.as_str())),
             ]),
         ));
+        row.push((
+            Value::from("row_id"),
+            rmpv::ext::to_value(self.row_id)
+                .map_err(|_| invalid("rule skill outcome identity encode failed"))?,
+        ));
+        row.push((
+            Value::from("read_position"),
+            rmpv::ext::to_value(&self.read_position)
+                .map_err(|_| invalid("rule skill outcome position encode failed"))?,
+        ));
         Ok(encode_value(&Value::Map(row))?)
     }
 
@@ -73,7 +87,24 @@ impl RawValue for RuleOutcomeRow {
                 })
             })
             .ok_or(invalid("rule skill outcome is missing its source"))?;
-        Ok(Self { outcome, source })
+        let row_id = rmpv::ext::from_value(
+            map_entry(&value, "row_id")
+                .ok_or(invalid("rule skill outcome is missing its identity"))?
+                .clone(),
+        )
+        .map_err(|_| invalid("rule skill outcome identity decode failed"))?;
+        let read_position = rmpv::ext::from_value(
+            map_entry(&value, "read_position")
+                .ok_or(invalid("rule skill outcome is missing its position"))?
+                .clone(),
+        )
+        .map_err(|_| invalid("rule skill outcome position decode failed"))?;
+        Ok(Self {
+            outcome,
+            source,
+            row_id,
+            read_position,
+        })
     }
 }
 
@@ -91,17 +122,34 @@ pub(crate) fn record_rule_outcome_in_txn(
     source: &RuleOutcomeSource,
     win: bool,
     at: u64,
+    read_position: Option<&RuleOutcomeReadPosition>,
 ) -> Result<()> {
     if source.receipt.is_empty() || source.card.is_empty() {
         return Err(invalid("a rule skill outcome must cite its receipt"));
     }
+    let key = (*skill, source.receipt.clone());
+    // Placement is optional. A failed held read never refuses the original put
+    // or mistakes an unreadable row for a newly born one.
+    let (row_id, read_position) = match RULE_OUTCOME.get(&vault.store, txn, &key) {
+        Ok(None) => {
+            let id = vault.store.clock.entity_id().ok();
+            (id, id.and(read_position.cloned()))
+        }
+        Ok(Some(held)) => {
+            let same = held.outcome.win == win && held.outcome.at == at && held.source == *source;
+            (held.row_id, same.then_some(held.read_position).flatten())
+        }
+        Err(_) => (None, None),
+    };
     RULE_OUTCOME.put(
         &vault.store,
         txn,
-        &(*skill, source.receipt.clone()),
+        &key,
         &RuleOutcomeRow {
             outcome: OutcomeRow { win, at },
             source: source.clone(),
+            row_id,
+            read_position,
         },
     )
 }
@@ -147,24 +195,10 @@ pub(crate) fn rule_outcome_receipts_in_txn(
     let mut receipts = Vec::new();
     for row in RULE_OUTCOME.iter_raw_from(&vault.store, txn, skill.as_bytes())? {
         let (key, value) = row?;
-        let Some((_, receipt)) = <(EntityId, String) as SideKey>::decode_key(&key) else {
-            tracing::warn!(
-                skill = %skill.to_hex(),
-                "a rule skill outcome key is unreadable; it was skipped"
-            );
-            continue;
-        };
-        match RuleOutcomeRow::from_raw(&value) {
-            Ok(_) => receipts.push(receipt),
-            Err(_) if OutcomeRow::from_raw(&value).is_ok() => {}
-            Err(error) => {
-                tracing::warn!(
-                    skill = %skill.to_hex(),
-                    receipt = %receipt,
-                    ?error,
-                    "a rule skill outcome is unreadable; it was skipped"
-                );
-            }
+        if let ClassifiedRuleOutcome::Rule { receipt, .. } =
+            classify_rule_outcome(skill, &key, &value)
+        {
+            receipts.push(receipt);
         }
     }
     Ok(receipts)

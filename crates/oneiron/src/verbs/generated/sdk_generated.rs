@@ -22,6 +22,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.commitments.ledger",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentLedgerRequest,
+                >(),
+            ),
+            (
                 "vault.commitments.instances",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::commitment_doors::CommitmentRefRequest,
@@ -7251,6 +7257,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 pub const OPENAPI_ROWS: &[&str] = &[
     "vault.commitments.create",
     "vault.commitments.get",
+    "vault.commitments.ledger",
     "vault.commitments.instances",
     "vault.commitments.proposals",
     "vault.commitments.fulfill",
@@ -8122,6 +8129,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.commitments.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.ledger" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentLedgerView,
         >(),
         "vault.commitments.instances" => crate::code_run::vault_read::request_schema::<
             Vec<crate::memory::commitment_doors::CommitmentView>,
@@ -10813,6 +10823,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.commitments.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.ledger" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19667,6 +19684,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
     match verb {
         "vault.commitments.create" => validate_input_vault_commitments_create(value)?,
         "vault.commitments.get" => validate_input_vault_commitments_get(value)?,
+        "vault.commitments.ledger" => validate_input_vault_commitments_ledger(value)?,
         "vault.commitments.instances" => validate_input_vault_commitments_instances(value)?,
         "vault.commitments.proposals" => validate_input_vault_commitments_proposals(value)?,
         "vault.commitments.fulfill" => validate_input_vault_commitments_fulfill(value)?,
@@ -21356,6 +21374,11 @@ fn validate_input_vault_commitments_create(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_commitments_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::commitment_doors::CommitmentRefRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_commitments_ledger(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::commitment_doors::CommitmentLedgerRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28397,6 +28420,7 @@ pub fn invoke(
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "vault.commitments.create" => invoke_vault_commitments_create(memory, value),
         "vault.commitments.get" => invoke_vault_commitments_get(memory, value),
+        "vault.commitments.ledger" => invoke_vault_commitments_ledger(memory, value),
         "vault.commitments.instances" => invoke_vault_commitments_instances(memory, value),
         "vault.commitments.proposals" => invoke_vault_commitments_proposals(memory, value),
         "vault.commitments.fulfill" => invoke_vault_commitments_fulfill(memory, value),
@@ -30065,6 +30089,13 @@ fn invoke_vault_commitments_get(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_commitments_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_commitments_ledger(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_commitments_ledger(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_commitments_instances(
@@ -39407,6 +39438,12 @@ pub fn vault_commitments_get(
     input: crate::memory::commitment_doors::CommitmentRefRequest,
 ) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
     memory.commitments_get_as(&memory.embedded_owner("vault.commitments.get")?, input)
+}
+pub fn vault_commitments_ledger(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentLedgerRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentLedgerView> {
+    memory.commitments_ledger_as(&memory.embedded_owner("vault.commitments.ledger")?, input)
 }
 pub fn vault_commitments_instances(
     memory: &Memory<'_>,

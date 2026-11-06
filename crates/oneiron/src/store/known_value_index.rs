@@ -270,6 +270,22 @@ impl KnownValues {
         })
     }
 
+    /// The current known-value matcher in one read snapshot. The caller
+    /// holds the custody read guard from before opening `txn` until this
+    /// matcher drops, as `Store::custody_snapshot` does.
+    pub(crate) fn load_in_guarded_read(store: &Store, txn: &RoTxn<'_>) -> Result<Option<Self>> {
+        let Some(ids) = store.known_history_ids_in_txn(txn)? else {
+            return Ok(None);
+        };
+        let history = ids.read_in_snapshot(txn, &store.vault_meta)?;
+        Self::of(&history, |custody| {
+            let (handle, _) = store
+                .port_short_id_reference(txn, custody)?
+                .ok_or(Error::CorruptedIndex("known-value history handle"))?;
+            Ok(Some(handle))
+        })
+    }
+
     /// The matcher over one custody record's entries written at
     /// `generations`, as the writer `wtxn` reads them, or `None` when it
     /// knows no value there (FIX 10550): what a resumed connector round

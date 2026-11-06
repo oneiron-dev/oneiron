@@ -1,7 +1,7 @@
 //! The reads a code run bound to an off-record session serves through the
 //! room's own view (WILL L11-01, S01-1): `vault.get`, `vault.hydrate`,
 //! `vault.refs.resolve`, `vault.search.bm25` and the run's own
-//! `vault.search`.
+//! `vault.search` and `vault.calendar.prep`.
 //!
 //! Each call reads ONE view of the room ([`SessionReadContext`]), under the
 //! narrow key the run's host admitted for its caller, never a wider one:
@@ -71,6 +71,8 @@ pub(crate) enum SessionRead {
     RefsResolve,
     /// `vault.search.bm25`.
     SearchBm25,
+    /// `vault.calendar.prep`.
+    CalendarPrep,
 }
 
 /// What one read in the room answers.
@@ -166,6 +168,18 @@ impl<'s> SessionReadContext<'s> {
                     .filter_map(|hit| hit.record.as_ref())
                     .filter_map(|record| EntityId::from_hex(&record.id).ok())
                     .collect();
+                (encode(&read)?, rows)
+            }
+            SessionRead::CalendarPrep => {
+                let input: crate::calendar::meeting::CalendarMeetingRequest = decode(input)?;
+                let event = input.event_id()?;
+                let lane = self.lane(ClaimReadStatus::Surfaceable);
+                let telemetry = self.session.retrieval_telemetry(self.route)?;
+                let (read, rows) = memory.calendar_prep_in(
+                    event,
+                    &lane,
+                    Some((&telemetry, self.session.pending_scan_checks())),
+                )?;
                 (encode(&read)?, rows)
             }
         };
@@ -510,9 +524,15 @@ pub(crate) fn scoped_session_text(
     admit: impl FnOnce(&heed::RoTxn<'_>) -> crate::Result<()>,
 ) -> crate::Result<(Vec<ScoredEntity>, (u64, Instant))> {
     let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-    let (filter, policy) = lane.recall_plan()?;
+    let crate::claim::SearchPlan {
+        filter,
+        candidates,
+        policy,
+    } = lane.recall_plan()?;
     let started = (vault.store.clock.now_recorded_at(), Instant::now());
-    if filter.deny_all {
+    // A key that reads nothing by itself still searches the rows its own
+    // live Grants read (FIX 7528).
+    if candidates.deny_all {
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
@@ -524,7 +544,7 @@ pub(crate) fn scoped_session_text(
     let scores = {
         let txn = vault.store.env.read_txn()?;
         admit(&txn)?;
-        let admit = lane.recall_candidates_in(&txn, &policy, &filter);
+        let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
         let mut admits = |id: &EntityId| admit(id);
         vault.text_scoped_in_txn(
             view,

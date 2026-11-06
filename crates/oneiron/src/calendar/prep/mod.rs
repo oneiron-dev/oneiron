@@ -48,9 +48,14 @@
 //!   `commitment.record` rows, decoded with the commitment codec: a live open
 //!   promise involving the meeting or its people. Every other CLAIM row, a
 //!   closed promise included, is dossier history, and the other stored entity
-//!   types map onto the three sections through `prep_section_kind_for`.
+//!   types map onto the three sections through `prep_section_kind_for`. An
+//!   attendee that directly names a CounterpartyContact also contributes its
+//!   open CMT-5 ledger; names, mail addresses and PERSON ids are not guessed
+//!   into contact identities. The caller's final scoped cut admits each label
+//!   head and renders only its native projection of the commitment words.
 
 mod home_node;
+mod ledger;
 mod lens;
 mod pack;
 mod wake;

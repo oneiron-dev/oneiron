@@ -72,13 +72,45 @@ pub(crate) fn stale_in_txn(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(marked_stale_in(store, txn, id)?
-        || super::dependent_walk::pending_withdrawal_in(store, txn, id)?.is_some())
+    stale_observed_in(store, txn, id, &mut None)
+}
+
+pub(super) fn stale_observed_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    observer: &mut Option<&mut super::StaleReadObserver<'_>>,
+) -> Result<bool> {
+    Ok(marked_stale_observed_in(store, txn, id, observer)?
+        || super::dependent_walk::pending_withdrawal_observed_in(store, txn, id, observer)?
+            .is_some())
 }
 /// Whether a withdrawal has reached `id` itself. The walk judges its own
 /// progress by this, never by what a pending walk says.
 fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
+    marked_stale_observed_in(store, txn, id, &mut None)
+}
+
+fn marked_stale_observed_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    observer: &mut Option<&mut super::StaleReadObserver<'_>>,
+) -> Result<bool> {
+    if observer.is_none() {
+        return Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some());
+    }
+    let key = stale_key(id);
+    let raw = store.vault_meta().get(txn, &key)?;
+    super::stale_reads::observe(
+        observer,
+        super::StaleRead::Row {
+            table: super::StaleReadTable::VaultMeta,
+            key: &key,
+            value: raw.as_deref(),
+        },
+    );
+    Ok(raw.is_some())
 }
 /// The room's explicit withdrawal mark in this exact overlay snapshot.
 pub(crate) fn marked_stale_in_overlay(
@@ -472,12 +504,7 @@ pub(super) fn epoch_summary_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    match super::EntityStoreRead::port_entity_record(store, txn, id)? {
-        Some(row) if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY => {
-            Ok(crate::compaction::stored_epoch_in(store, txn, id, &row.body)?.may_be())
-        }
-        _ => Ok(false),
-    }
+    super::epoch_reads::epoch_summary_in(store, txn, id, &mut None)
 }
 /// Stages a stale mark for `id` at `revision` in `dbs`'s own `vault_meta`, so
 /// `id` reads withdrawn there: a room's epoch summary born from a source that

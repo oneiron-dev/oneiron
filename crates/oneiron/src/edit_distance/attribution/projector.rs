@@ -24,7 +24,9 @@ use crate::error::{Error, Result};
 use crate::learning::{LearningCell, LearningEvidence, PREDICATE_LEARNING_EDIT_COST};
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
-use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
+use crate::skill_reliability::{
+    AmendedOutcome, OutcomeReadPosition, reconcile_amended_outcomes_positioned_in_txn,
+};
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,15 @@ pub fn project_edit_cost_claims(
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
+    project_amendment_reliability_with_positions(vault, None)
+}
+
+/// Projects amendments with independently declared placement for each physical outcome.
+/// Keys are `(skill, executor, attempt_receipt)`; positions are data, not read grants.
+pub fn project_amendment_reliability_with_positions(
+    vault: &Vault,
+    output_positions: Option<&BTreeMap<(EntityId, Option<String>, String), OutcomeReadPosition>>,
+) -> Result<Vec<EntityId>> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut verdicts = Vec::new();
         // The newest verdict per skill, for the floor join below: the
@@ -191,7 +202,8 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
                 at: judgment.at,
             });
         }
-        let skills = reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)?;
+        let skills =
+            reconcile_amended_outcomes_positioned_in_txn(vault, wtxn, &verdicts, output_positions)?;
         for skill in &skills {
             if let Some((scope, project, receipt, at)) = newest.get(skill) {
                 super::worsening::observe_floor_crossing_in_txn(

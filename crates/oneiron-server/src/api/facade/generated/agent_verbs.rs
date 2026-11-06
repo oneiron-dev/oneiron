@@ -4,6 +4,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/vault.commitments.create", post(facade_route))
         .route("/vault.commitments.get", post(facade_route))
+        .route("/vault.commitments.ledger", post(facade_route))
         .route("/vault.commitments.instances", post(facade_route))
         .route("/vault.commitments.proposals", post(facade_route))
         .route("/vault.commitments.fulfill", post(facade_route))

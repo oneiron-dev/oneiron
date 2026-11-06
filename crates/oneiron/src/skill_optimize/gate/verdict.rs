@@ -270,6 +270,9 @@ pub struct HeldOutVerdict {
     pub judge_revision: Option<String>,
     /// Replacement that retired this judge's score. Stored as a separate marker.
     pub displaced_by_revision: Option<String>,
+    /// Placement supplied on this verdict's original scoring request.
+    /// Unknown when absent; it never grants access to the row.
+    pub read_position: Option<SkillVerdictReadPosition>,
     /// Ledger row id; the receipt's id is derived from it.
     pub id: EntityId,
     /// The gated proposal this ruling is about.
@@ -343,6 +346,7 @@ impl HeldOutVerdict {
             accepted: disposition.admits(),
             accepted_verdict: Some(self.id),
             missing_sources: Vec::new(),
+            read_position: None,
             at,
             ..self.clone()
         }

@@ -26,10 +26,9 @@ use super::amended::amended_receipt_shares_in_txn;
 use super::anchored_amendment::{AnchoredEffect, anchored_rows_in_txn, effective_evidence_in_txn};
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
-use super::ledger::{
-    projection_outcomes_in_txn, receipt_executor, receipt_manifest_names_skill,
-    record_outcome_in_txn,
-};
+use super::ledger::{projection_outcomes_in_txn, receipt_executor, receipt_manifest_names_skill};
+use super::outcome_position::OutcomeReadPosition;
+use super::outcome_write::record_outcome_positioned_in_txn;
 use super::posterior::SkillReliabilityPosterior;
 use super::priors::ensure_prior_in_txn;
 use super::provenance::skill_reliability_prior;
@@ -311,6 +310,21 @@ pub fn project_skill_reliability(
     vault: &Vault,
     judgments: &[AttributionJudgment],
 ) -> Result<Vec<EntityId>> {
+    project_skill_reliability_with_positions(vault, judgments, None)
+}
+
+/// Projects judgments with independently requested placement for each new outcome.
+///
+/// Keys are persisted judgment sequences, not outcome row identities. Each entry
+/// declares the placement of that judgment's derived outcome; the judgment's own
+/// read position is not used. Missing entries leave placement unknown. Held rows
+/// never adopt a later request, and all original grounding checks still apply.
+/// Placement grants no read: readers must re-admit the physical outcome.
+pub fn project_skill_reliability_with_positions(
+    vault: &Vault,
+    judgments: &[AttributionJudgment],
+    output_positions: Option<&BTreeMap<u64, OutcomeReadPosition>>,
+) -> Result<Vec<EntityId>> {
     let persisted = persisted_judgments_by_sequence(vault)?;
     let mut batches: Vec<(EntityId, Option<String>, Vec<&AttributionJudgment>)> = Vec::new();
     for judgment in judgments {
@@ -389,7 +403,7 @@ pub fn project_skill_reliability(
                     .evidence_receipts
                     .first()
                     .ok_or(invalid("a reliability loss must cite a receipt"))?;
-                record_outcome_in_txn(
+                record_outcome_positioned_in_txn(
                     vault,
                     wtxn,
                     &skill,
@@ -397,6 +411,7 @@ pub fn project_skill_reliability(
                     receipt,
                     false,
                     row.at,
+                    output_positions.and_then(|positions| positions.get(&row.sequence)),
                 )?;
             }
             project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)
