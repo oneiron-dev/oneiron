@@ -30,6 +30,11 @@ use crate::temporal::TimeRange;
 /// The hash domain of the Agent PERSON that holds every seat run's T1 grants.
 const SEAT_SECRET_HOLDER_DOMAIN: &[u8] = b"oneiron:byoa-seat-secret-holder:v1";
 
+/// The hash domain of the per-claim Agent PERSON a seat child's slip holds
+/// for (FIX 10624 step 2): the claim's attempt, lease generation and lease
+/// owner follow it, so each claim derives its own holder.
+const SEAT_CHILD_HOLDER_DOMAIN: &[u8] = b"oneiron:byoa-seat-child-holder:v1:";
+
 const ERR_SEAT_SECRET_REPO: &str =
     "a seat run's secret manifest is read from its checkout's local repository";
 
@@ -110,6 +115,31 @@ fn ensure_seat_secret_holder(vault: &Vault) -> ByoaResult<EntityId> {
     };
     let actor = vault.try_with_write_txn_grouped(|wtxn| {
         ensure_derived_agent_in_txn(vault, wtxn, SEAT_SECRET_HOLDER_DOMAIN, occurred, now)
+    })?;
+    Ok(actor.entity_ref())
+}
+
+/// The per-claim Agent PERSON the seat child of `attempt`'s run under the
+/// claim of `lease_owner` at `attempt_count` holds its slip for (FIX 10624
+/// step 2), made when it is not yet. A retried claim derives another, so a
+/// grant one claim's helper took never reads as another's.
+pub fn seat_child_holder(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_owner: &str,
+    attempt_count: u32,
+) -> ByoaResult<EntityId> {
+    let mut domain = SEAT_CHILD_HOLDER_DOMAIN.to_vec();
+    domain.extend_from_slice(attempt.as_bytes());
+    domain.extend_from_slice(&attempt_count.to_be_bytes());
+    domain.extend_from_slice(lease_owner.as_bytes());
+    let now = vault.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let actor = vault.try_with_write_txn_grouped(|wtxn| {
+        ensure_derived_agent_in_txn(vault, wtxn, &domain, occurred, now)
     })?;
     Ok(actor.entity_ref())
 }

@@ -52,7 +52,8 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor, agent_dispatch_run_actor,
+    agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
+    resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -65,6 +66,7 @@ use oneiron::code_run::{
     finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
+use oneiron::context_board::TurnWake;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{
     CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt, outage_park_reason,
@@ -75,8 +77,8 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
 use oneiron::failure_ladder::{
-    DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
-    HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
+    DetectorTier, FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure,
+    TypedFailureEvidence, TypedFailureVerdict,
 };
 use oneiron::learning::TypeRef;
 use oneiron::llm::SpentKind;
@@ -171,6 +173,9 @@ struct Claimed {
     task: String,
     qa_thread_ref: EntityId,
     objectives: Vec<String>,
+    /// What started the run, from its dispatch (FIX 15011); `None` for a
+    /// run no event started.
+    wake: Option<TurnWake>,
 }
 
 impl Claimed {
@@ -476,7 +481,16 @@ impl SyncServer {
         };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
         if let Err(error) = self.live_runs.settle(run, waits, || {
-            settle(vault, self.decision_host(), &claimed, ran)
+            settle(
+                vault,
+                self.decision_host(),
+                &claimed,
+                ran,
+                self.config
+                    .agent_failure_healer
+                    .clone()
+                    .unwrap_or(HealerSlot::Reserved),
+            )
         }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
@@ -509,6 +523,7 @@ fn claim(
                     task: resident_task(&status, &resident, briefing.clone()),
                     agent,
                     qa_thread_ref: resident.home_message_ref,
+                    wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
                 };
@@ -526,6 +541,8 @@ fn claim(
                         task: agent_task(&status, briefing.clone()),
                         agent,
                         qa_thread_ref,
+                        // A TASK's dispatch is its event; a spawn is none.
+                        wake: status.attempt.task_ref.as_ref().map(|_| TurnWake::Task),
                         status,
                         objectives: Vec::new(),
                     };
@@ -548,10 +565,16 @@ enum BoundRun {
 /// What a project conversation run's task puts before its skill's body.
 const SKILL_SEPARATOR: &str = "\n\n";
 
+/// What a resident's room wake says woke it (FIX 15647); its briefing
+/// names the room and the turn by ref.
+const ROOM_WAKE_CAUSE: &str =
+    "A turn in a room woke you: it addresses you, or its thread's open TASK is yours.";
+
 /// A resident run's task: its frozen definition's instructions, then what
 /// woke it, then the briefing its wake carries: an inbox wake's message as
-/// its sender wrote it (OF-519). It reads only the attempt and its binding,
-/// so each entry of the run binds the same text to the run's record.
+/// its sender wrote it (OF-519), a room wake's room and turn by ref. It
+/// reads only the attempt and its binding, so each entry of the run binds
+/// the same text to the run's record.
 fn resident_task(
     status: &AgentDispatchStatus,
     resident: &ResidentAgentSpec,
@@ -559,6 +582,9 @@ fn resident_task(
 ) -> String {
     let cause = match &status.attempt.task_ref {
         Some(task) => task_cause(task),
+        None if resident_attempt_wakes_for_room(&status.attempt, resident.agent_def_ref) => {
+            ROOM_WAKE_CAUSE.to_owned()
+        }
         None => format!(
             "A message reached your inbox (identity {}). Your home conversation is {}.",
             resident.inbox_identity_ref.to_hex(),
@@ -566,6 +592,21 @@ fn resident_task(
         ),
     };
     task_text(status, std::iter::once(cause).chain(briefing))
+}
+
+/// What started a resident's run, from its attempt's engine-minted refs and
+/// never its briefing: the TASK it realizes, a diary-read review, a room
+/// turn (FIX 15647), else a message in its inbox.
+fn resident_wake(status: &AgentDispatchStatus, agent: EntityId) -> TurnWake {
+    if status.attempt.task_ref.is_some() {
+        TurnWake::Task
+    } else if resident_attempt_reviews_diary(&status.attempt, agent) {
+        TurnWake::Review
+    } else if resident_attempt_wakes_for_room(&status.attempt, agent) {
+        TurnWake::Room
+    } else {
+        TurnWake::Inbox
+    }
 }
 
 /// Another agent's run task: its frozen definition's instructions, then the
