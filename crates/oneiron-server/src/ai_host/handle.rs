@@ -71,6 +71,7 @@ impl AiHandle {
             summaries: false,
             decisions: Arc::default(),
             coach_heal_wake: Arc::default(),
+            coach_host_wake: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),

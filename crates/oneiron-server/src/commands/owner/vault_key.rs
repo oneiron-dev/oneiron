@@ -67,7 +67,8 @@ mod unlocked_open;
 pub(super) use self::fresh_restore::{RestoreWrap, restore_fresh};
 pub(crate) use self::host_unlock::HostUnlock;
 pub(super) use self::unlocked_open::{
-    KeyNeed, UnlockRequest, open_with_unlock, open_with_unlock_for_secret, refuse_two_stdin_secrets,
+    KeyNeed, UnlockRequest, open_with_unlock, open_with_unlock_for_secret,
+    open_with_unlock_for_secret_checked, refuse_two_stdin_secrets,
 };
 
 /// What a command that runs on a stopped vault does instead while a server

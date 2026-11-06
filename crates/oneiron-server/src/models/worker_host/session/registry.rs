@@ -12,7 +12,6 @@
 //! region or a buffer) is a [`HostCopy`] counted against that vault, so a
 //! lock can wait for its vault's to go.
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
@@ -31,6 +30,7 @@ use tokio::sync::Notify;
 
 use super::{CheckpointAuthority, SnapshotScope, lifecycle, policy};
 use crate::models::native_exl3::{OpFault, session_send};
+use crate::models::worker_host::NativeLaunch;
 
 /// Every managed worker's sessions, by worker id: held by the process's one
 /// worker host, beside the supervisors.
@@ -41,7 +41,7 @@ pub(in crate::models::worker_host) struct Registry(Mutex<BTreeMap<String, Worker
 /// and epoch, and its supervisor, whose activity the answers feed.
 #[derive(Clone)]
 pub(super) struct Place {
-    pub(super) socket: PathBuf,
+    pub(super) launch: NativeLaunch,
     pub(super) epoch: String,
     pub(super) worker: InferenceWorker,
     /// The device ledger of the worker incarnation's actual launch
@@ -203,7 +203,7 @@ pub(super) fn bind<'a>(
     place: &Place,
 ) -> &'a mut Worker {
     let current = workers.get(worker_id).is_some_and(|worker| {
-        worker.place.epoch == place.epoch && worker.place.socket == place.socket
+        worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket()
     });
     if !current {
         let ended = workers.insert(
@@ -233,9 +233,9 @@ pub(super) fn current<'a>(
     worker_id: &str,
     place: &Place,
 ) -> Option<&'a mut Worker> {
-    workers
-        .get_mut(worker_id)
-        .filter(|worker| worker.place.epoch == place.epoch && worker.place.socket == place.socket)
+    workers.get_mut(worker_id).filter(|worker| {
+        worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket()
+    })
 }
 
 /// Mints the ledger fact guard for a session of `vault` at `target` on
@@ -380,7 +380,7 @@ pub(super) async fn release_acked(
         reason,
     };
     let answer: Result<SessionReleased, OpFault> = session_send(
-        &place.socket,
+        &place.launch,
         &place.epoch,
         SessionOp::Drop,
         &body,
@@ -515,7 +515,7 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     conversation: Option<&JsonValue>,
 ) -> Result<R, SessionInvalidation> {
     session_send(
-        &place.socket,
+        &place.launch,
         &place.epoch,
         op,
         body,

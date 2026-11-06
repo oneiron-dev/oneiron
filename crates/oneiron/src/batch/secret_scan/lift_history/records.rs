@@ -65,7 +65,8 @@ pub(super) fn census(
     {
         let (key, raw) = row?;
         read += 1;
-        page.known_reads.extend(record_id(&key));
+        page.known_reads
+            .extend(record_id(&key).map(super::accounting::Source::Entity));
         if let Some(id) = record_id(&key)
             && census_hit(vault, txn, &id, &raw, known, known_only)?
         {

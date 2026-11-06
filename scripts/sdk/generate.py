@@ -346,7 +346,7 @@ ARGUMENTS = {
     'effort': {'rust': 'oneiron::memory::RecallEffort', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str', 'stub': 'Effort', 'native_py': 'Option<&str>',
         'napi_convert': 'let {name} = oneiron_remote::parse_effort({name}.as_deref().unwrap_or({default})).map_err(facade_error)?;', 'py_convert': 'let {name} = oneiron_remote::parse_effort({name}.unwrap_or({default})).map_err(raise)?;', 'field': 'Some({name})'},
     'scope': {'rust': '&oneiron::memory::RecallScope', 'napi': 'Option<NapiRecallScope>', 'native_ts': 'RecallScope | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallScope | None', 'native_py': 'Option<&str>', 'json': True,
-        'napi_convert': 'let {name} = recall_scope_to_engine({name});', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
+        'napi_convert': 'let {name} = recall_scope_to_engine({name}).map_err(facade_error)?;', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
     'limit': {'rust': 'usize', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int', 'stub': 'int', 'native_py': 'Option<usize>',
         'napi_convert': 'let {name} = {name}.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({default});', 'py_convert': 'let {name} = {name}.unwrap_or({default});', 'field': 'Some({name})'},
     'format': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'PackFormat | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
@@ -906,6 +906,12 @@ def mcp_input_dispatch(row):
                  'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
+        if name in ('vault.artifacts.view', 'vault.artifacts.export'):
+            body += ('let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());\n'
+                     'let memory = match owner {\n'
+                     '    Some(owner) => memory.with_owner_authorship(&owner),\n'
+                     '    None => memory,\n'
+                     '};\n')
         if name == 'describe':
             # describe(card key) expands a board card, under the board's own
             # scope and frame-epoch checks.

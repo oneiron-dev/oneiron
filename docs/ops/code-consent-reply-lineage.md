@@ -42,6 +42,20 @@ held-call delivery, grants, masking, output erasure, or pending bridge outcomes.
 Direct recorded SDK connector answers are a separate lineage supplier. These
 slices do not by themselves close every connector or session provenance path.
 
+A consent-only `connector.call` made through `self.use` uses the same bound
+code-consent wait as a direct connector call. Its call site keeps the actual
+`self.use` request identity, while the pending effect remains `connector.call`.
+Other `self.use` operations and holds for reasons other than consent keep their
+existing answers and waits.
+
+A hard-stopped REPL entry still commits the real wait it reached beside its
+failed-step checkpoint, but returns its original runtime or provider error,
+not a successful Waiting outcome. Reclaim and redirect can then resume the
+same run under a new valid lease. Force-cancel and terminal lease expiry do
+not revive the attempt. The retained seal can still make the already-admitted
+owner question answerable, just as when the run parked before force-cancel;
+the owner's real answer and the effect's existing gates remain required.
+
 ## Shared-vault owner questions
 
 A held call freezes every live vault owner's identity in its minting writer,

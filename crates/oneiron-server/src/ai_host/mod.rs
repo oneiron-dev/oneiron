@@ -153,6 +153,8 @@ pub struct AiHandle {
     decisions: Arc<OnceLock<DecisionHost>>,
     /// The installed Coach-heal worker's real publisher and served runtime.
     coach_heal_wake: Arc<OnceLock<coach_heal::WakeHost>>,
+    /// The runtime recorded by the actual host Coach worker installation.
+    coach_host_wake: Arc<OnceLock<tokio::runtime::Handle>>,
     /// The same cheap compactor code mode serves, exposed to typed host
     /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
     host_compaction: Arc<

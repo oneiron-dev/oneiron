@@ -10,13 +10,14 @@ use serde::{Deserialize, Serialize};
 use super::super::super::contribution::FORK_RECEIPT_PREFIX;
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::{FORKS, ForkValue, actor_gone_in_txn};
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
 use crate::{EntityId, Result, Vault};
 
 /// Actual erase subjects, captured before provider/scorer work: the actor,
-/// credited skill and both ends of a used edge. Removing one leaves the
-/// others discoverable for a later erase.
+/// credited skill, both ends of a used edge and entity spellings retained
+/// in the outcome receipt. Receipt spellings are erase metadata, not proof
+/// of authority. Removing one leaves the others discoverable for a later erase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ForkProvenance {
     subjects: Vec<EntityId>,
@@ -31,6 +32,7 @@ impl ForkProvenance {
         selected: Option<&StepReplayCapsule>,
     ) -> Result<Option<Self>> {
         let mut subjects = vec![candidate.skill];
+        subjects.extend(receipt_entities(&candidate.outcome_receipt));
         match candidate.target {
             ContributionTarget::LoadedSkill(skill) => subjects.push(skill),
             ContributionTarget::UsedEdge { derived, source } => subjects.extend([derived, source]),
@@ -82,6 +84,16 @@ impl ForkProvenance {
     }
 }
 
+/// Native full-id spellings anywhere in an opaque receipt, including
+/// upper-case hex: the same spelling match used by CHECK's erase pass.
+fn receipt_entities(receipt: &str) -> impl Iterator<Item = EntityId> + '_ {
+    receipt
+        .as_bytes()
+        .windows(ENTITY_ID_LEN * 2)
+        .filter_map(|hex| std::str::from_utf8(hex).ok())
+        .filter_map(|hex| EntityId::from_hex(hex).ok())
+}
+
 /// Re-keys every pair naming `entity` and rebinds CHECK's exact fork
 /// references without changing a measurement. New fork paths are opaque
 /// from birth, so keeping their bodies keeps no target-derived path.
@@ -93,7 +105,11 @@ pub(crate) fn erase_contribution_forks_in_txn(
     let rows = FORKS.scan(&vault.store, wtxn)?;
     let affected: BTreeSet<_> = rows
         .iter()
-        .filter(|(_, row)| row.provenance.subjects.contains(entity))
+        .filter(|(_, row)| {
+            row.provenance.subjects.contains(entity)
+                || matches!(&row.value, ForkValue::Fork(fork)
+                    if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity))
+        })
         .map(|((pair, _), _)| *pair)
         .collect();
     if affected.is_empty() {
@@ -104,12 +120,20 @@ pub(crate) fn erase_contribution_forks_in_txn(
         moved.insert(pair, *blake3::hash(&vault.store.clock.ulid()?).as_bytes());
     }
     let mut rebound = BTreeMap::new();
+    let mut erased_outcomes = BTreeMap::new();
     for (key, mut row) in rows {
         let Some(pair) = moved.get(&key.0) else {
             continue;
         };
         row.provenance.subjects.retain(|id| id != entity);
         if let ForkValue::Fork(fork) = &mut row.value {
+            if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity) {
+                let erased = format!("erased:{}", bytes_to_hex_lower(&vault.store.clock.ulid()?));
+                let replacement = erased_outcomes
+                    .entry(fork.scoring.outcome_receipt.clone())
+                    .or_insert(erased);
+                fork.scoring.outcome_receipt.clone_from(replacement);
+            }
             let fresh = bytes_to_hex_lower(&vault.store.clock.ulid()?);
             let receipt = format!("{FORK_RECEIPT_PREFIX}{fresh}");
             // Every occurrence of the same receipt gets the same new ref.

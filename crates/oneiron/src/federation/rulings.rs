@@ -208,6 +208,9 @@ impl Vault {
         vault_id: u64,
     ) -> Result<Vec<AdminRulingReceipt>> {
         let mut rows = Vec::new();
+        // Every admitted ruling of this vault, its grant's pact aside: the
+        // immutable history a Lamport step is bounded by (FIX 8740).
+        let mut observed_entries = 0u64;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         // ClaimOf edges are mutable graph materialization, not ledger custody.
         // The put-maintained predicate index keeps detached rows discoverable.
@@ -235,6 +238,7 @@ impl Vault {
             if receipt.ruling.vault_id != vault_id {
                 continue;
             }
+            observed_entries = observed_entries.checked_add(1).ok_or_else(invalid)?;
             let grant = EntityId::from_hex(&receipt.ruling.grant_ref)?;
             if fold
                 .pact_for_grant(&grant)
@@ -244,10 +248,10 @@ impl Vault {
             }
             rows.push(receipt);
         }
-        // A Lamport step requires at least that many admitted ledger entries.
+        // A Lamport step requires at least that many admitted ledger entries,
+        // witnessed ones included, so a later grant change never lowers it.
         // Partial replay stays inert until its history arrives; a peer's huge
         // self-asserted counter can neither win nor poison the next append.
-        let observed_entries = u64::try_from(rows.len()).map_err(|_| invalid())?;
         rows.retain(|row| row.ruling.ledger_order <= observed_entries);
         // Lamport order advances after every observed ruling; concurrent ties
         // use the immutable id. Receipts project the same merged history on all replicas.

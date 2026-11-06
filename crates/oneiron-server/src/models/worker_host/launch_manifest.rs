@@ -92,8 +92,72 @@ pub(super) struct LaunchRecord {
     pub(super) llama_alias: Option<String>,
     pub(super) pins: CacheIdentity,
     pub(super) native_socket: Option<PathBuf>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) native_peer: Option<super::process::ProcessPeer>,
     /// The scheduling wire the qualification hello advertised.
     pub(super) scheduling: Option<SchedulingCapability>,
+}
+
+/// The endpoint and verified launch record retained by one native call or
+/// session. On Linux/macOS its peer is checked against the supervised child.
+/// Other Unix targets retain their existing OwnServer transport semantics.
+#[cfg(unix)]
+#[derive(Clone)]
+pub(in crate::models) struct NativeLaunch {
+    socket: PathBuf,
+    manifest_sha256: String,
+    wire_model: String,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    peer: super::process::ProcessPeer,
+}
+
+#[cfg(unix)]
+impl NativeLaunch {
+    pub(in crate::models) fn socket(&self) -> &Path {
+        &self.socket
+    }
+
+    pub(in crate::models) fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
+    }
+
+    pub(in crate::models) fn hello_agrees(
+        &self,
+        hello: &serde_json::Value,
+        epoch: Option<&str>,
+    ) -> bool {
+        let actual_epoch = hello.get("epoch").and_then(serde_json::Value::as_str);
+        actual_epoch.is_some()
+            && epoch.is_none_or(|expected| actual_epoch == Some(expected))
+            && hello.get("model").and_then(serde_json::Value::as_str)
+                == Some(self.wire_model.as_str())
+            && hello
+                .get("launch_manifest")
+                .and_then(serde_json::Value::as_str)
+                == Some(self.manifest_sha256.as_str())
+            && hello
+                .pointer("/worker/kind")
+                .and_then(|kind| serde_json::from_value::<WorkerKind>(kind.clone()).ok())
+                == Some(WorkerKind::Exl3)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(in crate::models) fn peer_matches(&self, pid: Option<u32>) -> bool {
+        self.peer.matches(pid)
+    }
+}
+
+#[cfg(unix)]
+impl LaunchRecord {
+    pub(super) fn native_launch(&self, wire_model: &str) -> Option<NativeLaunch> {
+        Some(NativeLaunch {
+            socket: self.native_socket.clone()?,
+            manifest_sha256: self.manifest_sha256.clone(),
+            wire_model: wire_model.to_owned(),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            peer: self.native_peer.clone()?,
+        })
+    }
 }
 
 /// The current launch's record, shared by a worker's launcher, which fills
