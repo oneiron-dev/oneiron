@@ -188,8 +188,41 @@ their existing label/scorer path and gain no new grant requirement. The native
 This adds a native source-aware release and grading API. It does not yet wire
 the server's measuring job to a caller-authorized Memory handle or select its
 dedicated scorer. That job's current `&Vault` and Coach identity alone do not
-provide the caller's source permission. Scoped cut-audit text reads, inventory
-and automatic nomination remain separate work. Nothing here runs an eval case.
+provide the caller's source permission. The native source-aware owner setup
+below supplies scoped cut-audit reads; inventory nomination and the server
+consumers remain separate work. Nothing here runs an eval case.
+
+## Source-aware owner cohort setup
+
+`Memory::setup_eval_cohorts` and its listing twin use the same explicit owner
+proof, pinned metadata inventory, family/case decisions and cut commit as the
+existing Vault setup. The new result carries the ordinary setup report and
+every original scoped receipt used by a Repair comparison. The listing twin
+also names the source rows whose text the audit actually read, alongside the
+existing TURN, MESSAGE and proposal-artifact list. It returns no comparison
+text or expected response.
+
+A cut with Repair cases prepares this handle's original read lane, grant clock
+and body custody before its final source snapshot. In that snapshot it selects
+the cut's members and other-purpose cases, checks each Repair case's family,
+seat, canonical source root, parentless recipe and exact source-row set, and
+reads and recompiles the actual admitted capture. The stored full task and
+grader digest must still match. A caller-supplied text or hash never replaces
+this source admission. Only the task's `response_input` is serialized for the
+existing token-5gram near-copy comparison. Source text and graders are not
+copied into the audit, inventory or labels.
+
+Missing or withheld Repair sources produce explicit source coverage gaps, not
+clean comparisons. Changed source or recipe pins retain their normal errors.
+Flags change no membership or purpose, and this comparison serves no cohort
+and counts no exposure. The final source snapshot closes before legacy text
+readers open theirs. Receipt/Synthetic cases keep those original readers; a
+cut without Repair cases opens no new source lane. The existing Vault setup,
+method pin, threshold and atomic membership check are unchanged.
+
+This is a native Rust owner setup API. The HTTP/SDK owner handler is not yet
+threaded through an original Memory handle, and automatic Repair nomination
+is not activated by this change.
 
 ## Remaining feature work
 
@@ -198,9 +231,9 @@ compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
 Repair nomination, executable worlds beyond the explicit response-only task,
-server measurement integration and the scoped cut-audit consumer remain open.
-The explicit owner case door records source recipes, family assignment and
-exact-task reuse; the native release/grading API does not activate those
-remaining consumers. The file
+server measurement integration and the server's source-aware setup threading
+remain open. The explicit owner case door records source recipes, family
+assignment and exact-task reuse; native release/grading and source-aware
+owner setup do not activate those remaining consumers. The file
 path adds no table, family ledger, migration, old-format reader, default cap
 or timer.

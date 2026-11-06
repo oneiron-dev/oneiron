@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use super::repair_task::compile_repair_task;
 use super::{
-    CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalRepairTaskSource, FamilyPurpose,
-    assign_family_in_txn, put_case_in_txn, record_case_in_txn, rows_in_txn,
+    CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalRepairTask, EvalRepairTaskSource,
+    FamilyPurpose, assign_family_in_txn, put_case_in_txn, record_case_in_txn, rows_in_txn,
 };
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadReceipt};
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::consent::AuthenticatedOwner;
 use crate::ingest::{AgUiFileReadInput, project_ag_ui_file};
 use crate::memory::{Memory, MemoryResult};
-use crate::{EntityId, Error};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Frozen reconstruction recipe. Neither the task input nor its expected answer
 /// is copied into the case ledger; every use must read the admitted source again.
@@ -37,6 +37,39 @@ pub struct EvalRepairCaseRead {
     /// Missing or withheld sources author no family, case or label.
     pub case: Option<EvalCase>,
     pub receipt: ScopedReadReceipt,
+}
+
+/// Rebuild a stored recipe only through the caller's already prepared lane.
+/// The caller checks the case/family on `txn` and holds result bodies before it.
+pub(super) fn read_repair_task_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    lane: &ScopedRead<'_>,
+    recipe: &EvalRepairCaseRecipe,
+) -> Result<ScopedReadResult<Option<EvalRepairTask>>> {
+    let source = &recipe.source;
+    let id = EntityId::from_hex(&source.claim_ref)?;
+    let source_pin = AgUiFileReadInput {
+        claim_ref: source.claim_ref.clone(),
+        source_hash: source.source_hash.clone(),
+    };
+    lane.read_projected_in_txn(txn, &[PointRead::id(id)], None, |snapshot, rows| {
+        let view = project_ag_ui_file(vault, snapshot, id, &source_pin, rows)?;
+        let Some((view, _)) = view else {
+            return Ok(None);
+        };
+        if vault.local_hard_delete_marker_exists_in_txn(snapshot, &id)? {
+            return Ok(None);
+        }
+        let task = compile_repair_task(&view, source)?;
+        if task.source != recipe.source
+            || task.task_hash != recipe.task_hash
+            || task.source_rows.as_slice() != [id]
+        {
+            return Err(Error::InvalidClaimBody("Repair task recipe changed"));
+        }
+        Ok(Some(task))
+    })
 }
 
 impl Memory<'_> {
