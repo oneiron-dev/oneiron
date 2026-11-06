@@ -304,20 +304,21 @@ impl LiftedKeys {
         txn: &RoTxn<'_>,
         texts: impl IntoIterator<Item = impl AsRef<str>>,
         reader: &ContainerReader,
+        scan_bytes: usize,
     ) -> Result<Self> {
-        Self::of_in_txn_paced(store, txn, texts, Some(reader))
+        Self::of_in_txn_paced(store, txn, texts, Some((reader, scan_bytes)))
     }
 
     fn of_in_txn_paced(
         store: &Store,
         txn: &RoTxn<'_>,
         texts: impl IntoIterator<Item = impl AsRef<str>>,
-        reader: Option<&ContainerReader>,
+        reader: Option<(&ContainerReader, usize)>,
     ) -> Result<Self> {
-        let mut keys = Vec::new();
+        let mut keys: Vec<(String, String)> = Vec::new();
         for text in texts {
             let text = text.as_ref();
-            let hash = if let Some(reader) = reader {
+            let hash = if let Some((reader, _)) = reader {
                 reader
                     .pacing
                     .checkpoint(ReadProgress::Member)
@@ -338,7 +339,7 @@ impl LiftedKeys {
                 continue;
             };
             for key in &file.keys {
-                if let Some(reader) = reader {
+                if let Some((reader, _)) = reader {
                     reader
                         .pacing
                         .checkpoint(ReadProgress::Member)
@@ -354,13 +355,38 @@ impl LiftedKeys {
                 }
                 let mut duplicate = false;
                 for (held, _) in &keys {
-                    if let Some(reader) = reader {
+                    if let Some((reader, _)) = reader {
                         reader
                             .pacing
                             .checkpoint(ReadProgress::Member)
                             .map_err(withheld)?;
                     }
-                    if held == value {
+                    let equal = if let Some((reader, scan_bytes)) = reader {
+                        if held.len() != value.len() {
+                            false
+                        } else {
+                            let scan_bytes = scan_bytes.max(1);
+                            let mut equal = true;
+                            for (held, value) in held
+                                .as_bytes()
+                                .chunks(scan_bytes)
+                                .zip(value.as_bytes().chunks(scan_bytes))
+                            {
+                                reader
+                                    .pacing
+                                    .checkpoint(ReadProgress::Member)
+                                    .map_err(withheld)?;
+                                if held != value {
+                                    equal = false;
+                                    break;
+                                }
+                            }
+                            equal
+                        }
+                    } else {
+                        held == value
+                    };
+                    if equal {
                         duplicate = true;
                         break;
                     }
