@@ -53,6 +53,14 @@ same field updates instead of cloning another relationship set. The borrowed
 projection door stays unchanged. History intermediates remain unadmitted; the
 final projected body owns its own post-allocation capacity lease. The original
 body keeps its own guard until it drops, including while a replacement is built.
+
+The machine-history fold decodes its birth from the authenticated signed birth,
+not the mutable target row. Its private event states borrow that same body and
+still compare full birth values when joining branches. The history reader moves
+the decoded birth into the final owned projection; the borrowed fold door makes
+one copy for its returned projection. Branch grant maps and other fold scratch
+still allocate and remain unadmitted. This transfer does not establish retained-input
+FIFO progress or custody for a later typed copy.
 Contact reads retain only each live head's predicate index and value for the
 fold. The value owns a separate post-allocation lease on the supplied line.
 The canonical decoder charges the current value's actual heap capacities before
