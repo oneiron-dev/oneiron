@@ -65,6 +65,10 @@ pub(crate) struct ApplyOpsGateMode {
     /// keeps its signed bytes for read quarantine instead of the local
     /// write-window refusal.
     pub(super) replicated_puts: std::collections::BTreeSet<EntityId>,
+    /// Each ASSET `BatchBuilder::put_marked_carrier` queued, by the BLAKE3
+    /// of its bytes (FIX 9034): a batch of nothing else skips the door's
+    /// scan, its detection being the carrier's mark.
+    pub(super) marked_carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
@@ -91,6 +95,7 @@ impl ApplyOpsGateMode {
             owner_authored: None,
             asset_files: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
+            marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
         }
     }
@@ -141,6 +146,15 @@ impl ApplyOpsGateMode {
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
         self.caller_envelopes = envelopes;
+        self
+    }
+
+    /// Binds each marked carrier's ASSET put to its bytes (FIX 9034).
+    pub(super) fn with_marked_carriers(
+        mut self,
+        carriers: std::collections::BTreeMap<EntityId, [u8; 32]>,
+    ) -> Self {
+        self.marked_carriers = carriers;
         self
     }
 
