@@ -257,11 +257,31 @@ Unbound finalizers add no capacity work. Allocation internals before the new
 post-allocation measurements, pre-growth admission and a full construction peak
 remain outside these charges.
 
-These finalization charges do not cover remaining backing, the finalizer's
-input storage before these moves, other mutation copies, hash sets, config-map
-storage, number internals, serialization scratch, marker/index/retention keys
-and values, construction peaks or pre-growth admission. They do not establish
-a full working-set bound or a compiler/runtime result.
+The canonical detached finalizer also records its original owned empty-reason
+string and pack metadata before queuing the existing write. The string uses its
+actual capacity; the same lower replay calculation measures the pack value's
+known string, array-slot and object-key backing. These finalization inputs own
+separate storage from the captured replay config, the provisional record clone
+and the later decoded record. No input copy or new lease is made, and an unbound
+caller performs no added accounting walk.
+
+A private byte count travels with those same inputs and their existing lease.
+After the original moves into the final record, the existing current-record
+measurement adds its full known backing before releasing only that carried
+input count. This briefly counts moved backing twice without leaving a live
+gap or a duplicate final charge. Unused pack metadata drops at its original
+assignment before its input charge is released. On a missing row or an earlier
+error, the original payload still drops before the same lease. An unstarted
+write retains both in the same owner. Synchronous session-overlay and admitted
+finalizers keep their existing input handling; this pre-queue charge applies
+only to the canonical detached write.
+
+These finalization charges do not cover remaining backing, input construction
+before its first measurement, synchronous inputs before their existing moves,
+other mutation copies, hash sets, config-map storage, number internals,
+serialization scratch, marker/index/retention keys and values, construction
+peaks or pre-growth admission. They do not establish a full working-set bound
+or a compiler/runtime result.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full

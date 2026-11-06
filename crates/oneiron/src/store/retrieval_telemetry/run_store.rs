@@ -178,7 +178,7 @@ impl SessionStoreView<'_> {
         memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
-        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize, memory.as_mut())
+        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize, 0, memory.as_mut())
     }
 
     /// Session sibling of `Store::delete_retrieval_run`, used to discard a
@@ -232,6 +232,7 @@ struct DetachedRetrievalRunFinalize {
     surfaced_result_ids: Vec<[u8; 16]>,
     empty_reason: Option<String>,
     pack_config: Option<serde_json::Value>,
+    input_backing_bytes: u64,
     memory: Option<crate::host_memory::MemoryLease>,
 }
 
@@ -250,6 +251,7 @@ impl DetachedRetrievalRunFinalize {
             &core.canonical_dbs(),
             wtxn,
             finalize,
+            self.input_backing_bytes,
             self.memory.as_mut(),
         ) {
             stage_retrieval_run_delete(&core.canonical_dbs(), wtxn, self.run_id)?;
@@ -495,6 +497,18 @@ impl Store {
                     .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
             );
         }
+        let input_backing_bytes = memory.as_mut().map_or(0, |memory| {
+            let bytes = empty_reason
+                .as_ref()
+                .map_or(0, |reason| reason.capacity() as u64)
+                .saturating_add(
+                    pack_config
+                        .as_ref()
+                        .map_or(0, super::state::known_value_backing_bytes),
+                );
+            memory.materialized(0, bytes);
+            bytes
+        });
         let finalize = DetachedRetrievalRunFinalize {
             run_id,
             elapsed_us,
@@ -503,6 +517,7 @@ impl Store {
             surfaced_result_ids,
             empty_reason,
             pack_config,
+            input_backing_bytes,
             memory,
         };
         self.group_write_detached(DetachedWrite::of_core(
@@ -529,7 +544,13 @@ impl Store {
         self.write_in_group(|wtxn| {
             admit(wtxn)?;
             let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
-            stage_retained_context_pack_retrieval_run_finalize(self, wtxn, finalize, memory.as_mut())
+            stage_retained_context_pack_retrieval_run_finalize(
+                self,
+                wtxn,
+                finalize,
+                0,
+                memory.as_mut(),
+            )
         })
     }
 
@@ -786,6 +807,7 @@ fn stage_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
+    input_backing_bytes: u64,
     mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let RetrievalRunFinalize {
@@ -950,6 +972,7 @@ fn stage_context_pack_retrieval_run_finalize(
             )
         });
         memory.materialized(0, bytes);
+        memory.shrink(input_backing_bytes);
     }
     super::turn_index::put(target, wtxn, &record)?;
     if let Some(memory) = memory {
@@ -977,13 +1000,14 @@ fn stage_retained_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
+    input_backing_bytes: u64,
     memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let run_id = finalize.run_id;
     if RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)? {
         super::retention::require_prune_retrieval_runs(target, wtxn, 1)?;
     }
-    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize, memory)?;
+    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize, input_backing_bytes, memory)?;
     if RETRIEVAL_RUN.contains(target, wtxn, &run_id)? {
         super::retention::put_retrieval_age(
             target,
