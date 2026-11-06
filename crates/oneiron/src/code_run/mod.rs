@@ -45,6 +45,7 @@ pub mod shadow_runner;
 mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
+pub(crate) use storage::erase_reader_caller_actor_in_txn;
 mod support;
 mod task_settlement;
 mod team_submit;

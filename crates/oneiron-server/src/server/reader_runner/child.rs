@@ -83,26 +83,29 @@ impl Child {
         let job = &self.job;
         // A scoped child's door is its loan, Grant-checked at each call
         // (FIX 7507); the read child's door never stands in for it.
-        let door: Arc<dyn AgentVerbDoor> = match &job.kind {
-            ReaderJobKind::ScopedAgent { .. } => {
-                Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
-            }
-            ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
-                Arc::new(crate::api::ReaderChildDoor::new(
-                    Arc::clone(vault),
-                    shared.seats.caller(job.binding.parent_run),
-                ))
+        let door = |jobs: Option<&ReaderJobs<'_>>| -> Arc<dyn AgentVerbDoor> {
+            match &job.kind {
+                ReaderJobKind::ScopedAgent { .. } => {
+                    Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
+                }
+                ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                    Arc::new(crate::api::ReaderChildDoor::new(
+                        Arc::clone(vault),
+                        jobs.map(|jobs| {
+                            shared
+                                .seats
+                                .caller(jobs, job.binding.parent_run, job.binding.actor)
+                        })
+                        .unwrap_or_else(|| oneiron::claim::CallerLocality::OffDevice.into()),
+                    ))
+                }
             }
         };
         let settled = match &self.session {
             None => {
-                let end = self.metered(vault, None, door);
-                ReaderJobs::canonical(vault).complete(
-                    job.task,
-                    job.generation,
-                    end,
-                    unix_millis_now(),
-                )
+                let jobs = ReaderJobs::canonical(vault);
+                let end = self.metered(vault, None, door(Some(&jobs)));
+                jobs.complete(job.task, job.generation, end, unix_millis_now())
             }
             Some((session_ref, participant)) => {
                 // A session that is gone took the child's rows with its
@@ -110,8 +113,9 @@ impl Child {
                 let Ok(session) = vault.off_record_session_vault().bind(session_ref) else {
                     return;
                 };
-                let end = self.metered(vault, Some(&session), door);
-                ReaderJobs::for_session(&session, *participant).and_then(|jobs| {
+                let jobs = ReaderJobs::for_session(&session, *participant);
+                let end = self.metered(vault, Some(&session), door(jobs.as_ref().ok()));
+                jobs.and_then(|jobs| {
                     jobs.complete(job.task, job.generation, end, unix_millis_now())
                 })
             }

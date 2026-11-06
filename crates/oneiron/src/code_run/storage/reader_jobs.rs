@@ -5,7 +5,10 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+mod caller;
 mod scoped;
+
+pub(crate) use caller::erase_reader_caller_actor_in_txn;
 
 use std::collections::BTreeMap;
 
