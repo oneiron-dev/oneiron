@@ -489,6 +489,12 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 12113: a MESSAGE row's writer proof rides beside its
+            // carrier the same way, when this install wrote the row or the
+            // own-device lane admitted it with that proof.
+            if crate::sync::ingest::publish_writer_proof(vault, doc, id, &raw)? {
+                wrote_any = true;
+            }
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()
