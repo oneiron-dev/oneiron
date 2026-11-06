@@ -139,8 +139,9 @@ The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
 paragraph count, later lines reuse the same-index paragraph's properties;
 new replacement text uses its first run's (else first field's, else the global
 run's) properties. A later-template error falls back to the first paragraph's
-template. The first line of a same-count rebuild and the changed middle of
-a count-changing rebuild keep the existing first-paragraph template.
+template. New replacement text in the first line of a same-count rebuild,
+and changed middle lines in a count-changing rebuild, keep the existing
+first-paragraph/global-run template.
 Field-removal receipts, expected-text checks and the retained/cut paths are
 unchanged.
 
@@ -164,3 +165,13 @@ first-paragraph template; unknown coverage or copied-property errors fall
 back directly to that same template. No field wrapper survives the rebuild,
 and its field-removal receipts are unchanged. This is a deterministic current
 text assignment, not canonical paragraph identity or a PowerPoint proof.
+
+The same-count first-paragraph run carry (2026-11-06, FIX 17480) also keeps
+the first line's common character prefix and suffix in their actual source
+run or field properties, as static runs. Its replacement middle still uses
+the original global first-ordinary-run (else first-field) template, even when
+that run belongs to a later paragraph. Unsupported coverage or copied
+properties keep the original first-template render. Later same-count and
+count-changing paths, all static-run primitives and all field-removal receipts
+are unchanged. This does not assign canonical identity or claim PowerPoint
+rendering fidelity.

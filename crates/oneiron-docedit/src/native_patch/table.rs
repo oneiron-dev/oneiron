@@ -428,14 +428,15 @@ pub(super) fn set_cell(
 }
 
 /// Rebuild with the first paragraph/run template (else the first field's).
-/// Same-count later lines keep their same-index paragraph properties and
+/// Same-count lines keep their same-index paragraph properties and
 /// each direct run/field's properties on the common character prefix/suffix
-/// as static runs; replacement text uses the first run/field/global template.
+/// as static runs; the first line's replacement keeps the global template,
+/// later lines use their paragraph's first run/field (else global).
 /// With different counts, only unchanged common whole-paragraph prefix/suffix
 /// lines keep their original paragraph and static run properties. Changed
 /// middle and added lines use the first template. Unsupported coverage or
 /// properties use the actual one-template render for same-count later lines,
-/// then the first template; count-changed outer lines fall directly to first.
+/// then first; same-count first and count-changed outer lines fall to first.
 /// Copied properties keep namespace bindings; removed field types are reported.
 fn rebuilt(
     bytes: &[u8],
@@ -611,7 +612,12 @@ fn rebuilt(
     };
     let mut out = bytes[..first_node.span.start].to_vec();
     for (index, line) in value.split('\n').enumerate() {
-        let rendered = if same_count && index > 0 {
+        let rendered = if same_count && index == 0 {
+            match styled((first, first_node), source_run, line) {
+                Some(xml) => xml,
+                None => render((first, first_node), source_run, line)?,
+            }
+        } else if same_count && index > 0 {
             let actual = paragraphs[index];
             let actual_run = paragraph_run(actual.0);
             match styled(actual, actual_run, line) {
