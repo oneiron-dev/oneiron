@@ -1,5 +1,6 @@
 //! The Coach's training offer (OF-577): a cheaper stock model or a custom
-//! one for a seat, which the owner approves. Nothing deploys by itself.
+//! one for a seat. The owner answers, or a stock switch qualifies under the
+//! owner's saved autoapproval setting. A trained model never deploys itself.
 //!
 //! The Coach reads each seat's receipts at night and its offer skill decides
 //! whether a case is worth raising; how often is model policy, never a fixed
@@ -11,7 +12,8 @@
 //! stays unknown, never zero.
 //!
 //! - "Do nothing is the default." An unanswered or closed offer keeps the
-//!   baseline; only the vault owner's answer on the exact offer settles it.
+//!   baseline by default. An owner's exact answer or a qualified saved-policy
+//!   stock answer settles it; an unknown automatic comparison stays an offer.
 //! - A decline is a label for the offer skill, and a postpone comes back
 //!   later as a new offer with fresh numbers that says what changed.
 //! - A switch approval binds the stock model in the owner's own answer
@@ -34,6 +36,7 @@ use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod automatic;
 mod download_card;
 mod measurement;
 mod snapshot;

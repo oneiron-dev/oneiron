@@ -19,6 +19,7 @@ use super::{EvalSeat, SufficiencyCard};
 use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
 
+mod current;
 mod doors;
 mod finish;
 mod pricing;
@@ -255,6 +256,9 @@ pub struct EvalCaseMeasurement {
     pub stratum: Option<String>,
     /// BLAKE3 of the task every leg was given, as hex.
     pub task_hash: Option<String>,
+    /// Identity of the exact anchoring labels the three legs were scored
+    /// against. It grants no permission and changes no sufficiency rule.
+    pub scoring_labels: Option<String>,
     pub incumbent: EvalLegRecord,
     pub candidate: EvalLegRecord,
     /// The incumbent again, on the same task: the retest.
@@ -269,6 +273,15 @@ pub struct EvalCaseMeasurement {
 }
 
 impl EvalCaseMeasurement {
+    /// The same canonical anchoring-label identity at release and at a later
+    /// committing decision. No label text is copied into the measurement.
+    pub fn scoring_labels_fingerprint(labels: &[super::EvalLabel]) -> crate::Result<String> {
+        let anchors: Vec<_> = labels.iter().filter(|label| label.kind.anchors()).collect();
+        let bytes = serde_json::to_vec(&anchors)
+            .map_err(|_| crate::Error::InvariantViolation("eval label encoding"))?;
+        Ok(blake3::hash(&bytes).to_hex().to_string())
+    }
+
     /// The legs in order: incumbent, candidate, retest.
     #[must_use]
     pub fn legs(&self) -> [&EvalLegRecord; 3] {

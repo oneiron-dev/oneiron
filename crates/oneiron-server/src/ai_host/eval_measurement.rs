@@ -215,6 +215,9 @@ impl Job<'_> {
                     .as_str()
                     .to_owned(),
             ),
+            scoring_labels: Some(EvalCaseMeasurement::scoring_labels_fingerprint(
+                &task.labels,
+            )?),
             incumbent: EvalLegRecord::default(),
             candidate: EvalLegRecord::default(),
             retest: EvalLegRecord::default(),

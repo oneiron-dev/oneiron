@@ -624,3 +624,21 @@ pub(crate) fn erase_pilot_source_in_txn(
     }
     Ok(())
 }
+
+/// The original candidate validator on the current automatic stock snapshot.
+pub(crate) fn validate_stock_offer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &super::TrainingOffer,
+) -> Result<()> {
+    validate(
+        vault,
+        txn,
+        &OfferCandidateSetup {
+            seat: offer.seat.clone(),
+            incumbent: offer.incumbent.clone(),
+            candidate: offer.candidate.clone(),
+            destination: offer.destination.clone(),
+        },
+    )
+}

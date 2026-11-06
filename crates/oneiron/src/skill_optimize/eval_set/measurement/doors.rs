@@ -154,15 +154,26 @@ impl Vault {
     /// # Errors
     /// Storage errors.
     pub fn offer_floor_slices(&self, seat: &EvalSeat) -> Result<FloorSlicePolicy> {
-        let min_families = crate::learning_setting::setting_value_scoped(
-            self,
+        let txn = self.store.env.read_txn()?;
+        self.offer_floor_slices_in_txn(&txn, seat)
+    }
+
+    pub(crate) fn offer_floor_slices_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        seat: &EvalSeat,
+    ) -> Result<FloorSlicePolicy> {
+        let min_families = crate::learning_setting::setting_value_scoped_in_txn(
+            &self.store,
+            txn,
             &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES,
             None,
             None,
         )?
         .max(0.0) as u32;
-        let min_families_per_slice = crate::learning_setting::setting_value_scoped(
-            self,
+        let min_families_per_slice = crate::learning_setting::setting_value_scoped_in_txn(
+            &self.store,
+            txn,
             &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
             None,
             None,
