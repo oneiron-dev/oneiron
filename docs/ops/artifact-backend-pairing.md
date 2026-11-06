@@ -60,8 +60,8 @@ PERSON as class `agent`, unless it is archived. It then requires the same
 single live owner grant that names that principal and the work's exact verb,
 under the same snapshot, clock, owner and pact rules as other agent work.
 It does not union grants or use the human PERSON branch. This makes the
-native standing primitive available to work that already calls it; it does
-not enqueue an app callback or add the guest action transport.
+native standing primitive available to work that already calls it; the
+standing check itself does not enqueue an app callback.
 
 The empty-verb bootstrap slip stays empty. A grant row does not widen it.
 The owner explicitly issues a separate credential through
@@ -99,8 +99,24 @@ app or a lapsed native grant ends its standing even if the token's own expiry
 is later. No extra credential lifetime cap is added.
 
 The normal credential and dispatcher checks still apply. This issuer does not
-pass a holder key, slip or grant into a backend guest, and does not provide the
-guest's native action transport.
+pass a holder key, slip or grant into a backend guest. The artifact runtime's
+native Fetch relay carries the app's own signed requests to `/v1/core/actions`;
+it does not supply the app's private key or credential. The request must name
+the app PERSON for the exact staged artifact, fork and code-artifact source.
+The app remains responsible for obtaining and holding its own key and token.
+
+The same Fetch relay accepts `POST /v1/core/pairing/redeem` for this app's
+bootstrap. The app receives its one-use link through its own channel, generates
+its own key and sends the normal signed redemption body. Before redemption,
+the runtime checks that `holder_ref` is the app PERSON for the exact staged
+artifact, fork and code-artifact source. The ordinary redemption handler still
+checks the one-use code, possession signature, pin and holder. Its reply returns
+the empty-verb bootstrap credential to the requesting app; it neither mints an
+owner grant nor upgrades that credential. This opens no owner endpoint,
+arbitrary HTTP origin or slip-renewal endpoint. The owner-grant token is still
+delivered to this app through its own channel after the explicit owner act.
+No engine-owned private key, key storage or persistence across backend sessions
+is supplied by this door.
 
 This is the identity bootstrap and owner-grant join for FIX1116 / OF-356, not backend deployment.
 It starts no process, changes no publication pointer or audience, and exposes

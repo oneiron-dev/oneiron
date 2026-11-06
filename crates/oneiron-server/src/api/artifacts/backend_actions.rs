@@ -1,4 +1,4 @@
-//! App-only Fetch calls through the ordinary action route and its binding door.
+//! App-only Fetch calls through the native action and pairing doors.
 
 use std::{io, sync::Arc};
 
@@ -9,6 +9,7 @@ use axum::{
     http::{HeaderName, HeaderValue, Method, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Response},
+    routing::post,
 };
 use oneiron::artifact_hosting::ArtifactBackendSource;
 use oneiron_container::{HttpRequest, HttpResponse};
@@ -30,7 +31,8 @@ pub(super) async fn fetch(
     if request.method != "POST"
         || uri.scheme().is_some()
         || uri.authority().is_some()
-        || !verb.is_some_and(|verb| !verb.is_empty() && !verb.contains('/'))
+        || !(verb.is_some_and(|verb| !verb.is_empty() && !verb.contains('/'))
+            || uri.path() == "/v1/core/pairing/redeem")
     {
         return Err(super::no_engine_egress());
     }
@@ -53,6 +55,10 @@ pub(super) async fn fetch(
             Arc::clone(&server),
             require_staged_app,
         ))
+        .route(
+            "/v1/core/pairing/redeem",
+            post(crate::api::pairing::redeem_artifact_backend),
+        )
         .layer(Extension(source))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&server),
