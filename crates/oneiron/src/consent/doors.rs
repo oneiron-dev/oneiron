@@ -706,6 +706,7 @@ pub(crate) fn revoke_standing_grant_in_txn(
     }
     row.status = ConsentGrantStatus::Revoked;
     GRANTS.put(store, wtxn, &key, &row)?;
+    crate::agent_def::setup_trace::observe_standing_grant_revocation(store, grant_ref, &row);
     super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
     Ok(true)
 }
