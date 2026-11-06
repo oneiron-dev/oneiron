@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4571 generated types.
+// UniFFI census: 1262 facade rows, 4572 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -39900,6 +39900,15 @@ pub enum CodeWaitChoice {
     Deny,
 }
 
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRememberScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeWaitRememberScope {
+    #[serde(rename = "connection")]
+    Connection,
+    #[serde(rename = "asking_lineage")]
+    AskingLineage,
+}
+
 /// `oneiron::memory::code_wait_doors::types::CodeWaitResolveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -39908,6 +39917,12 @@ pub struct CodeWaitResolveRequest {
     pub target: CodeWaitTarget,
     #[serde(rename = "answer")]
     pub answer: CodeWaitChoice,
+    #[serde(
+        rename = "remember_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remember_scope: Option<CodeWaitRememberScope>,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
 }
@@ -39951,6 +39966,18 @@ pub struct CodeWaitAnswerView {
     pub answer: CodeWaitChoice,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
+    #[serde(
+        rename = "remember_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remember_scope: Option<CodeWaitRememberScope>,
+    #[serde(
+        rename = "remembered_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remembered_grant_ref: Option<String>,
     #[serde(rename = "decision_ref")]
     pub decision_ref: String,
     #[serde(rename = "answered_at_ms")]

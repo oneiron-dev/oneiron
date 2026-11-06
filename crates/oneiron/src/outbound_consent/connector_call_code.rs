@@ -92,6 +92,7 @@ pub(super) struct HeldFacts {
     grant_id: EntityId,
     key_id: EntityId,
     call: ScopedMcpCallContext,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     manifest_hash: [u8; 32],
     protocol_revision: String,
 }
@@ -138,6 +139,7 @@ pub(super) fn before_send(
                 grant_id,
                 key_id,
                 call: prepared.call().clone(),
+                remember_context: prepared.remember_context(),
                 manifest_hash: binding.manifest_hash,
                 protocol_revision: binding.protocol_revision.clone(),
             });
@@ -214,12 +216,7 @@ impl Vault {
             return Ok(None);
         }
         let remember_offer = if reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK) {
-            self.connector_stop_asking_offer(
-                &facts.key_id,
-                principal.actor_ref,
-                &facts.call.server,
-                &facts.call.tool,
-            )?
+            self.connector_stop_asking_offer(&facts.key_id, &facts.call, facts.remember_context)?
         } else {
             None
         };
@@ -233,6 +230,8 @@ impl Vault {
             server: facts.call.server.clone(),
             tool: facts.call.tool.clone(),
             endpoint: facts.call.resolved_endpoint.clone(),
+            payload_data_class: facts.call.payload_data_class,
+            remember_context: facts.remember_context,
             manifest_hash: facts.manifest_hash,
             protocol_revision: facts.protocol_revision.clone(),
             credential_record: pending.credential,
@@ -256,15 +255,17 @@ impl Vault {
         )))
     }
 
-    /// The exact lineage/tool box a stop-asking answer can remember without
-    /// changing the shared catalog setting or another caller's narrows.
+    /// The current connection/class/project box a stop-asking answer can
+    /// remember without changing the shared catalog setting or any narrow.
     fn connector_stop_asking_offer(
         &self,
         key_id: &EntityId,
-        actor: EntityId,
-        server: &str,
-        tool: &str,
+        call: &ScopedMcpCallContext,
+        context: Option<crate::connector_key::ConnectorToolRememberContext>,
     ) -> Result<Option<CodeConsentRememberOffer>, IntentLedgerError> {
+        let Some(context) = context else {
+            return Ok(None);
+        };
         let txn = self.store.env.read_txn().map_err(Error::from)?;
         let Some(key) = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_id)? else {
             return Ok(None);
@@ -274,9 +275,9 @@ impl Vault {
             &txn,
             key_id,
             &key,
-            actor,
-            server,
-            tool,
+            call,
+            context,
+            false,
         )?
         .map(|(settings_act, _)| CodeConsentRememberOffer { settings_act }))
     }

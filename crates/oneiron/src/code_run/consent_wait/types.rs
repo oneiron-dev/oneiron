@@ -13,7 +13,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 6;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 7;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -64,6 +64,8 @@ pub(crate) struct CodeConsentConnectorCall {
     pub(crate) server: String,
     pub(crate) tool: String,
     pub(crate) endpoint: String,
+    pub(crate) payload_data_class: crate::consent::tool_scope::DataClass,
+    pub(crate) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     pub(crate) manifest_hash: [u8; 32],
     pub(crate) protocol_revision: String,
     /// A `self.use` custody record's ref, never its value.
@@ -216,6 +218,9 @@ pub(crate) struct CodeConsentCheckpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) choice: CodeConsentChoice,
+    /// Whether the first answer explicitly asked for the asking-lineage scope.
+    /// True only for an explicit stop-asking choice; default false.
+    pub(crate) remember_asking_lineage: bool,
     pub(crate) word_ref: EntityId,
     pub(crate) answerer: EntityId,
     pub(crate) principal_ref: String,
@@ -336,6 +341,10 @@ pub struct CodeConsentAnswerInput {
     pub step_hash: [u8; 32],
     pub effect_digest: [u8; 32],
     pub choice: CodeConsentChoice,
+    /// Whether the owner explicitly asked for the asking-lineage remember scope.
+    /// Explicit choice only; default false. Normalized to false unless
+    /// `choice` is approve-and-stop-asking.
+    pub remember_asking_lineage: bool,
     /// The owner's own word on the wait's ask, naming the same choice.
     pub word_ref: EntityId,
 }
@@ -394,6 +403,11 @@ pub struct CodeConsentWaitView {
     /// The consumption receipt's links as the ledger holds them: the word
     /// and the settlement it consumed.
     pub consumption_links: Option<CodeWaitReceiptLinks>,
+    /// The first answer's actual asking-lineage scope, only for a stop-asking
+    /// choice; none before an answer or for other choices.
+    pub remember_asking_lineage: Option<bool>,
+    /// The first answer's minted standing grant ref, when it minted one.
+    pub remembered: Option<String>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
 }

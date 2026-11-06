@@ -540,9 +540,8 @@ pub(crate) fn evaluate_external_effect_policy(
                                 &*wtxn,
                                 &_key_id,
                                 &key,
-                                hydrated_effect.provenance.actor_entity_ref,
-                                &call.server,
-                                manifest_verb,
+                                call,
+                                prepared.and_then(|prepared| prepared.remember_context()),
                             )?,
                             None => false,
                         } =>

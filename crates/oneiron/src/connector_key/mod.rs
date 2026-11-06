@@ -103,6 +103,7 @@ pub(crate) use self::slate::{
 pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
 pub(crate) use self::tool_remember::{
+    ConnectorToolRememberContext, connector_tool_connection_in_txn,
     connector_tool_remember_bound_in_txn, connector_tool_remembered_in_txn,
 };
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};

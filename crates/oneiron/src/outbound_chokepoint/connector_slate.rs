@@ -55,6 +55,7 @@ struct Candidate {
     gate: ExternalEffectGateInput,
     digest: EffectDigest,
     actor: Option<EntityId>,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     family: PinnedApprovalFamily,
 }
 
@@ -69,6 +70,7 @@ fn candidate_in_txn(
                 gate: candidate.gate,
                 digest: candidate.digest,
                 actor: Some(candidate.actor),
+                remember_context: candidate.prepared.remember_context(),
                 family: PinnedApprovalFamily::ScopedMcp,
             }),
         );
@@ -78,6 +80,7 @@ fn candidate_in_txn(
             gate: candidate.gate,
             digest: candidate.digest,
             actor: candidate.actor,
+            remember_context: None,
             family: candidate.family,
         }),
     )
@@ -164,7 +167,13 @@ fn always_ask(
         else {
             return Ok(Release::Ask);
         };
-        match setting_in_txn(vault, wtxn, record, candidate.actor)? {
+        match setting_in_txn(
+            vault,
+            wtxn,
+            record,
+            candidate.gate.scoped_mcp_call.as_ref(),
+            candidate.remember_context,
+        )? {
             SlateDisposition::AlwaysAsk => {}
             // A later pass stops it.
             SlateDisposition::NeverAllow => return Ok(Release::Ask),
@@ -225,7 +234,8 @@ pub(super) fn setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &IntentLedgerRecord,
-    actor: Option<EntityId>,
+    call: Option<&crate::consent::tool_scope::ScopedMcpCallContext>,
+    context: Option<crate::connector_key::ConnectorToolRememberContext>,
 ) -> Result<SlateDisposition, IntentLedgerError> {
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(SlateDisposition::Auto);
@@ -241,14 +251,14 @@ pub(super) fn setting_in_txn(
         &record.tool,
     )?;
     if setting == SlateDisposition::AlwaysAsk
+        && let Some(call) = call
         && crate::connector_key::connector_tool_remembered_in_txn(
             &vault.store,
             txn,
             key_ref,
             &key,
-            actor,
-            &record.server,
-            &record.tool,
+            call,
+            context,
         )?
     {
         return Ok(SlateDisposition::Auto);
