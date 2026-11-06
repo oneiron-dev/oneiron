@@ -55,9 +55,11 @@ fn lower_reviewed_text(
     if old == new {
         return Ok(());
     }
-    let scope = super::oplog::repo_mutation_repo_key(repo);
+    // The repository's code-document identity, the one its symbols are
+    // keyed by (FIX 12761).
+    let scope = vault.resolve_repo_identity(repo)?;
     let session = vault
-        .open_code_document(&scope, path, old, proposal.session)?
+        .open_code_document(scope.as_str(), path, old, proposal.session)?
         .with_op_provenance(proposal.op_provenance.clone());
     vault.apply_code_file_ingress_exact(&mut [CodeFileIngress {
         operation: proposal.id,
