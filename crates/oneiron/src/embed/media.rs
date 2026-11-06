@@ -264,7 +264,10 @@ impl Vault {
                 &fills,
                 &item.id,
                 item.kind,
-                item.text_hash,
+                Some(
+                    item.text_hash
+                        .unwrap_or_else(|| *blake3::hash(&item.bytes).as_bytes()),
+                ),
                 &vector,
                 Some(&provenance),
             )?;

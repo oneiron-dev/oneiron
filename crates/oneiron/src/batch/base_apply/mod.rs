@@ -562,12 +562,12 @@ pub(super) fn apply_ops_with_authority_beside(
                 space,
                 id,
                 kind,
-                text_hash,
+                input_hash,
                 vector,
                 provenance,
             } => {
                 ops_vector::apply_media_vector_arm(
-                    store, &mut *wtxn, space, id, kind, text_hash, vector, provenance,
+                    store, &mut *wtxn, space, id, kind, input_hash, vector, provenance,
                 )?;
             }
             BatchOp::Phonetic { id, codes } => {

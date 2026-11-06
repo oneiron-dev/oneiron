@@ -571,7 +571,7 @@ pub(crate) fn apply_ops_session(
                 space,
                 id,
                 kind,
-                text_hash,
+                input_hash,
                 vector,
                 provenance,
             } => {
@@ -581,7 +581,7 @@ pub(crate) fn apply_ops_session(
                     space,
                     id,
                     *kind,
-                    *text_hash,
+                    *input_hash,
                     vector,
                     provenance.as_ref(),
                 )?;

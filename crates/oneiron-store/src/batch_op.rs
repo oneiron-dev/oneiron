@@ -110,7 +110,7 @@ pub enum BatchOp {
         fields: Vec<(String, String)>,
     },
     /// OF-370: one host-computed vector of `id` in declared embedding space `space`, of input
-    /// `kind`; a text row carries the hash of the text it embeds. Only a room stages it (the
+    /// `kind`; `input_hash` names the embedded bytes when known. Only a room stages it (the
     /// session media door, `Vault::put_session_media_vector`), so an off-record media write
     /// stays in the room; promotion replays it into base, where a binding the room no longer
     /// has leaves it to the backfill.
@@ -118,7 +118,8 @@ pub enum BatchOp {
         space: String,
         id: EntityId,
         kind: InputKind,
-        text_hash: Option<[u8; TEXT_HASH_LEN]>,
+        /// BLAKE3 of the sent UTF-8 text or projected media; `None` makes no input claim.
+        input_hash: Option<[u8; TEXT_HASH_LEN]>,
         vector: Vec<f32>,
         /// The device and runtime that computed it, stored beside it outside the space
         /// identity (FIX 7796); `None` for a vector a caller supplied.
