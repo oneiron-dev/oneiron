@@ -346,9 +346,8 @@ impl ReaderRunner {
             cursors: HashMap::new(),
             recovers,
         };
-        let started = std::thread::Builder::new()
-            .name("oneiron-reader-runner".to_owned())
-            .spawn(move || worker.run());
+        let started =
+            crate::engine_thread("oneiron-reader-runner".to_owned()).spawn(move || worker.run());
         if let Err(error) = started {
             tracing::error!(%error, "the reader runner did not start; reader children stay queued until their cutoff");
         }
@@ -598,14 +597,12 @@ impl Worker {
         let shared = Arc::clone(&self.shared);
         let signals = self.signals.clone();
         let vault = Arc::clone(vault);
-        let spawned = std::thread::Builder::new()
-            .name("oneiron-code-reader".to_owned())
-            .spawn(move || {
-                child.run_and_settle(&shared, &vault);
-                drop(child);
-                shared.ended(parent);
-                let _ = signals.send(Signal::Freed);
-            });
+        let spawned = crate::engine_thread("oneiron-code-reader".to_owned()).spawn(move || {
+            child.run_and_settle(&shared, &vault);
+            drop(child);
+            shared.ended(parent);
+            let _ = signals.send(Signal::Freed);
+        });
         if let Err(error) = spawned {
             tracing::warn!(%error, task = %task.to_hex(), "a reader child's thread did not start");
             self.shared.ended(parent);
