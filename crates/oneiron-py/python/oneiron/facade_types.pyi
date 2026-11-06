@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4581 declarations.
-Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1263 facade rows, 4584 declarations.
+Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -1559,7 +1559,7 @@ class DescribeRequest(TypedDict):
 TaskBoardStatus = Literal["running", "scheduled", "queued", "done", "failed"]
 TaskKind = Literal["standard", "consult", "reconciliation"]
 TaskTerminalDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
-ConnectorSendTaskOutcome = Literal["delivered", "failed", "ambiguous"]
+ConnectorSendTaskOutcome = Literal["delivered", "failed", "ambiguous", "owner_declined_resend"]
 LadderTerminalDisposition = Literal["approved", "overridden", "rejected", "failed", "escalated", "countered", "abandoned"]
 class CancelRejectionPathology(TypedDict):
     attempt_id: str
@@ -8467,6 +8467,14 @@ class OutboundCallRequestEraseRequest(TypedDict):
     call_seq: int
 class OutboundCallRequestErased(TypedDict):
     erased: bool
+class UncertainSendAnswer(TypedDict):
+    task_ref: EntityId
+    resend: bool
+UncertainSendAnswerOutcome = Literal["resend_released", "declined", "already_settled"]
+class UncertainSendAnswered(TypedDict):
+    task_ref: EntityId
+    resend: bool
+    outcome: UncertainSendAnswerOutcome
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId
