@@ -31,12 +31,12 @@ mod stamping;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
     stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
 };
+pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeView {
@@ -442,8 +442,7 @@ pub(crate) fn record_world_in(
     if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
         && let Some(source) = crate::comm::ScopedTouchRecord::decode(id, data)?
     {
-        return Ok(stored_scope(store, txn, id, kind)?
-            .map(|_| Some(source.world())));
+        return Ok(stored_scope(store, txn, id, kind)?.map(|_| Some(source.world())));
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
