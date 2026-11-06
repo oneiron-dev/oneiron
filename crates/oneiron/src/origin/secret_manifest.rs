@@ -240,7 +240,7 @@ impl Vault {
 /// The manifest file's bytes in `commit`'s tree, or `None` when it has none
 /// or `commit` names no commit. Only a regular file counts: a symlink or a
 /// submodule at the path declares nothing.
-fn manifest_bytes(
+pub(crate) fn manifest_bytes(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     commit: &GitOid,
