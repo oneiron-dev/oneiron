@@ -3,8 +3,8 @@ use super::{Binding, Module};
 use oxc_ast::{
     AstKind,
     ast::{
-        AssignmentTarget, BindingPattern, Expression, IdentifierReference, MemberExpression,
-        Program, Statement,
+        AssignmentExpression, AssignmentTarget, BindingPattern, Expression, IdentifierReference,
+        MemberExpression, Program, Statement,
     },
 };
 use oxc_semantic::Semantic;
@@ -92,6 +92,15 @@ pub(super) fn collect(
             let Expression::AssignmentExpression(assignment) = expression else {
                 continue;
             };
+            if let Some(names) =
+                property_chain(assignment, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                for name in names.into_iter().rev() {
+                    module.bindings.insert(name.clone(), Binding::Local(name));
+                }
+                continue;
+            }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
                     alias = assignment.operator.is_assign()
@@ -211,6 +220,46 @@ pub(super) fn collect(
             ));
         }
     }
+}
+
+fn property_chain(
+    assignment: &AssignmentExpression<'_>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<String>> {
+    if !matches!(
+        assignment.right.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    ) {
+        return None;
+    }
+    let mut assignment = assignment;
+    let mut names = Vec::new();
+    let mut chain_accounted = BTreeSet::new();
+    loop {
+        if !assignment.operator.is_assign() {
+            return None;
+        }
+        let member = assignment.left.as_member_expression()?;
+        let Target::Property(Some(name)) =
+            target(member, semantic, alias, native_module, &mut chain_accounted)?
+        else {
+            return None;
+        };
+        if name == "__proto__" {
+            return None;
+        }
+        names.push(name);
+        match assignment.right.get_inner_expression() {
+            Expression::AssignmentExpression(next) => assignment = next,
+            Expression::SequenceExpression(_) => return None,
+            _ => break,
+        }
+    }
+    accounted.extend(chain_accounted);
+    Some(names)
 }
 
 fn target(

@@ -54,10 +54,16 @@ For CommonJS, the extractor recognizes top-level direct assignments to
 `module.exports`, `module.exports.name`, `module.exports["name"]`, `exports.name`
 and `exports["name"]`. Top-level comma expressions apply those same direct
 assignment and delete rules in left-to-right order, including nested comma
-expressions. They share the ordinary wrapper and alias state; no conditional or
-right-hand-side expressions are evaluated. Uninitialized root `var module` and
-`var exports` redeclare the CommonJS wrapper parameters, including hoisted or repeated
-redeclarations. Direct simple `var` initializers update the same alias state in
+expressions. They share the ordinary wrapper and alias state. Direct chains such
+as `exports.a = exports.b = 1` contribute every eligible named property when all
+links are plain assignments to the current wrapper export object. Whole-module
+or wrapper-identifier assignments, unknown computed keys, `__proto__`, compound
+operators and sequence-valued terminals keep the ordinary outer-only handling and
+unresolved sites. The terminal value is not evaluated; its unknown wrapper
+references still produce unresolved sites. No conditional expressions are evaluated.
+Uninitialized root `var module` and `var exports` redeclare the CommonJS wrapper
+parameters, including hoisted or repeated redeclarations. Direct simple `var`
+initializers update the same alias state in
 source order. Lexical and function shadows remain distinct from wrapper bindings.
 Destructured, conditional and loop-carried initializer flows are not modeled.
 A direct `module = module` or `var module = module` preserves its current
