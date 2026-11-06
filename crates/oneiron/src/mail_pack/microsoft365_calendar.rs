@@ -11,7 +11,10 @@
 //!
 //! Graph tracks a calendar view, a fixed window of time: this wire's window
 //! runs from a month before it was opened to a year after, and opens again
-//! a month later, so the view moves with time. The view lists occurrences,
+//! a month later, so the view moves with time. Each opening's first listing
+//! also reads the four years past the view once, without tracking them
+//! (fix list row 16313): an event that far ahead lands at once, and a
+//! change to it lands at the next opening. The view lists occurrences,
 //! not series: each occurrence, exception or single event lands as its own
 //! event, its UID the Graph id (`graph:<id>`), its times in UTC (an all-day
 //! event keeps its UTC span). A removed occurrence is a delete. An event
@@ -46,6 +49,9 @@ const VIEW_BEFORE_SECS: u64 = 31 * 24 * 3600;
 const VIEW_AFTER_SECS: u64 = 366 * 24 * 3600;
 /// How long a view stands before it opens again.
 const VIEW_STANDS_SECS: u64 = 30 * 24 * 3600;
+/// How far past a view's end its opening's far listing reads: within the
+/// five years one Graph calendar view may span.
+const FAR_AFTER_SECS: u64 = 4 * 366 * 24 * 3600;
 /// The longest Graph id read.
 const MAX_GRAPH_ID_BYTES: usize = 512;
 
@@ -57,6 +63,11 @@ struct GraphCalendarCursor {
     link: String,
     /// Whether `link` continues the first full round of this view.
     listing: bool,
+    /// The next page of this opening's far listing while it runs: the
+    /// events past the view's end, read once (fix list row 16313). `link`
+    /// then holds the view's delta link for the rounds after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    far: Option<String>,
 }
 
 /// Host-side Microsoft Graph calendar wire over `reqwest::blocking`.
@@ -149,6 +160,17 @@ impl<'v> HttpGraphCalendarWire<'v> {
             "{GRAPH_ME_URL}/calendarView/delta?startDateTime={start}&endDateTime={end}"
         ))
     }
+
+    /// The far listing of the view opened at `opened_at`: the occurrences
+    /// from the view's end to four years past it, read without a delta.
+    fn far_link(opened_at: u64) -> Result<String> {
+        let view_end = opened_at.saturating_add(VIEW_AFTER_SECS);
+        let start = graph_time(view_end)?;
+        let end = graph_time(view_end.saturating_add(FAR_AFTER_SECS))?;
+        Ok(format!(
+            "{GRAPH_ME_URL}/calendarView?startDateTime={start}&endDateTime={end}"
+        ))
+    }
 }
 
 impl MailCalendarWire for HttpGraphCalendarWire<'_> {
@@ -169,9 +191,10 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                 opened_at: now,
                 link: Self::view_link(now)?,
                 listing: true,
+                far: None,
             },
         };
-        let page = match self.get(source, &cursor.link, &[])? {
+        let page = match self.get(source, cursor.far.as_ref().unwrap_or(&cursor.link), &[])? {
             RestAnswer::Found(page) => page,
             RestAnswer::Failed { status, code }
                 if status == 410
@@ -210,29 +233,69 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                 ics,
             }));
         }
-        let (link, listing, complete) = match (
-            text_of(page.get("@odata.nextLink")),
-            text_of(page.get("@odata.deltaLink")),
-        ) {
-            (Some(next), _) => (next, cursor.listing, false),
-            (None, Some(delta)) => (delta, false, true),
-            (None, None) => return Err(refused("graph_calendar_page_without_a_link")),
+        let next_page = text_of(page.get("@odata.nextLink"));
+        let (next, complete) = if cursor.far.is_some() {
+            // The far listing's pages end the opening's listing; the view's
+            // delta link waits in `link`.
+            let complete = next_page.is_none();
+            (
+                GraphCalendarCursor {
+                    opened_at: cursor.opened_at,
+                    link: cursor.link,
+                    listing: false,
+                    far: next_page,
+                },
+                complete,
+            )
+        } else {
+            match (next_page, text_of(page.get("@odata.deltaLink"))) {
+                (Some(next), _) => (
+                    GraphCalendarCursor {
+                        opened_at: cursor.opened_at,
+                        link: next,
+                        listing: cursor.listing,
+                        far: None,
+                    },
+                    false,
+                ),
+                // The view's first listing ends: its far listing follows.
+                (None, Some(delta)) if cursor.listing => (
+                    GraphCalendarCursor {
+                        opened_at: cursor.opened_at,
+                        link: delta,
+                        listing: false,
+                        far: Some(Self::far_link(cursor.opened_at)?),
+                    },
+                    false,
+                ),
+                (None, Some(delta)) => (
+                    GraphCalendarCursor {
+                        opened_at: cursor.opened_at,
+                        link: delta,
+                        listing: false,
+                        far: None,
+                    },
+                    true,
+                ),
+                (None, None) => return Err(refused("graph_calendar_page_without_a_link")),
+            }
         };
-        let next = GraphCalendarCursor {
-            opened_at: cursor.opened_at,
-            link,
-            listing,
-        };
+        let listing = cursor.listing || cursor.far.is_some();
         Ok(MailCalendarRead::Pull(MailCalendarPull {
             changes,
             next_cursor: Some(
                 serde_json::to_string(&next)
                     .map_err(|_| refused("graph_calendar_cursor_unencodable"))?,
             ),
-            complete: complete || !cursor.listing,
+            complete: complete || !listing,
+            // The opening's listing reads the view and its far listing: what
+            // it did not see in either span is gone.
             covers: Some(crate::TimeRange {
                 start: cursor.opened_at.saturating_sub(VIEW_BEFORE_SECS),
-                end: cursor.opened_at.saturating_add(VIEW_AFTER_SECS),
+                end: cursor
+                    .opened_at
+                    .saturating_add(VIEW_AFTER_SECS)
+                    .saturating_add(FAR_AFTER_SECS),
             }),
         }))
     }
