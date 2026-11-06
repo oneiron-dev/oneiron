@@ -365,9 +365,11 @@ impl DecisionProvider for SystemOneRung {
         call: &DecisionCall<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecision> {
-        // Nonlocal extraction still needs its native admission request.
+        // Extraction needs an explicit catalog binding; without one it stays
+        // unsupported before capture.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
+            && self.native_catalog.is_none()
         {
             return None;
         }
@@ -382,9 +384,11 @@ impl DecisionProvider for SystemOneRung {
         pack: &DecisionPack<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecisionPack> {
-        // Nonlocal extraction still needs its native admission request.
+        // Extraction needs an explicit catalog binding; without one it stays
+        // unsupported before capture.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
+            && self.native_catalog.is_none()
         {
             return None;
         }
