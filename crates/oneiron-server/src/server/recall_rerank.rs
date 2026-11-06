@@ -26,6 +26,9 @@
 //! the call on (outside a runtime there is none at all), so there the call
 //! runs on the server's own [`CallRuntime`]. Every door of such a host takes
 //! it, so no pooled connection belongs to a thread that is waiting.
+//! The recall's cancellation flag also wakes this wait. A ready cancellation
+//! wins before the call is polled; an in-flight call is dropped locally, as
+//! when its deadline expires, without claiming the provider stopped.
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -205,6 +208,7 @@ impl RecallRerankHost for ServedRerank {
             };
             context
         });
+        let cancel = run.work_context().cancel;
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
@@ -227,13 +231,20 @@ impl RecallRerankHost for ServedRerank {
         );
         // The timer is made inside the runtime that drives it: a sync door's
         // thread has none of its own.
-        let answered = match answer_at {
-            Some(at) => self
-                .runtime
-                .block_on(async move { tokio::time::timeout_at(at.into(), generate).await })
-                .map_err(|_| unavailable("the reranker did not answer before the deadline"))?,
-            None => self.runtime.block_on(generate),
-        };
+        let answered = self.runtime.block_on(async move {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(unavailable("the reranker call was cancelled")),
+                answered = async move {
+                    match answer_at {
+                        Some(at) => tokio::time::timeout_at(at.into(), generate)
+                            .await
+                            .map_err(|_| unavailable("the reranker did not answer before the deadline")),
+                        None => Ok(generate.await),
+                    }
+                } => answered,
+            }
+        })?;
         let response = answered.map_err(|error| match error {
             _ if egress.refused() => {
                 unavailable("a row became device-only while the reranker was called")
@@ -354,7 +365,7 @@ fn sent_rows(documents: &[RerankDocument<'_>]) -> Option<Vec<EntityId>> {
 pub(crate) struct CallRuntime(Mutex<Option<tokio::runtime::Runtime>>);
 
 impl CallRuntime {
-    pub(super) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
+    pub(crate) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
         let not_started =
             || unavailable("the server could not start a runtime to call the reranker on");
         let mut slot = self.0.lock().map_err(|_| not_started())?;
@@ -395,4 +406,23 @@ fn spent(denied: BudgetDenied) -> MemoryError {
         format!("the recall's budget line refused its rerank call: {denied}"),
         &["Recall at medium, or raise [models.recall] rerank_budget_units."],
     )
+}
+
+impl SyncServer {
+    /// A new rerank caller's batches use the same native payload price and line.
+    pub(crate) fn rerank_line_for_payload(
+        meter: &BudgetGuard,
+        query: &str,
+        documents: &[&str],
+    ) -> Result<Arc<dyn RerankLine>, BudgetDenied> {
+        let price = payload_units(query, documents);
+        let line = meter.read();
+        if price > line.remaining_units {
+            return Err(BudgetDenied::Exhausted);
+        }
+        meter.revise_line(line.limit_units, price.max(meter.reserve_units()));
+        Ok(Arc::new(BatchLine {
+            meter: meter.clone(),
+        }))
+    }
 }
