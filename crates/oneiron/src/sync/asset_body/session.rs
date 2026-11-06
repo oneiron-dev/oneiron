@@ -149,7 +149,10 @@ pub(crate) fn land_carried_body(
     if !bytes.is_empty() {
         spool.write_at(0, bytes)?;
     }
-    landing::land(peer, window, body, spool)
+    let landing = landing::land(peer, window, body, spool)?;
+    let committed = landing.committed;
+    landing.publish(peer);
+    Ok(committed)
 }
 
 /// A verified local landing, constructed only after the native close landed
@@ -514,15 +517,18 @@ impl AssetBodySession {
         // as stored, so nothing is released for it.
         let birth = matches!(peer.lane, AssetBodyLane::FederationReceive { .. })
             && matches!(stored(peer.vault, &body.id), Ok(false));
-        let committed = end.complete
-            && spool.received() == body.len
-            && match landing::land(peer, &window, &body, spool) {
-                Ok(landed) => landed,
+        let landing = if end.complete && spool.received() == body.len {
+            match landing::land(peer, &window, &body, spool) {
+                Ok(landing) => Some(landing),
                 Err(error) => {
                     tracing::warn!(entity = %body.id.to_hex(), %error, "asset body did not land");
-                    false
+                    None
                 }
-            };
+            }
+        } else {
+            None
+        };
+        let committed = landing.as_ref().is_some_and(|landing| landing.committed);
         if committed {
             self.owed.remove(&(window.clone(), body.id));
             self.held.insert((body.id, body.body_blake3));
@@ -540,6 +546,9 @@ impl AssetBodySession {
             }
         } else {
             self.ask_later(&window, &body);
+        }
+        if let Some(landing) = landing {
+            landing.publish(peer);
         }
         let receipt = encode_asset_body_receipt(&AssetBodyReceipt {
             attempt,

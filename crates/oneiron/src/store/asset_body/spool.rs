@@ -25,6 +25,7 @@ pub(crate) struct AssetBodySpool {
     hasher: blake3::Hasher,
     offered: AssetBodyFacts,
     received: u64,
+    receipt_prefix: [u8; crate::store::receipt_identity::MAGIC.len()],
 }
 
 impl AssetBodySpool {
@@ -36,6 +37,14 @@ impl AssetBodySpool {
     /// The bytes received so far: the offset the next frame starts at.
     pub(crate) const fn received(&self) -> u64 {
         self.received
+    }
+
+    /// Whether the received prefix calls for an isolated receipt candidate.
+    /// The original stage and receipt admission still validate the whole body.
+    #[cfg(feature = "sync")]
+    pub(crate) fn is_receipt_archive_source(&self) -> bool {
+        self.received >= self.receipt_prefix.len() as u64
+            && crate::store::receipt_identity::is_receipt_archive_source(&self.receipt_prefix)
     }
 
     /// The body instance the offered body may be filed under, minted now,
@@ -72,6 +81,13 @@ impl AssetBodySpool {
             .as_mut()
             .ok_or(Error::InvariantViolation("asset body spool staged twice"))?;
         spill.write(bytes)?;
+        let at = offset.min(self.receipt_prefix.len() as u64) as usize;
+        let take = self
+            .receipt_prefix
+            .len()
+            .saturating_sub(at)
+            .min(bytes.len());
+        self.receipt_prefix[at..at + take].copy_from_slice(&bytes[..take]);
         self.hasher.update(bytes);
         self.received = end;
         Ok(())
@@ -156,6 +172,7 @@ impl crate::Vault {
             hasher: blake3::Hasher::new(),
             offered,
             received: 0,
+            receipt_prefix: [0; crate::store::receipt_identity::MAGIC.len()],
         })
     }
 }

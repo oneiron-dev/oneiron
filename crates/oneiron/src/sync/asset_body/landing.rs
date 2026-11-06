@@ -9,10 +9,13 @@
 //! carrier as it judges any (tombstones, delete markers, residence, a
 //! release fence, the echo), and lands the row through the replicated
 //! door, at the tier the transfer's lane lands it at (FIX 12118). The rows it
-//! writes are the window's own: the live mirror never rewrites the carrier
-//! with them. A landed row wakes what waits on it and notifies the live
+//! writes are the window's own. A receipt archive alone journals its SAME
+//! staged canonical body under the ORIGINAL carrier header, on a detached
+//! fork, then publishes after commit and original local-land handling.
+//! A landed row wakes what waits on it and notifies the live
 //! queries as Observer B's ingest does (FIX 5489).
 
+use super::receipt_publication::ReceiptPublication;
 use super::references::{AssetBodyRef, bound_in};
 use super::session::AssetBodyPeer;
 use crate::conversation_dag::topology::Dependency;
@@ -31,6 +34,20 @@ use crate::sync::types::WindowKey;
 use crate::vault::entity_revision::revision_for_mode_in_txn;
 use crate::vault::{EntityRevisionChange, ReadMode};
 
+/// The original body commit and its already-durable optional receipt mirror.
+pub(super) struct BodyLanding {
+    pub(super) committed: bool,
+    publication: Option<ReceiptPublication>,
+}
+
+impl BodyLanding {
+    pub(super) fn publish(self, peer: &AssetBodyPeer<'_>) {
+        if let Some(publication) = self.publication {
+            publication.publish(peer);
+        }
+    }
+}
+
 /// Lands `spool`, every byte of the body `body` names, as the row of its
 /// carrier in `window`. `false` when the carrier was not landed: the window
 /// no longer binds this exact pair, or the ladder left it unwritten.
@@ -44,10 +61,16 @@ pub(super) fn land(
     window: &WindowKey,
     body: &AssetBodyRef,
     spool: AssetBodySpool,
-) -> Result<bool> {
+) -> Result<BodyLanding> {
     let Some(doc) = (peer.window)(window) else {
-        return Ok(false);
+        return Ok(BodyLanding {
+            committed: false,
+            publication: None,
+        });
     };
+    // Live fork finalizes pending Loro edits. It must run before any writer
+    // and only for a receipt candidate; ordinary body landings never fork.
+    let candidate = spool.is_receipt_archive_source().then(|| doc.fork());
     let vault = peer.vault;
     let key = body.key();
     let _import = crate::sync::manager::import_scope();
@@ -57,12 +80,12 @@ pub(super) fn land(
     let mint = spool.body_mint(vault)?;
     // The staged body outlives the commit: its pin keeps a published file
     // from the collector until the row naming it is durable.
-    let (landed, carrier, _staged, change) = vault.with_write_txn_grouped(|wtxn| {
+    let (landed, carrier, _staged, change, publication) = vault.with_write_txn_grouped(|wtxn| {
         let Some(carrier) = map_get_bytes(&doc.get_map("entities"), &key) else {
-            return Ok((false, Vec::new(), None::<StagedAssetBody>, None));
+            return Ok((false, Vec::new(), None::<StagedAssetBody>, None, None));
         };
         if bound_in(&doc, &body.id, &carrier).as_ref() != Some(body) {
-            return Ok((false, carrier, None, None));
+            return Ok((false, carrier, None, None, None));
         }
         unborn = watches(vault, &body.id)
             && !crate::ports::EntityStoreRead::port_entity_present(&vault.store, wtxn, &body.id)?;
@@ -99,7 +122,13 @@ pub(super) fn land(
             // A child, anchor or Parent deferred on this row wakes now.
             wake_parent_retry_in_txn(vault, wtxn, &[Dependency::Entity(body.id)])?;
         }
-        Ok((landed, carrier, Some(staged), change))
+        let publication = match candidate.as_ref().filter(|_| landed) {
+            Some(candidate) => ReceiptPublication::prepare_in_txn(
+                peer, wtxn, &doc, candidate, window, body, &carrier, &staged,
+            )?,
+            None => None,
+        };
+        Ok((landed, carrier, Some(staged), change, publication))
     })?;
     if landed && unborn {
         note_born(vault, body.id, &carrier);
@@ -107,7 +136,10 @@ pub(super) fn land(
     if landed {
         notify_landed(peer.materializer, window, body.id, &key, &carrier, change);
     }
-    Ok(landed)
+    Ok(BodyLanding {
+        committed: landed,
+        publication,
+    })
 }
 
 /// Tells the live queries the row `key` of `window`'s entities landed as
