@@ -103,7 +103,7 @@ impl Vault {
     /// whatever its kind's read context: an imported diary or owner-only
     /// NOTE, which every ordinary read and search holds, reads here to the
     /// owner who names it. `None` when `note` names no live NOTE with an
-    /// imported author.
+    /// imported author, or one kept under a use limit.
     ///
     /// # Errors
     /// The owner proof's refusal (another vault's, a lapsed credential, not
@@ -118,6 +118,12 @@ impl Vault {
         if crate::vault::live_entity_row_in_txn(&self.store, &txn, note)?.live_type()
             != Some(ENTITY_TYPE_NOTE)
         {
+            return Ok(None);
+        }
+        // A record kept under a use limit (a legal hold or a cooperative
+        // review restriction) reads to no one here, its owner included, as
+        // every ordinary read refuses it.
+        if crate::store::legal_hold::use_limit_in_txn(&self.store, &txn, note)?.is_some() {
             return Ok(None);
         }
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, note)?
