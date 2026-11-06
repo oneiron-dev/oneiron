@@ -1,11 +1,14 @@
 //! FIX 3611: a completed random audit as the anchor of a contribution check.
-//! The host's checker names its protocol with each check it makes
-//! ([`CheckerProtocol`]). A random audit of every objective of the seal's
-//! exact result freezes its contract ([`AuditContract`]) in the seal's own
-//! row, in the write that admits the check. Nothing rebuilds it later from
-//! the checker's prompt as it stands then. The seal's public request and
-//! outcome types are unchanged: the contract sits beside the receipt in a
-//! private stored form ([`StoredSeal`]).
+//! The host's checker names its protocol with each check it makes, and the
+//! rung that answered: where it ran and the route it went out on, which
+//! names its route prompt by digest ([`CheckerProtocol`]). A random audit of
+//! every objective of the seal's exact result freezes its contract
+//! ([`AuditContract`]) in the seal's own row, in the write that admits the
+//! check. Nothing rebuilds it later from the checker's prompt or route as
+//! they stand then. An audit whose checker could not name its answering
+//! rung anchors nothing. The seal's public request and outcome types are
+//! unchanged: the contract sits beside the receipt in a private stored form
+//! ([`StoredSeal`]).
 //!
 //! A single-call workflow step binds its answer to its capsule by the
 //! digest and length of its text (`code_run::bind_workflow_step_answer`).
@@ -15,20 +18,28 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::code_run::{CapsuleHost, StepReplayCapsule, step_replay_capsules_in_txn};
+use crate::code_run::{
+    CapsuleHost, ReplayRoutePin, StepReplayCapsule, step_replay_capsules_in_txn,
+};
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::receipt::attempt_pack_receipt_id;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, ModelLocality, Result, Vault};
 
 use super::{ObjectiveFinding, SEALS, SealCheckKind, SealedAttemptReceipt};
 
 /// The checker a host put a seal check to (FIX 3611): the digest of its
-/// protocol and wording, and the role its judge was routed on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// protocol and wording, the role its judge was routed on, and the rung
+/// that answered there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckerProtocol {
     pub digest: [u8; 32],
     pub role: ModelRole,
+    /// Where the judge's answering rung ran, and the route it went out on
+    /// as it answered, which names its route prompt by digest, never by
+    /// text. `None` when the check could not name that rung: its audit
+    /// anchors nothing.
+    pub judge_rung: Option<(ModelLocality, ReplayRoutePin)>,
 }
 
 /// A completed random audit's frozen contract (FIX 3611): what a
@@ -40,7 +51,8 @@ pub struct AuditContract {
     pub check: String,
     /// The rate the audit was drawn at.
     pub rate: f64,
-    /// The checker's protocol and the role its judge was routed on.
+    /// The checker's protocol, the role its judge was routed on and the
+    /// rung that answered there.
     pub protocol: CheckerProtocol,
     /// The independent judge that checked the result, as it served.
     pub judge_revision: String,
@@ -211,8 +223,9 @@ fn binds_result(capsule: &StepReplayCapsule, generation: u32, result: OutputRef)
 
 /// `attempt`'s frozen random audit, read in `txn` (FIX 3611), while the
 /// capsule it names still binds the seal's result as its answer. A seal with
-/// no frozen audit, an audit no capsule bound, an erased capsule and a
-/// changed answer or result are none.
+/// no frozen audit, an audit no capsule bound, an audit whose checker named
+/// no answering rung, an erased capsule and a changed answer or result are
+/// none.
 ///
 /// # Errors
 ///
@@ -228,7 +241,7 @@ pub(crate) fn bound_random_audit_in_txn(
     let Some(audit) = stored.audit else {
         return Ok(None);
     };
-    let Some(answer) = audit.answer else {
+    let (Some(answer), Some(_)) = (audit.answer, &audit.contract.protocol.judge_rung) else {
         return Ok(None);
     };
     let current = audited_answer_in_txn(vault, txn, &stored.receipt)?;

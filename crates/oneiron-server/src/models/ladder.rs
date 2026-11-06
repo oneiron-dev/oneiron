@@ -54,6 +54,7 @@ use tokio::sync::oneshot;
 
 pub use call_deadline::CallDeadline;
 pub(crate) use model_call::ModelCallBinding;
+pub(crate) use replay_prompt::ReplayLadder;
 use replay_prompt::RungPrompt;
 
 use super::cooldown::{
