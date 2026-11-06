@@ -52,7 +52,7 @@ use super::pieces::{
 use super::spawn_erase::{publish_start_in_txn, republished_start_body};
 use crate::code_run::CODE_RUN_REPLAY_RECORD_KEYS;
 use crate::compaction::output::OutputRef;
-use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
+use crate::provenance::body::{digest_holders_in_txn, owned_body_in_txn, publish_body_in_txn};
 use crate::store::{BodyMeter, Store};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -591,6 +591,41 @@ fn kept_start_pieces_in_txn(
         }
     }
     Ok(named)
+}
+
+/// FIX 4192 review fix: whether the bytes `digest` names have a holder
+/// besides the start pieces of the runs and actors `scopes`: a descriptor
+/// at any other occurrence, or a result body row that holds its body on its
+/// own. A census never carries such bytes apart from their own shared body
+/// instance, so stripping a start's content leaves another holder whole.
+///
+/// # Errors
+///
+/// Storage errors, and an occurrence that does not derive.
+pub(crate) fn start_piece_held_apart_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digest: &[u8; 32],
+    scopes: &BTreeSet<(EntityId, EntityId)>,
+) -> Result<bool> {
+    for (occurrence, owner) in digest_holders_in_txn(store, txn, digest)? {
+        let mut start = false;
+        for (run, actor) in scopes.iter().filter(|(run, _)| *run == owner) {
+            let path = PieceScope {
+                run: *run,
+                actor: *actor,
+            }
+            .start_path(digest);
+            if ResultOccurrence::owned(*run, &path)?.id() == occurrence {
+                start = true;
+                break;
+            }
+        }
+        if !start {
+            return Ok(true);
+        }
+    }
+    super::super::records::code_run_body_held_in_txn(store, txn, digest)
 }
 
 /// FIX 4192 review fix: the pieces of the step start `bytes` that hold
