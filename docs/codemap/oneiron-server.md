@@ -69,7 +69,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/feedback_triage/github.rs` | src | m | 4 crate-vis | — | The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: "GitHub issues still work |
 | `src/ai_host/feedback_triage/parts.rs` | src | m | 7 crate-vis | — | A long revision's parts (FIX 7549): the window a request must fit on the Coach's seat, and the item cut into… |
 | `src/ai_host/feedback_triage/synthesis.rs` | src | s | 4 crate-vis | — | A long revision's synthesis (FIX 7549): its answers, in order, joined in batches whose requests each fit the… |
-| `src/ai_host/handle.rs` | src | m | 18 fn · 17 crate-vis | — | The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints |
+| `src/ai_host/handle.rs` | src | m | 18 fn · 18 crate-vis | — | The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints |
 | `src/ai_host/harness.rs` | src | s | 1 crate-vis | — | The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit… |
 | `src/ai_host/home_digests.rs` | src | s | 1 crate-vis | — | Due digests on a host that runs no Dreamer (OF-499) |
 | `src/ai_host/identity.rs` | src | s | 1 crate-vis | — | Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check |
@@ -971,7 +971,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
 | `src/config/models/decisions.rs` | src | m | 8 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings, ImagePickSettings, ImportAudienceSettings, SeatPickSettings +1 | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
 | `src/config/models/drafting.rs` | src | s | 5 crate-vis | — | `[models.dreamer.drafting]`: the role and the budget a stewardship follow-up draft is written on (FIX 1002) |
-| `src/config/models/dreamer_wording.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
+| `src/config/models/dreamer_wording.rs` | src | s | 1 struct · 7 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 3 struct · 2 crate-vis | LiveAsrOptions, MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
 | `src/config/models/mod.rs` | src | L | 7 struct · 2 enum · 2 fn · 2 mod · 12 re-export · 5 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, TurnOpener +1 | `[models]`: which model serves each role, at three levels of detail |

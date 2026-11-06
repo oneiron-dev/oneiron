@@ -54704,6 +54704,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/connector_slate.rs",
+     "purpose": "The ordinary dispatch target frozen for its connector slate's one-send approval",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/degrade.rs",
      "purpose": "The ambient alternative of a degraded interrupt (FIX 7962): when the delivery window degrades an interrupt…",
      "surface": {
@@ -54747,7 +54757,7 @@
      "path": "src/outbound/dispatch_pipeline/govern.rs",
      "purpose": "Gate input assembled from the canonical outbound request",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -54758,7 +54768,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 3
      }
     },
@@ -54981,7 +54991,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "mod": 1,
       "re-export": 16
@@ -55313,7 +55323,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_chokepoint/admission.rs",
@@ -55337,9 +55347,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_chokepoint/connector_slate.rs",
-     "purpose": "FIX 990: the tool's capability setting (DEC-0006) at the last boundary before a Pending scoped call's send…",
+     "purpose": "FIX 990: the tool's capability setting (DEC-0006) at the last boundary before a Pending connector call's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -55390,6 +55400,17 @@
      "surface": {
       "crate-vis": 6,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/ordinary_slate.rs",
+     "purpose": "The ordinary frozen dispatch held by its owner's connector tool setting",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -56010,7 +56031,7 @@
      "path": "src/outbound_intent_ledger/payload.rs",
      "purpose": "A ledger row's payload at rest (FIX 9283, 9372, 2328, 2331)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -90294,15 +90315,15 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 11,
-     "impl_vault": false,
+     "files": 12,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
@@ -90931,9 +90952,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 156,
+   "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6386,
+   "source_files": 6388,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109499,7 +109520,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 18
      }
     },
@@ -118778,7 +118799,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 7,
       "struct": 1
      }
     },
