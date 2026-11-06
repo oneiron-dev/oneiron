@@ -6,9 +6,9 @@
 //! carries none of the reply's words: the drafts door shows them to a reader
 //! of the thread. Only its person reads it. It clears, seen and acked, when
 //! that revision is approved, discarded or drafted again. While the revision
-//! still waits, its taps discard it and, for a mailbox person who is one of
-//! the vault's Owners (the approve door takes an owner's proof), approve it;
-//! each door judges the draft again when called.
+//! still waits, its taps approve it or discard it; each door judges the
+//! draft again when called, and the approve door takes the mailbox person's
+//! own proof, owner of the vault or not.
 
 use super::reply::reply_awaits_in;
 use crate::entity_id::EntityId;
@@ -107,12 +107,10 @@ pub(super) fn clear_reply_ask_in_txn(
 }
 
 impl Memory<'_> {
-    /// The taps a drafted reply's Ask offers its caller now, while the
-    /// revision it names still waits for the caller, the mailbox's own
-    /// person: discard the draft, and approve that revision when the caller
-    /// is one of the vault's Owners, whose proof the approve door takes. Any
-    /// other row, and a revision approved, discarded or drafted again,
-    /// offers none.
+    /// The taps a drafted reply's Ask offers its caller now: approve the
+    /// revision it names, or discard the draft, while that revision still
+    /// waits for the caller, the mailbox's own person. Any other row, and a
+    /// revision approved, discarded or drafted again, offers none.
     pub(crate) fn mail_reply_ask_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some((draft_ref, revision)) = row.source.event.split_once(':') else {
             return Vec::new();
@@ -122,32 +120,24 @@ impl Memory<'_> {
             return Vec::new();
         };
         let vault = self.vault();
-        let person = self.actor();
-        let approves = vault
+        let awaits = vault
             .store
             .env
             .read_txn()
             .map_err(crate::Error::from)
-            .and_then(|txn| {
-                if !reply_awaits_in(vault, &txn, &draft, revision, person)? {
-                    return Ok(None);
-                }
-                crate::policy_model::is_live_vault_owner_in_txn(vault, &txn, &person).map(Some)
-            });
-        let Ok(Some(approves)) = approves else {
+            .and_then(|txn| reply_awaits_in(vault, &txn, &draft, revision, self.actor()));
+        if !matches!(awaits, Ok(true)) {
             return Vec::new();
-        };
-        let mut actions = Vec::new();
-        if approves {
-            actions.push(NotificationAction {
+        }
+        vec![
+            NotificationAction {
                 verb: MAIL_REPLY_APPROVE_VERB.to_owned(),
                 args: serde_json::json!({ "draft_ref": draft_ref, "revision": revision }),
-            });
-        }
-        actions.push(NotificationAction {
-            verb: MAIL_REPLY_DISCARD_VERB.to_owned(),
-            args: serde_json::json!({ "draft_ref": draft_ref }),
-        });
-        actions
+            },
+            NotificationAction {
+                verb: MAIL_REPLY_DISCARD_VERB.to_owned(),
+                args: serde_json::json!({ "draft_ref": draft_ref }),
+            },
+        ]
     }
 }

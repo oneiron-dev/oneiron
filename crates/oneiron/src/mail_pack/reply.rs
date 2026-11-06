@@ -803,11 +803,14 @@ impl Memory<'_> {
 }
 
 impl Vault {
-    /// The owner approves one revision of a drafted reply from their own
-    /// mailbox, and it sends (FIX 15420). The approve-once proof for exactly
-    /// that revision's frozen plan is minted with the draft's approval in one
-    /// writer; then the common recorded dispatcher sends it through the
-    /// mailbox's delegated identity, threaded on the provider. Approving it
+    /// A mailbox's own person approves one revision of a drafted reply from
+    /// that mailbox, and it sends (FIX 15420). `owner` is that person's own
+    /// proof, the vault's owner or a member (fix list row 17644 follow-up):
+    /// the door acts only on their own mailbox, and the proof lends no owner
+    /// authority. The approve-once proof for exactly that revision's frozen
+    /// plan is minted with the draft's approval in one writer; then the
+    /// common recorded dispatcher sends it the way the mailbox sends,
+    /// threaded on the provider. Approving it
     /// again after a held, failed or interrupted dispatch dispatches it
     /// again, and the ledger replays what it recorded rather than sending
     /// twice.
@@ -815,7 +818,7 @@ impl Vault {
     /// # Errors
     ///
     /// The draft unknown, discarded, sent, of another revision or of a
-    /// mailbox not the owner's; the mailbox unable to send; the dispatch
+    /// mailbox not the caller's; the mailbox unable to send; the dispatch
     /// refused.
     pub fn approve_mail_reply(
         &self,
@@ -824,7 +827,9 @@ impl Vault {
     ) -> MemoryResult<MailReplyDraftView> {
         let id = EntityId::from_hex(&input.draft_ref)?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
-        let actor = owner.revalidate(self)?;
+        // The mailbox's own person, owner of the vault or not: the door
+        // acts only on their own mailbox's reply.
+        let actor = owner.revalidate_person(self)?;
         let (row, source) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
@@ -905,7 +910,7 @@ impl Vault {
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
             // that acts, and finds the mailbox still theirs.
-            if owner.revalidate_in_txn(self, txn)? != actor
+            if owner.revalidate_person_in_txn(self, txn)? != actor
                 || SOURCES
                     .get(&self.store, txn, &row.source)?
                     .and_then(|source| source.owner)
@@ -930,7 +935,7 @@ impl Vault {
                 ));
             }
             if held.approved_at.is_none() {
-                self.approve_once_in_txn(txn, owner, digest)?;
+                self.approve_once_as_person_in_txn(txn, owner, digest)?;
                 held.approved_at = Some(now);
                 held.state = MailReplyDraftState::Approved;
                 held.updated_at = now;
