@@ -19,9 +19,7 @@ use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
 use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
 use super::reassignment_map::{ReassignmentEntry, ReassignmentTarget};
-use super::store_entity_helpers::{
-    identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
-};
+use super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope,
@@ -143,7 +141,10 @@ pub(super) fn resolution_rule_holds_for_store_in_txn(
     ) {
         return Ok(false);
     }
-    let Some(proposal_record) = identity_topology_event_for_store_in_txn(store, rtxn, proposal)?
+    // The proposal read whole (FIX 10188); a manifest still waiting on a
+    // part has nothing to rule on yet.
+    let Some(proposal_record) =
+        super::operation_parts::identity_topology_decision_for_store_in_txn(store, rtxn, proposal)?
     else {
         return Ok(false);
     };
@@ -486,8 +487,10 @@ impl Vault {
         let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*proposal))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
+        // The proposal read whole (FIX 10188): its scope, op and evidence are
+        // the decision's, never a manifest's.
         let record = self
-            .identity_topology_event_in_txn(&*wtxn, proposal)?
+            .identity_topology_decision_in_txn(&*wtxn, proposal)?
             .ok_or(Error::EntityNotFound)?;
         // The resolution rule, shared with replicated admission: the park
         // is still open, the fold has not retired it, and the ruling's own
