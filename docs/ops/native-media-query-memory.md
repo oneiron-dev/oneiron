@@ -534,6 +534,23 @@ still deletes its one fork key and returns; that delete records its original
 key capacity before the same operation, including false or error returns.
 The native lookup result, record and trace keep their original scope and drops.
 
+Before the original run-ID, trace-presence and known-hash filters, a successfully
+decoded lookup record also records its known backing on the same optional caller
+lease. It uses the same native capacity formula as the pre-put existing-row
+observation through one shared helper. This is a separate owned decode. When the
+pre-put stage calls this cleanup, its first decoded row is still alive; counting
+both allocations does not count the same backing twice.
+
+A shared observer returns the original lookup result without moving any field
+before the original let-chain. Errors and absent rows still add no decoded-record
+charge and fall back as before. Mismatched IDs, missing traces and unknown hashes
+also retain their original fallback. Their decoded buffers drop at the original
+chain failure before the full scan. On the fast path, the record and moved trace
+drop on the original return, including delete errors and unwind, before the
+caller lease. Known charges remain conservative until that lease drops; this is
+not exact early release or an allocation-peak bound. An unbound caller adds no
+capacity walk. No extra read, decode, clone, lease or admission is added.
+
 On the fallback path, the original successful scan's typed-row vector and its
 distinct filtered key vector each record their actual capacity times their
 native element size once. The same consuming loops retain and drop those
