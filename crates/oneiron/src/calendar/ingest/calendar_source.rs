@@ -70,7 +70,7 @@ pub(crate) fn apply_calendar_source_feed(
     now: u64,
 ) -> Result<usize, CalendarError> {
     let feed = parse_ics_feed(ics)?;
-    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?.record;
+    let archived = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?;
     let mut admission = PollAdmission {
         vault,
         screener: None,
@@ -78,7 +78,7 @@ pub(crate) fn apply_calendar_source_feed(
         system,
         preserve_direction: false,
         now,
-        blob_ref: &blob_ref,
+        blob_ref: &archived.record,
         verdict_fold: VerdictFold::default(),
         continuations: None,
     };
