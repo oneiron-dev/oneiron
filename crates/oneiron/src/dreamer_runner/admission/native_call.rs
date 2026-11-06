@@ -11,6 +11,11 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use oneiron_model::llm::BudgetMeterRange;
 
+mod net;
+use net::NativeNetCoverage;
+pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
+pub(crate) use net::{NativeNetSnapshot, NativeNetTally};
+
 const CALLS: SideTable<AdmittedCallId, NativeCallObligation, Named> =
     SideTable::new(&side_table::DREAMER_BUDGET_NATIVE_CALL);
 
@@ -28,6 +33,7 @@ struct NativeCallObligation {
     meter: NativeCallMeter,
     gross_coverage: NativeGrossCoverage,
     net_response: NativeNetResponse,
+    net_coverage: NativeNetCoverage,
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
 }
 
@@ -131,6 +137,7 @@ pub(crate) fn retain_native_call_in_txn(
         meter: NativeCallMeter::Unknown,
         gross_coverage: NativeGrossCoverage::Unknown,
         net_response: NativeNetResponse::Unknown,
+        net_coverage: NativeNetCoverage::Unknown,
         house_completions: None,
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
@@ -140,6 +147,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.meter = NativeCallMeter::Unknown;
         original.gross_coverage = NativeGrossCoverage::Unknown;
         original.net_response = NativeNetResponse::Unknown;
+        original.net_coverage = NativeNetCoverage::Unknown;
         original.house_completions = None;
         if original != row {
             return Err(invalid_dreamer_runner(

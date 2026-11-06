@@ -159,6 +159,16 @@ impl DreamerRunnerStore<'_> {
         step_bindings: &[StepReceipt],
         native: Option<&NativeMeterSnapshot>,
     ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_budget_with_native_evidence(input, step_bindings, native, None)
+    }
+
+    pub(crate) fn settle_budget_with_native_evidence(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepReceipt],
+        native: Option<&NativeMeterSnapshot>,
+        net: Option<&NativeNetSnapshot>,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
         self.vault.with_write_txn_grouped(|wtxn| {
             let mut unpinned = Vec::with_capacity(step_bindings.len());
             for binding in step_bindings {
@@ -177,6 +187,17 @@ impl DreamerRunnerStore<'_> {
                     &input,
                     actual.actual_units,
                     native,
+                );
+            }
+            if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(net) = net
+            {
+                super::native_call::record_native_net_settlement_in_txn(
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual.actual_units,
+                    net,
                 );
             }
             Ok(settled)
@@ -205,6 +226,25 @@ impl DreamerRunnerStore<'_> {
         lease: crate::dreamer_runner::DreamerTryLease<'_>,
         native: Option<&NativeMeterSnapshot>,
     ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_checkpoint_budget_with_native_evidence(
+            input,
+            step_bindings,
+            park,
+            lease,
+            native,
+            None,
+        )
+    }
+
+    pub(crate) fn settle_checkpoint_budget_with_native_evidence(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepReceipt],
+        park: ParkDreamerAttempt,
+        lease: crate::dreamer_runner::DreamerTryLease<'_>,
+        native: Option<&NativeMeterSnapshot>,
+        net: Option<&NativeNetSnapshot>,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
         if park.attempt_id != input.child_attempt {
             return Err(invalid_dreamer_runner(
                 "checkpoint park target differs from settlement",
@@ -232,6 +272,17 @@ impl DreamerRunnerStore<'_> {
                     &input,
                     actual.actual_units,
                     native,
+                );
+            }
+            if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(net) = net
+            {
+                super::native_call::record_native_net_settlement_in_txn(
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual.actual_units,
+                    net,
                 );
             }
             Ok(settled)
