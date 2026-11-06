@@ -25,15 +25,7 @@ pub(super) fn page_lines(
     let mut finished = 0;
     let mut at = from;
     while at.line < bytes.len() && finished < max_lines {
-        let rest = &bytes[at.line..];
-        // Lines end at `\n` or `\r\n`, as `str::lines` splits them.
-        let (line, next) = match line_end(rest, reader, scan_bytes)? {
-            Some(end) => (
-                rest[..end].strip_suffix(b"\r").unwrap_or(&rest[..end]),
-                at.line + end + 1,
-            ),
-            None => (rest, bytes.len()),
-        };
+        let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
         let mut text = String::new();
         lossy_for_each(line, reader, scan_bytes, |chunk| text.push_str(chunk))?;
         if let Some(prefix) = prefix(&text)? {
@@ -49,6 +41,87 @@ pub(super) fn page_lines(
         };
     }
     Ok((finished, None))
+}
+
+/// Prints HEAD lines without materializing a whole lossy line.
+pub(super) fn page_head_lines(
+    bytes: &[u8],
+    from: LinePosition,
+    out: &mut CommandOutputBuilder,
+    max_lines: usize,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<(usize, Option<LinePosition>)> {
+    let mut finished = 0;
+    let mut at = from;
+    while at.line < bytes.len() && finished < max_lines {
+        let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
+        let mut len = 0;
+        let mut boundary = at.printed == 0;
+        lossy_for_each(line, reader, scan_bytes, |chunk| {
+            if let Some(offset) = at.printed.checked_sub(len)
+                && offset <= chunk.len()
+            {
+                boundary |= chunk.is_char_boundary(offset);
+            }
+            len += chunk.len();
+        })?;
+        // The rendered line always ends in one ASCII newline.
+        boundary |= at.printed == len || at.printed == len + 1;
+        len += 1;
+        let printed = if boundary { at.printed } else { 0 };
+        let cut = out.push_line_streamed(len, printed, |output, mut remaining| {
+            let (mut offset, mut copied) = (0, 0);
+            let mut truncated = false;
+            lossy_for_each(line, reader, scan_bytes, |chunk| {
+                let end = offset + chunk.len();
+                if !truncated && end > printed && remaining > 0 {
+                    let start = printed.saturating_sub(offset);
+                    let mut take = remaining.min(chunk.len() - start);
+                    while !chunk.is_char_boundary(start + take) {
+                        take -= 1;
+                    }
+                    output.extend_from_slice(&chunk.as_bytes()[start..start + take]);
+                    copied += take;
+                    remaining -= take;
+                    truncated = start + take < chunk.len();
+                }
+                offset = end;
+            })?;
+            if !truncated && remaining > 0 && printed <= offset {
+                output.push(b'\n');
+                copied += 1;
+            }
+            Ok(copied)
+        })?;
+        if let Some(printed) = cut {
+            at.printed = printed;
+            return Ok((finished, Some(at)));
+        }
+        finished += 1;
+        at = LinePosition {
+            line: next,
+            printed: 0,
+        };
+    }
+    Ok((finished, None))
+}
+
+fn next_line<'bytes>(
+    bytes: &'bytes [u8],
+    at: usize,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<(&'bytes [u8], usize)> {
+    let rest = &bytes[at..];
+    // Lines end at `\n` or `\r\n`, as `str::lines` splits them.
+    Ok(match line_end(rest, reader, scan_bytes)? {
+        Some(end) => (
+            rest[..end].strip_suffix(b"\r").unwrap_or(&rest[..end]),
+            at + end + 1,
+        ),
+        None => (rest, bytes.len()),
+    })
 }
 
 fn checkpoint(reader: &ContainerReader) -> Result<()> {
