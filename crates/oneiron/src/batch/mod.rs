@@ -33,7 +33,8 @@ pub(crate) use phonetic_apply::checkpoint;
 mod prepared_index;
 mod put_apply;
 pub(crate) use person_substrate::{
-    PreparedPersonSubstrate, prepare_person_substrate, sweep_scope_stamps,
+    PreparedPersonSubstrate, prepare_person_substrate, prepare_person_substrate_after_puts,
+    sweep_scope_stamps,
 };
 #[cfg(feature = "sync")]
 mod recovery_shell;
@@ -73,6 +74,7 @@ pub(crate) use self::authority_log::{
 use self::base_apply::{apply_ops_with_authority_beside, apply_ops_with_origin};
 pub(crate) use self::base_apply::{
     apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
+    setup_birth_stamp_target,
 };
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{

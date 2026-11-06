@@ -43,8 +43,28 @@ pub(crate) fn prepare_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<PreparedPersonSubstrate> {
+    prepare_person_substrate_after_puts(store, txn, person, occurred, learned_at, &[])
+}
+
+pub(crate) fn prepare_person_substrate_after_puts(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    preceding: &[crate::agent_def::SetupEntityPut<'_>],
+) -> Result<PreparedPersonSubstrate> {
     let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
-    let bytes = if person_substrate_exists(store, txn, person, facet)? {
+    let exists = match preceding.iter().rev().find(|put| put.id == facet) {
+        Some(put) => {
+            if put.entity_type != ENTITY_TYPE_FACET || !is_substrate(&put.data, person) {
+                return Err(Error::CorruptedIndex("substrate identity collision"));
+            }
+            true
+        }
+        None => person_substrate_exists(store, txn, person, facet)?,
+    };
+    let bytes = if exists {
         None
     } else {
         // A caller can choose the id a PERSON's substrate lands at; an id that

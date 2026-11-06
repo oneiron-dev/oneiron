@@ -94,6 +94,8 @@ mod tests;
 
 mod portable;
 mod portable_binding;
+mod setup_plan;
+pub(crate) use setup_plan::{SetupEntityPut, setup_entity_type_in_txn};
 mod portable_knowledge;
 #[cfg(test)]
 pub(crate) use portable::agent_pack_files;
