@@ -3104,7 +3104,7 @@ export_facade! {
 "self.use" => fn self_use(&self, input: SecretUseRequest) -> SecretUseAnswer = |client| {
     let input: oneiron::task_verb::sdk::SecretUseRequest = crate::codec::lower_record("self.use", input)?;
     let output = client.self_use(&input)?;
-    crate::codec::lift_record("self.use", &output)
+    crate::codec::lift_secret_use_answer("self.use", output)
 };
 "self.secrets.materialize" => fn self_secrets_materialize(&self, input: LiveRunRequestSecretGrantMintRequest) -> SecretGrantView = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantMintRequest> = crate::codec::lower_record("self.secrets.materialize", input)?;
@@ -3124,7 +3124,7 @@ export_facade! {
 "self.secrets.use" => fn self_secrets_use(&self, input: LiveRunRequestSecretGrantUseRequest) -> SecretUseAnswer = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantUseRequest> = crate::codec::lower_record("self.secrets.use", input)?;
     let output = client.self_secrets_use(&input)?;
-    crate::codec::lift_record("self.secrets.use", &output)
+    crate::codec::lift_secret_use_answer("self.secrets.use", output)
 };
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
@@ -4874,7 +4874,7 @@ export_facade! {
 "vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> DecisionAsk = |client| {
     let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::lower_record("vault.decisions.asks.answer", input)?;
     let output = client.vault_decisions_asks_answer(&input)?;
-    crate::codec::lift_record("vault.decisions.asks.answer", &output)
+    crate::codec::lift_decision_ask("vault.decisions.asks.answer", output)
 };
 "vault.decisions.asks.climb" => fn vault_decisions_asks_climb(&self, input: DecisionAskClimbRequest) -> Option<ResolvedRole> = |client| {
     let input: oneiron::receipt::DecisionAskClimbRequest = crate::codec::lower_record("vault.decisions.asks.climb", input)?;
@@ -4884,12 +4884,12 @@ export_facade! {
 "vault.decisions.asks.confirm_grant" => fn vault_decisions_asks_confirm_grant(&self, input: DecisionAskConfirmGrantRequest) -> DecisionAsk = |client| {
     let input: oneiron::receipt::DecisionAskConfirmGrantRequest = crate::codec::lower_record("vault.decisions.asks.confirm_grant", input)?;
     let output = client.vault_decisions_asks_confirm_grant(&input)?;
-    crate::codec::lift_record("vault.decisions.asks.confirm_grant", &output)
+    crate::codec::lift_decision_ask("vault.decisions.asks.confirm_grant", output)
 };
 "self.decisions.asks" => fn self_decisions_asks(&self) -> Vec<DecisionAsk> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.decisions.asks")?;
     let output = client.self_decisions_asks(&input)?;
-    crate::codec::lift_record("self.decisions.asks", &output)
+    crate::codec::lift_decision_asks("self.decisions.asks", output)
 };
 "connector.list" => fn connector_list(&self, input: ConnectorListRequest) -> Vec<ConnectorEntry> = |client| {
     let input: oneiron::task_verb::sdk::ConnectorListRequest = crate::codec::lower_record("connector.list", input)?;
