@@ -633,27 +633,34 @@ fn enter_run(
     // requests carry it through. The live run keeps the installation across
     // its entries and its durable waits, and closes it as it retires (Engine
     // call RESUME C).
-    let entered = match door.install_self_brief(live.self_brief_owner()) {
-        Ok(brief) => {
-            if let Some(brief) = &brief {
-                live.hold_self_brief(brief.installation());
-            }
-            enter_engine_native_run(
-                vault,
-                provider,
-                &bound,
-                config,
-                compaction,
-                reactor,
-                meter,
-                model_seat,
-                planned,
-                status.input.definition.models.clone(),
-                brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
-            )
-        }
-        Err(error) => Err(EngineRunError::Binding(text(error))),
-    };
+    // A brief that does not install leaves the run as it ran before it had
+    // one: it enters with no brief, and the miss is logged.
+    let brief = door
+        .install_self_brief(live.self_brief_owner())
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                agent = %actor.entity_ref().to_hex(),
+                "a resident run's self brief did not install; the run enters without one"
+            );
+            None
+        });
+    if let Some(brief) = &brief {
+        live.hold_self_brief(brief.installation());
+    }
+    let entered = enter_engine_native_run(
+        vault,
+        provider,
+        &bound,
+        config,
+        compaction,
+        reactor,
+        meter,
+        model_seat,
+        planned,
+        status.input.definition.models.clone(),
+        brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
+    );
     door.bind_meter(None);
     door.bind_lease(None);
     door.bind_run_ceiling(None);
