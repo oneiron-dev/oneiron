@@ -357,6 +357,7 @@ async fn supervise(
             summary_instruction: settings.summary_instruction.clone(),
             resident_instruction: settings.resident_instruction.clone(),
             person_about_instruction: settings.person_about_instruction.clone(),
+            psych_mirror_instruction: settings.psych_mirror_instruction.clone(),
             task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
@@ -485,6 +486,9 @@ struct ObservedFactory {
     /// PERSON `about` lines are written with this: the host's wording, else
     /// the engine's own.
     person_about_instruction: Option<String>,
+    /// A person's Psych Mirror profile is written with this: the host's
+    /// wording, else the engine's own.
+    psych_mirror_instruction: Option<String>,
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
@@ -699,6 +703,9 @@ impl ObservedFactory {
         factory = factory.with_model_windows(self.windows.clone());
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
+        }
+        if let Some(instruction) = &self.psych_mirror_instruction {
+            factory = factory.with_psych_mirror_instruction(instruction.clone());
         }
         if let Some(host) = host {
             factory = factory.with_decisions(
