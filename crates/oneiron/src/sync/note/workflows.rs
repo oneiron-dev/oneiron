@@ -102,7 +102,11 @@ pub(super) struct Judge<'a, 't> {
     pub(super) txn: &'a heed::RoTxn<'t>,
     pub(super) tombstones: &'a TombstoneIndex,
     pub(super) flagged: &'a BTreeSet<EntityId>,
-    pub(super) selector: Option<(FederationGrantScope, &'a SyncSelector)>,
+    pub(super) selector: Option<(
+        FederationGrantScope,
+        &'a SyncSelector,
+        Option<&'a crate::federation::Scope>,
+    )>,
 }
 
 impl Judge<'_, '_> {
@@ -123,12 +127,20 @@ impl Judge<'_, '_> {
         {
             return Ok(false);
         }
-        Ok(self.selector.is_none_or(|(scope, selector)| {
-            crate::sync::selector::admit_note_in_txn(
-                self.vault, self.txn, *note, scope, selector, None,
-            )
-            .is_ok()
-        }))
+        Ok(self
+            .selector
+            .is_none_or(|(scope, selector, credential_scope)| {
+                crate::sync::selector::admit_note_in_txn_with_scope(
+                    self.vault,
+                    self.txn,
+                    *note,
+                    scope,
+                    selector,
+                    None,
+                    credential_scope,
+                )
+                .is_ok()
+            }))
     }
 }
 
@@ -170,6 +182,19 @@ impl NoteSelection {
         ids: &BTreeSet<EntityId>,
         selector: Option<(FederationGrantScope, &SyncSelector)>,
     ) -> Result<Self> {
+        Self::judged_in_with_scope(vault, txn, flagged, source, ids, selector, None)
+    }
+
+    /// The same selection, with attached NOTE rows bounded by the admitted credential too.
+    pub(crate) fn judged_in_with_scope(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        flagged: &BTreeSet<EntityId>,
+        source: &LoroDoc,
+        ids: &BTreeSet<EntityId>,
+        selector: Option<(FederationGrantScope, &SyncSelector)>,
+        credential_scope: Option<&crate::federation::Scope>,
+    ) -> Result<Self> {
         let mut dropped = BTreeSet::new();
         let mut attached = BTreeSet::new();
         if is_native(source) {
@@ -180,7 +205,7 @@ impl NoteSelection {
                 txn,
                 tombstones: &tombstones,
                 flagged,
-                selector,
+                selector: selector.map(|(scope, selector)| (scope, selector, credential_scope)),
             };
             for note in ids {
                 if state.cores.contains_key(note) && judge.drops(note)? {
