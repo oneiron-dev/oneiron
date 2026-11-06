@@ -99,7 +99,7 @@ pub fn run_shadow_step(
     seed_store(prepared, store)?;
     let encoded = serde_json::to_vec(answer)
         .map_err(|error| Error::InvalidConfig(format!("shadow step answer: {error}")))?;
-    let mut outputs = vec![store.put(arm_path(seq, "answer.json"), &encoded)?];
+    let outputs = vec![store.put(arm_path(seq, "answer.json"), &encoded)?];
     let Ok(healed) = heal_executor_reply(answer) else {
         let status = ShadowStatus::Failed {
             kind: "reply_unhealable".to_owned(),
@@ -111,19 +111,51 @@ pub fn run_shadow_step(
         };
         return finish_run(store, seq, status, outputs, &[], &[], bridge);
     };
+    let speech = healed.trailing_speak.as_deref();
+    run_program(
+        prepared,
+        &healed.code,
+        speech,
+        outputs,
+        runtime,
+        store,
+        cancel,
+        feedback,
+    )
+}
+
+/// Runs `code`, the step's program, in the arm whose bodies are in `store`
+/// and which already holds `outputs`, its speech after the program
+/// `trailing_speak`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arm lends its frozen step, program, bodies, runtime, store, token and checker"
+)]
+fn run_program(
+    prepared: &PreparedShadowStep,
+    code: &str,
+    trailing_speak: Option<&str>,
+    mut outputs: Vec<ShadowBodyRef>,
+    runtime: &mut dyn JsCodeModeRuntime,
+    store: &ShadowBodyStore,
+    cancel: &StepCancellation,
+    feedback: &ArmTypeFeedback<'_>,
+) -> Result<ShadowStepRun> {
+    let seq = prepared.step().step;
+    let (start, end) = prepared.bridge_window();
     // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
     // executed JavaScript and its preparation record stay in the arm's own
     // store beside the program.
-    let source = prepare_source(&healed.code);
+    let source = prepare_source(code);
     // Checked once, as its author wrote it, before anything of it is
     // written (FIX 10389, fork d).
-    let mut check = start_arm_check(feedback, prepared, &healed.code, &source);
+    let mut check = start_arm_check(feedback, prepared, code, &source);
     store.hold_feedback(check.latest());
-    outputs.push(store.put(script_output_path(seq), healed.code.as_bytes())?);
+    outputs.push(store.put(script_output_path(seq), code.as_bytes())?);
     if let Some(transpiled) = source.transpiled() {
         let executed = transpiled.executed_js().as_bytes();
         outputs.push(store.put(executed_output_path(seq), executed)?);
-        let record = transpiled.record_json(&healed.code)?;
+        let record = transpiled.record_json(code)?;
         outputs.push(store.put(source_map_output_path(seq), &record)?);
     }
     let boundary = executor_boundary_contract()
@@ -132,7 +164,7 @@ pub fn run_shadow_step(
     let step = JsCodeModeStep {
         run_id: prepared.step().run,
         seq,
-        script: &healed.code,
+        script: code,
         boundary,
         determinism: prepared.determinism,
     };
@@ -157,11 +189,7 @@ pub fn run_shadow_step(
     outputs.extend(bodies);
     outputs.extend(host.own_results());
     let mut proposed = std::mem::take(&mut host.proposed);
-    if let Some(text) = healed
-        .trailing_speak
-        .as_deref()
-        .filter(|text| !text.is_empty())
-    {
+    if let Some(text) = trailing_speak.filter(|text| !text.is_empty()) {
         outputs.push(store.put(arm_path(seq, "trailing-speech.txt"), text.as_bytes())?);
         proposed.push(trailing_speech(host.consumed(), text));
     }
