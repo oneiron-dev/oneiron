@@ -287,7 +287,12 @@ fn open_chunk_into(
     Envelope::parse(frame)
         .map_err(|_| corrupt())?
         .open_with_aad_into(OpenKey::SymmetricKek(kek), &policy, extra, plaintext)
-        .map_err(|_| corrupt())
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            _ => corrupt(),
+        })
 }
 
 /// The associated data a data key is wrapped under: the wrap domain and its
