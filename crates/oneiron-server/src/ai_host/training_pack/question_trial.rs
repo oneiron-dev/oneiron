@@ -5,7 +5,9 @@
 //! counted. Each row is read once by the head, at its fitted temperature,
 //! and twice by the typed question's current answerer: the host's ladder as
 //! the graph path asks it (`ladder_decide`), at the question's own dial and
-//! never past the Big rung, so a trial queues no person ask. Every read is a
+//! posture and never past the Big rung, so a trial queues no person ask and
+//! sends unit text off the host only where the question's reads would. Every
+//! read is a
 //! reversible read. `Vault::record_question_head_trial` reduces the reads to
 //! the trial's numbers. A read that fails or abstains is recorded as
 //! missing, which leaves the trial unknown; it never fails the trial.
@@ -16,17 +18,18 @@ use std::time::{Duration, Instant};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionRung, Reversibility, TypedDecision,
+    DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionRung, ProviderPin, Reversibility,
+    TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::training_pack::{QuestionHeadTrial, QuestionTrialCase, QuestionTrialInput, SplitSide};
-use oneiron::{EntityId, Error};
+use oneiron::{EntityId, Error, HostingPrivacyPosture};
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::question_evaluation::calibration::yes_probability;
 use super::question_serving::checkpoint_upload;
-use crate::decision_graph::{LadderCall, ladder_decide};
+use crate::decision_graph::{LadderCall, ladder_decide, question_posture};
 use crate::oneironer::QuestionHead;
 use crate::server::SyncServer;
 
@@ -101,12 +104,30 @@ fn yes(decision: &TypedDecision) -> Option<f64> {
         .flatten()
 }
 
+/// The pin of the rung that answered, as the graph path names it; `None`
+/// for an abstain.
+fn answering_pin(decision: &TypedDecision) -> Option<ProviderPin> {
+    if decision.answer == DecisionAnswer::Abstain {
+        return None;
+    }
+    let answered = decision.receipt.time.as_ref()?.answered?;
+    decision
+        .receipt
+        .providers
+        .iter()
+        .rev()
+        .find(|pin| pin.rung == answered)
+        .cloned()
+}
+
 /// The reads one trial makes of the current answerer.
 struct Incumbent<'a> {
     server: &'a SyncServer,
     input: &'a QuestionTrialInput,
     dial: DecisionDial,
     policy: DecisionBandPolicy,
+    /// The question's posture where it is stricter than the vault's.
+    posture: Option<HostingPrivacyPosture>,
 }
 
 impl Incumbent<'_> {
@@ -130,7 +151,7 @@ impl Incumbent<'_> {
                 label: TRIAL_LABEL,
                 ask_to: None,
                 correlation: None,
-                posture: None,
+                posture: self.posture,
             },
         )
         .inspect_err(|error| {
@@ -174,6 +195,7 @@ pub(crate) fn run_question_head_trial(
             band: input.dial.band,
         },
         policy: server.decision_host().bands(),
+        posture: question_posture(server, input.posture),
     };
     let cases: Vec<QuestionTrialCase> = rows
         .iter()
@@ -198,9 +220,7 @@ pub(crate) fn run_question_head_trial(
                 incumbent: first.as_ref().and_then(yes),
                 retest: second.as_ref().and_then(yes),
                 incumbent_ms,
-                incumbent_pin: first
-                    .as_ref()
-                    .and_then(|decision| decision.receipt.providers.last().cloned()),
+                incumbent_pin: first.as_ref().and_then(answering_pin),
                 incumbent_cost_per_thousand: first
                     .as_ref()
                     .and_then(|decision| decision.receipt.cost_per_thousand),

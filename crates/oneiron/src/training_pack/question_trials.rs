@@ -137,6 +137,9 @@ pub struct QuestionTrialInput {
     pub question: DecisionQuestion,
     /// The question's asker: the principal its reads run for.
     pub principal: EntityId,
+    /// The question's own posture, when it names one: its reads keep unit
+    /// text where the graph path keeps it.
+    pub posture: Option<crate::config::HostingPrivacyPosture>,
     /// The question's own dial; the host never reads past the Big rung.
     pub dial: crate::llm::decision::DecisionDial,
     pub target: QuestionTarget,
@@ -380,6 +383,7 @@ impl Vault {
         Ok(QuestionTrialInput {
             exposure: release.exposure,
             principal: record.principal,
+            posture: record.definition.posture,
             dial: record.definition.dial,
             question: record.definition.question,
             target,

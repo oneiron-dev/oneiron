@@ -134,8 +134,10 @@ struct TrainingRunView {
     /// an evaluated bind pass.
     #[serde(skip_serializing_if = "Option::is_none")]
     question_trial: Option<QuestionHeadTrial>,
-    /// Whether an evaluated bind of a question run's head passes: its checks
-    /// and a won trial; otherwise only an explicit choice binds it.
+    /// Whether an evaluated bind of a question run's head to the typed
+    /// question its latest trial was against passes: its checks and that won
+    /// trial. A bind to any other question needs a trial against that one, or
+    /// an explicit choice.
     can_bind_question_head: bool,
     state: TrainingState,
     /// The run's spec hash (64 hex), which `swap` names back.
