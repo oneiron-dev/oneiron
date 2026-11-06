@@ -137,8 +137,8 @@ prefix string moves into its system message. The compact dynamic JSON object
 also moves directly into the context user message before the caller's original
 user message. The previous single-block placement trimmed this already-trimmed,
 nonempty object and copied it; the message text and order remain the same.
-The independent dynamic JSON value, outgoing egress string, early-system copy
-and lower request clones remain outside this local buffer transfer.
+The independent dynamic JSON value and lower request clones remain outside
+this local buffer transfer.
 
 After the provider answers and the original credential-live check passes,
 `ai.reply` consumes the response's text parts in their original order. Its final
@@ -239,16 +239,21 @@ remain intact. Other transport-wide release coverage is not claimed here.
 
 `ai.reply` keeps a separate lease on the server's same physical-memory line for
 its owned route-prompt fingerprint string, taken standing text, assembled prefix,
-compact board JSON, outgoing egress text and the early-system text copy. It records
+compact board JSON and outgoing egress text. It records
 each actual string capacity after allocation. Growing the standing prefix records
 only the capacity increase; moving prefix and board into request messages keeps
 their existing charge. It does not treat a move across a module as a drop.
 
+The early layout moves the outgoing text into its system message, rather than
+cloning it. After the original route-prompt removal, the egress check borrows that
+same first text message. The stable layout keeps its separate outgoing string.
+Both layouts retain their original text, roles, order, hashes and egress sequence.
 The early layout releases its now-unused prefix and board before returning their
 charges. An omitted whitespace-only stable prefix is dropped in the same way.
 The temporary route prompt drops at its original post-fingerprint removal. The
-outgoing text drops after the original device-local egress check has finished
-reading it. Request message text stays charged until the consuming exact-generation
+separate stable-layout outgoing text drops after the original device-local egress
+check has finished reading it. Request message text, including the moved early-layout
+outgoing text, stays charged until the consuming exact-generation
 await has returned and its original request has dropped, on both success and error.
 The lease is declared before the owning locals and future, so an early return or
 cancellation drops those buffers before their charge.
