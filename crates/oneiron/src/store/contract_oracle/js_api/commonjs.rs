@@ -155,6 +155,29 @@ pub(super) fn collect(
             }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
+                    if assignment.operator.is_assign()
+                        && native_module
+                        && let Expression::SequenceExpression(sequence) =
+                            assignment.right.get_inner_expression()
+                        && let Some(last) = sequence.expressions.last()
+                        && whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
+                        && let Some(values) = whole_sequence_values(
+                            &assignment.right,
+                            semantic,
+                            alias,
+                            native_module,
+                            &mut accounted,
+                        )
+                    {
+                        commonjs = true;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        alias = true;
+                        accounted.insert((identifier.span.start, identifier.span.end));
+                        continue;
+                    }
                     alias = assignment.operator.is_assign()
                         && ((native_module
                             && whole_value(&assignment.right, semantic, &mut accounted))
