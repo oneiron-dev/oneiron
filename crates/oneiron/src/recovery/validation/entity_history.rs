@@ -17,6 +17,7 @@ pub(super) struct HistoryValidation {
     reached: Vec<bool>,
     metadata: MetadataRows,
     parent_next: usize,
+    record_field_byte: usize,
     pin_quote: PinQuote,
 }
 
@@ -65,7 +66,15 @@ impl HistoryValidation {
                         self.start(Stage::HeaderFields);
                         continue;
                     }
-                    strict(row.record_fields[self.next.saturating_sub(1)..=self.next].iter())?;
+                    if self.next != 0
+                        && !advance_record_field_order(
+                            &row.record_fields[self.next - 1],
+                            &row.record_fields[self.next],
+                            &mut self.record_field_byte,
+                        )?
+                    {
+                        return Ok(false);
+                    }
                     self.next += 1;
                     return Ok(false);
                 }
@@ -447,6 +456,27 @@ impl HistoryValidation {
         self.stage = stage;
         self.next = 0;
     }
+}
+
+fn advance_record_field_order(previous: &str, current: &str, next: &mut usize) -> Result<bool> {
+    let common_len = previous.len().min(current.len());
+    let end = next.saturating_add(blake3::CHUNK_LEN).min(common_len);
+    match previous.as_bytes()[*next..end].cmp(&current.as_bytes()[*next..end]) {
+        std::cmp::Ordering::Less => {}
+        std::cmp::Ordering::Greater => {
+            return Err(invalid("duplicate or unordered canonical record"));
+        }
+        std::cmp::Ordering::Equal if end < common_len => {
+            *next = end;
+            return Ok(false);
+        }
+        std::cmp::Ordering::Equal if previous.len() < current.len() => {}
+        std::cmp::Ordering::Equal => {
+            return Err(invalid("duplicate or unordered canonical record"));
+        }
+    }
+    *next = 0;
+    Ok(true)
 }
 
 fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Result<bool> {
