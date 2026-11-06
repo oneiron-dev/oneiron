@@ -459,3 +459,31 @@ finite fields keep the original whole-result codec and per-verb diagnostics.
 Native policy persistence, validation, authority, inputs, typed clients, hooks
 and public records are unchanged. This selected output conversion does not prove
 end-to-end depth, memory or runtime bounds.
+
+## Foreign-code proposal output claims
+
+`execute_code` consumes every claim-candidate proposal's required value and
+optional scope through the existing owned claim JSON conversion. All proposal
+leaves are consumed before returning the first conversion error. The original
+whole-result codec converts the finite remainder, then restores each claim's
+leaves in proposal order. Required null values stay present; absent and null
+optional scopes stay absent.
+
+Proposal identities, source and approval, other file effects, read snapshots,
+isolation receipts, type feedback and finite numeric conversions are unchanged.
+This changes no native execution, writes, authority, inputs, clients, hooks or
+public records. It does not prove end-to-end depth, memory or runtime bounds.
+
+## Cleanup review output entity bodies
+
+`vault.cleanup.review` consumes every present record's optional body JSON
+before converting the review, then restores bodies in item order. Missing
+content, missing record reads, withheld entities, and absent or null bodies
+keep their old shape. Every body is consumed before the first conversion error.
+
+The current attempt-row projection contains only finite typed fields, including
+opaque payload bytes, and stays on the original whole-result codec. Note text,
+read receipts, refusal facts, slot state, revisions, evidence, accept effects
+and finite numeric conversions are unchanged. Native snapshot reads, authority,
+inputs, clients, hooks and public records are unchanged. This selected output
+conversion does not prove end-to-end depth, memory or runtime bounds.

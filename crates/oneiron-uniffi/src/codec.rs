@@ -57,6 +57,8 @@ pub(crate) use claim_results::{
     lift_claim_settlement, lift_scoped_claim, lift_signal_extraction_result,
 };
 mod claims;
+mod cleanup_reviews;
+pub(crate) use cleanup_reviews::lift_cleanup_review;
 mod core_write;
 mod connector_manifests;
 pub(crate) use connector_manifests::{
@@ -68,6 +70,8 @@ mod drafters;
 pub(crate) use drafters::{lift_drafter_policy, lift_drafter_status};
 mod diagnostics;
 mod feedback;
+mod foreign_code;
+pub(crate) use foreign_code::lift_foreign_code_result;
 mod generated_lenses;
 mod identity_act_now;
 mod identity_lookups;
