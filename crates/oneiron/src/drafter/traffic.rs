@@ -49,6 +49,8 @@ use zeroize::Zeroizing;
 use super::{DrafterDependencies, DrafterSealing, invalid, policy_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::revoke_side_row_custody_with_context_in_txn;
+use crate::secret_record::CustodyWrite;
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::drafter_custody::{
@@ -159,6 +161,15 @@ pub(super) struct DrafterExampleSeal {
     pub(super) blake3: [u8; 32],
 }
 
+/// Where the side-row wall places an example's body (FIX 16231): the
+/// origin of every custody record it mints from it.
+const EXAMPLE_BODY_PLACE: &str = "side:DRAFTER_EXAMPLE_BODY";
+
+/// The origin the wall names an example's custody records by.
+fn example_body_origin(id: &EntityId) -> Result<EntityId> {
+    crate::batch::secret_scan::side_row_origin(EXAMPLE_BODY_PLACE, id.as_bytes())
+}
+
 /// What an example's sealed body holds.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -230,14 +241,11 @@ impl Vault {
         let family = request
             .canonical_hash_hex()
             .map_err(|_| invalid("a drafter example's request did not encode"))?;
-        let body = DrafterExampleBody {
+        let mut body = DrafterExampleBody {
             request,
             generated,
             finish_reason,
         };
-        let plain = Zeroizing::new(
-            serde_json::to_vec(&body).map_err(|_| invalid("a drafter example did not encode"))?,
-        );
         let mut seal = [0u8; 16];
         crate::key_material::os_fill(&mut seal)?;
         self.with_write_txn_grouped(|txn| {
@@ -269,6 +277,19 @@ impl Vault {
                 return Ok(DrafterExampleKept::Skipped(SKIP_EXCLUDED_WORLD));
             }
             let id = store.clock.entity_id()?;
+            // FIX 16231: the side-row wall masks a secret the call carried,
+            // as an authored row's write does, before the body is sealed: no
+            // drafter trains on a secret's value, only on its custody handle.
+            crate::batch::secret_scan::admit_typed(
+                self,
+                txn,
+                (EXAMPLE_BODY_PLACE, id.as_bytes()),
+                &mut body,
+            )?;
+            let plain = Zeroizing::new(
+                serde_json::to_vec(&body)
+                    .map_err(|_| invalid("a drafter example did not encode"))?,
+            );
             let key = mint_drafter_artifact_key_in_txn(store, txn, &id, &seal)?;
             let key_ref = key.key_ref;
             let sealed = DrafterSealing::for_example(id, seal, key)
@@ -318,18 +339,24 @@ impl Vault {
         if !due {
             return Ok(0);
         }
+        let write = CustodyWrite::of(self);
         self.with_write_txn_grouped(|txn| {
             let store = &self.store;
             let ids = EXAMPLES.scan_keys(store, txn, &[])?;
             let excess = ids.len().saturating_sub(DRAFTER_EXAMPLES_KEPT);
             let (dropped, kept) = ids.split_at(excess);
             for id in dropped {
-                drop_example_in_txn(store, txn, id)?;
+                drop_example_in_txn(&write, txn, id)?;
             }
             let kept: BTreeSet<EntityId> = kept.iter().copied().collect();
             let mut removed = excess as u64;
             for id in BODIES.scan_keys(store, txn, &[])? {
                 if !kept.contains(&id) {
+                    revoke_side_row_custody_with_context_in_txn(
+                        &write,
+                        txn,
+                        &example_body_origin(&id)?,
+                    )?;
                     BODIES.delete(store, txn, &id)?;
                     removed += 1;
                 }
@@ -397,7 +424,14 @@ pub(super) fn open_example_body_in(
 /// Drops example `id` in `wtxn`: its index rows, its body and its record,
 /// and stages the retirement of its key. A record that does not decode
 /// retires every key minted under the example; an absent one stages none.
-fn drop_example_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+fn drop_example_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let store = write.store;
+    // Each secret the wall lifted from its body goes with it (FIX 16231).
+    revoke_side_row_custody_with_context_in_txn(write, wtxn, &example_body_origin(id)?)?;
     if let Some(bytes) = EXAMPLES.get_bytes(store, wtxn, id)? {
         match EXAMPLES.decode_value(&bytes) {
             Ok(record) => {
@@ -423,17 +457,18 @@ fn drop_example_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Re
 /// # Errors
 /// Storage and custody faults.
 pub(crate) fn erase_drafter_examples_for_source_in_txn(
-    store: &Store,
+    write: &CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let examples: BTreeSet<EntityId> = NAMED_BY
         .scan_keys(store, wtxn, id.as_bytes())?
         .into_iter()
         .map(|(_, example)| example)
         .collect();
     for example in &examples {
-        drop_example_in_txn(store, wtxn, example)?;
+        drop_example_in_txn(write, wtxn, example)?;
         NAMED_BY.delete(store, wtxn, &(*id, *example))?;
     }
     Ok(())
