@@ -257,6 +257,10 @@ you want to act as instead.
 | `handle.withReadCredential(credential)` | a new handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle fails `FORBIDDEN` |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
+| `handle.acceptSharedInvitationHttps(request)` | accepts an invitation on this connected handle; `request` keeps wire spelling (`vault_id` decimal string, `invitation`, `expires_at`); answers the opaque acceptance |
+| `handle.retrySharedInvitationHttps(pendingJson, request)` | retries a pending acceptance under its original invocation; `pendingJson` is the exact `MemoryError` JSON text from the caught `OneironError.nativeErrorJson`, with the same request |
+| `engine.bootstrapSharedEnv(acceptance, entry, dimensions?, configFile?)` | imports the SAME acceptance into this engine's live registry; `entry` keeps wire spelling (`path`, `vault_id`, `member`, `home_url`, `credential_file`); answers the outcome; never persists the entry |
+| `engine.retainSharedEnv(entry)` | retains the same entry for this engine's next start; leaves the live registry unchanged |
 | `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, readReceipt }`, or a model round trip's `{ queued, callbackId }` |
 | `handle.closeLensFrame(cardId)` | closes that card and frees its frame; answers `{ closed }` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
@@ -315,6 +319,20 @@ Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurredAt` stamps the current wall clock at the call boundary; supplying one
 means passing `Math.floor(Date.now() / 1000)`.
 
+### Shared invitations and shared envs
+
+`acceptSharedInvitationHttps` and `retrySharedInvitationHttps` run on a
+connected handle. Both keep wire spelling: `vault_id` is a decimal string,
+`invitation` the token, `expires_at` a safe integer. A pending accept throws
+`OneironError`; retry with the SAME request and the exact
+`nativeErrorJson` text it carried. The acceptance holds the original native
+value: `homeUrl`, `acceptanceUrl`, verbatim `requestJson`/`replyJson`, and
+`memberClient`. On a started engine, `bootstrapSharedEnv` imports the SAME
+acceptance with the SAME entry and answers the outcome (`committed`,
+`vaultPath`, verbatim `errorJson` where `null` is not success); it never
+persists the entry. `retainSharedEnv` with the same entry persists for the
+next start.
+
 ## Errors
 
 Every failure is an `OneironError` carrying the engine's own vocabulary:
@@ -334,6 +352,10 @@ try {
 `code` is the engine's stable string — `BAD_REQUEST`, `FORBIDDEN`,
 `NOT_FOUND`, `LEASE_REQUIRED`, `VAULT_LOCKED_SINGLE_WRITER`, and others — and
 `suggestions` is never empty.
+
+`nativeErrorJson` carries the original native `MemoryError` JSON text when the
+failure came from a recognized native payload, verbatim for a pending retry;
+it is absent on manually constructed errors and malformed payloads.
 
 ## One writer per vault
 
