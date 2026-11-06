@@ -28,6 +28,10 @@ use crate::secret_custody::SecretSight;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeStateRequest {
+    /// The repository's code-document identity (FIX 12761):
+    /// `portable:<hex>` while a portable id stands for it, else
+    /// `local:<path>` or `github:<owner>/<repo>`. A frontier's `repo` spells
+    /// it.
     pub repo: String,
     pub path: String,
     #[serde(default)]
