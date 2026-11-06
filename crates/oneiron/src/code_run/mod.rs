@@ -146,7 +146,8 @@ pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
     erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
+    response_erased_error, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+    wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
