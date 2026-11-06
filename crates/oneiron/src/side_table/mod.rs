@@ -681,10 +681,27 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         txn: &mut RwTxn<'_>,
         key_prefix: &[u8],
     ) -> Result<usize> {
+        self.delete_from_with_key_capacity(dbs, txn, key_prefix, |_| {})
+    }
+
+    /// Deletes a prefix, observing the collected keys' backing before the first delete.
+    pub(crate) fn delete_from_with_key_capacity(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key_prefix: &[u8],
+        observe: impl FnOnce(u64),
+    ) -> Result<usize> {
         let keys = self
             .raw_rows(dbs, txn, key_prefix, false)?
             .map(|row| row.map(|(key, _)| key))
             .collect::<Result<Vec<_>>>()?;
+        let bytes = keys.iter().fold(
+            (keys.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<Vec<u8>>() as u64),
+            |bytes, key| bytes.saturating_add(key.capacity() as u64),
+        );
+        observe(bytes);
         for full in &keys {
             match self.decl.db {
                 SideDb::VaultMeta => dbs.side_vault_meta().delete(txn, full)?,
