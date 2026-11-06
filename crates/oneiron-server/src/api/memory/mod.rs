@@ -243,6 +243,9 @@ mod owner_delete;
 mod timeline;
 mod watch;
 pub(crate) use self::timeline::{__path_core_memory_timeline, core_memory_timeline};
+// A timeline read that an ask stopped runs again through its route (FIX 1435).
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) use self::timeline::core_memory_timeline_hooked;
 pub(crate) use self::watch::{
     __path_core_memory_watch_disable, __path_core_memory_watch_enable,
     __path_core_memory_watch_read, CoreMemoryWatchHealth,
