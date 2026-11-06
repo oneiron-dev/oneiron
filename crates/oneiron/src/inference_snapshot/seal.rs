@@ -80,7 +80,7 @@ impl<'a> SealedSnapshot<'a> {
             let (len, tail) = rest.split_first_chunk::<4>().ok_or_else(corrupt)?;
             let len = usize::try_from(u32::from_be_bytes(*len)).map_err(|_| corrupt())?;
             let frame = tail.get(..len).ok_or_else(corrupt)?;
-            Envelope::parse(frame).map_err(|_| corrupt())?;
+            Envelope::parse(frame).map_err(envelope_read_error)?;
             frames.try_reserve(1).map_err(std::io::Error::from)?;
             frames.push(Cow::Borrowed(frame));
             rest = &tail[len..];
@@ -284,7 +284,7 @@ fn open_chunk(
     let key_id = key_id(id, index, role);
     let policy = chunk_policy(id, &key_id);
     let plaintext = Envelope::parse(frame)
-        .map_err(|_| corrupt())?
+        .map_err(envelope_read_error)?
         .open_with_aad(OpenKey::SymmetricKek(kek), &policy, extra)
         .map_err(|_| corrupt())?;
     if plaintext.len() as u64 != len {
@@ -306,14 +306,18 @@ fn open_chunk_into(
     let key_id = key_id(id, index, role);
     let policy = chunk_policy(id, &key_id);
     Envelope::parse(frame)
-        .map_err(|_| corrupt())?
+        .map_err(envelope_read_error)?
         .open_with_aad_into(OpenKey::SymmetricKek(kek), &policy, extra, plaintext)
-        .map_err(|error| match error {
-            oneiron_crypto::Error::OutOfMemory => {
-                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
-            }
-            _ => corrupt(),
-        })
+        .map_err(envelope_read_error)
+}
+
+fn envelope_read_error(error: oneiron_crypto::Error) -> Error {
+    match error {
+        oneiron_crypto::Error::OutOfMemory => {
+            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+        }
+        _ => corrupt(),
+    }
 }
 
 /// The associated data a data key is wrapped under: the wrap domain and its
