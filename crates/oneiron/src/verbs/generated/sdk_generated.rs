@@ -140,6 +140,41 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.board.layout",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "self.board.fold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BoardFoldRequest,
+                >(),
+            ),
+            (
+                "self.board.unfold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BoardSectionRequest,
+                >(),
+            ),
+            (
+                "self.board.size",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BoardSizeRequest,
+                >(),
+            ),
+            (
+                "self.board.filter",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BoardFilterRequest,
+                >(),
+            ),
+            (
+                "self.board.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BoardReplaceRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary",
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
@@ -10926,6 +10961,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.board.layout" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.board.fold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.board.unfold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.board.size" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.board.filter" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.board.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.memory.diary" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19680,6 +19757,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.scratchpad.seal" => {
             let _input: crate::task_verb::sdk::ScratchpadSealRequest = decode(value.clone())?;
         }
+        "self.board.layout" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "self.board.fold" => {
+            let _input: crate::task_verb::sdk::BoardFoldRequest = decode(value.clone())?;
+        }
+        "self.board.unfold" => {
+            let _input: crate::task_verb::sdk::BoardSectionRequest = decode(value.clone())?;
+        }
+        "self.board.size" => {
+            let _input: crate::task_verb::sdk::BoardSizeRequest = decode(value.clone())?;
+        }
+        "self.board.filter" => {
+            let _input: crate::task_verb::sdk::BoardFilterRequest = decode(value.clone())?;
+        }
+        "self.board.replace" => {
+            let _input: crate::task_verb::sdk::BoardReplaceRequest = decode(value.clone())?;
+        }
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
@@ -24069,6 +24164,12 @@ pub fn invoke(
             encode(self_focus_scratchpad_append(memory, decode(value)?)?)
         }
         "self.focus.scratchpad.seal" => encode(self_focus_scratchpad_seal(memory, decode(value)?)?),
+        "self.board.layout" => encode(self_board_layout(memory, decode(value)?)?),
+        "self.board.fold" => encode(self_board_fold(memory, decode(value)?)?),
+        "self.board.unfold" => encode(self_board_unfold(memory, decode(value)?)?),
+        "self.board.size" => encode(self_board_size(memory, decode(value)?)?),
+        "self.board.filter" => encode(self_board_filter(memory, decode(value)?)?),
+        "self.board.replace" => encode(self_board_replace(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
@@ -26876,6 +26977,42 @@ pub fn self_focus_scratchpad_seal(
     input: crate::task_verb::sdk::ScratchpadSealRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ScratchpadWriteReply> {
     crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)
+}
+pub fn self_board_layout(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_layout_reply(memory, &input)
+}
+pub fn self_board_fold(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BoardFoldRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_fold_reply(memory, &input)
+}
+pub fn self_board_unfold(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BoardSectionRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_unfold_reply(memory, &input)
+}
+pub fn self_board_size(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BoardSizeRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_size_reply(memory, &input)
+}
+pub fn self_board_filter(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BoardFilterRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_filter_reply(memory, &input)
+}
+pub fn self_board_replace(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BoardReplaceRequest,
+) -> MemoryResult<crate::task_verb::sdk::BoardLayoutState> {
+    crate::task_verb::sdk::board_replace_reply(memory, &input)
 }
 pub fn self_memory_diary(
     memory: &Memory<'_>,

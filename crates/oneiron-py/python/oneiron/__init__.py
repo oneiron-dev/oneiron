@@ -5901,6 +5901,9 @@ class Oneiron:
         def focus(self) -> "Oneiron._SelfFocusVerbs":
             return Oneiron._SelfFocusVerbs(self._client)
         @property
+        def board(self) -> "Oneiron._SelfBoardVerbs":
+            return Oneiron._SelfBoardVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
@@ -6014,6 +6017,27 @@ class Oneiron:
         def seal(self, spec):
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
             return json.loads(_translate(lambda: self._client.self_focus_scratchpad_seal(json.dumps(spec))))
+    class _SelfBoardVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def layout(self, spec):
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+            return json.loads(_translate(lambda: self._client.self_board_layout(json.dumps(spec))))
+        def fold(self, spec):
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_fold(json.dumps(spec))))
+        def unfold(self, spec):
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_unfold(json.dumps(spec))))
+        def size(self, spec):
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_size(json.dumps(spec))))
+        def filter(self, spec):
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_filter(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
+            return json.loads(_translate(lambda: self._client.self_board_replace(json.dumps(spec))))
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
