@@ -112,6 +112,13 @@ impl Vault {
             } else {
                 None
             };
+            // So does the drafter line (FIX 14977): only its events beyond
+            // nights that trained nothing make a digest of their own.
+            let drafter = if due {
+                crate::drafter::unseen_drafter_line_in_txn(&self.store, &*txn, state.drafter_seen)?
+            } else {
+                None
+            };
             // So do the health cards: each one opened, updated or settled in
             // the period `[from, now)`, read in this write's own snapshot by
             // the test the public period reader keeps (FIX 1979).
@@ -132,6 +139,9 @@ impl Vault {
                 && cleanup.is_none()
                 && note_tombstones.is_none()
                 && applied.is_none()
+                && !drafter
+                    .as_ref()
+                    .is_some_and(crate::drafter::DigestDrafter::arms)
                 && health_cards.is_empty()
             {
                 return Ok(None);
@@ -160,6 +170,7 @@ impl Vault {
                     cleanup,
                     note_tombstones,
                     applied,
+                    drafter,
                     health_cards,
                     presentation,
                     recipient,
@@ -189,6 +200,7 @@ impl Vault {
             cleanup,
             note_tombstones,
             applied,
+            drafter,
             health_cards,
             presentation,
             recipient,
@@ -226,6 +238,9 @@ impl Vault {
         if let Some(line) = &applied {
             line.mark_seen(&mut state.applied_seen);
         }
+        if let Some(line) = &drafter {
+            state.drafter_seen = Some(line.through);
+        }
         let mut digest = ProactivityDigest {
             id: [0; 32],
             content_hash: [0; 32],
@@ -239,6 +254,7 @@ impl Vault {
             cleanup,
             note_tombstones,
             applied,
+            drafter,
             health_cards,
             rendered: String::new(),
             voice_style: presentation.voice_style.clone(),
@@ -298,6 +314,7 @@ impl Vault {
             || digest.cleanup.is_some()
             || digest.note_tombstones.is_some()
             || digest.applied.is_some()
+            || digest.drafter.is_some()
             || !digest.health_cards.is_empty()
         {
             if due {
@@ -324,6 +341,7 @@ struct DigestParts {
     cleanup: Option<DigestCleanup>,
     note_tombstones: Option<DigestNoteTombstones>,
     applied: Option<DigestApplied>,
+    drafter: Option<crate::drafter::DigestDrafter>,
     health_cards: Vec<agent_health::ConcernCardSummary>,
     presentation: ProactivityPresentation,
     recipient: Option<EntityId>,
