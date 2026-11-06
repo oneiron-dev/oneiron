@@ -318,7 +318,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let after = copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
-            if !builder.try_push_after(entry.clone(), after) {
+            if !builder.try_push_after(entry, after) {
                 next_cursor = builder
                     .last_entry_name()
                     .map(|name| copy_text_parts(&[name], reader, self.options.page_byte_cap))
