@@ -4,7 +4,7 @@
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::validate_claim_body_and_decode;
+use crate::claim::validate_claim_body_and_decode_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -110,7 +110,12 @@ fn recheck_admitted_claim_blob(
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(());
     }
-    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let body = validate_claim_body_and_decode_in_txn(
+        store,
+        txn,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    )?;
     crate::gate::check_federated_claim_admission(store, &body, policy)
 }
 

@@ -129,6 +129,9 @@ pub(crate) enum Tag {
     Run,
     /// Entity id → its birth row (FIX 1178).
     RowBirth,
+    /// TURN or CONVERSATION id → (): an archived MESSAGE joins it, so it
+    /// comes back stamped imported (FIX 7777).
+    MessageContainer,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,
