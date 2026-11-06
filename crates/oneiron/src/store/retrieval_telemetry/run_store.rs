@@ -733,6 +733,89 @@ fn read_retrieval_runs_in_txn(
     Ok(records)
 }
 
+fn record_decoded_retrieval_run_backing(
+    existing: &RetrievalRunRecord,
+    memory: &mut crate::host_memory::MemoryLease,
+) {
+    let bytes = (existing.signals.capacity() as u64)
+        .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
+        .saturating_add((existing.degradation.capacity() as u64).saturating_mul(
+            std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
+        ))
+        .saturating_add(
+            existing
+                .query_expander_id
+                .as_ref()
+                .map_or(0, |id| id.capacity() as u64),
+        );
+    let bytes = existing.policy_trace.as_ref().map_or(bytes, |trace| {
+        bytes.saturating_add(
+            (trace.decisions.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<
+                    crate::store::retrieval_policy::RetrievalPolicyDecision,
+                >() as u64),
+        )
+    });
+    let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+        entries.iter().fold(
+            (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                super::types::RetrievalScoreBreakdown,
+            >() as u64),
+            |bytes, entry| {
+                bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                ))
+            },
+        )
+    };
+    let bytes = bytes
+        .saturating_add(
+            (existing.result_ids.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+        )
+        .saturating_add(score_breakdown_bytes(&existing.score_breakdown));
+    let bytes = existing.trace.as_ref().map_or(bytes, |trace| {
+        let bytes =
+            bytes.saturating_add((trace.per_channel.capacity() as u64).saturating_mul(
+                std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
+            ));
+        let bytes = trace.per_channel.iter().fold(bytes, |bytes, channel| {
+            bytes.saturating_add(score_breakdown_bytes(&channel.candidates))
+        });
+        [
+            &trace.fused,
+            &trace.blended,
+            &trace.reranked,
+            &trace.final_stage,
+        ]
+        .into_iter()
+        .fold(bytes, |bytes, stage| {
+            bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
+        })
+    });
+    let bytes = bytes
+        .saturating_add(
+            existing
+                .empty_reason
+                .as_ref()
+                .map_or(0, |reason| reason.capacity() as u64),
+        )
+        .saturating_add(existing.replay_inputs.as_ref().map_or(0, |replay| {
+            replay
+                .query_ref
+                .as_ref()
+                .map_or(0, |reference| reference.capacity() as u64)
+                .saturating_add(
+                    replay
+                        .corpus_snapshot_ref
+                        .as_ref()
+                        .map_or(0, |reference| reference.capacity() as u64),
+                )
+                .saturating_add(replay.known_config_backing_bytes())
+        }));
+    memory.materialized(0, bytes);
+}
+
 /// Stages one retrieval-run row and its provisional/fork-index side writes
 /// into `target`'s `vault_meta` (ONE-1728 K11).
 ///
@@ -760,83 +843,7 @@ fn stage_retrieval_run_with_visibility(
         })?
     {
         if let Some(memory) = memory.as_deref_mut() {
-            let bytes = (existing.signals.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
-                .saturating_add((existing.degradation.capacity() as u64).saturating_mul(
-                    std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
-                ))
-                .saturating_add(
-                    existing
-                        .query_expander_id
-                        .as_ref()
-                        .map_or(0, |id| id.capacity() as u64),
-                );
-            let bytes = existing.policy_trace.as_ref().map_or(bytes, |trace| {
-                bytes.saturating_add(
-                    (trace.decisions.capacity() as u64)
-                        .saturating_mul(std::mem::size_of::<
-                            crate::store::retrieval_policy::RetrievalPolicyDecision,
-                        >() as u64),
-                )
-            });
-            let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
-                entries.iter().fold(
-                    (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
-                        super::types::RetrievalScoreBreakdown,
-                    >() as u64),
-                    |bytes, entry| {
-                        bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
-                            std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
-                        ))
-                    },
-                )
-            };
-            let bytes = bytes
-                .saturating_add(
-                    (existing.result_ids.capacity() as u64)
-                        .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
-                )
-                .saturating_add(score_breakdown_bytes(&existing.score_breakdown));
-            let bytes = existing.trace.as_ref().map_or(bytes, |trace| {
-                let bytes =
-                    bytes.saturating_add((trace.per_channel.capacity() as u64).saturating_mul(
-                        std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
-                    ));
-                let bytes = trace.per_channel.iter().fold(bytes, |bytes, channel| {
-                    bytes.saturating_add(score_breakdown_bytes(&channel.candidates))
-                });
-                [
-                    &trace.fused,
-                    &trace.blended,
-                    &trace.reranked,
-                    &trace.final_stage,
-                ]
-                .into_iter()
-                .fold(bytes, |bytes, stage| {
-                    bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
-                })
-            });
-            let bytes = bytes
-                .saturating_add(
-                    existing
-                        .empty_reason
-                        .as_ref()
-                        .map_or(0, |reason| reason.capacity() as u64),
-                )
-                .saturating_add(existing.replay_inputs.as_ref().map_or(0, |replay| {
-                    replay
-                        .query_ref
-                        .as_ref()
-                        .map_or(0, |reference| reference.capacity() as u64)
-                        .saturating_add(
-                            replay
-                                .corpus_snapshot_ref
-                                .as_ref()
-                                .map_or(0, |reference| reference.capacity() as u64),
-                        )
-                        .saturating_add(replay.known_config_backing_bytes())
-                }));
-            memory.materialized(0, bytes);
+            record_decoded_retrieval_run_backing(&existing, memory);
         }
         super::turn_index::delete_with_memory(target, wtxn, &existing, memory.as_deref_mut())?;
         delete_retrieval_trace_fork_indexes_for_run_with_memory(
@@ -1306,11 +1313,20 @@ fn delete_retrieval_trace_fork_indexes_for_run_with_memory(
     run_id: RetrievalRunId,
     mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
-    if let Ok(Some(record)) = RETRIEVAL_RUN.get_with_key_capacity(target, &*wtxn, &run_id, |bytes| {
-        if let Some(memory) = memory.as_deref_mut() {
-            memory.materialized(0, bytes);
-        }
-    }) && record.run_id == run_id
+    if let Ok(Some(record)) = RETRIEVAL_RUN
+        .get_with_key_capacity(target, &*wtxn, &run_id, |bytes| {
+            if let Some(memory) = memory.as_deref_mut() {
+                memory.materialized(0, bytes);
+            }
+        })
+        .inspect(|record| {
+            if let Some(record) = record
+                && let Some(memory) = memory.as_deref_mut()
+            {
+                record_decoded_retrieval_run_backing(record, memory);
+            }
+        })
+        && record.run_id == run_id
         && let Some(trace) = record.trace
         && !is_unknown_retrieval_trace_fork_hash(&trace.fork_hash)
     {
