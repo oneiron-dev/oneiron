@@ -54,7 +54,10 @@ pub mod frame_kind_ids {
 }
 
 /// The optional frame kinds this build decodes, as its hellos list them.
-pub const DECODED_FRAME_KIND_IDS: &[u8] = &[frame_kind_ids::SEALED_WORLD_UPDATES];
+pub const DECODED_FRAME_KIND_IDS: &[u8] = &[
+    frame_kind_ids::SEALED_WORLD_UPDATES,
+    frame_kind_ids::PRIVATE_HUMAN,
+];
 
 /// The codecs one peer decodes, from its hello. Unknown ids are ignored.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -76,7 +79,7 @@ impl WireCodecs {
     pub const OURS: Self = Self {
         zstd: true,
         sealed_world_updates: true,
-        private_human: false,
+        private_human: true,
     };
 
     /// The codecs named by a hello's id list.

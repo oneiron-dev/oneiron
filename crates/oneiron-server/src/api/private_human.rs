@@ -142,24 +142,13 @@ impl PrivateAsk {
     }
 
     fn encode(&self, tag: u8) -> Option<Vec<u8>> {
-        let request = &self.request;
-        let payload = serde_json::json!({
-            "kind": "private.human.ask",
-            "no_record": true,
-            "question": request.question,
-            "principal": request.principal.to_hex(),
-            "evidence": request.evidence.iter().map(|id| id.to_hex()).collect::<Vec<_>>(),
-            "reason": request.reason,
-            "prior": request.prior,
-            "prior_provider": request.prior_provider,
-            "queue_pin": request.queue_pin,
-            "to": request.to,
-            "correlation": request.correlation.map(|id| id.to_hex()),
-            "state": self.state,
-            "consent": self.consent,
-        });
+        let ask = oneiron::sync::transport::PrivateHumanAsk::new(
+            self.request.clone(),
+            self.state.clone(),
+            self.consent.clone(),
+        );
         let mut frame = vec![tag];
-        serde_json::to_writer(&mut frame, &payload).ok()?;
+        serde_json::to_writer(&mut frame, &ask).ok()?;
         Some(frame)
     }
 }

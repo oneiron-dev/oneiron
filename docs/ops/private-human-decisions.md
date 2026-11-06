@@ -34,8 +34,18 @@ decisions. Configured None returns before any hub or private run is created. The
 factory is not called by the anonymous consumer. The current full-sync socket upgrade admits owner-grade credentials; these
 registrations do not establish a general non-owner holder notification route.
 Only a socket explicitly advertising the private Human frame kind (`0x81`) is
-registered. The current native sync client does not yet decode this tag, so its
-hello and `WireCodecs::OURS` do not advertise support. Its typed event and decoder
-remain separate work. Wire/client coverage, rendered delivery and runtime privacy
-must not be inferred from the queue's existence. Ordinary anonymous, Checker, RPC and subscription paths
-keep their existing behavior. No stronger model path is enabled by this carrier.
+registered. The native sync client decodes the same typed payload into
+`SyncEvent::PrivateHumanAsk`, under the existing decoded-payload bound. That arm
+emits no response and skips deferred sync replay. It writes no root, window,
+ephemeral state or durable ASK. The application owns the event's request, optional
+policy state and consent effect; receiving it does not render or answer it, and
+confers no authority or grant. A notification with a different kind, malformed
+typed fields or `no_record: false` is a protocol error.
+
+The decoder's build advertises frame kind `0x81` in its hello and
+`WireCodecs::OURS`; a peer that lists nothing still has no such support. The two
+server-side housekeeping observers ignore non-status, non-error events as before;
+they are not a user interface. Rendered delivery, non-owner holder routing and
+runtime privacy must not be inferred from the native event or queue's existence.
+Ordinary anonymous, Checker, RPC and subscription paths keep their existing
+behavior. No stronger model path is enabled by this carrier.
