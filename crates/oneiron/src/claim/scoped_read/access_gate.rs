@@ -68,6 +68,18 @@ impl HeldAuthority {
         )
     }
 
+    /// The same read's row checks in another transaction (FIX 7528): nothing
+    /// held, since what this one holds belongs to its own txn, and the same
+    /// request asked of the rows.
+    pub(super) fn for_another_txn(&self) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+        )
+    }
+
     /// The row checks of a named read of `id` that asks `id`'s legal non-use
     /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
     /// by every other gate as before, and every other row, each source `id`
