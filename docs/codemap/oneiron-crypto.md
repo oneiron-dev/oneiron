@@ -30,7 +30,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 1 enum · 1 type | Error | The one error type |
 | `src/keys.rs` | src | m | 6 struct · 11 fn · 11 const · 11 crate-vis | Argon2Cost, HybridPublicKey, HybridSecretKey, Kek, Passphrase, RecoverySecret | Key material types |
 | `src/keys/tests.rs` | test | s | — | — | The seed expansion's stack wipe (RustCrypto/meta#38): building a key from its seed reaches below its caller… |
-| `src/lib.rs` | src | s | 3 const · 2 mod · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
+| `src/legal_clone.rs` | src | m | 2 struct · 2 enum · 8 fn · 1 const | CaptureBinding, ContentBinding, ContentSource, SourceComponent | Public-recipient encryption for host-private, per-order legal clones |
+| `src/lib.rs` | src | s | 3 const · 3 mod · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
 | `src/nonce.rs` | src | s | 1 struct · 2 fn | NonceLedger | Duplicate-nonce detection where the caller can see it |
 | `src/record/mod.rs` | src | m | 3 struct · 2 enum · 8 fn · 1 re-export · 1 crate-vis | CheckpointRef, RecordBody, SigPurpose, SignatureEntry, SignatureRecord | Signature records: the canonical encoding, the strict parser and the roster rules |
 | `src/record/sign.rs` | src | m | 1 struct · 2 enum · 11 fn | SigningKey, VerifyPolicy, VerifyingKey | Signing and verifying records |
