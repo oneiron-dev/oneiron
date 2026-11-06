@@ -363,6 +363,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.admin.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.admin.item.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.step_up.passkeys.reset" => a.spec.clone().ok_or_else(invalid),
+        "vault.step_up.totp.reset" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.list" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.put" => a.spec.clone().ok_or_else(invalid),
@@ -2253,6 +2254,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.step_up.passkeys.reset" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.step_up.totp.reset" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.enqueue" => {
@@ -9000,6 +9004,24 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_step_up_passkeys_reset(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.step_up.totp.reset" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.step_up.totp.reset", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::authority::StepUpTotpResetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_step_up_totp_reset(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

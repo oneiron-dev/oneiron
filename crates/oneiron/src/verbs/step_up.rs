@@ -22,3 +22,17 @@ pub fn reset_step_up_passkeys_as(
         .map_err(|_| MemoryError::bad_request("person must be the 32-hex id of a person"))?;
     Ok(vault.reset_step_up_passkeys_as_owner(owner, person)?)
 }
+
+/// Explicit owner recovery for a person's authenticator apps; never their passkeys.
+///
+/// # Errors
+/// `BAD_REQUEST` for a malformed person id; native owner or storage errors.
+pub fn reset_step_up_totp_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: crate::authority::StepUpTotpResetRequest,
+) -> MemoryResult<crate::authority::StepUpTotpReset> {
+    let person = EntityId::from_hex(&input.person)
+        .map_err(|_| MemoryError::bad_request("person must be the 32-hex id of a person"))?;
+    Ok(vault.reset_step_up_totp_as_owner(owner, person)?)
+}

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1319 code-mode rows (1279 host rows, 40 run rows), 4645 declarations.
-// Replies: 1127 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1320 code-mode rows (1280 host rows, 40 run rows), 4647 declarations.
+// Replies: 1128 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1004,6 +1004,8 @@ declare namespace Sdk {
   type WeaveAdminItemWrongRequest = { membership_grant: string; request: WeaveWrongItemRequest };
   type StepUpPasskeysResetRequest = { person: string };
   type StepUpPasskeysReset = { person: string; removed: number };
+  type StepUpTotpResetRequest = { person: string };
+  type StepUpTotpReset = { person: string; removed: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
@@ -7753,6 +7755,10 @@ declare const vault: Sdk.VaultHost & {
     passkeys: {
       /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
       reset(input: Sdk.StepUpPasskeysResetRequest): Promise<Sdk.StepUpPasskeysReset | StoredResult>;
+    };
+    totp: {
+      /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+      reset(input: Sdk.StepUpTotpResetRequest): Promise<Sdk.StepUpTotpReset | StoredResult>;
     };
   };
   structural: {

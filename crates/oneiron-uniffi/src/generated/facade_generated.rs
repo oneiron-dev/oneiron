@@ -1071,6 +1071,11 @@ export_facade! {
     let output = client.vault_step_up_passkeys_reset(&input)?;
     crate::codec::lift_record("vault.step_up.passkeys.reset", &output)
 };
+"vault.step_up.totp.reset" => fn vault_step_up_totp_reset(&self, input: StepUpTotpResetRequest) -> StepUpTotpReset = |client| {
+    let input: oneiron::authority::StepUpTotpResetRequest = crate::codec::lower_record("vault.step_up.totp.reset", input)?;
+    let output = client.vault_step_up_totp_reset(&input)?;
+    crate::codec::lift_record("vault.step_up.totp.reset", &output)
+};
 "vault.weave.enqueue" => fn vault_weave_enqueue(&self, input: WeaveEnqueueRequest) -> DreamerAttemptRef = |client| {
     let input: oneiron::task_verb::sdk::WeaveEnqueueRequest = crate::codec::lower_record("vault.weave.enqueue", input)?;
     let output = client.vault_weave_enqueue(&input)?;

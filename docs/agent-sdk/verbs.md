@@ -220,6 +220,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.admin.link.wrong`
 - `vault.weave.admin.item.wrong`
 - `vault.step_up.passkeys.reset`
+- `vault.step_up.totp.reset`
 - `vault.weave.enqueue`
 - `vault.weave.schedules.list`
 - `vault.weave.schedules.put`

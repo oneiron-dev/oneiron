@@ -1060,6 +1060,10 @@ export class Oneiron {
         /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
         reset: (input: Facade.StepUpPasskeysResetRequest): Facade.StepUpPasskeysReset => this.#call(() => this.#client.vaultStepUpPasskeysReset(input) as Facade.StepUpPasskeysReset),
       },
+      totp: {
+        /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+        reset: (input: Facade.StepUpTotpResetRequest): Facade.StepUpTotpReset => this.#call(() => this.#client.vaultStepUpTotpReset(input) as Facade.StepUpTotpReset),
+      },
     },
     inbox: {
       concerns: {

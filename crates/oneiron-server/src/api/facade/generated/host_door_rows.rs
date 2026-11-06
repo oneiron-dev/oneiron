@@ -32,6 +32,7 @@
 //! - `vault.weave.admin.digest`
 //! - `vault.weave.admin.link.wrong`
 //! - `vault.weave.admin.item.wrong`
+//! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`

@@ -249,6 +249,7 @@ vaultWeaveAdminDigest(input: unknown): unknown
 vaultWeaveAdminLinkWrong(input: unknown): unknown
 vaultWeaveAdminItemWrong(input: unknown): unknown
 vaultStepUpPasskeysReset(input: unknown): unknown
+vaultStepUpTotpReset(input: unknown): unknown
 vaultWeaveEnqueue(input: unknown): unknown
 vaultWeaveSchedulesList(input: unknown): unknown
 vaultWeaveSchedulesPut(input: unknown): unknown

@@ -218,6 +218,7 @@ pub enum AgentVerb {
     VaultWeaveAdminLinkWrong,
     VaultWeaveAdminItemWrong,
     VaultStepUpPasskeysReset,
+    VaultStepUpTotpReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -1511,6 +1512,7 @@ impl AgentVerb {
         Self::VaultWeaveAdminLinkWrong,
         Self::VaultWeaveAdminItemWrong,
         Self::VaultStepUpPasskeysReset,
+        Self::VaultStepUpTotpReset,
         Self::VaultWeaveEnqueue,
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
@@ -2807,6 +2809,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminLinkWrong => "vault.weave.admin.link.wrong",
             Self::VaultWeaveAdminItemWrong => "vault.weave.admin.item.wrong",
             Self::VaultStepUpPasskeysReset => "vault.step_up.passkeys.reset",
+            Self::VaultStepUpTotpReset => "vault.step_up.totp.reset",
             Self::VaultWeaveEnqueue => "vault.weave.enqueue",
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
@@ -4136,6 +4139,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
                 | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -5458,6 +5462,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
                 | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -6931,6 +6936,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
                 | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -8046,6 +8052,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
                 | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
@@ -8956,6 +8963,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminLinkWrong => &["spec"],
             Self::VaultWeaveAdminItemWrong => &["spec"],
             Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -10250,6 +10258,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminLinkWrong => &["spec"],
             Self::VaultWeaveAdminItemWrong => &["spec"],
             Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -11966,6 +11975,9 @@ impl AgentVerb {
             }
             Self::VaultStepUpPasskeysReset => {
                 "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."
+            }
+            Self::VaultStepUpTotpReset => {
+                "The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."
             }
             Self::VaultWeaveEnqueue => {
                 "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."

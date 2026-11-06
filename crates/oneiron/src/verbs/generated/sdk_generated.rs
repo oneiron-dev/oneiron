@@ -1166,6 +1166,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.step_up.totp.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpTotpResetRequest,
+                >(),
+            ),
+            (
                 "vault.weave.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WeaveEnqueueRequest,
@@ -7422,6 +7428,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.saved_query.members",
     "self.saved_query.evaluate",
     "vault.step_up.passkeys.reset",
+    "vault.step_up.totp.reset",
     "vault.weave.enqueue",
     "vault.weave.schedules.list",
     "vault.weave.schedules.put",
@@ -8554,6 +8561,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.step_up.passkeys.reset" => {
             crate::code_run::vault_read::request_schema::<crate::authority::StepUpPasskeysReset>()
+        }
+        "vault.step_up.totp.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpTotpReset>()
         }
         "vault.weave.enqueue" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
@@ -12416,6 +12426,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.step_up.passkeys.reset" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.totp.reset" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20496,6 +20513,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.step_up.passkeys.reset" => {
             let _input: crate::authority::StepUpPasskeysResetRequest = decode(value.clone())?;
         }
+        "vault.step_up.totp.reset" => {
+            let _input: crate::authority::StepUpTotpResetRequest = decode(value.clone())?;
+        }
         "vault.weave.enqueue" => {
             let _input: crate::task_verb::sdk::WeaveEnqueueRequest = decode(value.clone())?;
         }
@@ -24552,6 +24572,7 @@ pub fn invoke(
         "vault.step_up.passkeys.reset" => {
             encode(vault_step_up_passkeys_reset(memory, decode(value)?)?)
         }
+        "vault.step_up.totp.reset" => encode(vault_step_up_totp_reset(memory, decode(value)?)?),
         "vault.weave.enqueue" => encode(vault_weave_enqueue(memory, decode(value)?)?),
         "vault.weave.schedules.list" => encode(vault_weave_schedules_list(memory, decode(value)?)?),
         "vault.weave.schedules.put" => encode(vault_weave_schedules_put(memory, decode(value)?)?),
@@ -28626,6 +28647,16 @@ pub fn vault_step_up_passkeys_reset(
     crate::task_verb::sdk::reset_step_up_passkeys_as(
         memory.vault(),
         &memory.embedded_owner("vault.step_up.passkeys.reset")?,
+        input,
+    )
+}
+pub fn vault_step_up_totp_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpTotpResetRequest,
+) -> MemoryResult<crate::authority::StepUpTotpReset> {
+    crate::task_verb::sdk::reset_step_up_totp_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.totp.reset")?,
         input,
     )
 }

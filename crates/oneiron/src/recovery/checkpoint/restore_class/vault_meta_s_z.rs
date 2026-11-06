@@ -261,6 +261,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::STEP_UP_CHALLENGE, LIVE),
     (&t::STEP_UP_PASSKEY, LIVE),
     (&t::STEP_UP_RECORD, LIVE),
+    (&t::STEP_UP_TOTP, LIVE),
+    (&t::STEP_UP_TOTP_PENDING, LIVE),
     (&t::STORAGE_ABI_VERSION, CONTENT),
     (&t::MESSAGE_STREAM_RECEIPT_BY_REF, CONTENT),
     (&t::SYNC_BORN_WITH_CARRIED, CONTENT),

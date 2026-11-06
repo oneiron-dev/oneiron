@@ -3,7 +3,7 @@
 
 use heed::RwTxn;
 
-use super::{CHALLENGES, PASSKEYS, RECORDS};
+use super::{CHALLENGES, PASSKEYS, RECORDS, StepUpFactor};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -57,7 +57,11 @@ pub(super) fn drop_step_ups_with_passkey_in_txn(
     let keys: Vec<[u8; 32]> = RECORDS
         .scan(&vault.store, wtxn)?
         .into_iter()
-        .filter(|(_, record)| record.holder == holder && record.credential == *credential)
+        .filter(|(_, record)| {
+            record.holder == holder
+                && record.factor == StepUpFactor::Passkey
+                && record.credential == *credential
+        })
         .map(|(key, _)| key)
         .collect();
     for key in keys {
@@ -80,6 +84,20 @@ pub(crate) fn erase_step_up_records_actor_in_txn(
         .collect();
     for key in keys {
         RECORDS.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// An explicit passkey reset leaves authenticator-app step-ups alone.
+pub(super) fn erase_step_up_passkey_records_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for (key, record) in RECORDS.scan(&vault.store, wtxn)? {
+        if record.holder == *actor && record.factor == StepUpFactor::Passkey {
+            RECORDS.delete(&vault.store, wtxn, &key)?;
+        }
     }
     Ok(())
 }

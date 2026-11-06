@@ -693,6 +693,9 @@ impl OneironClient {
                 "vault.step_up.passkeys.reset" => remote_agent_verb_output::<
                     oneiron::authority::StepUpPasskeysReset,
                 >(client, verb, &input),
+                "vault.step_up.totp.reset" => remote_agent_verb_output::<
+                    oneiron::authority::StepUpTotpReset,
+                >(client, verb, &input),
                 "vault.weave.enqueue" => remote_agent_verb_output::<
                     oneiron::memory::DreamerAttemptRef,
                 >(client, verb, &input),
@@ -6673,6 +6676,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.step_up.passkeys.reset", value)
+    }
+    pub fn vault_step_up_totp_reset(
+        &self,
+        input: &oneiron::authority::StepUpTotpResetRequest,
+    ) -> Result<oneiron::authority::StepUpTotpReset, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.step_up.totp.reset", value)
     }
     pub fn vault_weave_enqueue(
         &self,

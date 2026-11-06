@@ -222,6 +222,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.admin.link.wrong", post(facade_route))
         .route("/vault.weave.admin.item.wrong", post(facade_route))
         .route("/vault.step_up.passkeys.reset", post(facade_route))
+        .route("/vault.step_up.totp.reset", post(facade_route))
         .route("/vault.weave.enqueue", post(facade_route))
         .route("/vault.weave.schedules.list", post(facade_route))
         .route("/vault.weave.schedules.put", post(facade_route))

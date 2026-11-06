@@ -12,7 +12,11 @@
 //! Admin's [`AdminStepUp`] witness: it reads that record for the request's
 //! own slip, so a caller's word that a step-up happened is never enough.
 //!
-//! A step-up stands while its slip stays live and the passkey it used stays
+//! An authenticator app is the optional second choice ([`totp`]); its seed
+//! rests sealed under its enrollment's erasable custody key. Both factors
+//! record the same slip-bound step-up and produce the same Admin witness.
+//!
+//! A step-up stands while its slip stays live and its factor stays
 //! enrolled; it adds no clock of its own (CALLS `FIX 11694 step-up life`).
 //! A person's first passkey is enrolled on their live slip alone; adding or
 //! removing one after that needs a current step-up with an enrolled one
@@ -23,7 +27,11 @@
 
 mod admin_inputs;
 mod erase;
+mod totp;
 mod webauthn;
+
+pub(crate) use totp::erase_step_up_totp_actor_in_txn;
+pub use totp::{EnrolledTotp, StepUpTotpReset, StepUpTotpResetRequest, TotpCode, TotpEnrollment};
 
 pub use admin_inputs::{
     WeaveAdminDigestRequest, WeaveAdminItemWrongRequest, WeaveAdminLensRequest,
@@ -58,7 +66,7 @@ pub const STEP_UP_NO_PASSKEY: &str = "step_up_no_passkey: enroll a passkey first
 /// Adding or removing a passkey once one is enrolled needs a current
 /// step-up with an enrolled one.
 pub const STEP_UP_REQUIRED: &str =
-    "step_up_required: step up with a passkey you already enrolled, then try again";
+    "step_up_required: step up with a factor you already enrolled, then try again";
 /// The ceremony's challenge is unknown, expired, already answered, or
 /// another request's or another ceremony's.
 pub const STEP_UP_CHALLENGE_STALE: &str = "step_up_challenge_stale: the ceremony's challenge is not open for this credential; start it again";
@@ -73,6 +81,8 @@ pub const STEP_UP_REFUSED: &str = "step_up_refused: the passkey response did not
 pub enum StepUpFactor {
     /// A user-verified passkey or security key (WebAuthn).
     Passkey,
+    /// An enrolled authenticator app (RFC 6238).
+    Totp,
 }
 
 /// The two WebAuthn ceremonies a challenge opens.
@@ -223,7 +233,7 @@ struct PendingChallenge {
 struct StepUpRecord {
     holder: EntityId,
     factor: StepUpFactor,
-    /// SHA-256 of the passkey's credential id.
+    /// Passkey credential hash, or the TOTP enrollment id, as `factor` names it.
     credential: [u8; 32],
     stepped_up_at: u64,
 }
@@ -299,7 +309,7 @@ impl Vault {
     }
 
     /// The step-up recorded on `request`'s slip for `holder`, while the
-    /// passkey it used is still enrolled.
+    /// factor it used is still enrolled.
     fn step_up_standing_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -309,9 +319,7 @@ impl Vault {
         let Some(record) = RECORDS.get(&self.store, txn, &request.claims().slip_id)? else {
             return Ok(None);
         };
-        if record.holder != holder
-            || !PASSKEYS.contains(&self.store, txn, &(holder, record.credential))?
-        {
+        if record.holder != holder || !self.step_up_factor_stands_in_txn(txn, &record)? {
             return Ok(None);
         }
         Ok(Some(record))
@@ -319,7 +327,7 @@ impl Vault {
 
     /// Whether the step-up an Admin witness names still stands in `txn`: its
     /// slip's record is that same step-up, by `holder` at `stepped_up_at`,
-    /// and the passkey it used is still enrolled. A reset, a removed passkey
+    /// and the factor it used is still enrolled. A reset, a removed factor
     /// or a newer step-up on the slip ends it.
     pub(crate) fn step_up_record_stands_in_txn(
         &self,
@@ -333,7 +341,25 @@ impl Vault {
         };
         Ok(record.holder == holder
             && record.stepped_up_at == stepped_up_at
-            && PASSKEYS.contains(&self.store, txn, &(holder, record.credential))?)
+            && self.step_up_factor_stands_in_txn(txn, &record)?)
+    }
+
+    fn has_step_up_factor_in_txn(&self, txn: &heed::RoTxn<'_>, holder: EntityId) -> Result<bool> {
+        Ok(!self.step_up_passkeys_in_txn(txn, holder)?.is_empty()
+            || totp::has_enrolled(self, txn, holder)?)
+    }
+
+    fn step_up_factor_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &StepUpRecord,
+    ) -> Result<bool> {
+        match record.factor {
+            StepUpFactor::Passkey => {
+                PASSKEYS.contains(&self.store, txn, &(record.holder, record.credential))
+            }
+            StepUpFactor::Totp => totp::stands(self, txn, record.holder, &record.credential),
+        }
     }
 
     /// Takes the open challenge `challenge` for `ceremony` on `request`'s
@@ -386,7 +412,7 @@ impl Vault {
                 return Err(authority_refused(STEP_UP_NO_PASSKEY));
             }
             StepUpCeremony::Enroll
-                if !passkeys.is_empty()
+                if self.has_step_up_factor_in_txn(&txn, holder)?
                     && self
                         .step_up_standing_in_txn(&txn, request, holder)?
                         .is_none() =>
@@ -463,7 +489,7 @@ impl Vault {
         if self.step_up_holder_in_txn(&txn, request)? != holder {
             return Err(not_holder());
         }
-        if !self.step_up_passkeys_in_txn(&txn, holder)?.is_empty()
+        if self.has_step_up_factor_in_txn(&txn, holder)?
             && self
                 .step_up_standing_in_txn(&txn, request, holder)?
                 .is_none()
@@ -620,7 +646,7 @@ impl Vault {
             .filter(|((holder, _), _)| *holder == person)
             .count();
         erase_step_up_passkeys_actor_in_txn(self, &mut txn, &person)?;
-        erase_step_up_records_actor_in_txn(self, &mut txn, &person)?;
+        erase::erase_step_up_passkey_records_actor_in_txn(self, &mut txn, &person)?;
         txn.commit()?;
         Ok(StepUpPasskeysReset {
             person: person.to_hex(),
@@ -630,7 +656,7 @@ impl Vault {
 
     /// The weave Admin's step-up witness for `request` (OF-499 A3): the
     /// [`AdminStepUp`] the step-up recorded on this exact slip left, while
-    /// the slip is a live one of its own live person and the passkey that
+    /// the slip is a live one of its own live person and the factor that
     /// stepped up is still enrolled. `None` when no such step-up stands.
     /// The only producer of the witness; the Admin proof binds it to the
     /// slip's holder and the slip and revalidates both on every read.

@@ -370,7 +370,8 @@ pub use slip_vault::{
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
 pub use step_up::{
-    EnrolledPasskey, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
+    EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
+    StepUpTotpReset, StepUpTotpResetRequest, TotpCode, TotpEnrollment,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
     STEP_UP_REFUSED, STEP_UP_REQUIRED, StepUpCeremony, StepUpChallenge, StepUpDone, StepUpFactor,
     StepUpPasskeysReset, StepUpPasskeysResetRequest, WeaveAdminDigestRequest,
@@ -379,7 +380,7 @@ pub use step_up::{
 };
 pub(crate) use step_up::{
     erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
-    erase_step_up_records_actor_in_txn,
+    erase_step_up_records_actor_in_txn, erase_step_up_totp_actor_in_txn,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,

@@ -15,10 +15,18 @@
 //! - `POST /v1/core/step-up/passkey` steps up with the assertion a `get`
 //!   answered.
 //!
+//! Authenticator-app doors under `/v1/core/step-up/totp` open a sealed-seed
+//! enrollment, confirm its first code, list/remove enrollments and verify
+//! later codes. The provisioning response is `no-store`.
+//!
 //! Each runs on the caller's own verified slip, at read scope: a step-up is
 //! the person's own sign-in strength, not a write into the vault's records.
 //! The owner's reset of a person's passkeys is the verb row
 //! `vault.step_up.passkeys.reset` (FIX 17553), under the owner proof.
+
+mod totp;
+
+pub(crate) use totp::vault_step_up_totp_reset;
 
 use std::sync::Arc;
 
@@ -48,6 +56,7 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
         .route("/v1/core/step-up/passkeys", get(passkeys).post(enroll))
         .route("/v1/core/step-up/passkeys/remove", post(remove))
         .route("/v1/core/step-up/passkey", post(step_up))
+        .merge(totp::routes())
 }
 
 #[derive(Deserialize)]

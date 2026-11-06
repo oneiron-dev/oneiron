@@ -1943,12 +1943,21 @@ class Oneiron:
         @property
         def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs":
             return Oneiron._VaultStepUpPasskeysVerbs(self._client)
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs":
+            return Oneiron._VaultStepUpTotpVerbs(self._client)
     class _VaultStepUpPasskeysVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def reset(self, spec):
             """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
             return json.loads(_translate(lambda: self._client.vault_step_up_passkeys_reset(json.dumps(spec))))
+    class _VaultStepUpTotpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_totp_reset(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

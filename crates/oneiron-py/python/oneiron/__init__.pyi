@@ -1362,9 +1362,14 @@ class Oneiron:
     class _VaultStepUpVerbs:
         @property
         def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs": ...
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs": ...
     class _VaultStepUpPasskeysVerbs:
         def reset(self, spec: Facade.StepUpPasskeysResetRequest) -> Facade.StepUpPasskeysReset:
             """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+    class _VaultStepUpTotpVerbs:
+        def reset(self, spec: Facade.StepUpTotpResetRequest) -> Facade.StepUpTotpReset:
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
