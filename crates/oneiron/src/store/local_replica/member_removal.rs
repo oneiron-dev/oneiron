@@ -83,6 +83,7 @@ pub(super) fn discard_owned_payload(
     // still stands; the descriptors go after.
     for asset in &assets {
         crate::memory::discard_asset_blob_reference_in_txn(store, txn, asset)?;
+        crate::sync::asset_body::home_proof::forget_in_txn(store, txn, *asset)?;
     }
     for id in ids {
         crate::provenance::body::release_owner_bodies_in_txn(store, txn, id)?;

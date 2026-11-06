@@ -555,10 +555,21 @@ impl<'a> Census<'a> {
             // the member, so a later call keeps it the same (FIX 14534).
             KeepReason::Tombstoned
         } else if crate::store::ASSET_FILE_PLANE
-            && crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?.is_some()
+            && let Some(manifest) =
+                crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?
+            && !(self.keep.release_local_members
+                && crate::sync::asset_body::home_proof::received_from_home_in(
+                    self.store,
+                    txn,
+                    *id,
+                    &manifest.facts.blake3,
+                    manifest.facts.len,
+                )?)
         {
             // A file-plane ASSET's body moves outside Loro; the home's
-            // window ack does not durably hold the body (FIX 5393).
+            // window ack does not durably hold the body (FIX 5393). The
+            // owner's discard lets go of one whose body this machine took
+            // from its home (FIX 14534, Engine 11-06 19:59 call).
             KeepReason::NotCarried
         } else if !self.keep.release_local_members
             && !map_contains_binary(&self.entities, &id.to_hex())

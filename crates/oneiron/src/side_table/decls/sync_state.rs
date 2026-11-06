@@ -558,6 +558,12 @@ side_tables! {
     /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
     /// its window brings it back. Key: hex32 (entity id).
     SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
+    /// A file-plane ASSET body this machine received from its home (FIX 14534): the home
+    /// machine (16 bytes), the carrier's BLAKE3 (32), the body's BLAKE3 (32) and its length
+    /// (u64be), written in the own-device client's landing commit. The owner's discard of a
+    /// world copy releases the ASSET's file only while its manifest names that body. Key:
+    /// hex32 (ASSET id).
+    SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
