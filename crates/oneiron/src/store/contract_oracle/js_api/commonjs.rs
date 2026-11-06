@@ -345,7 +345,12 @@ fn current_final_sequence_values<'ast, 'src>(
         return None;
     };
     let last = sequence.expressions.last()?;
-    if !whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new()) {
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    if !assigned_final && !whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
+    {
         return None;
     }
     whole_sequence_values(value, semantic, alias, native_module, accounted)
