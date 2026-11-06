@@ -132,17 +132,17 @@ impl<'a> NativeBrief<'a> {
     }
 
     /// Brings the held prefix to the run's current boundary: birth for a run
-    /// this executor has not asked about, else each fold batch committed
-    /// since, in commit order. A boundary leaves the queue only once its
-    /// prefix was prepared, so a refusal asks again at the same one.
+    /// this executor has not asked about, then each fold batch committed and
+    /// not yet prepared, in commit order. A host may answer birth with the
+    /// prefix it already delivered (a run entering again), so a batch that
+    /// landed at this entry still asks for its own fold. A boundary leaves
+    /// the queue only once its prefix was prepared, so a refusal asks again
+    /// at the same one.
     fn prepare_for(&mut self, run_id: EntityId) -> crate::Result<()> {
         if self.born != Some(run_id) {
             let prefix = self.port.prepare(BriefBoundary::Birth { run_id })?;
-            // Every batch committed before birth is in what birth read.
-            self.pending.clear();
             self.current = prefix.map(HeldPrefix::new);
             self.born = Some(run_id);
-            return Ok(());
         }
         while let Some(fold) = self.pending.front() {
             let prefix = self.port.prepare(BriefBoundary::Fold(fold.clone()))?;
