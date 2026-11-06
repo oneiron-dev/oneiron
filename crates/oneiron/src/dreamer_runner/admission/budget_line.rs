@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron_model::llm::{
-    BudgetAccountingSnapshot, BudgetGuard, BudgetLease, BudgetLeaseState, BudgetMeterRange,
+    BudgetAccountingSnapshot, BudgetGuard, BudgetGuardId, BudgetLease, BudgetLeaseState,
+    BudgetMeterRange,
 };
 
 use crate::attempt_queue::AttemptId;
@@ -48,6 +49,10 @@ pub(crate) struct NativeMeterSnapshot {
 }
 
 impl NativeMeterSnapshot {
+    pub(crate) fn guard_id(&self) -> BudgetGuardId {
+        self.accounting.guard_id
+    }
+
     pub(crate) fn matches_settlement(&self, line: &str, attempt: AttemptId) -> bool {
         self.original_line.for_attempt(attempt) == Some(line)
     }
