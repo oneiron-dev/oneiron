@@ -311,6 +311,29 @@ impl SyncConnection {
                                     "Pending tombstone retry failed: {error}"
                                 )));
                             }
+                            // A world the owner keeps on one other machine
+                            // leaves this one (FIX 14534).
+                            match crate::sync::residence::evict_worlds_placed_elsewhere(&vault) {
+                                Ok(eviction) if eviction.worlds > 0 => tracing::info!(
+                                    worlds = eviction.worlds,
+                                    windows_evicted = eviction.windows_evicted,
+                                    windows_busy = eviction.windows_busy,
+                                    windows_unconfirmed = eviction.windows_unconfirmed,
+                                    windows_with_local_members =
+                                        eviction.windows_with_local_members,
+                                    removed = eviction.removed,
+                                    kept = eviction.kept,
+                                    cached_items_removed = eviction.cached_items_removed,
+                                    cached_items_held = eviction.cached_items_held,
+                                    "world copies placed elsewhere evicted"
+                                ),
+                                Ok(_) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "World eviction failed: {error}"
+                                    )));
+                                }
+                            }
                         }));
                     }
                     if self.config.client_config.federation_peer.is_none()

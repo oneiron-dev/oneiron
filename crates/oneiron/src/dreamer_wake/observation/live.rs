@@ -289,7 +289,7 @@ impl ObservedCall<'_> {
     /// Which call this step's terminal claim closes.
     pub(crate) fn terminal(&self) -> StepTerminal {
         StepTerminal::Fresh {
-            bound: self.bound.is_some(),
+            key: self.bound.as_ref().map(|bound| bound.key),
         }
     }
 

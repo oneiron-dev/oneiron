@@ -24,6 +24,8 @@ mod comm_source;
 mod delete;
 mod export;
 pub(crate) mod note_world;
+#[cfg(feature = "sync")]
+pub(crate) mod origin_positions;
 mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
@@ -35,7 +37,8 @@ pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
-    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
+    stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
+    stamp_task_fact, unstage_session_position,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,8 +291,9 @@ fn derived_position(
 
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
-/// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
-/// the transaction that binds the blob to its project.
+/// A BLOB_ARTIFACT's likewise: `stamp_blob_project` settles a project
+/// audience, while `stamp_queue_check_exhaust_birth` settles the placement
+/// captured from a completed check's input. Later puts keep that position.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
 /// settles them. An ASSET body never proposes a sensitivity either: a raise
 /// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
@@ -304,11 +308,18 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                     ..prior.clone()
                 } == *proposed
         }
-        crate::registry::ENTITY_TYPE_TURN
-        | crate::registry::ENTITY_TYPE_MESSAGE
-        | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
             Scope {
                 audience: proposed.audience.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+            Scope {
+                worlds: proposed.worlds.clone(),
+                facets: proposed.facets.clone(),
+                audience: proposed.audience.clone(),
+                sensitivity: proposed.sensitivity,
                 ..prior.clone()
             } == *proposed
         }
@@ -421,8 +432,9 @@ fn stored_scope(
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`). An ASSET or ASSET_TEXT uses its kind- and birth-facet-bound
-/// singleton stamp, retaining base reality when no such single world is proved.
+/// it (`note_world`). An ASSET, ASSET_TEXT or BLOB_ARTIFACT uses its kind-
+/// and birth-facet-bound singleton stamp, retaining base reality when no such
+/// single world is proved.
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
 /// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
@@ -464,7 +476,8 @@ pub(crate) fn record_world_in(
         kind,
         crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
     );
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset {
+    let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset && !blob {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -474,7 +487,7 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
-    if asset {
+    if asset || blob {
         return Ok(Some(stamped.flatten()));
     }
     // An epoch summary is one whatever form its body takes, and a pointer no
@@ -640,7 +653,18 @@ pub(crate) fn scope_for_blob(
 ) -> Result<Option<Scope>> {
     let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let data = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if h.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+    scope_for_parts(store, txn, id, h.entity_type, data)
+}
+
+/// The scope of the actual row parts admitted by a read in `txn`.
+pub(crate) fn scope_for_parts(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let Ok(body) = crate::claim::decode_claim_body(data, true) else {
             return Ok(None);
         };
@@ -649,20 +673,20 @@ pub(crate) fn scope_for_blob(
         }
         return Ok(Some(body.record_scope("read")));
     }
-    if h.entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
         && crate::comm::ScopedTouchRecord::decode(id, data)?.is_some()
     {
         return comm_source::disclosure_in_txn(store, txn, id, data);
     }
-    if carries_birth_stamp(h.entity_type) {
+    if carries_birth_stamp(kind) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
-            let birth = default_stamp(h.entity_type, facet);
-            let mut scope = note_world::note_position(store, txn, id, h.entity_type, birth);
+            let birth = default_stamp(kind, facet);
+            let mut scope = note_world::note_position(store, txn, id, kind, birth);
             scope.verbs = singleton("read".to_owned());
             scope
         }));
     }
-    let mut scope = stored_scope(store, txn, id, h.entity_type)?;
+    let mut scope = stored_scope(store, txn, id, kind)?;
     if let Some(scope) = scope.as_mut() {
         scope.verbs = singleton("read".to_owned());
     }

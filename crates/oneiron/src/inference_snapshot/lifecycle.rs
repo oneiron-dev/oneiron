@@ -4,7 +4,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use oneiron_model::llm::VaultRef;
 use std::sync::{Arc, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(crate) use crate::store::snapshot_lifecycle::SnapshotLifecycle;
 pub use crate::store::snapshot_lifecycle::{
@@ -14,6 +14,52 @@ pub use crate::store::snapshot_lifecycle::{
 
 fn elapsed_ms(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+async fn release_snapshots_off_runtime(
+    runtime: Arc<dyn SnapshotRuntime>,
+    vault: VaultRef,
+    closed_generation: u64,
+    bound: Duration,
+    started: Instant,
+) -> SnapshotRelease {
+    let (mut sender, receiver) = tokio::sync::oneshot::channel();
+    let _ = std::thread::Builder::new()
+        .name("inference-snapshot-release".into())
+        .spawn(move || {
+            if sender.is_closed() {
+                return;
+            }
+            // Capture the host's executor before entering the temporary driver.
+            let answer = runtime.release_vault(vault, closed_generation);
+            let Ok(driver) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            let remaining = bound.saturating_sub(started.elapsed());
+            let release = if remaining.is_zero() {
+                None
+            } else {
+                driver.block_on(async {
+                    tokio::select! {
+                        biased;
+                        _ = sender.closed() => None,
+                        release = tokio::time::timeout(remaining, answer) => release.ok(),
+                    }
+                })
+            };
+            let _ = sender.send(release);
+        });
+    match receiver.await {
+        Ok(Some(release)) => release,
+        _ => SnapshotRelease {
+            timed_out: true,
+            elapsed_ms: elapsed_ms(started),
+            ..SnapshotRelease::default()
+        },
+    }
 }
 
 impl Vault {
@@ -51,8 +97,7 @@ impl Vault {
     /// reservations in flight, and waits for the attached runtime's release
     /// within its bound and [`LOCK_RELEASE_MARGIN`]. Never refuses: an
     /// answer that does not come in time is recorded timed out. Off a Tokio
-    /// runtime, which the bound needs, the runtime is not asked and the
-    /// release is recorded timed out.
+    /// runtime, an owned thread drives the release within the same bound.
     pub(crate) async fn release_inference_snapshots_for_lock(&self) -> SnapshotLockReceipt {
         let lifecycle = &self.store.inference_snapshots;
         let closed_generation = lifecycle.close();
@@ -81,7 +126,7 @@ impl Vault {
                 Err(_) => timed_out(),
             }
         } else {
-            timed_out()
+            release_snapshots_off_runtime(runtime, vault, closed_generation, bound, started).await
         };
         if release.timed_out {
             tracing::warn!(
