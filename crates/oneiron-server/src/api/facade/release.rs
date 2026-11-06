@@ -211,6 +211,15 @@ pub(crate) fn rows_still_admitted(
         auth.destination()
     };
     rows.iter().all(|row| {
+        // A run whose results the owner's own archive carries may have no
+        // entity row (a replay an action left): its run's own standing
+        // admits it, as an erase of its replies refuses it (FIX 9591).
+        if owner_whole_vault_export
+            && vault.get_entity_type(row).ok().flatten().is_none()
+            && let Ok(Some(stands)) = vault.code_run_results_stand(row)
+        {
+            return stands;
+        }
         let erased =
             oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false);
         !erased
