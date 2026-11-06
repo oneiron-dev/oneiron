@@ -131,7 +131,11 @@ pub(in crate::code_run::storage) fn owned_body(
 /// does not read would fail it. There the put stays as it was, its row
 /// holding its body on its own with no descriptor (FIX 5399b), so no raw
 /// put that lands today is refused or costs another body its hold. A
-/// session row an on-record route writes in base asks it too (FIX 7363).
+/// session row an on-record route writes in base asks it too (FIX 7363). A
+/// prior that differs only in its code-run origin is the same descriptor
+/// ([`OwnedBody::eq_ignoring_origin`], FIX 7365).
+///
+/// [`OwnedBody::eq_ignoring_origin`]: crate::provenance::body::OwnedBody::eq_ignoring_origin
 pub(in crate::code_run::storage) fn raw_put_publishes_descriptor(
     prior: &Result<Option<crate::provenance::body::OwnedBody>>,
     body: &crate::provenance::body::OwnedBody,
@@ -140,7 +144,8 @@ pub(in crate::code_run::storage) fn raw_put_publishes_descriptor(
     match prior {
         Ok(None) => true,
         Ok(Some(prior)) => {
-            prior == body || matches!(prior.state, BodyState::Incomplete { retained: None })
+            prior.eq_ignoring_origin(body)
+                || matches!(prior.state, BodyState::Incomplete { retained: None })
         }
         Err(_) => false,
     }
