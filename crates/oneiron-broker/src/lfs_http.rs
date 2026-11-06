@@ -49,8 +49,9 @@
 //! spells it, whatever its length): one left anywhere cuts the reply
 //! ([`crate::Failure::ReplyHoldsKey`]). Any other reply, not JSON or not
 //! the batch JSON, is never rewritten, only watched. The broker installs
-//! the credential again, in place of the placeholder, on an action whose
-//! headers name `Authorization:` and the placeholder and whose URL has the
+//! the credential again, in place of the placeholder and under that
+//! header's own name, on an action with a header of the placeholder (under
+//! any name) whose URL has the
 //! repository's own origin (scheme, host and port), and watches that
 //! action's reply as it watches a batch's. A placeholder on an action at
 //! another origin, or a credential on an action that names none, is
@@ -65,7 +66,7 @@
 //! No redirect is followed and nothing is resent.
 
 use reqwest::Url;
-use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
+use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 use crate::digest::{BodyDigest, field, is_hex_digest};
@@ -382,11 +383,12 @@ pub fn check_lfs_headers(
     Ok(())
 }
 
-/// Whether the action header `name: value` is the one the broker installs
-/// the repository credential in: `Authorization` (in any case, as HTTP
-/// reads a name) and exactly [`LFS_CREDENTIAL_PLACEHOLDER`].
-pub(crate) fn is_credential_placeholder(name: &str, value: &str) -> bool {
-    name.eq_ignore_ascii_case(AUTHORIZATION.as_str()) && value == LFS_CREDENTIAL_PLACEHOLDER
+/// Whether an action header's `value` is one the broker installs the
+/// repository credential in: exactly [`LFS_CREDENTIAL_PLACEHOLDER`], under
+/// any header name, since the batch reply's rewrite puts it in place of the
+/// installed value in whichever action header held it.
+pub(crate) fn is_credential_placeholder(value: &str) -> bool {
+    value == LFS_CREDENTIAL_PLACEHOLDER
 }
 
 /// The digest of one LFS request, taken as its body passes, in its own
@@ -538,18 +540,19 @@ impl LfsCallHeader {
         self.reply_limit.filter(|_| self.target.is_batch())
     }
 
-    /// Whether the exchange is an action whose headers name
-    /// `Authorization:` [`LFS_CREDENTIAL_PLACEHOLDER`]: the one action the
-    /// broker installs the repository credential on again, so the daemon
-    /// opens it with that credential (`PreparedLfsCall::open`). Its URL has
-    /// the repository's own origin, or [`Self::check`] refuses it.
+    /// Whether the exchange is an action with a header of
+    /// [`LFS_CREDENTIAL_PLACEHOLDER`], under any name: the one action the
+    /// broker installs the repository credential on again, under that
+    /// header's own name, so the daemon opens it with that credential
+    /// (`PreparedLfsCall::open`). Its URL has the repository's own origin,
+    /// or [`Self::check`] refuses it.
     #[must_use]
     pub fn names_credential_placeholder(&self) -> bool {
         !self.target.is_batch()
             && self
                 .headers
                 .iter()
-                .any(|(name, value)| is_credential_placeholder(name, value))
+                .any(|(_, value)| is_credential_placeholder(value))
     }
 
     /// Every check on the exchange's header, with no I/O: the daemon runs it
@@ -599,7 +602,7 @@ impl LfsCallHeader {
         let placeholder = self
             .headers
             .iter()
-            .any(|(_, value)| value == LFS_CREDENTIAL_PLACEHOLDER);
+            .any(|(_, value)| is_credential_placeholder(value));
         if placeholder && url.origin().ascii_serialization() != self.target.repository().origin() {
             return Err(Refusal::Secret);
         }
