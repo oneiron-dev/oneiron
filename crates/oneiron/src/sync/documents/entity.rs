@@ -129,15 +129,23 @@ impl EntityDocument {
     /// pending local update replayed on it, must cover the durable text, or
     /// nothing changes. A canonical restore's successor of the text held
     /// here takes its place instead, and a copy of the history a restore of
-    /// it replaced changes nothing (FIX 3553): the pending updates are of
-    /// the replaced history, and go once a peer acknowledges the successor.
+    /// it replaced changes nothing (FIX 3553). The pending updates of a
+    /// replaced history go with it, in the same writer: the parked rewrite
+    /// holds them, and no later STATE replays them onto the successor.
     fn replace_in_txn(&self, txn: &mut RwTxn<'_>, bytes: &[u8]) -> Result<()> {
         let staged = LoroDoc::new();
         storage::import_complete(&staged, bytes)?;
-        if crate::entity_doc::take_sync_successor_in_txn(&self.vault, txn, &self.id, &staged)?
-            .is_some()
-        {
-            return Ok(());
+        match crate::entity_doc::take_sync_successor_in_txn(&self.vault, txn, &self.id, &staged)? {
+            Some(true) => {
+                let keys: Vec<Vec<u8>> =
+                    QD_E.scan_keys(&self.vault.store, txn, journal_prefix(self.id).as_bytes())?;
+                for key in keys {
+                    QD_E.delete(&self.vault.store, txn, &key)?;
+                }
+                return Ok(());
+            }
+            Some(false) => return Ok(()),
+            None => {}
         }
         for frame in journal_in(&self.vault, txn, self.id)? {
             let frame = decode_document(&frame[1..])
