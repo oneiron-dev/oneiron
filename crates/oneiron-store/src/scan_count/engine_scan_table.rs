@@ -96,7 +96,9 @@ impl EngineScanThreshold for EngineScan {
             Self::AgentDefinitionVerbatimPinBytes => 1024,
             Self::AgentBirthSourceBytes => 32 * 1024 * 1024,
             Self::TaskPostIntentKeyBytes => 256,
-            Self::AudienceCoverDepth | Self::ProjectAnchorDepth => 64,
+            Self::AudienceCoverDepth
+            | Self::ProjectAnchorDepth
+            | Self::MachineTransitionFrontier => 64,
             Self::ProjectFoldDepth => 256,
             Self::WordSourceRecords => WORD_SOURCE_CHECK_RECORDS,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
