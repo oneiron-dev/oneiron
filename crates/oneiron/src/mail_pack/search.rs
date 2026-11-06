@@ -73,13 +73,15 @@ pub struct MailSearchReport {
 
 /// The query `query`, checked: 1 to 1024 bytes, no control character, its
 /// quotes closed and, outside them, its parentheses balanced. So a caller's
-/// `)` never closes the group a wire puts the query in.
-fn valid_query(query: &str) -> MemoryResult<&str> {
+/// `)` never closes the group a wire puts the query in. With `escapes`, a
+/// backslash inside a quoted string escapes the character after it, as the
+/// provider reads it (IMAP); without, a quote always ends the string.
+fn valid_query(query: &str, escapes: bool) -> MemoryResult<&str> {
     let query = query.trim();
     if query.is_empty()
         || query.len() > MAX_SEARCH_QUERY_BYTES
         || query.chars().any(char::is_control)
-        || !grouped(query)
+        || !grouped(query, escapes)
     {
         return Err(MemoryError::bad_request(format!(
             "a search query is 1 to {MAX_SEARCH_QUERY_BYTES} bytes, with no control character, \
@@ -90,12 +92,19 @@ fn valid_query(query: &str) -> MemoryResult<&str> {
 }
 
 /// Whether `query`'s quotes close and, outside them, each `)` closes a `(`
-/// the query opened itself.
-fn grouped(query: &str) -> bool {
+/// the query opened itself; with `escapes`, a backslash inside quotes takes
+/// the character after it as text.
+fn grouped(query: &str, escapes: bool) -> bool {
     let mut quoted = false;
     let mut depth = 0_usize;
-    for c in query.chars() {
+    let mut chars = query.chars();
+    while let Some(c) = chars.next() {
         match c {
+            '\\' if quoted && escapes => {
+                if chars.next().is_none() {
+                    return false;
+                }
+            }
             '"' => quoted = !quoted,
             '(' if !quoted => depth += 1,
             ')' if !quoted => {
@@ -131,7 +140,7 @@ impl Vault {
         page: Option<&str>,
         limit: u32,
     ) -> MemoryResult<MailSearchReport> {
-        let query = valid_query(query)?;
+        let query = valid_query(query, wire.search_escapes())?;
         let actor = owner.revalidate(self)?;
         let unknown = || MemoryError::not_found("no searchable mailbox source by that ref");
         let row = {

@@ -1544,6 +1544,12 @@ impl MailProviderWire for ImapMailWire<'_> {
             .map(|(headers, _)| headers.labels.clone())
     }
 
+    /// A quoted string in `SEARCH` keys escapes a quote or a backslash with a
+    /// backslash (RFC 3501 4.3).
+    fn search_escapes(&self) -> bool {
+        true
+    }
+
     /// The messages `query`, `SEARCH` keys, finds in the folders this wire
     /// reads (never trash, junk or drafts), folder by folder, the newest of
     /// each first, at most `limit` (fix list row 19089). A page looks in at
