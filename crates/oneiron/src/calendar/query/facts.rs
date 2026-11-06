@@ -307,9 +307,9 @@ pub(in crate::calendar) struct CalendarEventFacts {
     /// The `calendar.tz` zone, which places an all-day EVENT's days.
     zone: LaneFact<String>,
     /// Under the busy hold, the deciding kind is a held floating or all-day
-    /// one: the row keeps its header's interval and every zone's reach of
-    /// its wall time too (fix list row 17868).
-    held_civil: bool,
+    /// one, this one: the row keeps its header's interval and every zone's
+    /// reach of its wall time too (fix list row 17868).
+    held_civil: Option<crate::calendar::claims::CalendarTimeKind>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
     uids: Vec<String>,
@@ -374,7 +374,7 @@ impl CalendarEventFacts {
     pub(in crate::calendar) fn placed_extent(&self) -> Option<(u64, u64)> {
         match self.civil_extent() {
             Some(extent) => Some(extent),
-            None if self.held_civil => self.wall_extent(),
+            None if self.held_civil.is_some() => self.wall_extent(),
             None => None,
         }
     }
@@ -384,6 +384,14 @@ impl CalendarEventFacts {
     /// resolves (fix list row 17868), else the all-zone envelope. A zone the
     /// lane may not read places nothing.
     pub(in crate::calendar) fn civil_projector(&self) -> CivilProjector {
+        // A held all-day kind keeps every zone's reach, unless its zone is
+        // one this lane may not read: then, as the written row, it places
+        // nothing.
+        if self.held_civil == Some(crate::calendar::claims::CalendarTimeKind::AllDay)
+            && matches!(self.zone, LaneFact::Withheld)
+        {
+            return CivilProjector::Withheld;
+        }
         if !self.civil_all_day() {
             return CivilProjector::Envelope;
         }
@@ -525,7 +533,8 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
     let mut wall_time: Option<(EntityId, LaneFact<WallTimeFact>)> = None;
     let mut zone: Option<(EntityId, LaneFact<String>)> = None;
-    let mut held_civil_kinds: Vec<EntityId> = Vec::new();
+    let mut held_civil_kinds: Vec<(EntityId, crate::calendar::claims::CalendarTimeKind)> =
+        Vec::new();
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
     let mut uids = Vec::new();
@@ -592,7 +601,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
                             crate::calendar::claims::CalendarTimeKind::Floating
                                 | crate::calendar::claims::CalendarTimeKind::AllDay
                         ) {
-                            held_civil_kinds.push(claim_id);
+                            held_civil_kinds.push((claim_id, value.kind));
                         }
                         replace_when_lower(&mut time_kind, claim_id, LaneFact::Absent);
                     }
@@ -682,9 +691,12 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     // either way, and each (UID, original start) is one occurrence (FIX 9653).
     uids.sort_unstable();
     uids.dedup();
-    let held_civil = time_kind
-        .as_ref()
-        .is_some_and(|(id, _)| held_civil_kinds.contains(id));
+    let held_civil = time_kind.as_ref().and_then(|(id, _)| {
+        held_civil_kinds
+            .iter()
+            .find(|(held, _)| held == id)
+            .map(|&(_, kind)| kind)
+    });
     Ok(Some(CalendarEventFacts {
         held_civil,
         origin: origin.map_or(LaneFact::Absent, |(_, fact)| fact),
