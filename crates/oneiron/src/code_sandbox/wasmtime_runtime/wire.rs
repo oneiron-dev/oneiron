@@ -770,7 +770,14 @@ struct OutputFile {
 /// store, or held for the step's outcome when the host keeps none. A file
 /// frame must name a file under `/mnt/outputs`.
 pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u8>) -> Result<u64> {
-    output_frame(bridge.host, &mut bridge.held, bridge.message_bytes, bridge.cancel, target, frame)
+    output_frame(
+        bridge.host,
+        &mut bridge.held,
+        bridge.message_bytes,
+        bridge.cancel,
+        target,
+        frame,
+    )
 }
 
 pub(super) fn output_frame(
