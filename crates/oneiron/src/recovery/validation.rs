@@ -14,6 +14,13 @@ pub(super) use documents::DocumentRows;
 pub(super) use entity_documents::EntityDocumentRows;
 pub(super) use window_rows::WindowRows;
 
+/// Drain the generic document validator for native document capture callers.
+pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut validation = EntityDocumentRows::default();
+    while !validation.advance(snapshot, usize::MAX)? {}
+    Ok(())
+}
+
 /// Recovery-only proof for an AddressedTo edge retained by a soft-erased
 /// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
 /// are gone, so only a validated local canonical snapshot of the retained
