@@ -70,7 +70,7 @@ pub(crate) async fn describe_self_for_run(
             (brief, tail)
         }
         None => {
-            let (state, unavailable) = resolved_state(server, actor, line, &reads)?;
+            let (state, unavailable) = resolved_state(server, actor.entity_ref(), line, &reads)?;
             let brief = state.describe(&server.vault, &reads, Some(&people))?;
             let tail = render_resolved(&brief, &unavailable);
             (brief, tail)
@@ -86,7 +86,8 @@ pub(crate) async fn describe_self_for_run(
 /// `unavailable` names (its identity key, its name) is left out of
 /// identity, and one line after the sections names them all, so no
 /// placeholder reads as a resolved fact. Escaped as the renderer escapes.
-fn render_resolved(brief: &SelfBrief, unavailable: &[(&str, &str)]) -> String {
+/// The credential path renders its resolved brief the same way (FIX 11461).
+pub(super) fn render_resolved(brief: &SelfBrief, unavailable: &[(&str, &str)]) -> String {
     let mut identity = serde_json::to_value(brief).unwrap_or_default();
     let skills = identity
         .as_object_mut()
@@ -118,19 +119,20 @@ fn render_resolved(brief: &SelfBrief, unavailable: &[(&str, &str)]) -> String {
     out
 }
 
-/// The run's brief state as the run itself resolves it, and the fields it
-/// could not: [`RUN_BRIEF_UNRESOLVED`] always, the principal when no subject
-/// anchor names the person behind the agent, and the budget when no line
-/// binds the run's entry. Each unresolved field holds a value
-/// [`render_resolved`] leaves out.
-fn resolved_state(
+/// The run's brief state as the run itself resolves it for its agent
+/// `self_ref`, and the fields it could not: [`RUN_BRIEF_UNRESOLVED`] always,
+/// the principal when no subject anchor names the person behind the agent,
+/// and the budget when no line binds the run's entry. Each unresolved field
+/// holds a value [`render_resolved`] leaves out. A credentialed agent's
+/// describe(self) with no installed snapshot resolves its brief here too,
+/// over its own session's reads and with no line (FIX 11461).
+pub(super) fn resolved_state(
     server: &SyncServer,
-    actor: oneiron::WriteActor,
+    self_ref: oneiron::EntityId,
     line: Option<&RunAdmission>,
     reads: &SessionReadSet,
 ) -> MemoryResult<(SelfBriefState, Vec<(&'static str, &'static str)>)> {
     let mut unavailable = RUN_BRIEF_UNRESOLVED.to_vec();
-    let self_ref = actor.entity_ref();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
