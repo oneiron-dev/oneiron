@@ -1,6 +1,5 @@
 //! Request-shape validation and short-reference parsing, run before any dispatch.
 
-use crate::context_pack::{MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP};
 use crate::entity_id::{EntityId, parse_presentation_id};
 
 use super::context_pack::CoreContextPackRequest;
@@ -56,34 +55,6 @@ fn validate_query_seeds(
     Ok(())
 }
 
-// The accepted field names the context-pack validator reports, kept beside
-// their only production consumer.
-/// Accepted field names for the context-pack depth controls. A crate-local trait because
-/// `CoreContextPackRequest` is defined in `oneiron-contracts`.
-pub(super) trait ContextPackFieldNames {
-    fn edge_hop_field(&self) -> &'static str;
-    fn max_neighbors_field(&self) -> &'static str;
-}
-
-impl ContextPackFieldNames for CoreContextPackRequest {
-    /// Accepted field name reported when the resolved `edge_hop` is rejected.
-    fn edge_hop_field(&self) -> &'static str {
-        match &self.depth {
-            Some(depth) if depth.edge_hop.is_some() => "depth.edge_hop",
-            _ => "edge_hop",
-        }
-    }
-
-    /// Accepted field name reported when the resolved `max_neighbors` is
-    /// rejected.
-    fn max_neighbors_field(&self) -> &'static str {
-        match &self.depth {
-            Some(depth) if depth.max_neighbors.is_some() => "depth.max_neighbors",
-            _ => "max_neighbors",
-        }
-    }
-}
-
 fn validate_context_pack_request(request: &CoreContextPackRequest) -> VaultReadResult<()> {
     const METHOD: VaultReadMethod = VaultReadMethod::ContextPack;
 
@@ -96,37 +67,6 @@ fn validate_context_pack_request(request: &CoreContextPackRequest) -> VaultReadR
     )?;
     if request.axis.is_some() && request.type_ref.is_none() {
         return Err(invalid_request(METHOD, "axis", "axis needs a type_ref"));
-    }
-    let depth = request.resolved_depth();
-    if depth.edge_hop.is_some_and(|hop| hop > MAX_EDGE_HOP) {
-        return Err(invalid_request(
-            METHOD,
-            request.edge_hop_field(),
-            &format!("edge_hop must be less than or equal to {MAX_EDGE_HOP}"),
-        ));
-    }
-    if depth
-        .max_neighbors
-        .is_some_and(|neighbors| neighbors > MAX_CONTEXT_NEIGHBORS)
-    {
-        return Err(invalid_request(
-            METHOD,
-            request.max_neighbors_field(),
-            &format!("max_neighbors must be less than or equal to {MAX_CONTEXT_NEIGHBORS}"),
-        ));
-    }
-    if request
-        .budget
-        .as_ref()
-        .and_then(|budget| budget.retrieval.as_ref())
-        .and_then(|retrieval| retrieval.selected_edges)
-        .is_some_and(|edges| edges > MAX_CONTEXT_NEIGHBORS)
-    {
-        return Err(invalid_request(
-            METHOD,
-            "budget.retrieval.selected_edges",
-            &format!("selected_edges must be less than or equal to {MAX_CONTEXT_NEIGHBORS}"),
-        ));
     }
     Ok(())
 }

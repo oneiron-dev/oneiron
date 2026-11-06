@@ -2,9 +2,10 @@
 //! request, by the pattern of the contribution forks' exact call, never its
 //! code: the whole request as stored, bound to the model and locality that
 //! answered it, admitted as a raw call naming that model meets, sent on the
-//! one model's own ladder with no fallback, and only while that ladder's
-//! route prompt and route pin (route, offer, catalog revision, wire model,
-//! prompt digest) are the ones the capture pinned, by digest. Only then is
+//! one model's own ladder with no fallback, and only while that ladder's one
+//! picked rung is the rung that answered it, and that rung's route prompt
+//! and route pin (route, offer, catalog revision, wire model, prompt digest)
+//! are the ones the capture pinned, by digest. Only then is
 //! the capture's route prompt read from its capsule's body, each secret in
 //! it its custody handle, and sent on that call alone in place of the one
 //! configured (FIX 6255): no pin holds its text. Each call takes a policy
@@ -113,9 +114,15 @@ impl Gateway<'_> {
             let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, "model_not_served");
             return Ok(refused(receipt, unavailable));
         };
-        // The configured prompt is the one the capture was sent under, by
+        // The rung that answered the capture, as it is configured now; a
+        // ladder with no such rung is no exact replay.
+        let Some(replay) = ladder.for_replay_binding(&binding.model, binding.locality) else {
+            let unavailable = ShadowUnavailable::new(Reason::RouteUnavailable, "no_exact_rung");
+            return Ok(refused(receipt, unavailable));
+        };
+        // Its configured prompt is the one the capture was sent under, by
         // its digest (FIX 6356), before the stored prompt takes its place.
-        if ladder.exact_prompt_digest() != Some(binding.prompt_digest) {
+        if replay.exact_prompt_digest() != binding.prompt_digest {
             let unavailable =
                 ShadowUnavailable::new(Reason::RouteUnavailable, "route_prompt_moved");
             return Ok(refused(receipt, unavailable));
@@ -170,8 +177,8 @@ impl Gateway<'_> {
         let cancel = self.cancel;
         let may_send = move || !cancel.is_cancelled();
         let wait = ladder.exact_replay_wait();
-        let answered = ladder
-            .generate_exact_masked_within(&run, request, None, prompt.as_deref(), &may_send, wait)
+        let answered = replay
+            .generate_exact_within(&run, request, None, prompt.as_deref(), &may_send, wait)
             .await;
         let rows = kept.rows();
         let dispatched = rows

@@ -603,6 +603,7 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
         effect,
         SelfEffect::MemoryPutClaim
             | SelfEffect::AgentsPut
+            | SelfEffect::AgentsSpawn
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked
