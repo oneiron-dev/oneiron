@@ -23,9 +23,10 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRejection, GitWireRepo};
 use crate::origin::publication::{
     OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRequest, OriginPublicationStatus,
+    origin_keep_ref_name,
 };
 use crate::origin::residence::OriginAuthorityLease;
 use crate::origin::secret_projection::graph_objects::copy_repo_projection_objects;
@@ -116,25 +117,38 @@ impl Vault {
                 ref_name: step.name.as_str().to_owned(),
                 old_oid: step.old.as_str().to_owned(),
                 new_oid: step.new.as_str().to_owned(),
-                moved: true,
+                moved: false,
                 failure: None,
             };
             if pending.iter().any(|waiting| waiting.name == step.name) {
                 let receipt = self.move_purged_ref(
                     &wire, owner, actor, &frozen, store, &repo, step, authority, now,
                 )?;
-                outcome.moved = receipt.record.status == OriginPublicationStatus::Published;
-                if !outcome.moved {
-                    outcome.failure = Some(
-                        receipt
-                            .record
-                            .failure
-                            .clone()
-                            .unwrap_or_else(|| "the publication refused the move".to_owned()),
-                    );
-                }
+                // A replayed Published row answers with the wire's verdict on
+                // this call: a rejected re-drive is no move.
+                outcome.failure = match receipt.wire_rejection() {
+                    Some(reason) => Some(rejection_text(reason).to_owned()),
+                    None if receipt.record.status != OriginPublicationStatus::Published => {
+                        Some(receipt.record.failure.clone().unwrap_or_else(|| {
+                            "the publication refused the move".to_owned()
+                        }))
+                    }
+                    None => None,
+                };
             }
             refs.push(outcome);
+        }
+        // The advertisement decides what moved: each ref must name its copy,
+        // published, after every move ran.
+        let after: HashMap<GitRefName, GitOid> = self
+            .published_origin_refs(&wire, store, &repo)?
+            .into_iter()
+            .collect();
+        for (outcome, step) in refs.iter_mut().zip(&moves) {
+            outcome.moved = outcome.failure.is_none() && after.get(&step.name) == Some(&step.new);
+            if !outcome.moved && outcome.failure.is_none() {
+                outcome.failure = Some("the ref no longer names its masked copy".to_owned());
+            }
         }
         let all_moved = refs.iter().all(|outcome| outcome.moved);
         let mut released = Vec::new();
@@ -142,7 +156,12 @@ impl Vault {
             for root in frozen.keep_roots.iter().filter(|root| root.releases) {
                 let kind = OriginKeepRefKind::parse(&root.kind)?;
                 let oid = GitOid::parse_hex(root.oid.clone())?;
-                if self.origin_keep_owner_held(store, &oid, kind, &root.owner)? {
+                // A release stopped between its owner row and its keep-ref
+                // is driven again while the physical root stands; the
+                // zero-owner check keeps it for any other owner.
+                let held = self.origin_keep_owner_held(store, &oid, kind, &root.owner)?;
+                let rooted = wire.read_ref(&repo, &origin_keep_ref_name(&oid)?)?.is_some();
+                if held || rooted {
                     self.unpin_origin_object(&wire, &repo, kind, &root.owner, &oid, now)?;
                 }
                 released.push(root.clone());
@@ -288,6 +307,18 @@ struct Ended {
     refs: Vec<RepoSecretPurgeRefOutcome>,
     released: Vec<RepoSecretPurgeKeepRoot>,
     still_present: Vec<String>,
+}
+
+/// What one wire rejection of a ref move says.
+const fn rejection_text(reason: GitWireRejection) -> &'static str {
+    match reason {
+        GitWireRejection::RefMoved => "the ref moved before the purge could move it",
+        GitWireRejection::ObjectsUnavailable => {
+            "the masked copy's objects are not all in the store"
+        }
+        GitWireRejection::EffectUnconfirmed => "the ref move could not be confirmed",
+        GitWireRejection::Unauthorized => "the origin authority refused the move",
+    }
 }
 
 /// A stale plan's end: no ref moved by this run, each ref named as
