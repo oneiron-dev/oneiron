@@ -266,7 +266,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             } else {
                 admitted(cancel, || state.host.dispatch_self(call))?
             };
-            guest_reply(state.host, cancel, &answered)
+            guest_reply(state.host, cancel, &answered, state.message_bytes)
         }
     }
 }
