@@ -13,7 +13,7 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::dreamer_runner::{DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, FreeTimeItemBinding};
 use oneiron::llm::run_admission::RunAttribution;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext, WorkClass, WorkContext};
+use oneiron::llm::{HostInferenceContext, WorkClass, WorkContext};
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
 use super::super::policy::extraction_egress;
@@ -48,11 +48,7 @@ impl ResidentLend<'_> {
         let (model, host_binding, ladder, role) = match own {
             Some((model, locality, ladder)) => (
                 model.clone(),
-                HostInferenceBinding::Advertised {
-                    model,
-                    locality,
-                    keyless: ladder.all_keyless_own_server(),
-                },
+                ladder.host_binding(model, locality, ladder.all_keyless_own_server()),
                 ladder,
                 None,
             ),
