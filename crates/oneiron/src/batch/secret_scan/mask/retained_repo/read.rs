@@ -138,7 +138,9 @@ impl<'a> RepoKnownCheck<'a> {
 
     /// Each custody record a value that reads in `bytes` is held by, read as
     /// [`Self::reads_known`] reads: whose keys a release of the stored bytes
-    /// shows (FIX 8966), never a value.
+    /// shows (FIX 8966), never a value. Every value counts, one overlapping
+    /// another and each holder of the same bytes included, so a grant judged
+    /// by them covers all the bytes carry.
     ///
     /// # Errors
     /// A walk failure.
@@ -148,11 +150,7 @@ impl<'a> RepoKnownCheck<'a> {
             return Ok(holders);
         }
         let keep = |value: &[u8]| self.keep(value);
-        let mut read = |buffer: &[u8]| {
-            for hit in self.known.spans_except(buffer, keep) {
-                holders.insert(hit.custody);
-            }
-        };
+        let mut read = |buffer: &[u8]| holders.extend(self.known.holders_except(buffer, keep));
         read(bytes);
         let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
             read(member);
