@@ -30,6 +30,16 @@ unreadable-package message. Unsupported workbook features and engine failures
 still use the existing host precision fallback. The external-link comparisons
 and their non-resource failure messages are unchanged.
 
+Typed-answer validation keeps a temporary vector of cell coordinates. It
+reserves the exact element count and any allocator capacity surplus through
+the same resource operation before filling it. Sorting only that vector finds
+duplicate positions; answer and edit order stay unchanged. The original
+per-answer checks run before duplicate detection and keep the same invalid
+bundle error, not a first-failing-answer index. The temporary vector drops
+before its local hold. Raw stored-bundle decoding and output verification
+have no resource operation and keep their unmetered path. This covers only
+the duplicate index, not all validation allocations.
+
 The temporary chunk-plan vector and its validated cell text copies use the
 host's existing document-resource reservation and wait. The native writer
 reserves its returned operation vector and validated text copies before
