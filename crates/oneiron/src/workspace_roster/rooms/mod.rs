@@ -37,6 +37,7 @@ mod thread_reads;
 mod upkeep;
 mod upkeep_voice;
 mod upkeep_voice_guard;
+mod wake;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -144,6 +145,7 @@ pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
+pub use wake::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
 pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16

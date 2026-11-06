@@ -53,7 +53,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10466: every inference snapshot whose dependency set reaches it.
     |write, txn, id| crate::store::snapshot_catalog::erase_in_txn(write.store, txn, id),
     // FIX 15128: every drafter training example whose dependency set names it.
-    |write, txn, id| crate::drafter::erase_drafter_examples_for_source_in_txn(write.store, txn, id),
+    |write, txn, id| crate::drafter::erase_drafter_examples_for_source_in_txn(write, txn, id),
     // FIX 12569: every drafter version whose training ancestry reaches it.
     |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.
@@ -107,6 +107,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::provenance::erase_actor_stamp_uses_in_txn(write.store, txn, id),
     #[cfg(feature = "sync")]
     |write, txn, id| erase_carried_born_with_in_txn(write.store, txn, id),
+    // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::forget_message_writer_in_txn(write.store, txn, id),
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
     |write, txn, id| erase_retained_copies_in_txn(write.store, txn, id),
