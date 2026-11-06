@@ -23,7 +23,8 @@ pub(in crate::sync) struct IsolatedRootResult {
 impl PreparedIsolatedWindow {
     /// Imports original signed history, stages the native window and checks
     /// final authority in one root. `read_check` must judge the complete
-    /// candidate in this writer. Its arguments retain the original window
+    /// candidate in this writer. Its arguments retain every original signed
+    /// authority body and its actual imported id, plus the original window
     /// key, base, raw update and final candidate: a per-row or final-map check
     /// alone is not authority to persist the whole carried history/metadata.
     ///
@@ -39,6 +40,7 @@ impl PreparedIsolatedWindow {
         read_check: impl FnOnce(
             &heed::RoTxn<'_>,
             &VerifiedSlip,
+            &[(crate::EntityId, Vec<u8>)],
             &crate::sync::WindowKey,
             &loro::LoroDoc,
             &[u8],
@@ -65,7 +67,26 @@ impl PreparedIsolatedWindow {
             let result = vault.write_txn_door_after_commit(
                 crate::store::Callback::Opaque,
                 |txn| {
-                    authority.stage_history_in_txn(vault, txn)?;
+                    let original_history = authority.original_history_rows()?;
+                    let history_ids = authority.stage_history_in_txn(vault, txn)?;
+                    let imported: std::collections::BTreeSet<_> =
+                        history_ids.iter().copied().collect();
+                    if original_history.keys().any(|id| !imported.contains(id)) {
+                        return Err(Error::InvariantViolation(
+                            "isolated authority import omitted a carried row",
+                        ));
+                    }
+                    let history = history_ids
+                        .into_iter()
+                        .map(|id| {
+                            let body = original_history.get(&id).cloned().ok_or(
+                                Error::InvariantViolation(
+                                    "isolated authority import changed a carried row id",
+                                ),
+                            )?;
+                            Ok((id, body))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
                     let staged = {
                         let mut effects = entity_effects.borrow_mut();
                         self.stage_in_txn(
@@ -81,6 +102,7 @@ impl PreparedIsolatedWindow {
                     read_check(
                         txn,
                         &verified,
+                        &history,
                         &staged.content.key,
                         &staged.base,
                         &staged.update,
