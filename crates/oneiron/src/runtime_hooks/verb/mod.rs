@@ -242,7 +242,21 @@ impl Vault {
         class: HookActorClass,
         ask: EntityId,
     ) -> Result<VerbHookWaitStatus> {
-        ask::wait_status(self, invocation, verb, actor, class, ask)
+        ask::wait_status(self, invocation, verb, actor, class, ask, None)
+    }
+
+    /// Observes the same wait using the calling operation's held task-work
+    /// turn. Only the turn is shared; the ask still uses its saved author.
+    pub(crate) fn verb_hook_wait_status_on_turn(
+        &self,
+        invocation: InvocationId,
+        verb: &str,
+        actor: EntityId,
+        class: HookActorClass,
+        ask: EntityId,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<VerbHookWaitStatus> {
+        ask::wait_status(self, invocation, verb, actor, class, ask, turn.as_ref())
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in

@@ -172,7 +172,7 @@ impl Memory<'_> {
                         "transcript session was not prepared",
                     ))?;
                 if let Some(ask) = retry.ask {
-                    match vault.session_import_hook_wait(hint, ask)? {
+                    match vault.session_import_hook_wait(hint, ask, self)? {
                         crate::runtime_hooks::verb::VerbHookWaitStatus::Waiting => {
                             return Ok(TranscriptIngestOutcome::HookPending {
                                 session_ref: hint.id(),
