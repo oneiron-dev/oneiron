@@ -12,6 +12,8 @@ use crate::codebase::entity_id_from_hash_material;
 
 mod rereview;
 
+pub(super) use rereview::RereviewPrepared;
+
 /// The effector a landing reads secret values under: the owner binds a
 /// record's `read` scope to it at the bind door, and an unbound record
 /// refuses the landing with its typed binding error.
