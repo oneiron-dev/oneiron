@@ -18713,6 +18713,11 @@ pub enum HookReplayCase {
         #[serde(rename = "phase")]
         phase: HookPhase,
     },
+    #[serde(rename = "unknown_run")]
+    UnknownRun {
+        #[serde(rename = "run_key")]
+        run_key: String,
+    },
 }
 
 /// `oneiron::runtime_hooks::replay::HookReplayCompare`.
