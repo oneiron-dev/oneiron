@@ -372,10 +372,12 @@ impl Memory<'_> {
     /// door named, if any, and with nothing else on the surface its door
     /// could not rebuild (a host origin, a machine signer, a TASK host, an
     /// off-record session or a thread's turn). A slip's is its verified slip
-    /// and the binding its request was admitted on; a managed vault's
-    /// attested owner's is the person, the actor this surface is bound to as
-    /// a human, with no slip (FIX 11063). `None` resumes only on the
-    /// caller's retry.
+    /// and the binding its request was admitted on; a self-hosted root's,
+    /// read through its host action with no person's proof, is that action's
+    /// durable identity, rooted in this very slip (FIX 4744); a managed
+    /// vault's attested owner's is the person, the actor this surface is
+    /// bound to as a human, with no slip (FIX 11063). `None` resumes only on
+    /// the caller's retry.
     #[must_use]
     pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
         use crate::runtime_hooks::verb::{
@@ -402,8 +404,12 @@ impl Memory<'_> {
         }
         let instrument = self.credential_instrument.clone()?;
         let witness = match instrument.source {
+            VerbAskCredentialSource::Slip { slip, .. } if self.read_proof.is_none() => {
+                VerbAskCredentialWitness::HostAction(
+                    self.root_host_action(&slip, &instrument.vault)?,
+                )
+            }
             VerbAskCredentialSource::Slip { .. } => {
-                self.read_proof.as_ref()?;
                 VerbAskCredentialWitness::Slip(self.invocation_slip.clone()?)
             }
             VerbAskCredentialSource::AttestedOwner { holder } => {
@@ -419,6 +425,25 @@ impl Memory<'_> {
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
         };
         Some(VerbAskCredential::new(reference, witness))
+    }
+
+    /// The durable identity of the host action this surface reads through
+    /// (FIX 4744): only a self-hosted root's, bound for this surface's own
+    /// actor, acting under the root minted as `slip` for `vault`. The dev
+    /// mode has no root, and an unrelated slip has no host action, so
+    /// neither has one.
+    fn root_host_action(
+        &self,
+        slip: &[u8; 32],
+        vault: &[u8; 32],
+    ) -> Option<crate::authority::HostActionIdentity> {
+        let action = self.host_action.as_ref()?;
+        let actor = action.actor();
+        if actor.entity_ref() != self.actor || actor.actor_class() != self.actor_class {
+            return None;
+        }
+        let identity = action.guard().durable_identity(self.vault);
+        identity.acts_under(slip, vault).then_some(identity)
     }
 
     /// The managed vault's attested owner this surface's caller is, as the
