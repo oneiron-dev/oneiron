@@ -336,6 +336,14 @@ fn source_people_in(
             Err(_) => return Ok(SourcePeople::Unknown(room)),
         }
     } else {
+        // An imported MESSAGE's AuthoredBy names who its source says spoke,
+        // never a native writer: its speakers are unknown here, so the
+        // explicit-source consent route decides (FIX 15412).
+        if entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+            && crate::memory::imported_message_in_txn(&vault.store, rtxn, &source)?
+        {
+            return Ok(SourcePeople::Unknown(source));
+        }
         let mut authors = Vec::new();
         for edge in vault.store.port_edges(
             rtxn,
