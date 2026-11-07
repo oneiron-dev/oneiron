@@ -263,6 +263,15 @@ pub(super) fn silent_findings(
             }
         }
         let other_session = other_session(&called);
+        // The exact pair, frozen from this same comparison: the raw dial
+        // minutes and the compared quiet seconds, the seconds only when the
+        // `u64` is exactly representable. Otherwise unknown, never rounded.
+        let (exact_dial, exact_measured) =
+            if dials.silent_minutes.is_finite() && quiet <= (1u64 << f64::MANTISSA_DIGITS) {
+                (Some(dials.silent_minutes), Some(quiet as f64))
+            } else {
+                (None, None)
+            };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::Silent,
@@ -274,6 +283,8 @@ pub(super) fn silent_findings(
             actual: 0,
             dial: 1,
             measured: quiet as i64,
+            exact_dial,
+            exact_measured,
             // Another session's call is shown, and never hides this one.
             counter: other_session
                 .map(|_| AgentHealthCounter::OtherSessionActive)

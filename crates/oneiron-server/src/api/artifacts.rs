@@ -118,6 +118,10 @@ pub(crate) struct ArtifactServeQuery {
     blob_version: Option<u64>,
 }
 
+#[path = "artifacts/backend.rs"]
+mod backend;
+pub(crate) use self::backend::routes as backend_routes;
+
 #[path = "artifacts/route.rs"]
 mod route;
 use self::route::ArtifactRoute;
