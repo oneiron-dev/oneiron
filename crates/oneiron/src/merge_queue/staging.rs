@@ -5,10 +5,11 @@
 //! from their one verified base. CALL A keeps the automatic driver's
 //! same-path pairs out of staging, so it never reaches this composition.
 use super::composition::LineComposition;
+use super::survivors::{SurvivorCaller, SurvivorFormation};
 use super::types::QueueRecord;
 use super::{
     BatchState, MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue,
-    RepoQueueOrder, SpeculativePath,
+    QueueSurvivorLink, RepoQueueOrder, SpeculativePath,
 };
 use crate::{
     error::{CodeError, Error, Result},
@@ -55,7 +56,11 @@ impl MergeQueue<'_> {
 
     /// The one batch formation. `admit` is the batch writer's first act: it
     /// answers the run order the batch keeps (FIX 6867), none for an owner
-    /// or trusted batch, or a refusal, which writes nothing.
+    /// or trusted batch, or a refusal, which writes nothing. Acceptance then
+    /// judges every changed path, a rename's new name among them, against
+    /// the retained whitelist of a registered repository in this queue's
+    /// folder (FIX 4299); a batch it accepts is never revoked by a later
+    /// whitelist change.
     pub(super) fn enqueue_checked<R>(
         &self,
         proposals: Vec<MergeProposal>,
@@ -67,7 +72,29 @@ impl MergeQueue<'_> {
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
         let mut batch = self.queued_batch(&mut queue, proposals)?;
-        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
+        let locator = self.repo.repo_ref().locator();
+        let changed: Vec<String> = batch
+            .proposals
+            .iter()
+            .flat_map(|proposal| &proposal.files)
+            .flat_map(|file| {
+                let renamed = file
+                    .metadata_edit
+                    .as_ref()
+                    .and_then(|edit| edit.new_path.clone());
+                std::iter::once(file.path.clone()).chain(renamed)
+            })
+            .collect();
+        let saved = self.save_checked(&queue, &mut batch, |txn| {
+            let accepted = admit(txn)?;
+            if accepted.is_ok() {
+                let paths = changed.iter().map(String::as_str);
+                self.vault
+                    .require_registered_edit_in_txn(txn, None, &locator, paths)?;
+            }
+            Ok(accepted)
+        })?;
+        if let Err(refused) = saved {
             return Ok(Err(refused));
         }
         Ok(Ok(batch))
@@ -303,34 +330,23 @@ impl MergeQueue<'_> {
     /// A run's survivors keep its accepted order, its predecessors and its
     /// sequence, so they wait as before and its work still lists them (FIX
     /// 7066).
+    /// The driver's survivor formation forms them (FIX 4362). The red batch
+    /// and its survivors' batch link to each other in one writer. A retry
+    /// answers that batch, or none when no member survived. It never forms
+    /// another.
     pub fn requeue_survivors(&self, id: &str) -> Result<Option<MergeBatch>> {
         let _guard = lock_repository(self.repo.common_dir())?;
-        let batch = self.batch(id)?;
-        let quarantine = batch
-            .quarantine
-            .ok_or_else(|| invalid("batch has not been diagnosed"))?;
-        if self.queue()?.pointers.head != batch.expected_head {
-            return Err(Error::ConcurrentWrite(
-                "survivors need a newly reviewed base",
-            ));
+        match self.form_survivors(id, SurvivorCaller::Owner)? {
+            SurvivorFormation::Decided {
+                link: QueueSurvivorLink::Batch(child),
+                ..
+            } => self.batch(&child).map(Some),
+            SurvivorFormation::Decided {
+                link: QueueSurvivorLink::Empty,
+                ..
+            } => Ok(None),
+            SurvivorFormation::Refused(refusal) => Err(refusal.owner_error()),
         }
-        let survivors: Vec<_> = batch
-            .proposals
-            .into_iter()
-            .filter(|p| !quarantine.proposal_ids.contains(&p.id))
-            .collect();
-        if survivors.is_empty() {
-            return Ok(None);
-        }
-        let mut queue = self.queue()?;
-        self.require_current(&queue)?;
-        self.require_clean(self.repo.repo_root())?;
-        validate_proposals(&survivors, &queue.pointers.green)?;
-        let run_order = survivor_run_order(batch.run_order, &survivors);
-        let mut child = self.queued_batch(&mut queue, survivors)?;
-        child.run_order = run_order;
-        self.save(&queue, &[&child])?;
-        Ok(Some(child))
     }
 
     /// Abandon only unlanded work. Landing/rollback intents require recovery.
