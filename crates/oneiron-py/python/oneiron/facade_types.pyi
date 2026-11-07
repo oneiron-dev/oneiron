@@ -10277,7 +10277,7 @@ class ArchiveDeleteBatchResult(TypedDict):
     entries: list[ArchiveDeleteConfirmEntry]
 class UsageRepairListRequest(TypedDict):
     ...
-UndecodableUsageReason = Literal["stored_event_decode_failed"]
+UndecodableUsageReason = Literal["stored_event_decode_failed", "stored_pending_decode_failed"]
 class UndecodableUsageRow(TypedDict):
     rowRef: str
     byteLength: int
@@ -10288,7 +10288,7 @@ class UndecodableUsageList(TypedDict):
 class UsageRepairRemoveRequest(TypedDict):
     rowRef: str
     expectedHash: str
-UsageRepairReason = Literal["undecodable_event_removed"]
+UsageRepairReason = Literal["undecodable_event_removed", "undecodable_pending_removed"]
 class UsageRepairAuthorityOwner(TypedDict):
     kind: Literal["owner"]
     ref: str

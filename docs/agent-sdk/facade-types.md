@@ -4064,7 +4064,7 @@ export type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] }
 /** `oneiron::memory::usage_repair::UsageRepairListRequest` */
 export type UsageRepairListRequest = Record<string, never>
 /** `oneiron::memory::usage_repair::UndecodableUsageReason` */
-export type UndecodableUsageReason = "stored_event_decode_failed"
+export type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed"
 /** `oneiron::memory::usage_repair::UndecodableUsageRow` */
 export type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason }
 /** `oneiron::memory::usage_repair::UndecodableUsageList` */
@@ -4072,7 +4072,7 @@ export type UndecodableUsageList = { events: UndecodableUsageRow[] }
 /** `oneiron::memory::usage_repair::UsageRepairRemoveRequest` */
 export type UsageRepairRemoveRequest = { rowRef: string; expectedHash: string }
 /** `oneiron::memory::usage_repair::UsageRepairReason` */
-export type UsageRepairReason = "undecodable_event_removed"
+export type UsageRepairReason = "undecodable_event_removed" | "undecodable_pending_removed"
 /** `oneiron::memory::usage_repair::UsageRepairAuthority` */
 export type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string }
 /** `oneiron::memory::usage_repair::UsageRepairSurface` */
