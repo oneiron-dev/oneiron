@@ -26073,17 +26073,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/deletion/legal_hold/pending_delete.rs",
-     "purpose": "The owner's plain delete of a record only secret orders keep (OF-470 C2, C4, FIX 1465): \"erase confirmed…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -26115,7 +26104,7 @@
      "path": "src/deletion/legal_hold/types.rs",
      "purpose": "The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling…",
      "surface": {
-      "const": 7,
+      "const": 5,
       "enum": 8,
       "fn": 5,
       "struct": 6
@@ -74470,7 +74459,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 38
      }
     },
     {
@@ -74480,7 +74469,7 @@
      "path": "src/store/legal_hold/notice.rs",
      "purpose": "What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -74488,9 +74477,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/pending.rs",
-     "purpose": "An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's…",
+     "purpose": "An owner-confirmed erase that waits on a shared vault's veto window (OF-470 C4, FIX 9781)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -92412,7 +92401,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 65,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93548,7 +93537,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6602,
+   "source_files": 6601,
    "test_files": 895
   },
   "oneiron-android": {
@@ -117562,16 +117551,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/memory/owner_delete.rs",
-     "purpose": "The owner's own named delete through `/v1/core/memory/verbs` (FIX 1465)",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/api/memory/watch.rs",
      "purpose": "—",
      "surface": {
@@ -131311,7 +131290,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 700,
+     "files": 699,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131831,7 +131810,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1678,
+   "source_files": 1677,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
