@@ -240,8 +240,8 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
         in_flight.push(
             crate::engine_thread("mcp-bridge-call".into())
                 .spawn(move || {
-                    if let Some(answer) = bridge.answer(line) {
-                        emit_answer(&stdout, answer);
+                    if let Some(answer) = bridge.answer(&line) {
+                        emit(&stdout, &answer);
                     }
                 })
                 .expect("failed to spawn thread"),
@@ -258,18 +258,6 @@ fn emit(stdout: &Mutex<io::Stdout>, line: &str) {
     let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
     // A client that closed its end has gone; there is no one left to tell.
     let _ = writeln!(stdout, "{line}").and_then(|()| stdout.flush());
-}
-
-fn emit_answer(stdout: &Mutex<io::Stdout>, answer: Result<Value, String>) {
-    match answer {
-        Ok(answer) => {
-            let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
-            if serde_json::to_writer(&mut *stdout, &answer).is_ok() {
-                let _ = writeln!(stdout).and_then(|()| stdout.flush());
-            }
-        }
-        Err(refusal) => emit(stdout, &refusal),
-    }
 }
 
 /// One stdin line, read without holding more than [`MAX_FRAME_BYTES`] of it.
@@ -413,29 +401,29 @@ impl Bridge {
 
     /// One stdin line in, at most one stdout line out. A notification (no
     /// `id`) is forwarded and never answered, as JSON-RPC 2.0 requires.
-    fn answer(&self, line: String) -> Option<Result<Value, String>> {
-        let mut message: Value = match serde_json::from_str(&line) {
+    fn answer(&self, line: &str) -> Option<String> {
+        let mut message: Value = match serde_json::from_str(line) {
             Ok(message) => message,
             Err(error) => {
-                return Some(Err(rpc_error(
+                return Some(rpc_error(
                     &Value::Null,
                     -32700,
                     "parse_error",
                     &format!("the message is not JSON: {error}"),
                     None,
-                )));
+                ));
             }
         };
         // A batch, or anything but one object, is not a message this MCP
         // revision sends; answered here, it spends no holder proof.
         if !message.is_object() {
-            return Some(Err(rpc_error(
+            return Some(rpc_error(
                 &Value::Null,
                 -32600,
                 "invalid_request",
                 "send one JSON-RPC message object per line",
                 None,
-            )));
+            ));
         }
         // One deadline for the whole request, the endpoint probe included:
         // the called tool's own entry when `--tool-timeout-secs` names it,
@@ -453,7 +441,7 @@ impl Bridge {
                 .unwrap_or_else(mint_invocation)
         })
         .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
-        .unwrap_or_else(|| line.into_bytes());
+        .unwrap_or_else(|| line.as_bytes().to_vec());
         let sent = message
             .pointer("/params/_meta")
             .and_then(|meta| meta.get(INVOCATION_META))
@@ -471,11 +459,11 @@ impl Bridge {
                 if let Some(offered) = offered {
                     self.client_session.note_initialize(offered, &answer);
                 }
-                Ok(answer)
+                answer.to_string()
             }
             // No answer from the server is no proof the call finished, so
             // the memory keeps what it holds.
-            Err(refusal) => Err(refusal.rpc_error(&id, &self.auth)),
+            Err(refusal) => refusal.rpc_error(&id, &self.auth),
         })
     }
 
