@@ -216,9 +216,14 @@ batch's ordinals; one acknowledgement never covers another batch or the order.
 The worker takes the LMDB writer briefly as a barrier before each read, so a
 wake from a writer that has not yet committed is never read early.
 
-Managed stop does not end a prospective connection at its trigger: every
-other legal capture ends and joins at the start of teardown, while prospective
-connections keep draining. After every writer of the process has stopped and
+Managed stop does not end a prospective connection or a live-session
+capture's connection at its trigger: every other legal capture ends and joins
+at the start of teardown, while those are kept. Once every admitted write has
+ended, managed stop closes every off-record session as an explicit close does,
+before the final drain: a session a live order covers has its written spill
+captured for that order before its bodies go, or, when that order's HOST has
+no working attempt and so no retry can come, that order's capture ends
+interrupted and is never reported as captured, and the close goes on. After every writer of the process has stopped and
 before the vault closes, the final drain runs: each attached prospective
 connection drains its outbox to empty under the writer barrier and sends one
 last batch, possibly empty, whose summary carries `final_next_ordinal`, the

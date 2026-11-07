@@ -71,6 +71,13 @@ impl HostLegalConnection {
         self.stream.set_read_timeout(deadline)?;
         self.stream.set_write_timeout(deadline)?;
         if matches!(&request.scope, CaptureScope::LiveSession(_)) {
+            // Teardown's stop trigger leaves this stream open for the
+            // off-record session close; one it already closed never registers.
+            if !self.role.claim_live() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
             return self.run_live(vault, request, public);
         }
         if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
