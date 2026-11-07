@@ -129630,7 +129630,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "fn": 16,
       "re-export": 1,
       "struct": 1
