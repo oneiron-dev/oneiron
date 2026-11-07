@@ -97,6 +97,7 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
         MemoryError::bad_request("the verb input could not be read for the records it names")
     })?;
     let refs = record_references_at(&value, pointers);
+    let refs = without_archived_evidence_subject(memory, row, &value, refs)?;
     match validate_record_references(memory, &refs) {
         Ok(()) => Ok(()),
         Err(ReferenceRefusal::Read(error)) => Err(error),
@@ -114,6 +115,80 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
             Err(invented_reference(&pointer, recorded))
         }
     }
+}
+
+/// The one slot that may name a record a cleanup archive filed away (FIX
+/// 21997): the subject of the resolver's confidence evidence, a
+/// `provider.enrichment` CLAIM. ARCH-0073 §6 keeps the archive visible to
+/// entity resolution, and a re-mention restores the same record from that
+/// evidence (`ingest::resolution`), so the vault owner writes it on the
+/// archived subject without restoring it. Every other row, slot and
+/// predicate keeps the live-read rule.
+const ARCHIVED_EVIDENCE_SLOT: (&str, &str) = ("vault.claims.upsert", "/subject_ref");
+
+/// `refs` less the archived subject [`ARCHIVED_EVIDENCE_SLOT`] admits:
+/// `input` is resolver confidence evidence and
+/// [`archived_subject_admitted`] holds for its subject. A live subject, and
+/// every other ref, stays to be read as before.
+fn without_archived_evidence_subject(
+    memory: &Memory<'_>,
+    row: &str,
+    input: &Value,
+    refs: Vec<NamedRecordRef>,
+) -> MemoryResult<Vec<NamedRecordRef>> {
+    let (slot_row, slot_pointer) = ARCHIVED_EVIDENCE_SLOT;
+    if row != slot_row
+        || input.get("predicate").and_then(Value::as_str)
+            != Some(crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT)
+    {
+        return Ok(refs);
+    }
+    let mut kept = Vec::with_capacity(refs.len());
+    for named in refs {
+        if named.pointer == slot_pointer && archived_subject_admitted(memory, &named.reference)? {
+            continue;
+        }
+        kept.push(named);
+    }
+    Ok(kept)
+}
+
+/// Whether `reference` names a record the vault owner's own read would
+/// admit but for its cleanup archive (FIX 21997): the writer reads as the
+/// vault owner, the record's row is stored, its archive marker is a cleanup
+/// archive, and nothing else withholds its words (no removal, stale mark,
+/// legal-hold use limit or withdrawn source; `raw_exportable_in_txn`). An
+/// unresolvable ref names no such record and stays for the ordinary refusal.
+fn archived_subject_admitted(memory: &Memory<'_>, reference: &str) -> MemoryResult<bool> {
+    let owner = memory
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)?
+        .actor_key()
+        .reads_as_vault_owner();
+    if !owner {
+        return Ok(false);
+    }
+    let vault = memory.vault();
+    let Ok(id) = crate::vault::entity_refs::resolve_entity_ref(vault, reference) else {
+        return Ok(false);
+    };
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let cleanup_archive = vault
+        .archive_tombstone_in_txn(&txn, &id)?
+        .is_some_and(|marker| {
+            marker.reason == Some(crate::deletion::TombstoneReason::ArchivedByCleanup)
+        });
+    if !cleanup_archive {
+        return Ok(false);
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? else {
+        return Ok(false);
+    };
+    Ok(crate::ports::raw_exportable_in_txn(
+        &vault.store,
+        &txn,
+        &id,
+        &raw,
+    )?)
 }
 
 /// The refusal a write naming an unresolved record ref gets: the field
