@@ -167,10 +167,27 @@ impl EngineNativeExecutor<'_> {
             // runs as the JavaScript Oxc prints for it, kept beside the
             // program with its map and Oxc pin; JavaScript runs as written.
             let prepared = prepare_source(&script);
+            // Feedback mode checks the program as its author wrote it, on
+            // its own thread, while the program runs: nothing waits on the
+            // check or is refused for it (FIX 8277). It starts once the
+            // program is, so every way out of the step from here, a failure
+            // before the program runs included, leaves its feedback, its
+            // preparation note included (FIX 9046).
+            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
             match &pending {
-                Some(pending) => check_pending_preparation(pending, &prepared)?,
+                Some(pending) => {
+                    self.kept(&checking, check_pending_preparation(pending, &prepared))?;
+                }
                 None => {
-                    record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
+                    self.kept(
+                        &checking,
+                        record_prepared_source(
+                            &self.storage,
+                            &mut record,
+                            completed_steps,
+                            &prepared,
+                        ),
+                    )?;
                 }
             }
             let bridge_start = record.bridge_calls.len();
@@ -182,20 +199,31 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
-            self.gated_write.observe_consumed_code_replies(&record)?;
-            let recoverable = self.observation_refs(&record)?;
-            let mut host = RecordingJsHost::new(
-                self.gated_write,
-                config.run_id,
-                bridge_start as u64,
-                config.determinism,
-                self.legibility,
-            )
-            .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model)
-            .with_result_share(&self.result_share)
-            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps))
-            .with_deadline_replay(replay);
+            self.kept(
+                &checking,
+                self.gated_write.observe_consumed_code_replies(&record),
+            )?;
+            let recoverable = self.kept(&checking, self.observation_refs(&record))?;
+            let mut host = self
+                .kept(
+                    &checking,
+                    RecordingJsHost::new(
+                        self.gated_write,
+                        config.run_id,
+                        bridge_start as u64,
+                        config.determinism,
+                        self.legibility,
+                    )
+                    .with_recoverable_outputs(
+                        &self.storage,
+                        &record,
+                        recoverable,
+                    ),
+                )?
+                .with_skill_executor(&config.model)
+                .with_result_share(&self.result_share)
+                .with_callable_checks(CallableChecks::new(self.code_check, completed_steps))
+                .with_deadline_replay(replay);
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -203,11 +231,6 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            // Feedback mode checks the program as its author wrote it, on
-            // its own thread, while the program runs: nothing waits on the
-            // check or is refused for it (FIX 8277). Every way out of the
-            // step leaves its feedback, its preparation note included.
-            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
             let step_outcome = self
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
