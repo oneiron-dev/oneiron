@@ -19,7 +19,9 @@ impl EngineNativeExecutor<'_> {
     /// The complete rows this step's request was read from, or `None` when
     /// any constituent lacks a witness (FIX 6999). The host-built task and
     /// browser-handoff evidence stay unknown today; the other sets are real
-    /// witnesses, ready for their later carriers to complete the union.
+    /// witnesses, ready for their later carriers to complete the union. The
+    /// self brief the request carries brings the rows its host listed beside
+    /// it (FIX 17594), and a request with none brings none.
     pub(super) fn step_source_rows(
         &self,
         config: &EngineExecutorConfig,
@@ -50,6 +52,7 @@ impl EngineNativeExecutor<'_> {
                 .map(|(row, _)| row.summary_id())
                 .collect::<Vec<_>>()
         });
+        let brief_rows = Some(self.brief_source_rows());
         // Browser planner handoff evidence has no row witness yet (FIX 6999).
         let browser_rows: Option<Vec<EntityId>> = None;
         // The records each fold summary the request copies was written from
@@ -65,6 +68,7 @@ impl EngineNativeExecutor<'_> {
             exposure_rows,
             bridge_rows,
             epoch_rows,
+            brief_rows,
             browser_rows,
             fold_rows,
         ])

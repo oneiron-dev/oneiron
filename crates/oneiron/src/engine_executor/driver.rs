@@ -1,5 +1,6 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
+use super::self_brief::{FoldBoundary, NativeBrief, SelfBriefPort};
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, FoldWordRef, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
@@ -40,6 +41,9 @@ pub struct EngineNativeExecutor<'a> {
     /// This attempt's steps' checks, as they stand (FIX 8277). Kept while
     /// the step's host still reads the run's storage.
     pub(super) step_checks: std::sync::Mutex<Vec<std::sync::Arc<super::code_check::StepCell>>>,
+    /// The host's self-brief port for this run, when it lends one (FIX
+    /// 17594), with the prefix the run's requests carry.
+    pub(super) self_brief: Option<NativeBrief<'a>>,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -80,6 +84,7 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
+            self_brief: None,
             next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -127,6 +132,7 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
+            self_brief: None,
             next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -156,6 +162,17 @@ impl<'a> EngineNativeExecutor<'a> {
     #[must_use]
     pub fn with_code_check(mut self, feedback: &'a super::code_check::TypeFeedback) -> Self {
         self.code_check = Some(feedback);
+        self
+    }
+
+    /// Binds the host's self-brief port (FIX 17594, delivery slice D2): each
+    /// model request of the run carries the brief it prepares, as one
+    /// message right after the task, from the run's first request in this
+    /// executor and again past each fold batch the run commits. With none
+    /// bound, a request carries no brief.
+    #[must_use]
+    pub fn with_self_brief(mut self, port: &'a dyn SelfBriefPort) -> Self {
+        self.self_brief = Some(NativeBrief::new(port));
         self
     }
 
@@ -300,6 +317,16 @@ impl<'a> EngineNativeExecutor<'a> {
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         self.output_context.compact_span(request.turn_start, last);
+        // FIX 17594 (Engine call B): the committed swap is a brief boundary,
+        // named by the epoch, summary and steps it committed. Both the seat's
+        // landing and `integrate_compaction` land here.
+        self.brief_fold_committed(FoldBoundary::Epoch {
+            run_id,
+            epoch: plan.epoch,
+            summary_id: plan.summary_id,
+            first_step: request.turn_start,
+            last_step: last,
+        });
         Ok(plan)
     }
 

@@ -196,6 +196,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(reply_occurrences(&record));
+            release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Its bodies are held by its owner row's run (a decoded
             // record's `run_id`), which need not be the replay key.
@@ -301,6 +302,7 @@ fn release_reply_outputs_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<()> {
+    release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
     for (owner, path, handle) in reply_occurrences(record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
@@ -444,6 +446,23 @@ fn retire_released_outputs_in_txn(
     for (owner, digests) in released {
         let digests: Vec<_> = digests.into_iter().collect();
         crate::store::erase_bodies_in_txn(store, wtxn, &owner, &digests)?;
+    }
+    Ok(())
+}
+
+/// Removes byte-free, unpublished occurrences when the run's replies are erased.
+fn release_unpublished_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+) -> Result<()> {
+    for body in crate::provenance::body::owned_bodies_in_txn(store, wtxn, &owner)? {
+        if matches!(
+            body.state,
+            crate::store::body_descriptor::BodyState::Incomplete { retained: None }
+        ) {
+            release_body_in_txn(store, wtxn, &owner, &body.occurrence)?;
+        }
     }
     Ok(())
 }
