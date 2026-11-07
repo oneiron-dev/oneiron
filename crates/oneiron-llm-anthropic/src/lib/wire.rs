@@ -381,7 +381,7 @@ pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let cache_read = u64_field(usage, "cache_read_input_tokens");
     let cache_write = u64_field(usage, "cache_creation_input_tokens");
     let output_tokens = u64_field(usage, "output_tokens");
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             // The common input total includes cached tokens; the wire
             // reports uncached input separately.
@@ -398,7 +398,26 @@ pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    let measured_input = usage
+        .get("input_tokens")
+        .and_then(JsonValue::as_u64)
+        .zip(
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .zip(
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .and_then(|((input, read), write)| input.checked_add(read)?.checked_add(write));
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: measured_input,
+        output: usage.get("output_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// The finish of a reply whose provider reported none.
