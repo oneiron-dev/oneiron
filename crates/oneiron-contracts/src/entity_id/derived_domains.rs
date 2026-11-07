@@ -63,6 +63,12 @@ pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.a
 /// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
 pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
 
+/// The run id of one shared agent action (`code_run::actions::execution`,
+/// FIX 9702). Parts: the actor, the verb id, the idempotency key, then for a
+/// live run's action `live-run`, the attempt id and its try count (u32
+/// big-endian).
+pub const SHARED_ACTION: &[u8] = b"oneiron:shared-action:v1";
+
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
