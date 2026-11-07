@@ -15627,11 +15627,11 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/transition/event.rs",
-     "purpose": "Canonical bounded MessagePack and Ed25519 proof for claim transition events",
+     "purpose": "Canonical MessagePack and Ed25519 proof for claim transition events",
      "surface": {
       "crate-vis": 10
      }
@@ -41924,7 +41924,7 @@
      "path": "src/identity_topology/op_vocabulary.rs",
      "purpose": "The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 1,
       "struct": 6
@@ -42079,7 +42079,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 1,
-      "crate-vis": 75,
+      "crate-vis": 77,
       "re-export": 1
      }
     },
