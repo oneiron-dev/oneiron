@@ -4,43 +4,60 @@ use super::*;
 
 impl Vault {
     /// The export-first removal archives delivered to `member` that are still
-    /// within their term at `now`.
+    /// within their term at `now`, as their rows keep them: metadata and the
+    /// file each names ([`Self::removal_export_copies_in_txn`] reads them).
     pub(crate) fn removal_exports_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         member: EntityId,
         now: u64,
-    ) -> Result<Vec<RemovalExportCopy>> {
+    ) -> Result<Vec<removal_archive::StoredRemovalExport>> {
         let prefix = removal_export_key(&member.to_hex(), "");
         Ok(REMOVAL_EXPORT
             .scan_from(&self.store, txn, prefix.as_bytes())?
             .into_iter()
-            .map(|(_, stored)| stored.copy)
-            .filter(|copy| now < copy.expires_at)
+            .map(|(_, stored)| stored)
+            .filter(|stored| now < stored.copy.expires_at)
             .collect())
     }
 
     /// The archive the removal receipt `receipt_id` delivered to `member`,
-    /// while it is within its term at `now`; `None` after it, or when that
-    /// removal delivered `member` none.
+    /// while it is within its term at `now`, as its row keeps it; `None`
+    /// after it, or when that removal delivered `member` none.
     pub(crate) fn removal_export_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         member: EntityId,
         receipt_id: EntityId,
         now: u64,
-    ) -> Result<Option<RemovalExportCopy>> {
+    ) -> Result<Option<removal_archive::StoredRemovalExport>> {
         let row_key = removal_export_key(&member.to_hex(), &receipt_id.to_hex());
         Ok(REMOVAL_EXPORT
             .get(&self.store, txn, &row_key)?
-            .map(|stored| stored.copy)
-            .filter(|copy| now < copy.expires_at))
+            .filter(|stored| now < stored.copy.expires_at))
     }
 
-    /// Drops every export-first removal archive past its term. It reads
-    /// first and opens a writer only when one has expired; the writer checks
-    /// each again, so an archive a re-run delivered anew in between stays. It
-    /// answers how many it dropped.
+    /// The copies of `kept` the removed Owner proving the mint's own key
+    /// takes, each read from its archive's file in `txn` (FIX 3679).
+    pub(crate) fn removal_export_copies_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kept: Vec<removal_archive::StoredRemovalExport>,
+    ) -> Result<Vec<RemovalExportCopy>> {
+        let mut copies = Vec::with_capacity(kept.len());
+        for stored in kept {
+            if let Some(copy) = self.removal_export_copy_in_txn(txn, stored, None)? {
+                copies.push(copy);
+            }
+        }
+        Ok(copies)
+    }
+
+    /// Drops every export-first removal archive past its term, its file
+    /// released for the collector (FIX 3679). It reads first and opens a
+    /// writer only when one has expired; the writer checks each again, so an
+    /// archive a re-run delivered anew in between stays. It answers how many
+    /// it dropped.
     pub(crate) fn drop_expired_removal_exports(&self) -> Result<usize> {
         let expired: Vec<String> = {
             let txn = self.store.env.read_txn()?;
@@ -64,6 +81,9 @@ impl Vault {
                 .is_some_and(|stored| now >= stored.copy.expires_at);
             if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
                 self.drop_removal_deliveries_for_export_in_txn(&mut txn, row_key)?;
+                if let Some(row) = ArchiveRow::from_key(row_key) {
+                    self.release_removal_archives_in_txn(&mut txn, row, None)?;
+                }
                 dropped += 1;
             }
         }
