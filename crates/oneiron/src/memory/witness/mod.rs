@@ -6,6 +6,7 @@ mod archive;
 mod assertions;
 mod base;
 mod codec;
+mod foreign_speech;
 mod linked;
 mod program;
 mod reply_assertions;
@@ -36,11 +37,13 @@ pub(crate) use self::wake_outcome::{erase_turn_wake_label_in_txn, turn_wake_outc
 
 pub(crate) use self::archive::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_message_body,
+    archived_inline_turn_body, archived_message_body,
 };
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 pub(crate) use self::source_attribution::{

@@ -40,7 +40,7 @@ pub use learning_setting_args::{
     LearningSettingPutArgs, LearningSettingsCommand,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
+    ArchiveSpeakers, BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
     ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportFolderAttachArgs,
     ImportFolderCommand, ImportFolderListArgs, ImportFolderPathArgs, ImportFolderRescanArgs,
     ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,

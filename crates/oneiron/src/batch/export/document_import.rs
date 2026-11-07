@@ -13,9 +13,9 @@ use super::archive_index::{
     QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
 };
 use super::{
-    ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
-    ExportEpochFloor, ExportResultBody, ExportRun, ExportSkillBundle, WholeVaultDocument,
-    WholeVaultImportReceipt,
+    ArchiveFiles, ArchiveRecordKind, ArchiveSpeakers, ExportDerivationEnvelope, ExportEdge,
+    ExportEntity, ExportEpochFloor, ExportResultBody, ExportRun, ExportSkillBundle,
+    WholeVaultDocument, WholeVaultImportReceipt,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -77,6 +77,18 @@ impl Vault {
     /// local author edge; the TURN and CONVERSATION they join are stamped
     /// `import_source = "archive"`.
     ///
+    /// `speakers` says whose words the archive's conversations hold (FIX
+    /// 15412); the caller names it, and nothing in the archive decides it.
+    /// [`ArchiveSpeakers::Own`] keeps every author and speaker.
+    /// [`ArchiveSpeakers::Foreign`] makes each `user` or `companion` MESSAGE,
+    /// its TURN and each conversational TURN with no MESSAGE speak as a
+    /// `counterparty`, the original author in `metadata.import.source_author`
+    /// and the original speaker in the TURN's `import_speaker`; `system` rows
+    /// stay, no author edge is linked and no PERSON minted. An archive
+    /// imported again with the same choice is an exact repeat; with the
+    /// other, its speech rows already here are refused by name, never
+    /// rewritten. The receipt records the choice.
+    ///
     /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
     /// notes, other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
@@ -87,8 +99,12 @@ impl Vault {
     /// The archive's embedding setup (OF-370) declares the spaces and binds the
     /// slots this vault lacks; it never overwrites this vault's own setup, and
     /// a conflict with it is reported, never a refusal of the import.
-    pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_from(std::io::Cursor::new(bytes))
+    pub fn import_whole_vault_archive(
+        &self,
+        bytes: &[u8],
+        speakers: ArchiveSpeakers,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_from(std::io::Cursor::new(bytes), speakers)
     }
 
     /// [`Self::import_whole_vault_archive`] from a file or other seekable
@@ -99,8 +115,9 @@ impl Vault {
     pub fn import_whole_vault_archive_from<R: Read + Seek>(
         &self,
         source: R,
+        speakers: ArchiveSpeakers,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, None)
+        self.import_whole_vault_archive_as(source, None, speakers)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
@@ -111,8 +128,13 @@ impl Vault {
         &self,
         bytes: &[u8],
         actor: &WriteActor,
+        speakers: ArchiveSpeakers,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_from_with_actor(std::io::Cursor::new(bytes), actor)
+        self.import_whole_vault_archive_from_with_actor(
+            std::io::Cursor::new(bytes),
+            actor,
+            speakers,
+        )
     }
 
     /// [`Self::import_whole_vault_archive_with_actor`] from a seekable source,
@@ -121,14 +143,16 @@ impl Vault {
         &self,
         source: R,
         actor: &WriteActor,
+        speakers: ArchiveSpeakers,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, Some(actor))
+        self.import_whole_vault_archive_as(source, Some(actor), speakers)
     }
 
     fn import_whole_vault_archive_as<R: Read + Seek>(
         &self,
         source: R,
         actor: Option<&WriteActor>,
+        speakers: ArchiveSpeakers,
     ) -> Result<WholeVaultImportReceipt> {
         let scratch = self
             .store
@@ -240,7 +264,11 @@ impl Vault {
                 // A file-plane ASSET compares as its body, never the manifest
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
-                if matches_row(&row, &existing, &row.body) {
+                // FIX 15412: under foreign speakers a MESSAGE or TURN stored
+                // here as it came is this vault's own speech, never a repeat.
+                let speech = matches!(row.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN);
+                let foreign_speech = speech && speakers == ArchiveSpeakers::Foreign;
+                if !foreign_speech && matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
@@ -251,7 +279,7 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(&row, &archive.index, &archive.files)?;
+                let body = imported_body(self, &row, &archive.index, &archive.files, speakers)?;
                 if matches_row(
                     &row,
                     &existing,
@@ -266,6 +294,9 @@ impl Vault {
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
+                }
+                if speech {
+                    refuse_other_speakers(self, &row, &existing, &archive, speakers)?;
                 }
                 return Err(invalid("import ID collides with different entity data"));
             }
@@ -304,7 +335,7 @@ impl Vault {
             } else {
                 dependencies(
                     row.entity_type,
-                    &imported_body(&row, &archive.index, &archive.files)?,
+                    &imported_body(self, &row, &archive.index, &archive.files, speakers)?,
                 )?
             };
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
@@ -361,7 +392,15 @@ impl Vault {
                     }
                     _ => {
                         let projects = projects.as_ref();
-                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects, &assets)?;
+                        insert_ready_row(
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                            id,
+                            projects,
+                            &assets,
+                            speakers,
+                        )?;
                         (Vec::new(), 0)
                     }
                 };
@@ -485,6 +524,7 @@ impl Vault {
         }
         Ok(WholeVaultImportReceipt {
             authority,
+            speakers,
             inserted_entities,
             unchanged_entities,
             archived_receipt_sources,
@@ -546,6 +586,7 @@ fn insert_ready_row<R: Read + Seek>(
     id: EntityId,
     projects: Option<&ProjectRootMap>,
     assets: &super::asset_reserve::ArchiveAssets,
+    speakers: ArchiveSpeakers,
 ) -> Result<()> {
     if !archive.index.remove(Tag::Pending, id.as_bytes())? {
         return Err(Error::InvariantViolation("import queue lost row"));
@@ -575,7 +616,7 @@ fn insert_ready_row<R: Read + Seek>(
         vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged)?;
         return stamp_archived_birth(vault, wtxn, archive, &id);
     }
-    let body = imported_body(&row, &archive.index, &archive.files)?;
+    let body = imported_body(vault, &row, &archive.index, &archive.files, speakers)?;
     let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
@@ -1502,11 +1543,15 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
 /// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
-/// by its owning adapter without carrying a foreign owner approval.
+/// by its owning adapter without carrying a foreign owner approval. A
+/// MESSAGE, and the TURN it or no MESSAGE joins, speaks as `speakers` says
+/// (FIX 15412), read with this vault's assistant names.
 fn imported_body(
+    vault: &Vault,
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
     files: &dyn ArchiveFiles,
+    speakers: ArchiveSpeakers,
 ) -> Result<Vec<u8>> {
     let bytes = row.body.to_bytes_in(files)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
@@ -1557,15 +1602,58 @@ fn imported_body(
                 &parse_id(&row.id)?,
                 EdgeKind::AuthoredBy,
             )?;
-            crate::memory::archived_message_body(&bytes, &bylines)
+            crate::memory::archived_message_body(&bytes, &bylines, speakers)
         }
         ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
             if index.contains(Tag::MessageContainer, parse_id(&row.id)?.as_bytes())? =>
         {
-            crate::memory::archived_container_body(row.entity_type, &bytes)
+            crate::memory::archived_container_body(
+                row.entity_type,
+                &bytes,
+                speakers,
+                &vault.config.assistant_display_names,
+            )
+        }
+        // FIX 15412: a foreign archive's conversational TURN no MESSAGE
+        // joins, its words inline, speaks as a counterparty too.
+        ENTITY_TYPE_TURN if speakers == ArchiveSpeakers::Foreign => {
+            crate::memory::archived_inline_turn_body(&bytes, &vault.config.assistant_display_names)
         }
         _ => Ok(bytes),
     }
+}
+
+/// FIX 15412: refuses archived MESSAGE or TURN `row`, which collides with
+/// the row stored here as `existing`, by name when the other speaker choice
+/// explains the collision: an import with own speakers meets a row foreign
+/// speakers made; one with foreign speakers meets a row own speakers made, or
+/// this vault's own row stored as it came. The stored row stays as it is.
+fn refuse_other_speakers<R: Read + Seek>(
+    vault: &Vault,
+    row: &ExportEntity,
+    existing: &[u8],
+    archive: &IndexedArchive<'_, R>,
+    speakers: ArchiveSpeakers,
+) -> Result<()> {
+    let other = match speakers {
+        ArchiveSpeakers::Own => ArchiveSpeakers::Foreign,
+        ArchiveSpeakers::Foreign => ArchiveSpeakers::Own,
+    };
+    let made = imported_body(vault, row, &archive.index, &archive.files, other)?;
+    let made = ExportBody::from_bytes(&made, row.entity_type);
+    let as_it_came = speakers == ArchiveSpeakers::Foreign && matches_row(row, existing, &row.body);
+    let explained = as_it_came || matches_row(row, existing, &made);
+    if !explained {
+        return Ok(());
+    }
+    Err(invalid(match speakers {
+        ArchiveSpeakers::Own => {
+            "archived speech is already here with foreign speakers; this import names own speakers"
+        }
+        ArchiveSpeakers::Foreign => {
+            "archived speech is already here with own speakers; this import names foreign speakers"
+        }
+    }))
 }
 
 /// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive

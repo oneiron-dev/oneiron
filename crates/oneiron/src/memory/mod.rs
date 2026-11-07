@@ -412,8 +412,10 @@ pub(crate) use support::{
 };
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_message_body,
+    archived_inline_turn_body, archived_message_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
     witness_message_body,
