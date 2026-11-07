@@ -35,6 +35,8 @@ pub(super) fn validate_critique_artifact(artifact: &CritiqueArtifact) -> Result<
     if let Some(prediction) = &artifact.prediction {
         prediction.validate(artifact.created_at)?;
     }
+    // Every ref a critique cites is kept and checked; their count refuses
+    // nothing (FIX 9939).
     for evidence_ref in &artifact.evidence_refs {
         validate_text(evidence_ref, MAX_EVIDENCE_REF_BYTES, "evidence_ref")?;
     }

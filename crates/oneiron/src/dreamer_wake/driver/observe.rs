@@ -125,6 +125,7 @@ impl DreamerWakeDriver<'_> {
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
+            input.destination_bound.as_ref(),
             &self.deadline,
             cancel,
         )?
