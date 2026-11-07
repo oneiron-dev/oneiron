@@ -11,7 +11,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::read_join::{DefinitionRows, FileRow, SnapshotRows, file_absent};
+use super::read_join::{DefinitionRows, FileRow, RepoReadSelection, SnapshotRows, file_absent};
 use super::work::{RepoOwnWork, resolve_repo_queue_target, snapshot_file, work_view};
 use super::{
     NO_PATHS, RepoMergeQueueObserveInput, RepoMergeQueueObserveOutput, RepoRunAdmitted,
@@ -41,7 +41,9 @@ impl Memory<'_> {
         input: RepoSnapshotsGetInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsGetOutput>> {
         let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let join = self.repo_read_join_for_run(binding, &target, &input.snapshot, SnapshotRows)?;
+        let portable = input.portable_repo.as_ref();
+        let join =
+            self.repo_read_join_for_run(binding, &target, portable, &input.snapshot, SnapshotRows)?;
         let bounds = &join.admitted.membership.bounds;
         // A run reads repo bytes masked (FIX 7608): each marked file names
         // the copy its read returns.
@@ -62,7 +64,7 @@ impl Memory<'_> {
             .collect();
         Ok(RepoRunAnswer {
             output: RepoSnapshotView {
-                repo: input.repo,
+                repo: join.selected,
                 git_ref: input.git_ref,
                 commit: join.commit,
                 snapshot: input.snapshot,
@@ -84,9 +86,16 @@ impl Memory<'_> {
         input: RepoSnapshotsReadInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsReadOutput>> {
         let target = repo_target(input.repo, &input.git_ref, [input.path.as_str()]);
-        let join =
-            self.repo_read_join_for_run(binding, &target, &input.snapshot, FileRow(&input.path))?;
+        let portable = input.portable_repo.as_ref();
+        let join = self.repo_read_join_for_run(
+            binding,
+            &target,
+            portable,
+            &input.snapshot,
+            FileRow(&input.path),
+        )?;
         let mount = &join.mount;
+        let selection = join.selection(&target, portable);
         // A run reads repo bytes masked (FIX 7608): a marked file's
         // projection, its opaque residue found before a byte is read. A read
         // that says why asks only after its lane admits the file (FIX 8960).
@@ -105,7 +114,7 @@ impl Memory<'_> {
                         .repo_read_join_under(
                             binding,
                             &join.admitted,
-                            &target,
+                            &selection,
                             &input.snapshot,
                             FileRow(&input.path),
                         )
@@ -115,8 +124,20 @@ impl Memory<'_> {
                     }
                     Ok(())
                 };
-                let read = run_reveal_reader(self, binding, &join.admitted)
-                    .snapshot_file_read_with_why(
+                // A portable id's anchor is the admitted repo: the reveal
+                // keeps it and looks up no served anchor in its place.
+                let reader = run_reveal_reader(self, binding, &join.admitted);
+                let read = if join.portable_hit {
+                    reader.snapshot_file_read_with_why_at_repo(
+                        mount,
+                        join.selected,
+                        &input.path,
+                        input.why.as_deref(),
+                        RepoReadDoor::Text,
+                        readmit,
+                    )?
+                } else {
+                    reader.snapshot_file_read_with_why(
                         mount,
                         input.repo,
                         &input.path,
@@ -124,7 +145,8 @@ impl Memory<'_> {
                         RepoReadDoor::Text,
                         readmit,
                     )?
-                    .ok_or_else(file_absent)?;
+                }
+                .ok_or_else(file_absent)?;
                 (read.projection, read.byte_route)
             }
         };
@@ -142,7 +164,7 @@ impl Memory<'_> {
         Ok(RepoRunAnswer {
             rows: join.rows,
             output: RepoSnapshotsReadOutput {
-                repo: input.repo,
+                repo: join.selected,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
                 file,
@@ -166,13 +188,14 @@ impl Memory<'_> {
         let join = self.repo_read_join_for_run(
             binding,
             &target,
+            input.portable_repo.as_ref(),
             &input.snapshot,
             DefinitionRows(&input.name),
         )?;
         Ok(RepoRunAnswer {
             rows: join.rows,
             output: RepoSymbolsDefinitionsOutput {
-                repo: input.repo,
+                repo: join.selected,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
                 definitions: join
@@ -331,8 +354,9 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<(Vec<u8>, Vec<EntityId>)>> {
         let snapshot = bytes_to_hex_lower(&own.stamp.base_snapshot);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [path]);
+        let plain = RepoReadSelection::plain(&target);
         let Ok(join) =
-            self.repo_read_join_under(binding, &own.admitted, &target, &snapshot, FileRow(path))
+            self.repo_read_join_under(binding, &own.admitted, &plain, &snapshot, FileRow(path))
         else {
             return Ok(None);
         };
@@ -365,7 +389,7 @@ impl Memory<'_> {
             // The file's own join again: the lane still reads its ASSET and
             // the scope still holds it (FIX 4300).
             let file = self
-                .repo_read_join_under(binding, &own.admitted, &target, &snapshot, FileRow(path))
+                .repo_read_join_under(binding, &own.admitted, &plain, &snapshot, FileRow(path))
                 .map_err(|_| changed())?;
             if file.mount.code_artifact_id() != artifact {
                 return Err(changed());
