@@ -88,6 +88,7 @@ impl WireSeat {
             operation,
             parts,
             references: Vec::new(),
+            mask: None,
             params: std::collections::BTreeMap::new(),
             voice,
         }

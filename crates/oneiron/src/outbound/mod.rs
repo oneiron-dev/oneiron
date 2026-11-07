@@ -88,8 +88,8 @@ pub use self::intent::{
 pub use self::recovery_suggestions::OutboundRecoverySuggestion;
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
 pub use self::reply_job::{
-    CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
-    ConnectorReplyJobResult, ConnectorReplyStage,
+    CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_REF, CONNECTOR_REPLY_RESULT_PREFIX,
+    ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage,
 };
 pub use self::send_lookup::{EngineSendId, SENT_LOOKUP_TIMEOUT, SentLookup, SentLookupTarget};
 pub use self::send_reaper::ConnectorSendLeaseReap;
@@ -104,9 +104,10 @@ pub(crate) use self::connector_task::{
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::reply_job::{
-    connector_event_participant_ids, erase_connector_reply_bodies_by_authors_in_txn,
-    erase_connector_reply_bodies_for_events_in_txn, erase_connector_reply_job_payload,
-    erase_connector_reply_results_in_txn,
+    connector_event_participant_ids, connector_witness_rows_in_txn,
+    erase_connector_reply_bodies_by_authors_in_txn, erase_connector_reply_bodies_for_events_in_txn,
+    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+    surface_participant_ids,
 };
 pub(crate) use self::uncertain_send::{
     UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER,
