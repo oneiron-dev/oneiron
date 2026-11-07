@@ -75,9 +75,9 @@ pub(crate) use crate::store::identity_redirect_rows::{
 
 pub use crate::deletion::REDIRECT_CARRIER_CLASS;
 
-/// Maximum shell hops one resolution may walk. The path-cycle guard already
-/// makes a cycle a typed error; this bound additionally keeps a pathological
-/// (forged, or corruption-induced) chain from consuming unbounded stack.
+/// Frontier steps one outbound walk ([`outbound_redirect_heads_in_txn`])
+/// expands. A resolution has no hop bound: its walk is iterative, so no
+/// chain can exhaust the stack, and it expands each shell once (FIX 10010).
 const MAX_REDIRECT_CHAIN_DEPTH: usize = 64;
 
 /// The redirect row `entity` MUST have, derived from engine-authored truth
@@ -164,42 +164,59 @@ pub(crate) fn maintain_redirect_projection_in_txn(
 }
 
 /// Walks `id` through the projection into its head set, accumulating into
-/// `heads`.
+/// `heads` (FIX 10010).
 ///
-/// TWO INDEPENDENT guards, because neither implies the other and this walk
-/// recurses over data an attacker or a corrupt page can shape:
-/// - `path` is the ancestor set of the CURRENT walk; re-entering it is a
-///   cycle, which no door can build (the apply door refuses to shell a
-///   shell) and so is corruption. This catches cycles precisely.
-/// - `depth` is the recursion depth. It is NOT derivable from `path.len()`:
-///   on a cycle the path set stops growing while the stack keeps growing, so
-///   a `path.len()` bound is no backstop at all — losing the cycle check
-///   would overflow the stack rather than error. Depth stands alone and
-///   bounds a legitimately-deep (or adversarially-deep) acyclic chain.
+/// The walk keeps its own stack, so a legitimately deep chain resolves
+/// however many hops its head is away, and no chain an attacker or a corrupt
+/// page shapes can exhaust the thread's stack. Two sets guard it:
+/// - `path`, the shells on the current walk: re-entering one is a cycle,
+///   which no door can build (the apply door refuses to shell a shell) and so
+///   is corruption.
+/// - `done`, the ids already resolved: their heads are in `heads` already, so
+///   one met again (a diamond of splits and merges) is not walked twice, and
+///   the work is bounded by the rows the walk reads.
 fn resolve_into_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
-    depth: usize,
-    path: &mut BTreeSet<EntityId>,
     heads: &mut BTreeSet<EntityId>,
 ) -> Result<()> {
-    if depth >= MAX_REDIRECT_CHAIN_DEPTH {
-        return Err(Error::CorruptedIndex("identity redirect chain depth"));
+    let mut path = BTreeSet::new();
+    let mut done = BTreeSet::new();
+    // Each shell on the current walk, with the heads of its row left to walk.
+    let mut stack: Vec<(EntityId, std::vec::IntoIter<EntityId>)> = Vec::new();
+    let mut next = Some(*id);
+    loop {
+        if let Some(id) = next.take()
+            && !done.contains(&id)
+        {
+            match redirect_row_in_txn(store, rtxn, &id)? {
+                // Live: resolves to itself.
+                None => {
+                    heads.insert(id);
+                    done.insert(id);
+                }
+                Some(row) => {
+                    if !path.insert(id) {
+                        return Err(Error::CorruptedIndex("identity redirect cycle"));
+                    }
+                    stack.push((id, row.into_iter()));
+                }
+            }
+        }
+        let Some((shell, row)) = stack.last_mut() else {
+            return Ok(());
+        };
+        match row.next() {
+            Some(head) => next = Some(head),
+            None => {
+                let shell = *shell;
+                stack.pop();
+                path.remove(&shell);
+                done.insert(shell);
+            }
+        }
     }
-    let Some(row) = redirect_row_in_txn(store, rtxn, id)? else {
-        // Live: resolves to itself.
-        heads.insert(*id);
-        return Ok(());
-    };
-    if !path.insert(*id) {
-        return Err(Error::CorruptedIndex("identity redirect cycle"));
-    }
-    for head in &row {
-        resolve_into_in_txn(store, rtxn, head, depth + 1, path, heads)?;
-    }
-    path.remove(id);
-    Ok(())
 }
 
 /// The two canonical shell edge kinds — the edge-scan witness of "which
@@ -404,7 +421,8 @@ impl Vault {
     /// possible.
     ///
     /// Returns [`Error::CorruptedIndex`] when the projection graph contains
-    /// a cycle or an implausibly deep chain, rather than looping.
+    /// a cycle, rather than looping. A chain resolves however deep its head
+    /// is (FIX 10010).
     pub fn resolve_entity(&self, id: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         self.resolve_entity_in_txn(&rtxn, id)
@@ -417,8 +435,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let mut heads = BTreeSet::new();
-        let mut path = BTreeSet::new();
-        resolve_into_in_txn(&self.store, rtxn, id, 0, &mut path, &mut heads)?;
+        resolve_into_in_txn(&self.store, rtxn, id, &mut heads)?;
         Ok(heads.into_iter().collect())
     }
 

@@ -654,6 +654,13 @@ fn person_name(body: &[u8]) -> Option<String> {
             .as_str()
             .map(str::to_owned)
     })
+    .or_else(|| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str())
+            .map(str::to_owned)
+    })
     .filter(|name| !name.trim().is_empty())
 }
 
