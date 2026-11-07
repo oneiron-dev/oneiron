@@ -22,10 +22,10 @@ pub(crate) struct RowHookResume {
 /// sandbox. Every server door that runs a row itself, not through `invoke`,
 /// crosses it here. The hooks read under `reader`, capped by their grant,
 /// and as `actor` when it is `None`. A rewrite must pass the row's input
-/// check, then `check`, as if the caller sent it. An ask saves `resume`'s
-/// credential, and its drain permit marks the chain's thread as the drain's
-/// run of the call. A hook's ask runs on `turn`, the task-work turn the
-/// calling operation already holds, if any.
+/// check (`row_input_check`), then `check`, as if the caller sent it. An
+/// ask saves `resume`'s credential, and its drain permit marks the chain's
+/// thread as the drain's run of the call. A hook's ask runs on `turn`, the
+/// task-work turn the calling operation already holds, if any.
 #[expect(
     clippy::too_many_arguments,
     reason = "the row's call plus the caller's key, rewrite admission, resume and turn"
@@ -86,8 +86,7 @@ async fn row_hooks_pre_decided(
         };
         oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
-            oneiron::task_verb::sdk::validate_input(&verb, args)
-                .map_err(|error| error.to_string())?;
+            row_input_check(&verb, args)?;
             check
                 .as_ref()
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
@@ -110,7 +109,7 @@ async fn row_hooks_pre_decided(
         // A restrictive call's args that fail the row's input check give way
         // to the caller's own (FIX 5076).
         oneiron::task_verb::revoke_lands::settle(&mut pre, &|args| {
-            oneiron::task_verb::sdk::validate_input(&verb, args).is_ok()
+            row_input_check(&verb, args).is_ok()
         });
         Ok(pre)
     };
@@ -120,6 +119,24 @@ async fn row_hooks_pre_decided(
     })
     .await
     .map_err(|_| hooks_did_not_finish())?
+}
+
+/// The input check a rewrite of row `verb` meets before its door's own
+/// admission: a native memory read's own request validation, which the verb
+/// table's check does not carry (FIX 1435), else that check.
+fn row_input_check(verb: &str, args: &serde_json::Value) -> Result<(), String> {
+    use oneiron::code_run::vault_read::{VaultReadMethod, VaultReadRequest};
+    match VaultReadMethod::ALL
+        .into_iter()
+        .find(|method| method.tool_name() == verb)
+    {
+        Some(method) => {
+            VaultReadRequest::validate_body(method, args).map_err(|error| error.to_string())
+        }
+        None => {
+            oneiron::task_verb::sdk::validate_input(verb, args).map_err(|error| error.to_string())
+        }
+    }
 }
 
 /// The post chain over that row's result, off the async runtime: the
@@ -219,7 +236,13 @@ pub(super) async fn facade_hooks_pre_counted(
             call,
         )
         .ok()
-        .and_then(|memory| memory.verb_ask_credential()),
+        .and_then(|memory| match call.room_turn().ok().flatten() {
+            Some(room) => memory
+                .for_room_turn(room)
+                .ok()
+                .and_then(|turn| turn.verb_ask_credential()),
+            None => memory.verb_ask_credential(),
+        }),
         _ => None,
     };
     let resume = RowHookResume {

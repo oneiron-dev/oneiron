@@ -52,12 +52,6 @@ const MAX_INPUT_BYTES_CEILING: usize = 4096;
 /// Output bound on the parse call. The parser emits one small JSON object.
 const MAX_OUTPUT_TOKENS: u32 = 256;
 
-/// Bound on how many local windows a single parse may produce.
-const MAX_LOCAL_TIME_WINDOWS: usize = 8;
-
-/// Bound on an IANA timezone identifier.
-const MAX_VISITOR_TZ_BYTES: usize = 64;
-
 /// Booking-specific [`CallPurpose::Other`] name. The host policy binds this
 /// purpose to its cheap tier; no provider or model id is hard-coded here.
 pub const CONSTRAINT_PARSE_CALL_PURPOSE: &str = "booking_constraint_parse";
@@ -248,18 +242,14 @@ impl ConstraintObject {
     }
 
     /// Fail closed on an unsupported schema version, an out-of-bounds minute
-    /// window, an inverted UTC window, an over-long vector, or a vector that is
-    /// not in canonical (strictly ascending) order.
+    /// window, an inverted UTC window, or a vector that is not in canonical
+    /// (strictly ascending) order. A constraint carries any number of local
+    /// windows (ABC row 74); the solve door measures them.
     pub fn validate(&self) -> Result<(), BookingError> {
         if self.schema_version != CONSTRAINT_SCHEMA_VERSION {
             return Err(BookingError::InvalidConstraint(format!(
                 "constraint schema version must be {CONSTRAINT_SCHEMA_VERSION}, got {}",
                 self.schema_version
-            )));
-        }
-        if self.local_time_windows.len() > MAX_LOCAL_TIME_WINDOWS {
-            return Err(BookingError::InvalidConstraint(format!(
-                "constraint carries at most {MAX_LOCAL_TIME_WINDOWS} local time windows"
             )));
         }
         for window in &self.local_time_windows {
@@ -530,13 +520,13 @@ fn admit(used: u16, cap: u16) -> Result<u16, BookingError> {
         .ok_or(BookingError::SessionCapExhausted)
 }
 
-/// An IANA-shaped identifier: bounded, and restricted to the characters zone
-/// names use. Anything else fails closed.
+/// An IANA-shaped identifier: nonempty, of any length (ABC row 75), and
+/// restricted to the characters zone names use. Anything else fails closed.
 pub(super) fn validate_visitor_tz(value: &str) -> Result<(), BookingError> {
-    if value.is_empty() || value.len() > MAX_VISITOR_TZ_BYTES {
-        return Err(BookingError::InvalidConstraint(format!(
-            "visitor timezone must be 1..={MAX_VISITOR_TZ_BYTES} bytes"
-        )));
+    if value.is_empty() {
+        return Err(BookingError::InvalidConstraint(
+            "visitor timezone must not be empty".to_owned(),
+        ));
     }
     if !value
         .bytes()

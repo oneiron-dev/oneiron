@@ -429,6 +429,7 @@ impl Brief {
                 .filter(|revision| !revision.trim().is_empty()),
             // No measured card for the seat: unknown, never not-worse.
             card: None,
+            paired_measurement: None,
             losses: Vec::new(),
             risk: None,
         };

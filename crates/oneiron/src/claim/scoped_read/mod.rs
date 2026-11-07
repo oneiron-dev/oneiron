@@ -157,6 +157,7 @@ mod commitment_reminder_wording;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
+pub(crate) use profile_sources::CompanionProfileSourceJudgement;
 mod retrieval_loop;
 mod search;
 pub(crate) use search::SearchPlan;

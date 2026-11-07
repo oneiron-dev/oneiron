@@ -6,12 +6,19 @@
 //! checks), so the door's tip LFS pairing admits the pointers it publishes.
 //! An object that does not arrive is left to the door, which refuses a tip
 //! naming an absent object as it refuses any push; nothing here holds.
+//!
+//! The credential broker carries no Git-LFS exchange yet (OSH-3), so this
+//! vault's own process makes these requests, with the binding's header when
+//! the import names one. Before the first of them goes out, the import
+//! records that as a labelled daemon residual (FIX 19084), which its receipt
+//! shows; a residual that cannot be recorded sends nothing.
+use super::source::{ImportOutcome, ImportStep};
 use super::types::{ExternalImportRequest, NormalizedSource};
 use super::{EXTERNAL_IMPORT_FETCH_EFFECTOR, ImportCall};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::FetchedExternalGit;
-use crate::origin::lfs::{LfsBatchRemote, LfsOid};
+use crate::origin::lfs::{DirectLfsRemote, LfsBatchCredential, LfsOid, download_lfs_objects};
 
 impl Vault {
     /// Installs the Git-LFS objects `fetched`'s history names that this
@@ -50,10 +57,22 @@ impl Vault {
             tracing::warn!("an outside import's repository is off its host; no LFS fetch");
             return Ok(());
         }
-        let remote = LfsBatchRemote::of(&source.repository)?;
+        let remote = DirectLfsRemote::of(&source.repository)?;
+        self.observe(
+            call,
+            ImportStep::Lfs,
+            ImportOutcome::DaemonResidual,
+            "git_lfs_daemon_residual",
+        )?;
         let now = self.now_recorded_at();
         let missing = match request.source_binding.as_deref() {
-            None => remote.download(self, None, &absent, now),
+            None => download_lfs_objects(
+                self,
+                &remote.transport(None),
+                LfsBatchCredential::Anonymous,
+                &absent,
+                now,
+            ),
             Some(binding) => {
                 let mut answer = Err(Error::InvariantViolation("an import LFS fetch never ran"));
                 let door = self.inject_secret_at_door(
@@ -65,7 +84,13 @@ impl Vault {
                             return Ok(());
                         };
                         let header = zeroize::Zeroizing::new(text.trim().to_owned());
-                        answer = remote.download(self, Some(header.as_str()), &absent, now);
+                        answer = download_lfs_objects(
+                            self,
+                            &remote.transport(Some(header.as_str())),
+                            LfsBatchCredential::Remote,
+                            &absent,
+                            now,
+                        );
                         Ok(())
                     },
                 );
