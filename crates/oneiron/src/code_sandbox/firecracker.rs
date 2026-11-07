@@ -11,6 +11,8 @@ mod egress;
 #[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]
+mod oci_mounts;
+#[cfg(target_os = "linux")]
 mod oci_session;
 #[cfg(target_os = "linux")]
 mod protocol;
