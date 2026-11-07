@@ -13,6 +13,9 @@ import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
 import { defineFile, redactor } from "./support/run.ts";
 
+const recipeDefaults = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text());
+const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
+
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
@@ -384,6 +387,8 @@ async function anonymousPolicy(engine: EngineFixture, policyRow: string): Promis
   expect(readback.configuration.owner_policy_patterns).toEqual(configured.owner_policy_patterns);
 }
 
+const SUMMARY_PROMPT = "Summarize the admitted source text and retain its location fact.";
+
 function dreamerConfig(providers: ScriptedProviders, summary = false): string {
   return `
 [models]
@@ -402,10 +407,22 @@ revision = "e2e-v1"
 model = "summary:privacy-summary"
 [models.dreamer]
 enabled = true
-${summary ? 'summary_prompt = "Summarize the admitted source text and retain its location fact."' : ""}
+${summary ? 'summary_prompt = "' + SUMMARY_PROMPT + '"' : ""}
 [models.workflows]
 enabled = false
 `;
+}
+
+// The Dreamer's background extraction producers (follower, keyframe
+// fold, novelty rung, window audit) are not scripted here: each gets a
+// declared 503 and parks; a foreground answer is never handed to one.
+function backgroundExtraction(model: string): ProviderStep[] {
+  return (["follower_instruction", "follower_keyframe_instruction", "novelty_instruction", "audit_window_instruction"] as const)
+    .map(key => ({ id: `background-${key}`, origin: "extraction", role: "extraction_teacher",
+      purpose: `background ${key}`, standing: true as const,
+      request: { method: "POST" as const, path: "/v1/chat/completions", model, system: recipeDefaults[key] },
+      response: { kind: "json" as const, status: 503,
+        body: { error: { type: "fixture_background_unscripted", message: "Background producer is not scripted" } } } }));
 }
 
 async function grantExtraction(engine: EngineFixture): Promise<void> {
@@ -497,11 +514,11 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   redactor.add(...names, spec.protected.claimText);
   const providers = await ScriptedProviders.start({ id: "privacy-archive", steps: [{
     id: "eligible-people", origin: "extraction", role: "extraction_teacher", purpose: "extract witnessed people",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system }, barrier: "extract",
     response: openaiText("eligible-people", "privacy-extract", JSON.stringify({ candidates: [],
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
-  }] });
+  }, ...backgroundExtraction("privacy-extract")] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
@@ -586,7 +603,7 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     const receipts = await allReceipts(engine.client);
     expect(receipts.filter(row => /delete|erase/i.test([row.kind, row.outcome, ...row.reason_codes].join(" "))))
       .toEqual([]);
-    expect(providers.seenFixtureCalls).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "eligible-people")).toHaveLength(1);
   } catch (error) {
     primaryFailed = true;
     primary = error;
@@ -619,7 +636,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
   redactor.add(...forbidden, spec.unrelatedText);
   const providers = await ScriptedProviders.start({ id: "privacy-erase", steps: [{
     id: "source-claim", origin: "extraction", role: "extraction_teacher", purpose: "extract cited location",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system }, barrier: "extract",
     response: openaiText("source-claim", "privacy-extract", JSON.stringify({
       persons: [{ id: "new:P1", name: "Mira", evidence_turn_refs: ["T1"] }],
       candidates: [{ subject: "new:P1", predicate: "privacy.location", value: spec.claimText,
@@ -672,10 +689,11 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     }), { inputTokens: 128, outputTokens: 32 }),
   }, {
     id: "source-summary", origin: "summary", role: "dreamer_current", purpose: "summarize declared source",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary" },
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
     response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
       { inputTokens: 128, outputTokens: 48 }),
-  }] });
+  }, ...backgroundExtraction("privacy-extract")] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
@@ -844,7 +862,8 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(sweep.deadline_at - sweep.requested_at).toBeLessThanOrEqual(spec.expected.historicalSweepMaxSeconds);
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
-    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary")).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").length).toBeGreaterThanOrEqual(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").every(call => (call.body as any)?.response_format?.json_schema?.schema?.required?.join(",") === "text,keep")).toBe(true);
   } catch (error) {
     primaryFailed = true;
     primary = error;
