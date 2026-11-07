@@ -5,6 +5,7 @@ mod check_evidence;
 mod flight;
 mod pending;
 mod self_steps;
+mod wait;
 
 use super::compaction;
 use super::compaction::{FoldJob, KindFolds, RunFrames};
