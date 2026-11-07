@@ -11,18 +11,17 @@
 //! Only where Oneiron hosts the bytes (posture `Hosted` or `Relay`): host
 //! orders only Oneiron places and lifts, through host-only doors no owner,
 //! member or agent surface may route to; a host-only log the owner reads
-//! through one permitted view; silence under a secrecy order; refusals that
-//! name the order's law bound and what self-hosting changes; a privacy erase
-//! that keeps only the held part; and a use limit on what it keeps, for its
-//! holds' purpose only, while any hold keeps it, customer or host order
-//! (WILL-PLAN L01 rows 01-03, FIX 8849). Everywhere, "erase confirmed"
-//! stands apart from "erase completed" (C4, row 04).
+//! through one permitted view; silence under a secrecy order. A host order
+//! keeps nothing in the vault: what it covers is preserved as its clone in
+//! the host's separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
+//! 2026-11-05). A customer hold keeps the held part of a privacy erase, with
+//! a use limit on it for that hold's purpose only (FIX 8849). Everywhere,
+//! "erase confirmed" stands apart from "erase completed" (C4, row 04).
 
 #[cfg(unix)]
 pub(super) mod clone;
 mod confirmation;
 mod held_scrubs;
-mod pending_delete;
 pub(crate) mod prospective;
 mod types;
 
@@ -35,7 +34,7 @@ pub use types::*;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::ConfirmedEraseOutcome;
 use crate::entity_id::EntityId;
-use crate::error::{Error, LegalHoldState, Result};
+use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
 use crate::recovery::checkpoint::CUSTODY_RETIREMENT_COMPLETE;
@@ -466,10 +465,9 @@ impl Vault {
     }
 
     /// Runs each owner erase that waits whose record nothing holds now, as
-    /// its request asked: an explicit lift-and-erase hard, an owner's plain
-    /// delete under its own reason (FIX 1465), and in a shared vault with
-    /// two or more Owners an explicit one only once its own `erase` act
-    /// completed (FIX 9781); an explicit one whose act never started has it
+    /// its request asked: an explicit lift-and-erase hard, in a shared vault
+    /// with two or more Owners only once its own `erase` act completed (FIX
+    /// 9781); an explicit one whose act never started has it
     /// started first (FIX 10401). A failed one stays for the next pass. One
     /// whose request went or was replaced before its writer ran is
     /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
@@ -555,20 +553,6 @@ impl Vault {
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
         hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
-    }
-}
-
-/// What a record a host order keeps reads as after the owner's confirm:
-/// retained for law, naming the bound of an order the owner may see; else
-/// completion pending and nothing more, since only a secret order keeps it
-/// (C2, WILL-PLAN L01 rows 01 and 04).
-fn kept_status(seen: &[LegalHold], now: u64) -> LiftAndEraseStatus {
-    match hold_store::law_notice(seen, now, LegalHoldState::RetainedForLaw) {
-        Some(notice) => LiftAndEraseStatus::RetainedForLaw(notice),
-        None => LiftAndEraseStatus::CompletionPending {
-            receipt_ref: None,
-            reason: None,
-        },
     }
 }
 

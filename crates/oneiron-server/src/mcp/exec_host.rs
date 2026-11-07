@@ -9,7 +9,7 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::code_run::{CompactionHostBinding, GatedActorWrite};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
-    RunCompaction,
+    RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
@@ -126,6 +126,30 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    /// The durable run's self brief, when the door lends one (FIX 17594
+    /// D5): keyed by [`Self::run_id`], never the stream or a session label.
+    pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+}
+
+/// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
+/// with one `execute_code` call by the door it arrived at: the port the
+/// run's executor carries the brief through, and what the host does with
+/// the brief around one entry.
+///
+/// The brief lives with the durable run, keyed by its trusted run id, never
+/// with the call or its waiter: an entry installs it, or installs it again
+/// at the epoch it holds, under the run's single flight; a resumable outcome
+/// keeps it; the run's completion closes it (Engine call RESUME C). Both
+/// calls block: the host makes them on the run's own worker thread.
+pub trait McpCodeRunSelfBrief: SelfBriefPort {
+    /// Installs the run's brief for the entry about to run, as the run
+    /// resolves now: afresh with none installed, else again at the epoch it
+    /// holds, its delivered prefix kept. `false`, logged, when it does not
+    /// install: the entry runs without it, as before.
+    fn install(&self) -> bool;
+
+    /// Closes the run's brief: the run completed.
+    fn close(&self);
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -643,6 +667,10 @@ impl<'a> ScopeMeter<'a> {
 /// through the provider's planned backend on that same meter and payer,
 /// bound to its plan; with a provider that has none, through the backend it
 /// takes today.
+///
+/// A run its host lends a self-brief port (`brief`, FIX 17594) carries the
+/// brief it prepares on every backend this entry takes; with none, its
+/// requests carry no brief.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -655,6 +683,7 @@ pub(crate) fn enter_engine_native_run(
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
     listed: Vec<AgentModel>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -679,7 +708,7 @@ pub(crate) fn enter_engine_native_run(
             None => provider.backend(),
         };
         return enter_on(
-            vault, provider, backend, bound, config, compaction, reactor, seat,
+            vault, provider, backend, bound, config, compaction, reactor, seat, brief,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -727,6 +756,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     } else {
         enter_on(
@@ -738,6 +768,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     };
     live.book_rest()
@@ -1010,6 +1041,7 @@ fn enter_on(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
@@ -1026,6 +1058,11 @@ fn enter_on(
     }
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
     }
     reactor
         .block_on(executor.run(&routed_config))

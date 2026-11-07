@@ -22,6 +22,7 @@ mod program_entry;
 mod record;
 mod repl;
 mod run_position;
+mod self_brief;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -48,6 +49,10 @@ pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
 // FIX 4606: a canonical run's generation and parked wait, read outside its
 // entries.
 pub use self::run_position::{CodeRunPosition, code_run_position};
+// FIX 17594: the host's self-brief port a native run's requests carry.
+pub use self::self_brief::{
+    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+};
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
