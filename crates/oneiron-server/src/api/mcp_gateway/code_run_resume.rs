@@ -186,7 +186,7 @@ struct McpCodeRunContinuation {
     witness: Option<InvocationSlipBinding>,
     /// The ceiling of the connector registration the call came in by;
     /// `None` for a managed vault's attested owner, who has none.
-    registration: Option<[u8; 32]>,
+    registration: Option<oneiron::runtime_hooks::verb::VerbAskMcpCeiling>,
 }
 
 impl McpCodeRunContinuation {
@@ -602,10 +602,7 @@ async fn caller_stands(server: &Arc<SyncServer>, continuation: &McpCodeRunContin
             Ok(resolved) => resolved,
             Err(error) => return not_entered(continuation, &error),
         };
-        if !crate::code_consent_host::ceiling_holds(
-            ceiling,
-            &super::verb_hooks::mcp_adapter_ceiling(&resolved),
-        ) {
+        if ceiling != &super::verb_hooks::mcp_adapter_ceiling(&resolved) {
             return not_entered(continuation, &VerbAskRefusal::ScopeRefused);
         }
         if let Err(error) = super::actor_dispatch::mcp_proof_admits(server, &resolved, auth) {
