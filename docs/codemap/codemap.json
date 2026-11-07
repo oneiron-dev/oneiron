@@ -123068,7 +123068,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -145502,6 +145502,7 @@
       "GraphFsReference",
       "GraphNode",
       "GraphQuestionInput",
+      "GraphicLimits",
       "GroundingContext",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
@@ -148310,7 +148311,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1140,
-      "struct": 3476
+      "struct": 3477
      }
     },
     {
