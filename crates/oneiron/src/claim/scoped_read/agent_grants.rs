@@ -292,10 +292,27 @@ fn reader_grants_in(
     if !undecoded.is_empty() {
         warn_grant_errors(undecoded.len(), &undecoded, None);
     }
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == reader)
+            .map(|standing| &standing.grant),
+    )?;
+    // A Grant whose `read` a class it names admits reads under its Scope
+    // with `read` listed (FIX 8735); an unclassed Grant's Scope is its own.
     Ok(grants
-        .into_iter()
-        .filter(|standing| standing.stands_in_txn(vault, txn, reader, "read", now, &owners))
-        .map(|standing| (standing.id, standing.grant.authority_scope))
+        .iter()
+        .filter(|standing| {
+            standing.stands_in_txn(vault, txn, reader, "read", now, &owners, &classes)
+        })
+        .map(|standing| {
+            (
+                standing.id,
+                standing.grant.scope_for_verb("read", &classes).into_owned(),
+            )
+        })
         .collect())
 }
 

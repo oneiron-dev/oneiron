@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
+// UniFFI census: 1291 facade rows, 4674 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1243.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -7147,6 +7147,28 @@ pub struct SpendPayer {
     pub at_ms: u64,
 }
 
+/// `oneiron_contracts::wallet::WalletRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WalletRef {
+    #[serde(rename = "issuer")]
+    pub issuer: String,
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron::agent_dispatch::spend_record::GrantSpendBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GrantSpendBinding {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "mint_act")]
+    pub mint_act: String,
+    #[serde(rename = "wallet_ref")]
+    pub wallet_ref: WalletRef,
+}
+
 /// `oneiron::agent_dispatch::spend_record::SpendScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -7199,6 +7221,8 @@ pub struct SpendScope {
     pub exploration_attempt: Option<AttemptId>,
     #[serde(rename = "payer", default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<SpendPayer>,
+    #[serde(rename = "funding", default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<GrantSpendBinding>,
 }
 
 /// `oneiron::agent_dispatch::spend_record::SpendSignal`.
@@ -7797,6 +7821,12 @@ pub struct OpenSpendLeaseRequest {
     pub unit: String,
     #[serde(rename = "shown_at_ms")]
     pub shown_at_ms: u64,
+    #[serde(
+        rename = "funding_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub funding_grant_ref: Option<String>,
 }
 
 /// `oneiron::agent_dispatch::budget_doors::SpendScopeRequest`.
@@ -34321,6 +34351,18 @@ pub struct ConsentRegistryAgentGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
     #[serde(rename = "confers")]
     pub confers: bool,
 }
@@ -45125,6 +45167,18 @@ pub struct AgentGrantMintRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
 }
 
 /// `oneiron::verbs::agent_grant::AgentGrantView`.
@@ -45151,6 +45205,18 @@ pub struct AgentGrantView {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
     #[serde(rename = "confers")]
     pub confers: bool,
     #[serde(rename = "revoke_command")]
@@ -45189,6 +45255,46 @@ pub struct AgentGrantRevoked {
     pub agent: Option<String>,
     #[serde(rename = "act_ref", default, skip_serializing_if = "Option::is_none")]
     pub act_ref: Option<String>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVerbClassRow {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "verbs")]
+    pub verbs: Vec<String>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentVerbClassesView {
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "classes")]
+    pub classes: Vec<AgentVerbClassRow>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVerbClassesConfigureRequest {
+    #[serde(rename = "expected_body_hash")]
+    pub expected_body_hash: String,
+    #[serde(rename = "classes")]
+    pub classes: Vec<AgentVerbClassRow>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentVerbClassesReceipt {
+    #[serde(rename = "configuration")]
+    pub configuration: AgentVerbClassesView,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
 }
 
 /// `oneiron_authority::federation::git_push::GitPushRepo`.

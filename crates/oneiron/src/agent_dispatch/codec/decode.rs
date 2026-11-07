@@ -56,6 +56,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut comm = None;
     let mut direct_spawn = None;
     let mut requester = None;
+    let mut funding = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -333,6 +334,25 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            KEY_FUNDING => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "funding must be a serialized grant spend binding",
+                    ),
+                ))?;
+                let binding: crate::agent_dispatch::GrantSpendBinding = serde_json::from_str(json)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "funding must decode as a grant spend binding",
+                        ))
+                    })?;
+                if !binding.wallet_ref.is_valid() {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "funding must name a nonempty wallet",
+                    )));
+                }
+                funding = Some(binding);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -414,5 +434,6 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         comm,
         direct_spawn,
         requester,
+        funding,
     })
 }
