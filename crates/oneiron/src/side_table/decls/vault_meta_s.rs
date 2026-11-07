@@ -72,6 +72,14 @@ side_tables! {
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
     /// entry hash).
     SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
+    /// The owner's mark that he imported one export secret request's supplement here, which this
+    /// install could not sign in the import's writer, with no live machine profile or no install
+    /// key loaded (FIX 12291): the owner the import revalidated, the surface he imported from
+    /// and the second the import was at, until a pass that can sign carries it or finds nothing
+    /// owed. Holds no secret byte, ciphertext, secret name, proof, credential or key. Key: hash32
+    /// (the request's entry hash).
+    SECRET_CUSTODY_PENDING_IMPORT_MARK: VaultMeta b"secret_custody:pending_import_mark:v1:" Named Engine
+        => crate::store::pending_import_mark::erase_pending_import_mark_actor_in_txn;
     /// A revoke of one portable custody record this install made but could not carry for the
     /// owner yet, with no live machine profile or no install key loaded (CALLS
     /// CUSTODY_REVOKE_PENDING_CARRY): the owner it is by, the surface he decided on, the second
@@ -371,6 +379,10 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// The key a pending invitation's own slips must bind, as the invitee bound it with an
+    /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
+    /// Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION_KEY: VaultMeta b"shared-vault:invitation-key:v1:" Raw;
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
     /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;

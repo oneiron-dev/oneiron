@@ -8,6 +8,7 @@ use crate::code_tree_blob::MODE_GITLINK;
 use crate::git_wire::ids::GitOid;
 use crate::git_wire::mutation_commands::path_arg;
 use crate::git_wire::mutation_commands::utf8_trimmed;
+use crate::git_wire::path_text::git_path_os_str;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 
@@ -34,8 +35,9 @@ pub fn gitlink_oid(content: &[u8]) -> Result<String> {
 /// checkout judges.
 pub fn empty_directory_in_tree(root: &Path, path: &str) -> Result<Option<std::path::PathBuf>> {
     let mut at = root.to_path_buf();
+    // `path` is a Git path's text: each part names its own bytes (FIX 21326).
     for part in path.split('/') {
-        at.push(part);
+        at.push(&*git_path_os_str(part)?);
         match std::fs::symlink_metadata(&at) {
             Ok(meta) if meta.is_dir() => {}
             Ok(_) | Err(_) => return Ok(None),
