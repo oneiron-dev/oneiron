@@ -99,6 +99,11 @@ pub(super) fn long_wait_findings(
         if queue * 2 > wait {
             counter.push(AgentHealthCounter::QueueWait);
         }
+        let (exact_dial, exact_measured) = if dials.wait_share.is_finite() && share.is_finite() {
+            (Some(dials.wait_share), Some(share))
+        } else {
+            (None, None)
+        };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::LongWait,
@@ -112,6 +117,8 @@ pub(super) fn long_wait_findings(
             actual: if live { permille / 100 * 100 } else { permille },
             dial: (dials.wait_share * 1000.0).round() as i64,
             measured: permille,
+            exact_dial,
+            exact_measured,
             counter,
             confession: None,
             blocked: false,
@@ -239,6 +246,11 @@ pub(super) fn cost_spike_findings(
             continue;
         };
         let permille = (ratio * 1000.0).round() as i64;
+        let (exact_dial, exact_measured) = if dials.cost_spike.is_finite() && ratio.is_finite() {
+            (Some(dials.cost_spike), Some(ratio))
+        } else {
+            (None, None)
+        };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::CostSpike,
@@ -252,6 +264,8 @@ pub(super) fn cost_spike_findings(
             actual: if live { permille / 500 * 500 } else { permille },
             dial: (dials.cost_spike * 1000.0).round() as i64,
             measured: permille,
+            exact_dial,
+            exact_measured,
             counter,
             confession: None,
             blocked: false,
@@ -450,6 +464,8 @@ fn dup_finding(
         actual: 1,
         dial: 0,
         measured: 1,
+        exact_dial: None,
+        exact_measured: None,
         counter: Vec::new(),
         confession: None,
         blocked: false,
@@ -519,6 +535,8 @@ pub(super) fn misalignment_findings(
             actual: count,
             dial: 0,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: Some(attempt),
             blocked: false,
@@ -569,6 +587,8 @@ pub(super) fn widen_denial_findings(
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: None,
             blocked: false,
@@ -631,6 +651,8 @@ pub(super) fn unsupported_done_findings(
             actual: count,
             dial: 0,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: None,
             blocked: false,

@@ -14,10 +14,8 @@ use heed::RwTxn;
 
 use super::{RefusalNote, flush_refusals_in_txn, hosts_bytes};
 #[cfg(feature = "sync")]
-use crate::deletion::{LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_REFUSAL};
+use crate::deletion::LEGAL_HOLD_REFUSAL;
 use crate::error::Error;
-#[cfg(feature = "sync")]
-use crate::error::LegalHoldState;
 use crate::store::Store;
 
 thread_local! {
@@ -218,16 +216,10 @@ impl Drop for RefusalBatch<'_> {
     }
 }
 
-/// Whether `error` is a legal hold's refusal of a destroying path
-/// ([`Store::reject_legal_holds_in_txn`]) in any of its three forms, and not
-/// another failure: a door defers on it and fails on the rest.
+/// Whether `error` is a customer hold's refusal of a destroying path
+/// ([`Store::reject_legal_holds_in_txn`]), and not another failure: a door
+/// defers on it and fails on the rest.
 #[cfg(feature = "sync")]
 pub(crate) fn is_hold_refusal(error: &Error) -> bool {
-    match error {
-        Error::LegalHold(notice) => notice.state == LegalHoldState::RetainedForLaw,
-        Error::InvalidConfig(refusal) => {
-            matches!(refusal.as_str(), LEGAL_HOLD_REFUSAL | LEGAL_HOLD_DEFERRAL)
-        }
-        _ => false,
-    }
+    matches!(error, Error::InvalidConfig(refusal) if refusal.as_str() == LEGAL_HOLD_REFUSAL)
 }

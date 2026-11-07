@@ -21,7 +21,6 @@
 
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use oneiron::LlmRequest;
 use oneiron::agent_def::AgentDefinition;
 use oneiron::code_run::{
     AdmittedLiveFork, CompactionHome, CompactionHostBinding, LiveCompactionFork,
@@ -36,6 +35,7 @@ use oneiron::llm::{
     ContentPart, ModelId, ModelLocality, SelfCompactionDefault, SelfCompactionSource,
 };
 use oneiron::skill_optimize::union_source_rows;
+use oneiron::{EntityId, LlmRequest};
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
@@ -391,12 +391,14 @@ impl CompactionBackend for SelfCompactionBackend {
 
     /// Binds the live rung for a row that reads the live context: forced
     /// under one that selects it, and under `auto` only while the prefix is
-    /// still warm (FIX 6029). Stages the row and the cheap writer it read
-    /// for the flight, so the flight is sized and frozen on the same ones; a
-    /// row that cannot be read is named when the flight freezes.
+    /// still warm (FIX 6029), and only for a request whose every source row
+    /// its host witnessed (FIX 9463). Stages the row and the cheap writer it
+    /// read for the flight, so the flight is sized and frozen on the same
+    /// ones; a row that cannot be read is named when the flight freezes.
     fn capture_live_fork(
         &self,
         live: &LlmRequest,
+        prefix_sources: Option<Vec<EntityId>>,
         summary_token_budget: u64,
     ) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
         let staged = self.row().ok().map(|row| Staged {
@@ -420,6 +422,7 @@ impl CompactionBackend for SelfCompactionBackend {
             self.host.actor().entity_ref(),
             &row,
             live,
+            prefix_sources,
             summary_token_budget,
             how,
         )
@@ -456,6 +459,12 @@ impl CompactionBackend for SelfCompactionBackend {
             return Err(SelfCompactionUnavailable::FlightNotPrepared.refusal());
         };
         let (served, source) = self.serve_flight(&frozen, request, retry)?;
+        // The rows the live fork's prefix was read from, only when the call
+        // ran on it (FIX 9463).
+        let prefix_sources = match (&frozen.live, source) {
+            (Some(fork), SelfCompactionSource::LiveFork) => fork.prefix_sources().to_vec(),
+            _ => Vec::new(),
+        };
         let usage = &served.response.usage;
         let sent = served.sent.zip(serde_json::to_vec(&served.response).ok());
         let mut execution = CompactionExecution {
@@ -474,6 +483,7 @@ impl CompactionBackend for SelfCompactionBackend {
                 .step_hash
                 .map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect()),
             home: served.worn,
+            prefix_sources,
             snapshot_hash: None,
             snapshot_len: None,
             step: None,
@@ -484,15 +494,15 @@ impl CompactionBackend for SelfCompactionBackend {
         };
         // The paid call, for its host to file in the model-step family on
         // the run's captured route (FIX 4465 B), with the same complete
-        // witnessed set its admission carries. An unwitnessed window or live
-        // prefix leaves the sources unknown and the step unfiled (FIX 11937).
-        let sources = match (&execution.source, request.window_read_from_sources) {
-            (SelfCompactionSource::RetainedTurns, true) => union_source_rows([
-                Some(request.sources.clone()),
-                Some(execution.home_dependencies().collect::<Vec<_>>()),
-            ]),
-            _ => None,
-        };
+        // witnessed set its admission carries: the window's, the home's and,
+        // on the live fork, its prefix's (FIX 9463). An unwitnessed window
+        // leaves the sources unknown and the step unfiled (FIX 11937).
+        let sources = union_source_rows([
+            request
+                .window_read_from_sources
+                .then_some(request.sources.clone()),
+            Some(execution.input_dependencies().collect::<Vec<_>>()),
+        ]);
         execution.calls = sent
             .map(|(request, response)| CompactionCall {
                 request,
