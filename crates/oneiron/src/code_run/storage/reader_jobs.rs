@@ -7,8 +7,10 @@
 
 mod read;
 mod scoped;
+mod txn;
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
@@ -20,8 +22,9 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
-    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
+    ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderRoute,
+    ReaderRunEnd, SpawnHostSeat, SpawnParentBinding, TaskWaitSet, TaskWaitSetResult,
+    reader_job_cutoff, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -560,71 +563,6 @@ pub(crate) enum WaitSetOutcome {
 }
 
 impl ExecutorStorage<'_> {
-    /// One transaction of the run's reader rows on its route: a canonical
-    /// run's in one vault write transaction, a session-bound run's in its
-    /// room's routed one, answered as its participant stands. Nothing the
-    /// closure holds outlives the transaction, as the vault's grouped write
-    /// door requires.
-    pub(crate) fn reader_txn<T>(
-        &self,
-        f: impl FnOnce(&mut ReaderTxn<'_, '_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let vault: &Vault = vault;
-                vault.with_write_txn_grouped(|txn| {
-                    f(&mut ReaderTxn {
-                        txn,
-                        read: RoutedDbs::Base(vault),
-                        write: RoutedDbs::Base(vault),
-                        spend: SpendBook::new(vault),
-                        staged: BTreeMap::new(),
-                        vault: Some(vault),
-                        settled: Vec::new(),
-                    })
-                })
-            }
-            Self::Session(binding) => {
-                let spend = binding.session.spend_book();
-                let (answer, settled) = binding.answered(|| {
-                    binding
-                        .session
-                        .routed_side_txn(&binding.route, |txn, read, write| {
-                            let mut tx = ReaderTxn {
-                                txn,
-                                read,
-                                write,
-                                spend,
-                                staged: BTreeMap::new(),
-                                vault: None,
-                                settled: Vec::new(),
-                            };
-                            let answer = f(&mut tx)?;
-                            Ok((answer, tx.settled))
-                        })
-                })?;
-                for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, None, now_ms)?;
-                }
-                Ok(answer)
-            }
-        }
-    }
-
-    /// One read of the run's reader rows through its route's view.
-    pub(super) fn reader_read<T>(
-        &self,
-        f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let txn = vault.store.env.read_txn()?;
-                f(&txn, RoutedDbs::Base(vault))
-            }
-            Self::Session(binding) => binding.answered(|| binding.session.routed_side_read(f)),
-        }
-    }
-
     /// The base spend scopes the run's children spend under.
     pub(crate) fn spend_book(&self) -> SpendBook<'_> {
         match self {
@@ -980,18 +918,47 @@ impl ExecutorStorage<'_> {
 
     /// Up to `limit` queued children, oldest first.
     pub(crate) fn queued_reader_jobs(&self, limit: usize) -> Result<Vec<ReaderJob>> {
+        Ok(self.queued_reader_jobs_after(None, limit)?.jobs)
+    }
+
+    /// Up to `limit` queue rows' children, oldest first, from just after
+    /// `after` (the queue's front for none), and where the next page starts
+    /// while rows follow (FIX 9708). A walk that pages on reaches every child
+    /// queued behind ones it cannot run yet.
+    pub(crate) fn queued_reader_jobs_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
         self.reader_read(|txn, dbs| {
-            let mut jobs = Vec::new();
-            for row in INDEX.iter_from(&dbs, txn, b"q")? {
-                if jobs.len() >= limit {
+            let front = vec![b'q'];
+            let end = vec![b'q' + 1];
+            let start = after.map(|at| queued_key(at.enqueued_at_ms, at.task));
+            let lower = start
+                .as_ref()
+                .map_or(Bound::Included(&front), Bound::Excluded);
+            let mut page = ReaderQueuePage {
+                jobs: Vec::new(),
+                next: None,
+            };
+            let (mut read, mut last) = (0, None);
+            for row in INDEX.iter_range(&dbs, txn, lower, Bound::Excluded(&end))? {
+                if read >= limit {
+                    page.next = last;
                     break;
                 }
                 let (key, _) = row?;
-                if let Some(job) = JOBS.get(&dbs, txn, &id_at(&key, 9)?)? {
-                    jobs.push(job);
+                let task = id_at(&key, 9)?;
+                last = Some(ReaderQueueCursor {
+                    enqueued_at_ms: time_at(&key, 1)?,
+                    task,
+                });
+                read += 1;
+                if let Some(job) = JOBS.get(&dbs, txn, &task)? {
+                    page.jobs.push(job);
                 }
             }
-            Ok(jobs)
+            Ok(page)
         })
     }
 
@@ -1349,6 +1316,17 @@ impl<'a> ReaderJobs<'a> {
     /// Up to `limit` queued children, oldest first.
     pub fn queued(&self, limit: usize) -> Result<Vec<ReaderJob>> {
         self.storage.queued_reader_jobs(limit)
+    }
+
+    /// Up to `limit` queued children, oldest first, from just after `after`
+    /// (the queue's front for none), and where the next page starts while
+    /// more follow (FIX 9708).
+    pub fn queued_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
+        self.storage.queued_reader_jobs_after(after, limit)
     }
 
     pub fn job(&self, task: EntityId) -> Result<Option<ReaderJob>> {
