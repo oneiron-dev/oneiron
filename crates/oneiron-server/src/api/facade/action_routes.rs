@@ -295,6 +295,9 @@ pub(super) fn require_action_scope(auth: &CoreAuth, verb: &str) -> Result<(), Fa
 /// read key at the caller's locality, and the owner's proof when the
 /// credential carries one.
 pub(crate) struct ActionBound {
+    /// The credential the action came in on, which a replayed answer is
+    /// released for again (FIX 8158).
+    replay_auth: CoreAuth,
     actor: EntityId,
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
@@ -347,6 +350,7 @@ pub(crate) fn action_bound(
             }
         };
     Ok(Some(ActionBound {
+        replay_auth: auth.clone(),
         actor,
         class,
         key,
