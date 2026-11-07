@@ -3017,6 +3017,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConnectorCallApproveOnceRequest>(),
             ),
             (
+                "vault.connectors.replies.retry_failed",
+                crate::code_run::vault_read::request_schema::<ConnectorReplyRetryRequest>(),
+            ),
+            (
                 "vault.consent.deny",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::DenyConsentRequest,
@@ -7822,6 +7826,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
     "vault.connectors.calls.approve_once",
+    "vault.connectors.replies.retry_failed",
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.create_auto_weave_grant",
@@ -9540,6 +9545,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.connectors.replies.retry_failed" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorReplyRetryView,
         >(),
         "vault.consent.deny" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
@@ -14961,6 +14969,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.connectors.calls.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.replies.retry_failed" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20852,6 +20867,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.connectors.calls.approve_once" => {
             validate_input_vault_connectors_calls_approve_once(value)?
         }
+        "vault.connectors.replies.retry_failed" => {
+            validate_input_vault_connectors_replies_retry_failed(value)?
+        }
         "vault.consent.deny" => validate_input_vault_consent_deny(value)?,
         "vault.consent.create_standing_grant" => {
             validate_input_vault_consent_create_standing_grant(value)?
@@ -24815,6 +24833,13 @@ fn validate_input_vault_connectors_calls_approve_once(
     value: &serde_json::Value,
 ) -> MemoryResult<()> {
     let _input: ConnectorCallApproveOnceRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_connectors_replies_retry_failed(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: ConnectorReplyRetryRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29754,6 +29779,9 @@ pub fn invoke(
         "vault.consent.approve_once" => invoke_vault_consent_approve_once(memory, value),
         "vault.connectors.calls.approve_once" => {
             invoke_vault_connectors_calls_approve_once(memory, value)
+        }
+        "vault.connectors.replies.retry_failed" => {
+            invoke_vault_connectors_replies_retry_failed(memory, value)
         }
         "vault.consent.deny" => invoke_vault_consent_deny(memory, value),
         "vault.consent.create_standing_grant" => {
@@ -34700,6 +34728,16 @@ fn invoke_vault_connectors_calls_approve_once(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_connectors_calls_approve_once(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_connectors_replies_retry_failed(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_connectors_replies_retry_failed(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[inline(never)]
 fn invoke_vault_consent_deny(
@@ -44839,6 +44877,16 @@ pub fn vault_connectors_calls_approve_once(
     crate::task_verb::sdk::approve_connector_call_once(
         memory.vault(),
         &memory.embedded_owner("vault.connectors.calls.approve_once")?,
+        input,
+    )
+}
+pub fn vault_connectors_replies_retry_failed(
+    memory: &Memory<'_>,
+    input: ConnectorReplyRetryRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorReplyRetryView> {
+    crate::task_verb::sdk::retry_failed_connector_reply_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.replies.retry_failed")?,
         input,
     )
 }
