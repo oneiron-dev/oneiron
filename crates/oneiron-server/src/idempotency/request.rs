@@ -112,12 +112,15 @@ async fn idempotent(
         Ok(body) => body,
         Err(error) => return api_error_response(error, is_core_auth_route),
     };
-    let request_body = body.to_vec();
+    // The entry keeps the body's digest, never the body (ABC transport row
+    // T5): a retry is the same request when its body digests the same, and
+    // the route reads these same bytes, shared, not copied.
+    let request_digest = blake3::hash(&body).as_bytes().to_vec();
 
     // Each keyed admission reclaims one page of expired entries (FIX 5951).
     state.store.reclaim_expired_page().await;
     let _guard = state.store.lock_for(&store_key).await;
-    match state.store.lookup(&store_key, &target, &request_body) {
+    match state.store.lookup(&store_key, &target, &request_digest) {
         Ok(IdempotencyLookup::Replay(response)) => {
             // A legacy route's caller keys its partition alone; its replay
             // stays the legacy one.
@@ -202,7 +205,7 @@ async fn idempotent(
     // effect has run when it cannot be kept.
     if state
         .store
-        .insert_intent(&store_key, target.clone(), request_body.clone(), stamp)
+        .insert_intent(&store_key, target.clone(), request_digest.clone(), stamp)
         .is_err()
     {
         tracing::error!(
@@ -215,7 +218,7 @@ async fn idempotent(
         );
     }
 
-    let request = Request::from_parts(parts, Body::from(request_body.clone()));
+    let request = Request::from_parts(parts, Body::from(body));
     // The route runs, and its reply is read, under its intent: each write it
     // commits counts itself on the intent in its own transaction (FIX 10379).
     // The outcome is read whole: a large success is kept and answered, never
@@ -267,7 +270,7 @@ async fn idempotent(
         // is unknown rather than acting again (FIX 6056, 9527).
         if state
             .store
-            .settle(&store_key, target, request_body, cached, stamp)
+            .settle(&store_key, target, request_digest, cached, stamp)
             .is_err()
         {
             tracing::error!(
