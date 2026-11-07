@@ -14,10 +14,19 @@
 //! A Switch moves a MESSAGE to its fork's document. The head it leaves names
 //! the document it moved from and the version it forked at, so another
 //! machine holding that document moves the same way (FIX 3554). Only such a
-//! head moves a document here; any other stands as a conflict.
+//! head moves a document here, or a canonical restore's successor over the
+//! incarnation it replaces (FIX 3553); any other stands as a conflict.
 
-use super::document::decode_frontier;
+use super::doc_actor::DocActor;
+use super::document::{BODY, decode_frontier};
+use super::forks::{
+    ENTITY_DOC_FORK, ENTITY_DOC_FORK_SNAPSHOT, ENTITY_DOC_PROPOSAL_BUNDLE, ForkRecord,
+    ProposalBundle,
+};
+use super::pins::{CitationPin, ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT};
+use super::side_keys::HexPair;
 use super::storage::{self, ENTITY_DOC_HEAD, Head};
+use super::succession::Succession;
 use super::{EntityDoc, ForkStatus, TextField};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ArtifactError, Error, Result};
@@ -25,7 +34,7 @@ use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead}
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
-use loro::VersionVector;
+use loro::{Frontiers, ID, UpdateOptions, VersionVector};
 use serde::{Deserialize, Serialize};
 
 /// What a window carries of a MESSAGE's document beside its snapshot.
@@ -43,6 +52,10 @@ pub(crate) struct CarriedDocument {
     /// The Switch that moved the message to this document, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) switched: Option<SwitchedFrom>,
+    /// The history this incarnation replaces, when a canonical restore
+    /// rebuilt the document (FIX 3553).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) succeeds: Option<Succession>,
 }
 
 /// The document a Switch moved a MESSAGE from (FIX 3554).
@@ -127,7 +140,23 @@ impl CarriedDocument {
             named(&from.document)?;
             decode_frontier(&from.base).ok()?;
         }
+        if let Some(from) = &self.succeeds {
+            named(&from.incarnation)?;
+            VersionVector::decode(&from.version).ok()?;
+        }
         named(&self.entity)
+    }
+
+    /// Whether this head is a canonical restore's successor of `other`
+    /// (FIX 3553): the same message and document, under an incarnation that
+    /// names `other`'s as the one it replaces.
+    pub(crate) fn supersedes(&self, other: &Self) -> bool {
+        self.succeeds
+            .as_ref()
+            .is_some_and(|from| from.incarnation == other.incarnation)
+            && self.incarnation != other.incarnation
+            && self.document == other.document
+            && self.entity == other.entity
     }
 
     /// Whether this head is a Switch's over `other`: the same message and
@@ -232,6 +261,7 @@ fn local_in(
         version,
         shallow,
         switched,
+        succeeds: head.succeeds.clone(),
     };
     Ok(Some((head, carried)))
 }
@@ -269,8 +299,11 @@ impl Vault {
     /// so its pins and citation floors resolve here. Where it holds the same
     /// document, the snapshot's operations join it, and a newer history floor
     /// drops its history to that floor ([`purged_at_carried_floor`]). A
-    /// Switch's head over the document held here moves it ([`switched_in`]).
-    /// Where it holds another document or incarnation, that one stands.
+    /// Switch's head over the document held here moves it ([`switched_in`]),
+    /// and a canonical restore's successor of the incarnation held here
+    /// takes its place ([`superseded_in`]); a held successor of the carried
+    /// incarnation stands as held (FIX 3553). Where it holds another document
+    /// or incarnation, that one stands.
     pub(crate) fn merge_carried_message_document_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -307,7 +340,13 @@ impl Vault {
         if let Some((_, held)) = &local
             && !switched
         {
-            if held.document != carried.document || held.incarnation != carried.incarnation {
+            // The window takes this vault's successor from here.
+            if held.supersedes(carried) {
+                return Ok(DocumentMerge::Held);
+            }
+            if (held.document != carried.document || held.incarnation != carried.incarnation)
+                && !carried.supersedes(held)
+            {
                 return Ok(DocumentMerge::Conflict);
             }
             if held.holds(carried) && !carried.purges(held) {
@@ -335,6 +374,7 @@ impl Vault {
                     generation: 0,
                     pending: 0,
                     birth_frontier: None,
+                    succeeds: carried.succeeds.clone(),
                 };
                 storage::persist(self, txn, &message, &mut head, &incoming, None)?;
                 if incoming.doc.is_shallow() {
@@ -348,6 +388,12 @@ impl Vault {
             Some((head, _)) if switched => {
                 if let Some(stands) =
                     switched_in(self, txn, &message, head, carried, snapshot, &incoming)?
+                {
+                    return Ok(stands);
+                }
+            }
+            Some((head, held)) if carried.supersedes(&held) => {
+                if let Some(stands) = superseded_in(self, txn, &message, head, carried, &incoming)?
                 {
                     return Ok(stands);
                 }
@@ -452,6 +498,210 @@ fn purged_at_carried_floor(
         return waits("the history here does not cut at its floor");
     }
     Ok(Ok(shallow))
+}
+
+/// Takes `carried`, a canonical restore's successor of the incarnation
+/// `head` names here, in place of it (FIX 3553; Engine 11-06 20:16, A):
+/// the successor's history replaces this one. Operations held here past the
+/// version it replaces stay as a pending rewrite of the successor for the
+/// owner to land or drop, never lost ([`park_held_edits_in_txn`]). Each pin
+/// is bound to its twin, the successor's version with the same text, at the
+/// same span and quote, as a restore binds it (FIX 3464). A history with
+/// rows the successor does not carry stands, as a restore refuses to drop
+/// them: a fork, receipt or purge receipt here, a live citation floor, a
+/// pin with no twin, or a purge floor the successor does not keep; and so
+/// does a history a hold keeps, on the record or on its pad's world, as
+/// the purge door refuses it. `None` once it is taken; otherwise what the
+/// head does.
+fn superseded_in(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    message: &EntityId,
+    mut head: Head,
+    carried: &CarriedDocument,
+    incoming: &EntityDoc,
+) -> Result<Option<DocumentMerge>> {
+    let store = &vault.store;
+    let Some(replaces) = &carried.succeeds else {
+        return Ok(Some(DocumentMerge::Conflict));
+    };
+    let Ok(replaced) = VersionVector::decode(&replaces.version) else {
+        return Ok(Some(DocumentMerge::Refused("not a whole head")));
+    };
+    let pad_held = match EntityStoreRead::port_entity_raw(store, txn, message)? {
+        Some(raw) => crate::world_keys::held_pad_world_in_txn(store, txn, &raw)?,
+        None => false,
+    };
+    if pad_held || crate::store::legal_hold::held_in_txn(store, txn, message.as_bytes())? {
+        return Ok(Some(DocumentMerge::Deferred(
+            "a hold or selected storage-only restriction keeps its history",
+        )));
+    }
+    let rows = format!("{}:", message.to_hex()).into_bytes();
+    if !super::forks::all_forks(store, txn, message)?.is_empty()
+        || !super::forks::receipts(store, txn, message)?.is_empty()
+        || !ENTITY_DOC_PURGE_RECEIPT
+            .scan_from(store, txn, &rows)?
+            .is_empty()
+        || super::citation_floor::has_live_citer(store, txn, message)?
+    {
+        return Ok(Some(DocumentMerge::Refused(
+            "the history here holds rows its successor does not carry",
+        )));
+    }
+    let old = storage::load(store, txn, &head)?;
+    if old.doc.is_shallow() && !incoming.doc.is_shallow() {
+        return Ok(Some(DocumentMerge::Refused(
+            "a purge here is not the successor's",
+        )));
+    }
+    let mut pins = Vec::new();
+    for (_, pin) in ENTITY_DOC_PIN.scan_from(store, txn, &rows)? {
+        let Some(twin) = twin_in(message, &old, incoming, &pin, &replaced)? else {
+            return Ok(Some(DocumentMerge::Refused(
+                "a pin here has no twin in its successor",
+            )));
+        };
+        pins.push(twin);
+    }
+    super::citation_floor::erase_in_txn(store, txn, message)?;
+    head.incarnation.clone_from(&carried.incarnation);
+    head.birth_frontier = None;
+    head.succeeds = carried.succeeds.clone();
+    let slot = DocumentSlot::from_hex(&head.document)?;
+    storage::persist(vault, txn, message, &mut head, incoming, None)?;
+    if incoming.doc.is_shallow() {
+        store.port_document_shallow_since_put(
+            txn,
+            slot,
+            &incoming.doc.shallow_since_vv().encode(),
+        )?;
+    } else {
+        store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
+    }
+    for pin in &pins {
+        let citation = EntityId::from_hex(&pin.citation)?;
+        ENTITY_DOC_PIN.put(store, txn, &HexPair(HexId(*message), HexId(citation)), pin)?;
+    }
+    if !replaced.includes_vv(&old.doc.oplog_vv()) {
+        park_held_edits_in_txn(vault, txn, message, &head, incoming, &old)?;
+    }
+    Ok(None)
+}
+
+/// `pin`, a pin of `old`, bound to its twin in `doc`, the successor of the
+/// history `replaced` names (FIX 3464): the newest version of `doc` whose
+/// text is the text of the version `pin` quotes, at the same span, where it
+/// reads the same quote. None where `pin` quotes a version past `replaced`,
+/// does not resolve, or `doc` holds no such version.
+fn twin_in(
+    entity: &EntityId,
+    old: &EntityDoc,
+    doc: &EntityDoc,
+    pin: &CitationPin,
+    replaced: &VersionVector,
+) -> Result<Option<CitationPin>> {
+    if !pin.within(replaced) {
+        return Ok(None);
+    }
+    let Ok(origin) = old.fork(&pin.anchor.frontier) else {
+        return Ok(None);
+    };
+    let Ok((start, end)) = super::verbs::resolve(&origin, *entity, &pin.anchor) else {
+        return Ok(None);
+    };
+    let text = origin.text();
+    let mut versions = vec![doc.doc.oplog_frontiers()];
+    doc.doc
+        .travel_change_ancestors(&doc.doc.oplog_frontiers().to_vec(), &mut |meta| {
+            let last = i32::try_from(meta.len).map_or(meta.id.counter, |len| {
+                meta.id.counter.saturating_add(len.saturating_sub(1))
+            });
+            versions.push(Frontiers::from_id(ID::new(meta.id.peer, last)));
+            std::ops::ControlFlow::Continue(())
+        })
+        .map_err(|_| Error::CorruptedIndex("successor document history"))?;
+    for version in versions {
+        let Ok(candidate) = doc.fork(&version.encode()) else {
+            continue;
+        };
+        if candidate.text() != text {
+            continue;
+        }
+        let Ok(anchor) = super::verbs::make_anchor(&candidate, *entity, start, end) else {
+            continue;
+        };
+        if anchor.quote == pin.anchor.quote && anchor.hash == pin.anchor.hash {
+            return Ok(Some(CitationPin {
+                anchor,
+                ..pin.clone()
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Parks `old`'s text and metadata, which hold operations past the version
+/// the successor `doc` replaces, as a pending rewrite of `doc` at its head,
+/// for the owner to land or drop (Engine 11-06 20:16): a proposal of its own
+/// that names no one, as the edits' authors are in the history it replaced.
+/// Nothing is parked where they leave the successor's value as it is.
+fn park_held_edits_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    message: &EntityId,
+    head: &Head,
+    doc: &EntityDoc,
+    old: &EntityDoc,
+) -> Result<()> {
+    let text = old.text();
+    let metadata = old.metadata_bytes()?;
+    if text == doc.text() && metadata == doc.metadata_bytes()? {
+        return Ok(());
+    }
+    let base = doc.doc.oplog_frontiers().encode();
+    let fork = doc.fork(&base)?;
+    fork.doc
+        .get_text(BODY)
+        .update(&text, UpdateOptions::default())
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidEditManifest("held edits fork")))?;
+    EntityDoc::replace_metadata(&fork.doc, &metadata)?;
+    fork.doc.commit();
+    let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let record = ForkRecord {
+        fork: EntityId::now().to_hex(),
+        proposal: EntityId::now().to_hex(),
+        entity: message.to_hex(),
+        parent_document: head.document.clone(),
+        base: base.clone(),
+        actor: DocActor::Erased,
+        opened_at: at,
+        rewrite: true,
+        status: ForkStatus::Pending,
+        read_refs: Vec::new(),
+        keep: None,
+    };
+    ENTITY_DOC_FORK.put(&vault.store, txn, &record.fork, &record)?;
+    ENTITY_DOC_FORK_SNAPSHOT.put(
+        &vault.store,
+        txn,
+        &record.fork,
+        &fork.shallow_snapshot(&base)?,
+    )?;
+    let proposal = record.proposal.clone();
+    ENTITY_DOC_PROPOSAL_BUNDLE.put(
+        &vault.store,
+        txn,
+        &proposal,
+        &ProposalBundle {
+            proposal: proposal.clone(),
+            author: DocActor::Erased,
+            forks: vec![record],
+            settled: false,
+            opener_lineage: Vec::new(),
+        },
+    )?;
+    Ok(())
 }
 
 /// Takes `carried`, a Switch's head over `head`, the document this vault
