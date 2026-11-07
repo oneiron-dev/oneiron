@@ -417,6 +417,8 @@ impl<'a> AgentDispatcher<'a> {
         // FIX 11592: the requester the host's door named, or the parent's.
         let requester =
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
+        let caller_origin =
+            self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
 
@@ -553,6 +555,7 @@ impl<'a> AgentDispatcher<'a> {
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
             requester,
+            caller_origin,
         })
     }
 

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1286 facade rows, 4659 declarations.
+Census: 1286 facade rows, 4661 declarations.
 Inputs: 1215 of 1286 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1115 of 1286 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -14460,10 +14460,17 @@ class WorkflowDispatchRequest(TypedDict):
     briefing: str
     context_spec: NotRequired[ContextSpec | None]
     task_ref: NotRequired[EntityId | None]
+CallerLocality = Literal["on_device", "off_device"]
+class CallerOriginConnectionBody(TypedDict):
+    locality: CallerLocality
+class CallerOriginConnection(TypedDict):
+    connection: CallerOriginConnectionBody
+CallerOrigin = Literal["native_host", "unknown"] | CallerOriginConnection
 class WorkflowStepCapture(TypedDict):
     requested_agent_ref: EntityId
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec
+    caller_origin: CallerOrigin
 class WorkflowStepRun(TypedDict):
     ordinal: int
     requested_agent_ref: EntityId
@@ -14556,6 +14563,7 @@ class LaunchedMember(TypedDict):
     state: str
     type_ref: TypeStamp
     team_ref: NotRequired[str | None]
+    caller_origin: CallerOrigin
 TeamAxis = Literal["converge", "diverge"]
 class ResolvedTeam(TypedDict):
     type_ref: TypeStamp
