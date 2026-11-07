@@ -46,6 +46,8 @@ mod run_verbs;
 mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
+mod scoped_generation;
+pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
 pub mod shadow_runner;
 mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
