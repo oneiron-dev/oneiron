@@ -7,11 +7,15 @@
 //! owner's call names his own stream instead (FIX 5204), and runs again here
 //! while the vault records him as its live owner.
 
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod ceiling;
+
 use std::sync::Arc;
 
 use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::vault_read::{VaultReadMethod, VaultReadRequest};
 use oneiron::memory::{Memory, RewriteAdmit};
-use oneiron::runtime_hooks::verb::{VerbAskCredential, VerbAskDoor};
+use oneiron::runtime_hooks::verb::{VerbAskCredential, VerbAskDoor, VerbAskMcpCeiling};
 use oneiron::runtime_hooks::{VerbCall, VerbHookPre};
 use serde_json::Value;
 
@@ -20,7 +24,9 @@ use super::admission::mcp_admit_scoped_verb;
 use super::tasks_response::mcp_agent_verb_arguments;
 use super::{McpCallContext, McpGatewayError, mcp_facade_error};
 use crate::api::facade::RowHookResume;
-use crate::mcp::{McpEndpointTool, McpResolvedActor, McpSurfaceMode, try_registered_surface};
+use crate::mcp::{
+    McpEndpointTool, McpResolvedActor, McpSurfaceMode, McpVerbArguments, try_registered_surface,
+};
 use crate::server::SyncServer;
 
 /// The pre chain of MCP row `tool` over its `input`, for `actor` calling
@@ -95,34 +101,47 @@ fn mcp_verb_ask_credential(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Option<VerbAskCredential> {
-    let owner = actor
-        .auth
+    let door = actor
+        .drain
         .as_ref()
-        .and_then(crate::api::scoped_auth::attested_owner_holder);
-    let door = match owner {
-        Some(_) => VerbAskDoor::McpOwner {
-            connection: actor.stream_connection.0.clone(),
-        },
-        None => VerbAskDoor::Mcp {
-            connection: actor.stream_connection.0.clone(),
-            ceiling: mcp_adapter_ceiling(actor),
-        },
-    };
+        .filter(|drain| Some(drain.invocation()) == memory.invocation())
+        .and_then(|drain| drain.credential_door())
+        .cloned()
+        .unwrap_or_else(|| {
+            let owner = actor
+                .auth
+                .as_ref()
+                .and_then(crate::api::scoped_auth::attested_owner_holder);
+            match owner {
+                Some(_) => VerbAskDoor::McpOwner {
+                    connection: actor.stream_connection.0.clone(),
+                },
+                None => VerbAskDoor::Mcp {
+                    connection: actor.stream_connection.0.clone(),
+                    ceiling: mcp_adapter_ceiling(actor),
+                },
+            }
+        });
     memory
         .clone()
         .with_credential_door(door)
         .verb_ask_credential()
 }
 
-/// BLAKE3 of the registration a connector call came in by: its actor, its
-/// world and facet scope and its bound verbs. A call settlement runs again
-/// must find the same (ARCH-0080 §3 Ask).
-pub(super) fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
-    let ceiling = format!(
-        "{:?}|{:?}|{:?}|{:?}",
-        actor.actor_ref, actor.actor_class, actor.scope, actor.bound_verbs
-    );
-    *blake3::hash(ceiling.as_bytes()).as_bytes()
+/// The registration a connector call came in by, saved without a credential
+/// so settlement can meet its live authority with this original ceiling.
+pub(super) fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> VerbAskMcpCeiling {
+    VerbAskMcpCeiling {
+        actor_ref: actor.actor_ref,
+        actor_class: actor.actor_class,
+        world: actor.scope.world_ref,
+        facets: actor.scope.facets.clone(),
+        write_facet: actor.scope.facet_ref,
+        bound_verbs: actor
+            .bound_verbs
+            .as_ref()
+            .map(|verbs| verbs.iter().map(|name| (*name).to_owned()).collect()),
+    }
 }
 
 /// The door's admission of `tool` for `actor`, then what a hook reads, built
@@ -151,13 +170,23 @@ fn mcp_hooks_admitted(
             "a host trigger requires the owner's verified credential",
         ));
     }
+    // FIX 4794: a row whose handler takes the caller's credential refuses a
+    // call with none here, before its pre hooks run, with that handler's error.
+    if actor.auth.is_none() && crate::api::facade::needs_caller_credential(tool) {
+        return Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        ));
+    }
     let reader = VerbCall::reader_of(memory, tool).map_err(mcp_facade_error)?;
     Ok((reader, Some(mcp_rewrite_admit(server, tool, actor))))
 }
 
 /// The admission a connector's own call of `tool` meets, run on a hook's
 /// rewritten args for the same actor. A row no generated tool carries
-/// admits no rewrite.
+/// admits no rewrite. A native read's args are its native request: they
+/// meet that method's own request validation first (FIX 1435).
 fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContext) -> RewriteAdmit {
     let resolved = try_registered_surface(McpSurfaceMode::ToolFirst)
         .ok()
@@ -172,7 +201,10 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
         let Some(tool) = generated else {
             return Err("no MCP tool carries this row to re-admit its args".to_owned());
         };
-        let arguments = mcp_agent_verb_arguments(tool.name, rewritten).map_err(refused)?;
+        let arguments = match tool.memory_method() {
+            Some(method) => mcp_native_read_arguments(method, rewritten)?,
+            None => mcp_agent_verb_arguments(tool.name, rewritten).map_err(refused)?,
+        };
         arguments
             .validate(tool.name, tool)
             .map_err(|error| refused(mcp_tool_validation_error(error)))?;
@@ -184,24 +216,39 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
     })
 }
 
+/// The `tools/call` arguments a native read's `request` projects onto, once
+/// it passed `method`'s own request validation (FIX 1435).
+fn mcp_native_read_arguments(
+    method: VaultReadMethod,
+    request: &Value,
+) -> Result<McpVerbArguments, String> {
+    VaultReadRequest::validate_body(method, request).map_err(|error| error.to_string())?;
+    Ok(McpVerbArguments {
+        request: Some(request.clone()),
+        ..McpVerbArguments::default()
+    })
+}
+
 #[cfg(feature = "code-sandbox-wasmtime")]
 impl McpCallContext {
     /// Runs a connector's call a verb hook's ask stopped again, once the ask
     /// settled proceed (ARCH-0080 §3 Ask), under `auth`, its credential as it
     /// verified again now. The registration is the one its saved
-    /// `connection` names now, never a saved copy, and must carry the
-    /// `ceiling` the call was admitted at. The saved args meet the admission
+    /// `connection` names now, never a saved copy, capped by the original
+    /// `ceiling`. The saved args meet the admission
     /// the connector's own call of the tool meets, then run through the same
     /// door, the pre chain on the drain's permit.
     pub(crate) async fn resume_verb_ask(
         server: &Arc<SyncServer>,
         auth: crate::auth::CoreAuth,
         connection: &str,
-        ceiling: &[u8; 32],
+        ceiling: &VerbAskMcpCeiling,
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::runtime_hooks::verb::VerbAskResumed,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         // Only a generated tool-first row is a door a connector's call
         // comes back by.
@@ -226,11 +273,9 @@ impl McpCallContext {
         });
         drop(registry);
         let mut actor = resolved.map_err(crate::credential_resume::adapter_refusal)?;
-        if !crate::credential_resume::ceiling_holds(ceiling, &mcp_adapter_ceiling(&actor)) {
-            return Err(VerbAskRefusal::ScopeRefused);
-        }
         super::actor_dispatch::mcp_proof_admits(server, &actor, &auth)
             .map_err(|_| VerbAskRefusal::CredentialChanged)?;
+        ceiling::intersect_registration(server, &mut actor, ceiling)?;
         actor.auth = Some(auth);
         let landing = crate::api::write_facet::landing_facet(
             &server.vault,
@@ -269,8 +314,10 @@ impl McpCallContext {
         connection: &str,
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::runtime_hooks::verb::VerbAskResumed,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         if !matches!(
             try_registered_surface(McpSurfaceMode::ToolFirst)
@@ -303,17 +350,48 @@ impl McpCallContext {
 
 /// The saved `call` run again in `context`, its door rebuilt: the saved args
 /// meet the admission the caller's own call of the tool meets, then run
-/// through the same dispatch.
+/// through the same dispatch. A native read runs again through its own
+/// verb-hook boundary, on the saved request (FIX 1435). Either answer goes
+/// beside the rows it was derived from, for the caller's retry to be
+/// released by (FIX 1435, FIX 21054).
 #[cfg(feature = "code-sandbox-wasmtime")]
 async fn rerun_saved_call(
     server: &Arc<SyncServer>,
     context: &McpCallContext,
     call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
-) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
-    use oneiron::runtime_hooks::verb::VerbAskRefusal;
+) -> Result<
+    oneiron::runtime_hooks::verb::VerbAskResumed,
+    oneiron::runtime_hooks::verb::VerbAskRefusal,
+> {
+    use oneiron::runtime_hooks::verb::{VerbAskRefusal, VerbAskResumed};
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
+    if let Some(McpEndpointTool::Verb(tool)) = try_registered_surface(McpSurfaceMode::ToolFirst)
+        .ok()
+        .and_then(|surface| surface.resolve(&call.verb))
+        && let Some(method) = tool.memory_method()
+    {
+        // The native read's boundary, on the heap (FIX 12072).
+        let ran = Box::pin(
+            super::tasks_response::native_read::execute_native_read_input(
+                server,
+                tool,
+                method,
+                call.args,
+                context,
+                &mut served,
+            ),
+        )
+        .await;
+        return Ok(match (ran, served.into_rows()) {
+            (Ok((output, _)), Some(producers)) => VerbAskResumed::RanWithProducers {
+                result: Ok(output),
+                producers,
+            },
+            (ran, _) => VerbAskResumed::Ran(ran.map(|(output, _)| output).map_err(mcp_saved_error)),
+        });
+    }
     let mut board_hooks = None;
     // The held call's admission intent reopens for this run and settles on
     // its answer, as the facade drain's does (FIX 4735).
@@ -338,18 +416,26 @@ async fn rerun_saved_call(
     ))
     .await;
     match ran {
-        Err(error) => Ok(Err(mcp_saved_error(error))),
+        Err(error) => Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error)))),
         Ok((output, ..)) => {
             // A board read answers the settlement here: the receipt its hook
             // rows owe is recorded and their blocks spent as the answer
             // returns (OF-579).
             if let Some(mut hooks) = board_hooks {
                 if let Err(error) = hooks.record_receipt(server).await {
-                    return Ok(Err(mcp_saved_error(error)));
+                    return Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error))));
                 }
                 hooks.spend(server);
             }
-            Ok(Ok(output))
+            Ok(
+                match super::served_rows::saved_answer_rows(&call.verb, served) {
+                    Some(producers) => VerbAskResumed::RanWithProducers {
+                        result: Ok(output),
+                        producers,
+                    },
+                    None => VerbAskResumed::Ran(Ok(output)),
+                },
+            )
         }
     }
 }

@@ -39,8 +39,13 @@ pub(super) async fn facade_call_receipt(
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
     // A custody value's body is wiped and redacted here (FIX 11442).
-    let (bytes, request) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    let (bytes, request) = super::secret_body::read_middleware_body(
+        body,
+        &verb,
+        &mut parts.extensions,
+        crate::api::request_floor::request_floor(&server),
+    )
+    .await;
     // FIX 4280: a call serving a room NOTE to a caller verified in its room
     // keeps none either, judged on arrival, before a close drops its hold.
     let anonymous = anonymous
@@ -58,6 +63,7 @@ pub(super) async fn facade_call_receipt(
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
+    super::secret_body::retain_request_digest(&mut parts.extensions, &request_digest);
     // FIX 10938: a row an action runs in process runs inside its own hold.
     let outer = parts
         .extensions

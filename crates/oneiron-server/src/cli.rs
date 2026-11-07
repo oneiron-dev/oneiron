@@ -13,7 +13,7 @@ mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
-    FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs,
+    FilesAttachArgs, FilesCommand, FilesConvertArgs, FilesListArgs, FilesPathArgs, FilesRescanArgs,
 };
 mod graph_fs_args;
 mod hook_args;
@@ -21,6 +21,8 @@ mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
+mod model_workers_args;
+pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
 mod recovery_kit_args;
 mod reminder_route_args;
@@ -68,7 +70,8 @@ pub use owner_args::{
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
     RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
-    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    RecoveryKitRecoverAuthorityArgs, RecoveryKitRestoreArgs, RecoveryKitRootsArgs,
+    RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use reminder_route_args::{
     ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,
@@ -114,6 +117,8 @@ pub enum Command {
     /// flags ride [`ServeArgs`] so both the bare and the explicit `serve`
     /// forms accept them; the mode is selected in `commands::serve`.
     Serve(Box<ServeArgs>),
+    /// Supervise configured model workers without opening a vault.
+    ModelWorkers(ModelWorkersArgs),
     /// Revoke an existing device lease binding.
     Revoke(Box<RevokeArgs>),
     /// Print or locate the agentskills-compatible skill pack.
@@ -1028,6 +1033,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     match cli.into_command() {
         Command::Serve(args) => commands::serve(*args).await,
+        Command::ModelWorkers(args) => commands::model_workers(args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => {

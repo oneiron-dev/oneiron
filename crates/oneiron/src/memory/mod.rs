@@ -123,7 +123,10 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+mod proactivity_digest;
 pub(crate) mod read_capture;
+pub use proactivity_digest::ProactivityDigestRequest;
+
 mod read_lane;
 mod read_selection;
 mod reads;
@@ -178,8 +181,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, land_asset_blob_in_txn,
-    release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, discard_asset_blob_reference_in_txn,
+    land_asset_blob_in_txn, release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -384,8 +387,9 @@ pub use witness::{
     StreamSyncVisibility,
 };
 pub use witness::{
-    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
-    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamFinished,
+    SessionStreamOutcome, SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext,
+    SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

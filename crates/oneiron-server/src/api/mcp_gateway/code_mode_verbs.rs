@@ -68,6 +68,9 @@ pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow}
 // The facade's browser rows count their hooks' decisions as this door's do
 // (FIX 10425).
 pub(crate) use self::guests::count_hook_decisions;
+// A code-mode run's self brief states its budget from the run's line (FIX
+// 17594 D5).
+pub(crate) use self::dispatch::code_mode_line;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
@@ -357,4 +360,6 @@ pub(crate) struct ReaderChildDoor {
     /// Where the parent run's caller's rows go: its locality, with the
     /// machine its connection proved (FIX 4937).
     caller: oneiron::settings::ReadDestination,
+    /// The native Read job also holds its own derived spawn seat.
+    nested_readers: bool,
 }

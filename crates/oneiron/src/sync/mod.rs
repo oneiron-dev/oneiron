@@ -29,6 +29,8 @@
 //! - `federation_burst` — authenticated peer observations and durable defer/replay
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
+pub mod ask_forward;
+pub mod ask_option_link;
 pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
@@ -74,6 +76,7 @@ pub mod schema;
 pub mod selector;
 pub mod server_state;
 pub mod shared_leave;
+pub(crate) mod source_audiences;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;
@@ -90,8 +93,9 @@ pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
-    ResidenceSearch, ResidenceSearchPage, SealedBundleRelay, SearchSource, SyncClient,
-    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
+    ResidenceSearch, ResidenceSearchPage, SealedBundleRelay, SearchSource, StagedImportBodySource,
+    SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus,
+    SyncTransportCredential, ThinItem,
 };
 pub use connection::{
     ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
@@ -100,6 +104,7 @@ pub use connection::{
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
+pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
