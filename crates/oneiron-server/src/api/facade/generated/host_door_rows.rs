@@ -5,6 +5,7 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
@@ -96,6 +97,7 @@
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
@@ -105,6 +107,8 @@
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -1684,7 +1688,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
     HostDoorRow::from_verb(verb).is_some()
         || matches!(
             verb,
-            "self.focus.wakes"
+            "vault.commitments.ledger"
+                | "self.focus.wakes"
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
@@ -1776,6 +1781,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
                 | "vault.connectors.web.usage"
+                | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
                 | "ai.ask_image"
@@ -1784,6 +1790,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.create"
                 | "vault.questions.edit"
                 | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
                 | "vault.questions.backfill"
                 | "vault.questions.read"
                 | "vault.questions.outcome_windows"
