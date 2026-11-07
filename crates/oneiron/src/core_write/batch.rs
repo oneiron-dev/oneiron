@@ -134,12 +134,19 @@ impl Vault {
         })
     }
 
-    /// Every put of `input` staged in one batch, and its receipt rows.
+    /// Every put of `input` staged in one batch, and its receipt rows. The
+    /// batch's entity count is measured against `core_batch_entities`
+    /// (FIX 57): past it the row asks, and every entity is still staged in
+    /// this one batch, so the write stays one atomic transaction.
     fn stage_core_batch(
         &self,
         input: &CoreBatchWriteInput,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<(BatchBuilder<'_>, Vec<CoreBatchEntityReceipt>)> {
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::CoreBatchEntities,
+            input.entities.len() as u64,
+        );
         let mut batch = self.batch();
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {

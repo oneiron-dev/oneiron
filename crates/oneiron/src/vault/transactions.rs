@@ -28,7 +28,9 @@ pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
 /// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
-/// reservation: only the delete doors write them. Nor a federation world's
+/// reservation: only the delete doors write them. Nor the owner's discard of a
+/// world copy, its marks or a BASE window's projection floor: only the
+/// discard and its projection write them (FIX 14534). Nor a federation world's
 /// registration or stale stamp: only the registration and the stale sweep
 /// write them. Nor a peer-origin digest: only the peer import records what it
 /// brought. Nor the record of which machine wrote a MESSAGE row: only the put
@@ -66,6 +68,18 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     {
         return Err(Error::InvalidConfig(
             "deletion fences, markers and topology reservations are written only by the delete doors"
+                .to_owned(),
+        ));
+    }
+    if [
+        crate::side_table::SYNC_DISCARDED_WORLD_ROW.prefix,
+        crate::side_table::SYNC_BASE_WINDOW_DISCARD.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "the owner's discard marks and projection floors are written only by the discard"
                 .to_owned(),
         ));
     }
@@ -133,7 +147,19 @@ impl Vault {
     /// Checks if a directed edge exists in the LMDB vault.
     pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.port_edge_get(&rtxn, src, kind, tgt)?.is_some())
+        self.edge_exists_in_txn(&rtxn, src, kind, tgt)
+    }
+
+    /// [`Self::edge_exists`] in `txn`, so a door proves an edge in the
+    /// snapshot it serves from (FIX 10782).
+    pub fn edge_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.store.port_edge_get(txn, src, kind, tgt)?.is_some())
     }
 
     /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).

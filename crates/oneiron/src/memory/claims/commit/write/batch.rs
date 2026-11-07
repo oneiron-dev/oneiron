@@ -114,6 +114,13 @@ impl Memory<'_> {
         let mut writes = Vec::with_capacity(claims.len());
         for (index, claim) in claims.iter().enumerate() {
             refuse_typed_claim_family(claim.input).map_err(refused_at(index))?;
+            // ABC row 22: the batch measures each claim whole, as the single
+            // claim door does, never refusing it for its size.
+            let bytes = crate::memory::caps::claim_input_json_bytes(claim.input)
+                .map_err(refused_at(index))?;
+            let _ = self
+                .vault
+                .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
             writes.push(
                 self.resolve_claim_write(claim.input, true, claim.in_writer, claim.birth)
                     .map_err(refused_at(index))?,
