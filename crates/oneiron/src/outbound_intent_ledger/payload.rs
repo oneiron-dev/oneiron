@@ -393,6 +393,7 @@ fn stop_for_erase(record: &mut IntentLedgerRecord, reason: IntentEscalationReaso
 impl ErasedForm for IntentLedgerRecord {
     fn into_erased(mut self) -> crate::Result<Self> {
         self.payload = envelope(KIND_ERASED, Named::default(), &[]);
+        self.pinned_approval = None;
         stop_for_erase(&mut self, IntentEscalationReason::ActorErased);
         Ok(self)
     }

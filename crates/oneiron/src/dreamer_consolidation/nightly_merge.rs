@@ -270,6 +270,7 @@ impl ConsolidationExecutor<'_> {
                 self.inference.extraction_egress,
             );
             let keyless = call.inference.selected_keyless();
+            let paid = call.inference.selected_paid();
             let locality = match call.inference.selected_locality() {
                 Some(locality) => locality,
                 // A missing locality, a request that did not hash and an
@@ -320,6 +321,7 @@ impl ConsolidationExecutor<'_> {
                     response_format: ResponseFormat::Text,
                     locality,
                     host_keyless: keyless,
+                    host_paid: paid,
                 }
                 .with_purpose_defaults(),
                 messages: vec![
