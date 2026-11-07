@@ -11,13 +11,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::shadow_runner::{ShadowRunRequest, ShadowRunResult, ShadowStatus};
-use crate::compaction::output::OutputRef;
+use crate::code_run::shadow_runner::{
+    ShadowRunRequest, ShadowRunResult, ShadowSourceAdmission, ShadowStatus,
+};
 use crate::dreamer_runner::shadow_values::ArtifactDigest;
 use crate::dreamer_runner::shadow_values::ArtifactDigestAlgorithm;
 use crate::dreamer_runner::shadow_values::EngineArtifactPin;
 use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
 use crate::dreamer_runner::shadow_values::ShadowArmLease;
+use crate::dreamer_runner::shadow_values::ShadowBodyRef;
 use crate::dreamer_runner::shadow_values::ShadowIsolation;
 use crate::dreamer_runner::shadow_values::ShadowMeterContext;
 use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
@@ -105,6 +107,8 @@ pub fn parse_artifact_digest_text(text: &str) -> Option<ArtifactDigest> {
 /// The host's shadow runner as a code fix drives it (FIX 1661, 2144), from
 /// the Coach's blocking worker: each arm runs to its result on the host's
 /// own runtime, and its bodies stay under its lease until it is released.
+/// A body reaches the code fix's questions only through the host's model
+/// release (FIX 9468).
 pub trait CodeFixShadowHost {
     /// Runs one arm of `request` to its result: run, or unavailable for a
     /// typed reason.
@@ -114,16 +118,20 @@ pub trait CodeFixShadowHost {
     /// A runner or storage failure, never an unavailable arm.
     fn run_arm(&self, request: ShadowRunRequest) -> Result<ShadowRunResult>;
 
-    /// The whole body `body` of the arm `lease` holds, or why it cannot be
-    /// read now.
+    /// The whole body `body` of the arm `lease` holds, released to a model
+    /// (FIX 9468), or why it cannot be now. The host's release reads again
+    /// the arm's mark on the body, the arm's source, `admission`'s Grant to
+    /// the step's capture and the taint of each source occurrence the arm
+    /// was seeded with, then reads the arm's bytes as they were written.
     ///
     /// # Errors
     ///
-    /// The arm's store failing.
-    fn read_arm_body(
+    /// The arm's store failing, and the release's storage errors.
+    fn read_arm_body_for_model(
         &self,
         lease: &ShadowArmLease,
-        body: OutputRef,
+        body: &ShadowBodyRef,
+        admission: &dyn ShadowSourceAdmission,
     ) -> Result<std::result::Result<Vec<u8>, ShadowUnavailable>>;
 
     /// Releases `lease`: its arm's bodies go.

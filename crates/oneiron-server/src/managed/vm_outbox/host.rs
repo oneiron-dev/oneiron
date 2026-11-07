@@ -128,25 +128,23 @@ impl VmOutboxAttachment {
             store,
             Arc::clone(&gate),
         );
-        std::thread::Builder::new()
-            .name("vm-outbox-host".into())
-            .spawn(move || {
-                for stream in listener.incoming() {
-                    let served = stream.map_err(anyhow::Error::from).and_then(|stream| {
-                        let mut link = Link::new(stream.try_clone()?, stream);
-                        carrier.host_session(&mut link, &vault)
-                    });
-                    if let Err(error) = served {
-                        tracing::warn!(
-                            reason = "vm_outbox_session_ended",
-                            vault = %vault,
-                            error = %format!("{error:#}"),
-                            "a vault VM's outbox carrier session ended; both ends keep their work"
-                        );
-                        std::thread::sleep(ACCEPT_BACKOFF);
-                    }
+        crate::engine_thread("vm-outbox-host".into()).spawn(move || {
+            for stream in listener.incoming() {
+                let served = stream.map_err(anyhow::Error::from).and_then(|stream| {
+                    let mut link = Link::new(stream.try_clone()?, stream);
+                    carrier.host_session(&mut link, &vault)
+                });
+                if let Err(error) = served {
+                    tracing::warn!(
+                        reason = "vm_outbox_session_ended",
+                        vault = %vault,
+                        error = %format!("{error:#}"),
+                        "a vault VM's outbox carrier session ended; both ends keep their work"
+                    );
+                    std::thread::sleep(ACCEPT_BACKOFF);
                 }
-            })?;
+            }
+        })?;
         Ok(Self { gate })
     }
 

@@ -70,19 +70,25 @@ pub fn enqueue_booking_verb_with_publication(
     // Sixteen bytes of digest are plenty to tell two requests apart.
     let request_hex = blake3::hash(&encode_row(&attempt.request)?).to_hex();
     let request_digest = &request_hex[..32];
+    // The caller's key enters the dedupe key as its digest, so a key of any
+    // length (ABC row 73) makes a queue key of one length; two keys meet
+    // only when their digests do.
     let dedupe_key = match public_scope {
         Some(snapshot) => attempt.request.idempotency_key().map(|key| {
             format!(
-                "public:{}:{request_digest}:{key}",
-                blake3::hash(&snapshot).to_hex()
+                "public:{}:{request_digest}:{}",
+                blake3::hash(&snapshot).to_hex(),
+                blake3::hash(key.as_bytes()).to_hex()
             )
         }),
-        // Namespace both arms: a caller's literal key may otherwise equal
-        // a public key and coalesce onto an unrestricted queued attempt.
-        None => attempt
-            .request
-            .idempotency_key()
-            .map(|key| format!("private:{request_digest}:{key}")),
+        // Namespace both arms: a caller's key may otherwise equal a public
+        // key and coalesce onto an unrestricted queued attempt.
+        None => attempt.request.idempotency_key().map(|key| {
+            format!(
+                "private:{request_digest}:{}",
+                blake3::hash(key.as_bytes()).to_hex()
+            )
+        }),
     };
     let payload = encode_row(&attempt)?;
 
