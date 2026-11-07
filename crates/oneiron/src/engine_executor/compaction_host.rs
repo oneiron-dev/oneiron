@@ -46,6 +46,7 @@ impl EngineNativeExecutor<'_> {
         // FIX 4465 B: every paid call of a self-written pass is filed before
         // anything lands, so a landing that is refused keeps its steps too.
         self.file_self_passes(&mut finished);
+        self.mark_self_written_summaries(&finished);
         // FIX 17594 (Engine call B): a fold batch that committed is a brief
         // boundary, before the epoch the flight may swap in after it.
         if let Some((_, byline, _)) = seat.swap_seat()
@@ -607,8 +608,7 @@ impl EngineNativeExecutor<'_> {
     /// room's overlay over base. A canonical run's window, keep list and
     /// ceiling then pass `host.compact`'s pre-hooks, which may pin more.
     /// This run's swapped epochs with their summaries' prose, and its fold
-    /// ledger, where the run's rows are: base, or its room's overlay over
-    /// base.
+    /// ledger, where the run's rows are: base, or its room's overlay over base.
     pub(super) fn compaction_epochs(
         &self,
         run_id: crate::EntityId,

@@ -60,9 +60,10 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
         self.verify_storage_dispatcher_binding()?;
         config.validate()?;
-        // The entry's capture epoch of the run's read-world ledger (FIX 6130).
+        // The entry's capture epoch of the run's read-world ledger (FIX 6130),
+        // for the task this entry runs (FIX 7087).
         let gated = self.gated_write;
-        let _read_worlds = gated.enter_read_worlds(config.run_id);
+        let _read_worlds = gated.enter_read_worlds(config.run_id, &config.task);
         self.validate_run_seat(config)?;
         // Resolve exactly once per run attempt. Both teaching sites use these
         // bytes, and the fingerprint joins the durable replay identity below.
