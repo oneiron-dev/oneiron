@@ -479,13 +479,33 @@ impl Memory<'_> {
         quoted: Option<&crate::conversation_dag::QuotedReply>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<()> {
+        // A source landing marks each row it stamps born in this write before
+        // it stages it: the write door admits the stamp under that mark
+        // alone, and binding the row takes it away (fix list row 16256).
+        let birth = plan
+            .imported
+            .as_ref()
+            .and_then(|stamp| stamp.source_audience.as_ref());
+        if let Some(birth) = birth {
+            let turn_put =
+                matches!(admission.turn, AdmittedTurn::Mint { .. }) || admission.has_new_messages();
+            let stamped = mint_conversation
+                .then_some(plan.conversation_id)
+                .into_iter()
+                .chain(turn_put.then_some(plan.turn_id))
+                .chain(plan.message_ids());
+            for id in stamped {
+                crate::source_audience::mark_birth_in_txn(self.vault, wtxn, birth, &id)?;
+            }
+        }
         let mut batch = self.vault.batch_in();
         if mint_conversation {
-            batch = batch.put(
+            batch = put_container(
+                batch,
+                birth,
                 &plan.conversation_id,
                 ENTITY_TYPE_CONVERSATION,
-                plan.occurred,
-                plan.learned_at,
+                (plan.occurred, plan.learned_at),
                 &plan.conversation_body,
             );
         }
@@ -495,15 +515,15 @@ impl Memory<'_> {
             // is this turn in", so a turn minted without it is one no
             // consolidation round can group.
             AdmittedTurn::Mint { body } => {
-                batch = batch
-                    .put(
-                        &plan.turn_id,
-                        ENTITY_TYPE_TURN,
-                        plan.occurred,
-                        plan.learned_at,
-                        body,
-                    )
-                    .edge(&plan.turn_id, EdgeKind::ChildOf, &plan.conversation_id, 1.0);
+                batch = put_container(
+                    batch,
+                    birth,
+                    &plan.turn_id,
+                    ENTITY_TYPE_TURN,
+                    (plan.occurred, plan.learned_at),
+                    body,
+                )
+                .edge(&plan.turn_id, EdgeKind::ChildOf, &plan.conversation_id, 1.0);
                 if let Some(quoted) = quoted {
                     batch = quoted.edges(batch, &plan.turn_id, plan.learned_at);
                 }
@@ -521,11 +541,12 @@ impl Memory<'_> {
                     &plan.turn_id,
                 )? {
                     let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
-                    batch = batch.put(
+                    batch = put_container(
+                        batch,
+                        birth,
                         &plan.turn_id,
                         ENTITY_TYPE_TURN,
-                        record.occurred,
-                        redirtied_at,
+                        (record.occurred, redirtied_at),
                         &record.body,
                     );
                 }
@@ -736,5 +757,22 @@ fn resolve_entity_ref_in_txn(
                 MemoryError::not_found(format!("short ref {reference:?} does not resolve"))
             }),
         Err(_) => resolve_entity_ref(vault, reference),
+    }
+}
+
+/// [`crate::batch::BatchBuilder::put`] of the turn's TURN or CONVERSATION
+/// row, through the source-bound door when the landing holds a source's
+/// proof: its rows carry the source-audience obligation (fix list row 16256).
+fn put_container<'b>(
+    batch: crate::batch::BatchBuilder<'b>,
+    birth: Option<&crate::source_audience::SourceAudienceBirth>,
+    id: &EntityId,
+    entity_type: u8,
+    (occurred, learned_at): (crate::temporal::TimeRange, u64),
+    body: &[u8],
+) -> crate::batch::BatchBuilder<'b> {
+    match birth {
+        Some(birth) => batch.put_source_bound(id, entity_type, occurred, learned_at, body, birth),
+        None => batch.put(id, entity_type, occurred, learned_at, body),
     }
 }

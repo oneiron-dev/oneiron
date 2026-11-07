@@ -376,6 +376,7 @@ pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),
