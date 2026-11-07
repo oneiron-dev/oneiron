@@ -2,9 +2,11 @@
 //! #guest-grants, #relationship-lifecycle).
 //!
 //! Each owner mints, for the peer vault, one FEDERATION_GRANT of purpose
-//! [`FederationGrantScope::Connect`] and role Guest: read and propose inside
-//! explicit local named worlds, never base and never a received foreign
-//! world. The grant names a vault-resident guest actor for that peer, never a
+//! [`FederationGrantScope::Connect`] and role Guest: read, propose or both
+//! inside explicit local named worlds, never base and never a received
+//! foreign world. A propose-only grant stands and confers no read (FIX
+//! 8734): mint and binding judge its liveness, each door its verb. The grant
+//! names a vault-resident guest actor for that peer, never a
 //! host key or a vault id, and that actor's row carries the origin vault.
 //!
 //! A minted grant is inert until one Active pact binds it: every reader asks
@@ -214,8 +216,9 @@ pub(crate) fn pact_admits_grant(
 
 /// Refuses unless `grant_ref` is a live Connect guest grant here for
 /// `peer_vault_id`, unexpired now, whose scope projects exactly to
-/// `outbound`, the pact half this vault shares. Ask, membership, own-device
-/// and Delegate rows all refuse.
+/// `outbound`, the pact half this vault shares. Liveness asks no verb, so a
+/// propose-only grant binds (FIX 8734). Ask, membership, own-device and
+/// Delegate rows all refuse.
 pub(crate) fn require_connect_grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -236,7 +239,7 @@ pub(crate) fn require_connect_grant_in_txn(
             peer_vault_id: *peer_vault_id,
         })
         || !grant.role.is_guest()
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
+        || !grant.is_live_at(vault.store.clock.now_recorded_at())
     {
         return Err(refused(
             "the grant is not a live Connect grant for that peer vault",
@@ -326,9 +329,10 @@ impl Vault {
     /// approved by `owner` (FIX 3016). In one writer: a live Owner and an
     /// unconflicted local root; not this vault; no live Connect with that
     /// peer; worlds that are this vault's live named worlds, never base or a
-    /// received foreign world; verbs read/propose only; the request inside
-    /// the manifest's Connect guest ceiling (an excess refuses, never a
-    /// clamp); an expiry, when given, in the future. The grant names the
+    /// received foreign world; verbs read/propose only, propose alone
+    /// included (FIX 8734); the request inside the manifest's Connect guest
+    /// ceiling (an excess refuses, never a clamp); an expiry, when given, in
+    /// the future; the resolved grant live. The grant names the
     /// peer's vault-resident guest actor, resolved or created here. It is
     /// inert until both owners' Connect makes its pact Active.
     pub fn mint_connect_grant(
@@ -384,9 +388,9 @@ impl Vault {
             resolved.clone(),
             expires_at,
         )?;
-        if !grant.confers_at(now) {
+        if !grant.is_live_at(now) {
             return Err(refused(
-                "the requested scope confers no read: name its bands, audience and sensitivity",
+                "the requested scope reaches no record: name its bands, audience and sensitivity",
             ));
         }
         let id = self.store.clock.entity_id()?;

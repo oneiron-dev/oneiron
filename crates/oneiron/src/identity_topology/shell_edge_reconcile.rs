@@ -300,6 +300,7 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         // `merged_into`/`split_into` row for this reconciler to own.
         StoredIdentityOpAction::Undo { .. }
         | StoredIdentityOpAction::Facet { .. }
+        | StoredIdentityOpAction::ParkedFacet { .. }
         | StoredIdentityOpAction::AssertDistinct { .. }
         | StoredIdentityOpAction::ProposalResolution { .. }
         | StoredIdentityOpAction::ProposalCancellation { .. }

@@ -574,20 +574,32 @@ impl FederationGrant {
         Ok(())
     }
 
-    /// Returns whether this grant confers at `now_secs`.
+    /// Returns whether this grant stands at `now_secs`, whatever verb it
+    /// carries (FIX 8734): not a git_push kind, no bottom verb, world, band,
+    /// audience or sensitivity axis, and unexpired. A propose-only grant
+    /// stands. Withdrawal, pact state and row liveness stay the caller's
+    /// checks, and each door still asks for its own verb.
     ///
     /// The expiry second itself DENIES. Grants without an expiry — every
-    /// non-delegate role — confer regardless of age.
+    /// non-delegate role — stand regardless of age.
+    #[must_use]
+    pub fn is_live_at(&self, now_secs: u64) -> bool {
+        Self::scope_is_live_at(&self.authority_scope, self.kind, self.expires_at, now_secs)
+    }
+
+    /// Returns whether this grant confers read at `now_secs`: it is live
+    /// ([`Self::is_live_at`]) and its verbs carry `read`. Every read door
+    /// asks this; a live propose-only grant confers no read.
     #[must_use]
     pub fn confers_at(&self, now_secs: u64) -> bool {
         Self::scope_confers_at(&self.authority_scope, self.kind, self.expires_at, now_secs)
     }
 
-    /// Whether a scope of `kind` with `expires_at` confers at `now_secs`
-    /// (FIX 4703): the [`Self::confers_at`] predicate over explicit parts,
-    /// so a signed Mint's scope is judged without building a Grant.
-    /// Source-equivalent to [`Self::confers_at`]; a `GitPush` kind never
-    /// confers (G1-PUSH).
+    /// Whether a scope of `kind` with `expires_at` confers read at
+    /// `now_secs` (FIX 4703): the [`Self::confers_at`] predicate over
+    /// explicit parts, so a signed Mint's scope is judged without building a
+    /// Grant. Source-equivalent to [`Self::confers_at`]; a `GitPush` kind
+    /// never confers (G1-PUSH).
     #[must_use]
     pub(crate) fn scope_confers_at(
         scope: &super::Scope,
@@ -595,9 +607,21 @@ impl FederationGrant {
         expires_at: Option<u64>,
         now_secs: u64,
     ) -> bool {
+        scope.verbs.contains(&"read".to_owned())
+            && Self::scope_is_live_at(scope, kind, expires_at, now_secs)
+    }
+
+    /// The [`Self::is_live_at`] predicate over explicit parts: liveness
+    /// alone, no verb asked.
+    fn scope_is_live_at(
+        scope: &super::Scope,
+        kind: super::FederationGrantKind,
+        expires_at: Option<u64>,
+        now_secs: u64,
+    ) -> bool {
         // A git_push grant confers no standing (G1-PUSH).
         if kind == super::FederationGrantKind::GitPush
-            || !scope.verbs.contains(&"read".to_owned())
+            || scope.verbs.is_bottom()
             || scope.worlds.is_bottom()
             || scope.bands.is_bottom()
             || scope.audience.is_bottom()

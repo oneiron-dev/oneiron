@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1318 code-mode rows (1278 host rows, 40 run rows), 4658 declarations.
-// Replies: 1129 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1326 code-mode rows (1285 host rows, 41 run rows), 4671 declarations.
+// Replies: 1134 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -997,6 +997,15 @@ declare namespace Sdk {
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
+  type WeaveAdminReportRequest = { membership_grant: string; request?: WeaveReportRequest };
+  type WeaveAdminLensRequest = { membership_grant: string; request?: WeaveLensRequest };
+  type WeaveAdminDigestRequest = { membership_grant: string; request?: WeaveDigestRequest };
+  type WeaveAdminLinkWrongRequest = { membership_grant: string; request: WeaveWrongLinkRequest };
+  type WeaveAdminItemWrongRequest = { membership_grant: string; request: WeaveWrongItemRequest };
+  type StepUpPasskeysResetRequest = { person: string };
+  type StepUpPasskeysReset = { person: string; removed: number };
+  type StepUpTotpResetRequest = { person: string };
+  type StepUpTotpReset = { person: string; removed: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
@@ -1831,7 +1840,7 @@ declare namespace Sdk {
   type OfferCost = { currency: string; monthly_before?: number | null; monthly_after?: number | null; one_off?: number | null; payback_months?: number | null };
   type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost; score?: number | null; evidence_refs: string[] };
   type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] };
-  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null };
+  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; paired_measurement?: number[] | null; losses: string[]; risk?: string | null };
   type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } };
   type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string };
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
@@ -1981,7 +1990,7 @@ declare namespace Sdk {
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
   type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };
-  type RsiOverdraftReceipt = { share: string; units: number };
+  type RsiOverdraftReceipt = { share: string; units: number; reservation: string; vault: string; public_key: string; signature: string };
   type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number };
   type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
   type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };
@@ -2061,9 +2070,7 @@ declare namespace Sdk {
   type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState };
   type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window";
-  type LegalHoldBoundKind = "law";
-  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
-  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
+  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type LegalHoldWithdrawEraseRequest = { records: EntityId[] };
@@ -2204,7 +2211,7 @@ declare namespace Sdk {
   type GraduationDemoteRequest = { scope: GraduationScope; reason: GraduationDemotionReason };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
-  type PolicySensitivity = "normal" | "sensitive";
+  type PolicySensitivity = "public" | "private" | "sensitive" | "restricted" | "normal";
   type PolicyAxes = { criticality?: PolicyCriticality | null; sensitivity?: PolicySensitivity | null };
   type PolicyRule = { prefix: string; exact?: boolean; axes: PolicyAxes };
   type PolicyCeiling = "auto" | "proposed";
@@ -2719,7 +2726,8 @@ declare namespace Sdk {
   type OriginPublishAct = { actor?: EntityId | null; class: OriginPublishActorClass; authority: OriginPublishAuthority; at: number };
   type OriginPublishRefusalReason = "destination_changed" | "remote_moved" | "rejected" | "outcome_unknown" | "authority_changed" | "objects_missing" | "marked_live_secret" | "secret_history_unknown";
   type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null };
-  type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null };
+  type BrokerIsolation = "separate_user" | "same_user";
+  type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null; broker_isolation?: BrokerIsolation | null };
   type OriginPublishReviewRequest = { repo: string; request_id: EntityId; page: number; code_repo?: EntityId | null };
   type OriginPublishReviewView = { request_id: EntityId; digest: string; page: number; pages: number; items: OriginPublishReviewItem[] };
   type OriginPublishIdRequest = { repo: string; request_id: EntityId; code_repo?: EntityId | null };
@@ -3703,6 +3711,8 @@ declare namespace Sdk {
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type LegalHoldState = "retained_for_law" | "use_restricted";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
@@ -3774,16 +3784,18 @@ declare namespace Sdk {
   type CalendarImportClaimReceipt = { claim_ref: string; predicate: string; approval: string; lifecycle: string };
   type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
   type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
-  type CalendarOccurrencesRequest = { master_ref: string; range: CalendarRangeDto };
+  type CalendarOccurrencesPageRequest = { master_ref: string; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarOccurrencesPage = { occurrences: CalendarOccurrenceView[]; complete: boolean; resume_from?: number | null };
   type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarSearchRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number };
-  type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
+  type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null };
+  type CalendarSearchPage = { events: CalendarEventView[]; complete: boolean; resume_from?: number | null };
+  type CalendarFreebusyPageRequest = { calendars: CalendarSel[]; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
-  type CalendarFreebusyDto = CalendarFreebusyIntervalDto[];
+  type CalendarFreebusyPage = { intervals: CalendarFreebusyIntervalDto[]; complete: boolean; resume_from?: number | null };
   type CalendarMeetingRequest = { event_ref: string };
   type PrepSectionKind = "prior_commitment" | "attendee_thread" | "dossier_delta";
   type PrepItem = { kind: PrepSectionKind; text: string; source_refs: string[]; observed_at: number };
@@ -4456,18 +4468,18 @@ declare namespace Sdk {
   type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { kind: "edge"; source: EntityId; edge_kind: string; target: EntityId };
   type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" };
   type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget };
+  type IdentityFacetSpec = { label: string };
   type IdentityProposalOutcome = "approved_untouched" | "approved_amended" | "rejected";
-  type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] };
-  type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId };
+  type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] } | { op: "facet"; entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] };
+  type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "parked_facet"; entity: EntityId; specs: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId };
   type IdentityTopologyReceipt = { event: EntityId; seq: number; at: number; actor?: EntityId | null; source: ClaimSource; approval: ClaimApprovalStatus; confidence: number; evidence?: IdentityEvidence | null; action: IdentityEventAction; seen: string };
   type IdentityLifecycle = "active" | "merged" | "split";
   type IdentityTransition = { entity: EntityId; state: IdentityLifecycle };
   type IdentityTopologyResult = { outcome: "applied"; receipt: IdentityTopologyReceipt; transitions: IdentityTransition[] } | { outcome: "parked"; receipt: IdentityTopologyReceipt } | { outcome: "noop" };
   type IdentitySplitRequest = { entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
-  type IdentityFacetSpec = { label: string };
   type IdentityFacetRequest = { entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
   type IdentityAssertDistinctRequest = { a: EntityId; b: EntityId; reason: string };
-  type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest };
+  type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest } | { op: "facet"; spec: IdentityFacetRequest };
   type IdentityProposeRequest = { operation: IdentityProposedOp };
   type IdentityUndoRequest = { event: EntityId; seen: string };
   type IdentityEntityRequest = { entity: EntityId };
@@ -4658,10 +4670,11 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "voted"; teamRef: string; choice: string } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
+  type TeamVoteInput = { teamRef: string; choice: string };
   type TeamSubmitInput = { team: string; outputRevision: string };
   type TeamSubmitAnswer = { team: string; outputRevision: string; reviewClaim: string; alreadySubmitted: boolean };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
@@ -5198,6 +5211,7 @@ declare namespace self {
     record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     submit(input: Sdk.TeamSubmitInput): Promise<Sdk.TeamSubmitAnswer | StoredResult>;
+    vote(input: Sdk.TeamVoteInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.FoldReply<Sdk.FoldUnfolded> | StoredResult>;
   /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
@@ -5546,8 +5560,8 @@ declare const vault: Sdk.VaultHost & {
     create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
     /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
     event_outcome(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventOutcome | null> | StoredResult>;
-    /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
-    freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
+    /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue. */
+    freebusy(input: Sdk.CalendarFreebusyPageRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyPage> | StoredResult>;
     ics: {
       /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
       import(input: Sdk.CalendarIcsImportRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
@@ -5556,8 +5570,8 @@ declare const vault: Sdk.VaultHost & {
       /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
       move(input: Sdk.CalendarInstanceMoveRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
     };
-    /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
-    occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    /** Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue. */
+    occurrences(input: Sdk.CalendarOccurrencesPageRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrencesPage> | StoredResult>;
     outcome_policy: {
       /** Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarOutcomePolicy | StoredResult>;
@@ -5574,8 +5588,8 @@ declare const vault: Sdk.VaultHost & {
     prep(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.PrepPack | null> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
-    /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
-    search(input: Sdk.CalendarSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView[]> | StoredResult>;
+    /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue. */
+    search(input: Sdk.CalendarSearchPageRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarSearchPage> | StoredResult>;
     transcript: {
       /** Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate. */
       ingest(input: Sdk.TranscriptFileDropInput): Promise<Sdk.TranscriptIngestOutcome | StoredResult>;
@@ -6526,7 +6540,7 @@ declare const vault: Sdk.VaultHost & {
       /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
       resolve(input: Sdk.IdentityProposalResolveRequest): Promise<Sdk.IdentityProposalResolutionResult | StoredResult>;
     };
-    /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+    /** The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals. */
     propose(input: Sdk.IdentityProposeRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
     /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
     resolve(input: Sdk.IdentityEntityRequest): Promise<Sdk.IdentityResolution | StoredResult>;
@@ -7776,6 +7790,16 @@ declare const vault: Sdk.VaultHost & {
     /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
     reconfigure(input: Sdk.StandingBlockConfigureRequest): Promise<Sdk.StandingBlockView | StoredResult>;
   };
+  step_up: {
+    passkeys: {
+      /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+      reset(input: Sdk.StepUpPasskeysResetRequest): Promise<Sdk.StepUpPasskeysReset | StoredResult>;
+    };
+    totp: {
+      /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+      reset(input: Sdk.StepUpTotpResetRequest): Promise<Sdk.StepUpTotpReset | StoredResult>;
+    };
+  };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
@@ -7934,6 +7958,22 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   weave: {
+    admin: {
+      /** One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy. */
+      digest(input: Sdk.WeaveAdminDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+      item: {
+        /** A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays. */
+        wrong(input: Sdk.WeaveAdminItemWrongRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+      };
+      /** A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events. */
+      lens(input: Sdk.WeaveAdminLensRequest): Promise<Sdk.LensFrameCard | StoredResult>;
+      link: {
+        /** A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays. */
+        wrong(input: Sdk.WeaveAdminLinkWrongRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+      };
+      /** A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read. */
+      report(input: Sdk.WeaveAdminReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;
+    };
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest: ((input: Sdk.WeaveDigestRequest) => Promise<Sdk.WeaveDigestView | null | StoredResult>) & {
       /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
