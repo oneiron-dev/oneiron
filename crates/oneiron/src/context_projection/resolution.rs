@@ -440,7 +440,9 @@ fn scan_memory_sections(
 /// applies, so they can neither reach a chat projection nor displace real
 /// conversational turns under the bounded over-scan.
 fn scan_chat_sections(vault: &Vault, txn: &heed::RoTxn<'_>, last_n: usize) -> Result<Vec<String>> {
-    let mut sections = Vec::with_capacity(last_n);
+    // Grown as turns are found: `last_n` is the caller's count, not an
+    // allocation (FIX 9765).
+    let mut sections = Vec::new();
     for (id, _learned_at, body) in vault.latest_entity_bodies_by_type_in_txn(
         txn,
         ENTITY_TYPE_TURN,

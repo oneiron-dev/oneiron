@@ -4,6 +4,7 @@
 mod check_evidence;
 mod pending;
 mod self_steps;
+mod wait;
 
 use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
