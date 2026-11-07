@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1331 code-mode rows (1290 host rows, 41 run rows), 4688 declarations.
+// Census: 1331 code-mode rows (1290 host rows, 41 run rows), 4689 declarations.
 // Replies: 1139 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -1502,7 +1502,8 @@ declare namespace Sdk {
   type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased";
   type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
   type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
-  type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };
+  type FederationPayloadBytes = number[];
+  type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: FederationPayloadBytes; rate_ratio: number; streak_ratio: number };
   type FederationBurstReviewBundle = { bundle_ref: string; request_refs: string[]; updates: FederationIsolatedUpdate[]; quarantined: boolean; replay_automatic: boolean };
   type FederationBurstReviewRequest = { bundle_ref: string };
   type FederationBurstReviewReceipt = { bundle_ref: string; batches: FederationBurstReceipt[] };
