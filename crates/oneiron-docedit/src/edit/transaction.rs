@@ -370,6 +370,9 @@ pub struct DeckTransaction {
     pub marks: IdMarks,
     /// Derives every creation id the steps mint, so a replay mints the same.
     pub seed: String,
+    /// Graphic byte and pixel ceilings for `set_picture`; absent, the engine defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     pub steps: Vec<DeckStep>,
 }
 
