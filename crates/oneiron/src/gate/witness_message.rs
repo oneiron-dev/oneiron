@@ -47,9 +47,12 @@ use super::doors::{edge_actor_class_str, enforce_gate_decision};
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::resolution::PolicyManifestResolution;
 
-use crate::store::witness_message_body::witness_message_envelope_denial;
+use crate::source_audience::SourceAudienceBirth;
 pub(crate) use crate::store::witness_message_body::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+};
+use crate::store::witness_message_body::{
+    source_bound_witness_message_envelope_denial, witness_message_envelope_denial,
 };
 
 /// One authorized MESSAGE write.
@@ -146,6 +149,46 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
     Ok(WitnessMessageAuthorization {
         body,
         binding: witness_message_binding(actor, body),
+    })
+}
+
+/// [`check_witness_message_ceiling`] for a SOURCE-BOUND MESSAGE (fix list
+/// row 16256): the row a source landing writes under its
+/// [`SourceAudienceBirth`], whose stored bytes `stamped` carry the
+/// source-audience obligation as their last key.
+///
+/// The existing ceiling runs whole over the envelope's PLAIN encoding, so
+/// every axis, author and policy check is the one every MESSAGE meets; then
+/// `stamped` must be exactly the envelope's source-bound encoding. The
+/// authorization it answers covers `stamped` and binds those bytes, so the
+/// put writes the stamp and nothing else. Only a holder of the proof reaches
+/// this door; every other door binds the plain encoding and so refuses a
+/// stamped body.
+///
+/// # Errors
+///
+/// As [`check_witness_message_ceiling`], and
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)
+/// when `stamped` is not the envelope's source-bound encoding.
+pub(crate) fn check_source_bound_witness_message_ceiling<'a>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    envelope: &WitnessMessageEnvelope<'_>,
+    stamped: &'a [u8],
+    policy: &PolicyManifestResolution,
+    _birth: &SourceAudienceBirth,
+) -> Result<WitnessMessageAuthorization<'a>> {
+    let plain = envelope.encode_body()?;
+    check_witness_message_ceiling(store, txn, actor, envelope, &plain, policy)?;
+    if let Some(reason_code) = source_bound_witness_message_envelope_denial(envelope, stamped) {
+        let decision = GateDecision::deny(reason_code);
+        store.diagnostics.gate.record_decision(&decision);
+        enforce_gate_decision(decision)?;
+    }
+    Ok(WitnessMessageAuthorization {
+        body: stamped,
+        binding: witness_message_binding(actor, stamped),
     })
 }
 
