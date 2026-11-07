@@ -260,9 +260,14 @@ fn check_window_update(
     if metadata.mode.is_snapshot() {
         let mut refused = None;
         let mut misplaced = false;
-        map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
+        map_for_each_value_bytes(&candidate.get_map("entities"), |raw, blob| {
             if refused.is_none() {
                 refused = blob.and_then(carrier_refusal);
+            }
+            // Fix list row 16256: what each live row says of its
+            // source-audience obligation.
+            if let Some(blob) = blob {
+                audiences.note_row(raw, blob);
             }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
@@ -356,9 +361,13 @@ fn check_window_update(
             let root = root_as_latest_state(update, sections).ok_or_else(corrupt)?;
             let root = LoroDoc::from_snapshot(&root).map_err(decode_error)?;
             let mut at_root = None;
-            map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
+            map_for_each_value_bytes(&root.get_map("entities"), |raw, blob| {
                 if at_root.is_none() {
                     at_root = blob.and_then(carrier_refusal);
+                }
+                // Fix list row 16256: and each root row's.
+                if let Some(blob) = blob {
+                    audiences.note_row(raw, blob);
                 }
             });
             if let Some(error) = at_root {
@@ -558,6 +567,8 @@ fn check_window_update(
                     if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
+                    // Fix list row 16256: and each retained insert's.
+                    audiences.note_row(&map_key, &blob);
                     // FIX 5850: a fault reading the shell's history is the
                     // server's, returned as one, never read as "outside".
                     if let Some(key) = key
@@ -602,6 +613,10 @@ fn check_window_update(
             }
         }
     }
+    // Fix list row 16256: a row any version of which, or whose held row or
+    // binding, states the source-audience obligation refuses every version
+    // that drops or changes it, wherever it comes in the range.
+    audiences.refuse_dropped_obligations(vault, doc)?;
     Ok(AdmittedWrites {
         cutoffs,
         history_free: audiences.names_erased(),

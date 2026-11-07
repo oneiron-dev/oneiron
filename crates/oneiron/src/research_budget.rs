@@ -58,12 +58,102 @@ pub struct RsiExplorationRead {
     pub suspended: bool,
 }
 
-/// The stamped token-share overflow admitted from the unallocated token pool.
-/// Units record reservation-time overdraft, even if it settles for less.
+/// The signed record of one token-share overflow admitted from the
+/// unallocated token pool (ARCH-0011): the vault store, the reservation, the
+/// share and the units it binds, signed by this install's device key. Units
+/// record reservation-time overdraft, even if it settles for less. Byte
+/// fields are lowercase hex. [`Self::verify`] checks the signature alone;
+/// `Vault::verify_rsi_overdraft` also checks it names this vault and this
+/// install's key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RsiOverdraftReceipt {
     pub share: String,
     pub units: u64,
+    /// The reservation the overdraft was admitted for.
+    pub reservation: String,
+    /// The vault store it binds: its 32-byte store id.
+    pub vault: String,
+    /// The Ed25519 device key that signed it.
+    pub public_key: String,
+    /// The signature over [`Self::transcript`].
+    pub signature: String,
+}
+
+/// The signing domain of an RSI overdraft receipt.
+const OVERDRAFT_RECEIPT_DOMAIN: &[u8] = b"oneiron/rsi/overdraft-receipt/v1";
+
+impl RsiOverdraftReceipt {
+    /// The bytes the signature covers: the domain, then the vault, the
+    /// reservation, the share, the units and the public key, each field
+    /// length-prefixed.
+    ///
+    /// # Errors
+    /// A byte field that is not lowercase hex.
+    pub fn transcript(&self) -> Result<Vec<u8>, RsiBudgetError> {
+        let malformed =
+            || RsiBudgetError::Engine(crate::Error::CorruptedIndex("RSI overdraft receipt"));
+        let vault = hex_bytes(&self.vault).ok_or_else(malformed)?;
+        let reservation = hex_bytes(&self.reservation).ok_or_else(malformed)?;
+        let public_key = hex_bytes(&self.public_key).ok_or_else(malformed)?;
+        let mut out = OVERDRAFT_RECEIPT_DOMAIN.to_vec();
+        for field in [
+            vault.as_slice(),
+            reservation.as_slice(),
+            self.share.as_bytes(),
+            &self.units.to_le_bytes(),
+            public_key.as_slice(),
+        ] {
+            out.extend_from_slice(&(field.len() as u64).to_le_bytes());
+            out.extend_from_slice(field);
+        }
+        Ok(out)
+    }
+
+    /// Whether the signature is the embedded key's over the transcript.
+    #[must_use]
+    pub fn verify(&self) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let Some(key) = hex_bytes(&self.public_key)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
+        else {
+            return false;
+        };
+        let Some(signature) =
+            hex_bytes(&self.signature).and_then(|bytes| Signature::from_slice(&bytes).ok())
+        else {
+            return false;
+        };
+        self.transcript()
+            .is_ok_and(|transcript| key.verify(&transcript, &signature).is_ok())
+    }
+}
+
+/// `bytes` as lowercase hex.
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+        out.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
+    }
+    out
+}
+
+/// The bytes lowercase hex `text` spells, or `None`.
+fn hex_bytes(text: &str) -> Option<Vec<u8>> {
+    let digit = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    };
+    let text = text.as_bytes();
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    text.chunks(2)
+        .map(|pair| Some((digit(pair[0])? << 4) | digit(pair[1])?))
+        .collect()
 }
 
 /// The durable receipt of one reservation's terminal outcome.
