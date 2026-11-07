@@ -299,6 +299,57 @@ impl AgentGrantStanding {
         self.pact_standing_lapsed_for_store_in_txn(&vault.store, vault.privacy_posture(), txn)
     }
 
+    /// [`Self::pact_standing_lapsed_in_txn`] as an observation: the same
+    /// membership gate and the same lapse, but a store or decode failure of
+    /// the check is `Err`, for a reader that must name the Grant's standing
+    /// unknown instead of reading it by [`PACT_STANDING_CHECK_ERROR`].
+    ///
+    /// # Errors
+    /// The failure of the membership check itself; never a refusal.
+    pub(crate) fn pact_standing_lapse_observed_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        grant_pact_standing_lapse_observed_for_store_in_txn(
+            &vault.store,
+            vault.privacy_posture(),
+            txn,
+            self.id,
+            self.grant.scope,
+            self.grant.member_ref,
+        )
+    }
+
+    /// Whether this Grant stands ([`Self::stands_in_txn`]) for `agent` at
+    /// `now` for at least one verb of its own explicit verb list: the same
+    /// rule, verb by verb, with no rule of its own. Its pact half reads no
+    /// verb, so the first listed verb [`Self::stands_for`] admits decides it.
+    /// The pact half is read as an observation
+    /// ([`Self::pact_standing_lapse_observed_in_txn`]).
+    ///
+    /// # Errors
+    /// The failure of the pact membership check itself.
+    pub(crate) fn stands_for_any_listed_verb_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        now: u64,
+        owners: &[EntityId],
+    ) -> Result<bool> {
+        let ScopeAxis::Some(verbs) = &self.grant.authority_scope.verbs else {
+            return Ok(false);
+        };
+        if !verbs
+            .iter()
+            .any(|verb| self.stands_for(agent, verb, now, owners))
+        {
+            return Ok(false);
+        }
+        Ok(!self.pact_standing_lapse_observed_in_txn(vault, txn)?)
+    }
+
     /// [`Self::pact_standing_lapsed_in_txn`] through a `Store` and the
     /// posture its vault opened with (FIX 7461): the same check, which reads
     /// nothing else of a vault.
@@ -374,10 +425,25 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     scope: FederationGrantScope,
     member: EntityId,
 ) -> bool {
-    let creation = match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
-        Ok(Some(creation)) => creation,
-        Ok(None) => return false,
-        Err(error) => return lapse_on_check_error(id, FederationGrantKind::Access, &error),
+    grant_pact_standing_lapse_observed_for_store_in_txn(store, posture, txn, id, scope, member)
+        .unwrap_or_else(|error| lapse_on_check_error(id, FederationGrantKind::Access, &error))
+}
+
+/// The pact half's one observation: whether the Grant `id`, under `scope`
+/// and naming `member`, lost its pact membership. A refusal of the
+/// membership gate is a lapse; a store or decode failure of the check is
+/// `Err`, which the admission rule reads by [`PACT_STANDING_CHECK_ERROR`].
+fn grant_pact_standing_lapse_observed_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    member: EntityId,
+) -> Result<bool> {
+    let Some(creation) = crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?
+    else {
+        return Ok(false);
     };
     // A Grant under another vault's scope (a residence one) is no pact Grant
     // of this shared vault: never lapsed, its reader's own rule judges it
@@ -385,14 +451,14 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     if let FederationGrantScope::Vault { vault_id } = scope
         && vault_id != creation.vault_id
     {
-        return false;
+        return Ok(false);
     }
     match crate::federation::authenticated_grant_membership_for_store_in_txn(
         store, posture, txn, scope, member, id,
     ) {
-        Ok(Some(_)) => false,
-        Ok(None) | Err(Error::Claim(_)) => true,
-        Err(error) => lapse_on_check_error(id, FederationGrantKind::Access, &error),
+        Ok(Some(_)) => Ok(false),
+        Ok(None) | Err(Error::Claim(_)) => Ok(true),
+        Err(error) => Err(error),
     }
 }
 

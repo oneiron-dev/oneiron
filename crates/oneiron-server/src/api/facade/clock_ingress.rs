@@ -171,7 +171,7 @@ pub(crate) async fn classify_request(
         return Ok((request, None));
     }
     let (parts, body) = request.into_parts();
-    let limit = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+    let limit = crate::api::request_floor::request_floor(server);
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
@@ -184,7 +184,12 @@ pub(crate) async fn classify_request(
     }
     // This door runs outside the body codec, so a content-encoded body is
     // classified on a decoded copy (FIX 11520) and handed back raw.
-    let decoded = crate::api::body_codec::decode_copy(&parts.headers, parts.uri.path(), &bytes);
+    let decoded = crate::api::body_codec::decode_copy(
+        &parts.headers,
+        parts.uri.path(),
+        &bytes,
+        crate::api::request_floor::request_floor(server),
+    );
     let probe: &[u8] = decoded.as_deref().unwrap_or(bytes.as_ref());
     let call = serde_json::from_slice::<Value>(probe)
         .ok()
@@ -416,6 +421,23 @@ where
     let run_writes = super::host_doors::support::calling_run_writes();
     let work = oneiron::store::carry_idempotency_intent(work);
     tokio::task::spawn_blocking(move || {
+        let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
+        oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)
+    })
+}
+
+/// A door's untimed memory admission on a dedicated transfer worker,
+/// carrying the same clock, run-write and idempotency context as
+/// [`run_blocking`] without occupying the runtime's shared blocking pool.
+pub(crate) fn run_transfer_worker<F, R>(work: F) -> tokio::sync::oneshot::Receiver<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let restrictive = RESTRICTION_ONLY.try_with(|_| ()).is_ok();
+    let run_writes = super::host_doors::support::calling_run_writes();
+    let work = oneiron::store::carry_idempotency_intent(work);
+    crate::api::transfer::spawn_worker(move || {
         let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
         oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)
     })

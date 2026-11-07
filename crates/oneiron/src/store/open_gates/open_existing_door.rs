@@ -233,6 +233,7 @@ impl Store {
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             ppr_cache_invalidation: &crate::ppr::PprCacheInvalidator,
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
+            host_legal_prospective: crate::store::legal_hold::ProspectiveWake::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,
             group_commit: crate::store::GroupCommit::default(),

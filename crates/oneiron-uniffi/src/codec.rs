@@ -500,6 +500,7 @@ impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
 impl Lift<engine::WitnessReceipt> for WitnessReceipt {
     fn lift(value: engine::WitnessReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            turn_id: value.turn_id.to_hex(),
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
@@ -1028,14 +1029,14 @@ impl Lower<engine::BlobArtifactInput> for BlobArtifactInput {
     }
 }
 
-/// `vault.artifacts.append`'s arguments: the raw bytes are measured against
-/// the engine blob ceiling before they are base64-encoded for the request.
+/// `vault.artifacts.append`'s arguments: the raw bytes are base64-encoded
+/// for the request; the engine's append door measures their size against
+/// `blob_content_bytes` and never refuses it (FIX 76).
 impl Lower<sdk::AppendBlobVersionRequest>
     for (String, Vec<u8>, Option<String>, Option<i64>, Option<i64>)
 {
     fn lower(self) -> Result<sdk::AppendBlobVersionRequest, OneironError> {
         let (artifact_ref, content, run_ref, occurred_at, learned_at) = self;
-        engine::caps::check_blob_bytes(content.len())?;
         Ok(sdk::AppendBlobVersionRequest {
             artifact_ref,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&content),

@@ -62,7 +62,8 @@ pub use self::manifest::BOOKING_ANTI_ABUSE_RULES_KEY;
 pub(crate) use self::manifest::decode_manifest_rule_field;
 pub use self::quarantine::{
     BookingQuarantineAdmission, BookingQuarantineReceipt, admit_quarantine_submission,
-    admit_restorable_quarantine_submission, quarantine_borderline_submission,
+    admit_quarantine_submission_without_quota, admit_restorable_quarantine_submission,
+    quarantine_borderline_submission,
 };
 pub use self::quarantine_restore::{
     BookingQuarantineRestoreInput, BookingQuarantinedSubmission, booking_quarantined_submission,
