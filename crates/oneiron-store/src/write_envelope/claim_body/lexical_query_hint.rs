@@ -1,12 +1,13 @@
 //! Codec primitives for `core.lexical.query_hint` side records.
 //!
-//! This module owns only the encode/decode/normalize/target-extraction
-//! primitives; `crate::batch` owns hint materialization and dedup, and
+//! This module owns only the encode/decode/normalize/target-extraction and
+//! id primitives; `crate::batch` owns hint materialization and dedup, and
 //! `crate::bm25` owns the scoring collapse.
 
 use rmpv::Value;
 
 use super::*;
+use oneiron_contracts::entity_id::derived_domains::LEXICAL_QUERY_HINT;
 use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use oneiron_contracts::error::{Error, Result};
 
@@ -18,7 +19,6 @@ pub const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
 
 /// Maximum UTF-8 byte length of one prospective query hint.
 pub const MAX_LEXICAL_QUERY_HINT_BYTES: usize = 256;
-pub const LEXICAL_QUERY_HINT_ID_PREFIX: [u8; 2] = *b"LH";
 
 const LEXICAL_HINT_KIND: &str = "prospective_query";
 const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
@@ -176,4 +176,31 @@ pub fn lexical_query_hint_target(body: &ClaimBody) -> Result<Option<EntityId>> {
         ));
     }
     Ok(Some(subject))
+}
+
+/// The id of the hint CLAIM that carries normalized `query` for `target`:
+/// `EntityId::derive` under `derived_domains::LEXICAL_QUERY_HINT` of the
+/// target's id bytes and the query's UTF-8 bytes.
+pub fn lexical_query_hint_claim_id(target: &EntityId, query: &str) -> Result<EntityId> {
+    EntityId::derive(LEXICAL_QUERY_HINT, &[target.as_bytes(), query.as_bytes()])
+        .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
+}
+
+/// The hint `body` carries when it is a lexical query hint stored under its
+/// own id: the hint predicate, a subject equal to the encoded target, and
+/// `id` equal to [`lexical_query_hint_claim_id`] of that target and query.
+/// `None` for a CLAIM of any other predicate and for a hint body under any
+/// other id; an error for a malformed hint body.
+pub fn canonical_lexical_query_hint(
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<Option<LexicalQueryHintValue>> {
+    if !id.has_derived_stamp() || lexical_query_hint_target(body)?.is_none() {
+        return Ok(None);
+    }
+    let hint = decode_lexical_query_hint_value(&body.value)?;
+    if lexical_query_hint_claim_id(&hint.target, &hint.query)? != *id {
+        return Ok(None);
+    }
+    Ok(Some(hint))
 }

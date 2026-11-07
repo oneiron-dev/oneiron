@@ -5,9 +5,12 @@ use super::super::quarantine::{self, QuarantineContainer};
 use super::{RematCtx, RematLedger};
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::deletion::{ReplayedTombstoneOutcome, decode_tombstone_value};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{TombstoneStep, classify_tombstone, classify_tombstone_in_txn};
 use crate::sync::types::{
     TombstoneResidence, retained_world_shell_belongs_to_window, tombstone_residence_in,
@@ -175,13 +178,16 @@ impl Pass<'_> {
         let mut staged = Vec::new();
         let mut stopped = None;
         let mut done = chunk.len();
+        let mut claims_changed = false;
         let committed = vault.store.env.write_txn().and_then(|mut parent| {
             let probes = vault.batch_tombstone_scope_probes_in_txn(&parent, hard_ids)?;
             // FIX 9398: the chunk's erases drop the rooms' media copies once,
             // before the commit.
             let room_media_drops = crate::embed::RoomMediaDrops::open(&vault.store, &parent);
             for (index, (key, value)) in chunk.iter().enumerate() {
-                if let Err(error) = self.stage(&mut parent, key, value, &mut staged) {
+                if let Err(error) =
+                    self.stage(&mut parent, key, value, &mut staged, &mut claims_changed)
+                {
                     if out_of_room(&error) {
                         done = index;
                     } else {
@@ -199,6 +205,9 @@ impl Pass<'_> {
         // committed or dropped.
         vault.store.flush_legal_hold_refusals_settled();
         committed?;
+        if claims_changed {
+            vault.verb_hook_bindings_changed();
+        }
         if done < chunk.len() {
             tracing::warn!(
                 window = %self.ctx.window_key,
@@ -242,6 +251,7 @@ impl Pass<'_> {
         key: &'e str,
         value: &'e [u8],
         staged: &mut Vec<Staged<'e>>,
+        claims_changed: &mut bool,
     ) -> Result<()> {
         let vault = self.ctx.vault;
         let (id, hard) = match self.gate(Some(&**parent), key, value)? {
@@ -258,8 +268,15 @@ impl Pass<'_> {
             Gate::Replay { id, hard } => (id, hard),
         };
         let replayed = savepoint(vault, parent, |child| {
-            quarantine::apply_replayed_tombstone_for_sync_in_txn(vault, child, &id, value)
-                .map(|(outcome, _changed, cancelled)| (outcome, cancelled))
+            // Capture the original kind in the same savepoint as the delete.
+            let is_claim = EntityStoreRead::port_entity_raw(&vault.store, &*child, &id)?
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
+            let (outcome, _changed, cancelled) =
+                quarantine::apply_replayed_tombstone_for_sync_in_txn(vault, child, &id, value)?;
+            let item_claims_changed = is_claim && outcome.changed_local_state();
+            Ok((outcome, cancelled, item_claims_changed))
         });
         match replayed {
             Err(err) if out_of_room(&err) => return Err(err),
@@ -267,12 +284,22 @@ impl Pass<'_> {
                 self.quarantine_in(parent, key, value, &err)?;
                 staged.push(Staged::Terminal(Some(id)));
             }
-            replayed => staged.push(Staged::Replayed {
+            Ok((outcome, cancelled, item_claims_changed)) => {
+                *claims_changed |= item_claims_changed;
+                staged.push(Staged::Replayed {
+                    key,
+                    value,
+                    id,
+                    hard,
+                    replayed: Ok((outcome, cancelled)),
+                });
+            }
+            Err(err) => staged.push(Staged::Replayed {
                 key,
                 value,
                 id,
                 hard,
-                replayed,
+                replayed: Err(err),
             }),
         }
         Ok(())
