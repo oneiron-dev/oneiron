@@ -39,9 +39,9 @@ use super::types::{
     ShadowTraceEntry, ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason as Reason,
 };
 use crate::code_run::{
-    CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayRecord,
-    CodeRunResultBinding, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
-    reveals_secret,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayCursor,
+    CodeRunReplayRecord, CodeRunResultBinding, SelfCall, SelfDispatchOutcome, SelfDispatcher,
+    SelfDurableWait, reveals_secret,
 };
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream, JsResultCall, RESULT_READ_ROOT,
@@ -351,6 +351,16 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
                 }
                 outcome
             }
+            // An erase took the row's request words (FIX 6534): the arm
+            // stops there as on an erased reply, and no request is read
+            // back or made up in their place.
+            Err(_) if request_erased_at(self.window, at) => {
+                let erased = ShadowUnavailable::new(
+                    Reason::SourceWithheld,
+                    crate::code_run::RESPONSE_ERASED,
+                );
+                return Err(self.stop(erased));
+            }
             Err(_) => {
                 let mismatch = ShadowUnavailable::new(Reason::BridgeReplayMismatch, "bridge_call");
                 return Err(self.stop(mismatch));
@@ -479,6 +489,15 @@ fn response_erased(outcome: &SelfDispatchOutcome) -> bool {
         outcome,
         SelfDispatchOutcome::Failed(failed) if failed.error == crate::code_run::RESPONSE_ERASED
     )
+}
+
+/// Whether the row at `at` of `window` holds a request an erase took (FIX
+/// 6534).
+fn request_erased_at(window: &CodeRunReplayRecord, at: usize) -> bool {
+    window
+        .bridge_calls
+        .get(at)
+        .is_some_and(CodeRunBridgeCall::request_erased)
 }
 
 /// Whether `outcome` is the fail-closed answer a call gets once its run's

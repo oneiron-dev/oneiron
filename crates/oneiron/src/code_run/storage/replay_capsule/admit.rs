@@ -10,7 +10,9 @@
 //! a body past the inline bound still spills whole: nothing is capped. A
 //! request the wall refuses outright is withheld, never stored raw: the
 //! capsule keeps the step's start without it when the start admits, so a
-//! continuation still finds its checkpoint (FIX 6254).
+//! continuation still finds its checkpoint (FIX 6254). An admitted request
+//! is published as its pieces: each one its run does not hold yet for the
+//! actor, then the manifest as the capsule's own body (FIX 4192).
 
 mod refresh;
 
@@ -28,9 +30,12 @@ use super::super::super::replay_capsule::{
     CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
+use super::super::StartCompaction;
+use super::super::fold_answers::words_withdrawn;
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
+use super::pieces::{PieceScope, RequestPieces, unheld_lens};
 use super::{
     CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, capsule_key,
     fork_capsule_in_txn, fork_row_name,
@@ -38,8 +43,11 @@ use super::{
 use crate::batch::secret_scan::{
     SidePart, TextReplacements, admit_side_parts, admit_tracked_side_parts,
 };
-use crate::code_run::{decode_code_run_replay_record, encode_code_run_replay_record};
+use crate::code_run::{
+    FoldWordRef, decode_code_run_replay_record, encode_code_run_replay_record, recorded_fold_words,
+};
 use crate::compaction::output::OutputRef;
+use crate::dreamer_runner::step_replay::CapsuleFoldWords;
 use crate::error::GateError;
 use crate::store::{BodyMint, BodySink};
 use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, Result, Vault};
@@ -152,12 +160,19 @@ pub(super) fn with_spill<T>(
 
 /// Writes `draft` as its attempt's capsule: its request and start bodies as
 /// the wall admits them, published, and its row, in one transaction. `None`,
-/// with nothing written, when the step's actor is gone by now.
+/// with nothing written, when the step's actor is gone by now. FIX 4192:
+/// the instances minted first are for the request's pieces its run does
+/// not hold yet for the actor, and the start.
 pub(crate) fn put_staged_capsule(
     vault: &Vault,
     draft: &CapsuleDraft<'_>,
 ) -> Result<Option<StepReplayCapsule>> {
-    let lens = [draft.request.len(), start_estimate(vault, draft.capture)?];
+    let scope = PieceScope {
+        run: draft.capture.run,
+        actor: draft.actor,
+    };
+    let mut lens = unheld_lens(vault, &draft.request, scope)?;
+    lens.push(start_estimate(vault, draft.capture)?);
     let reserved = spilling(vault.code_result_inline_bytes(), &lens);
     with_spill(vault, reserved, |wtxn, spill| {
         write_capsule_in_txn(vault, wtxn, spill, draft)
@@ -191,6 +206,10 @@ fn write_capsule_in_txn(
     if actor_gone_in_txn(vault, wtxn, &draft.actor) {
         return Ok(None);
     }
+    // FIX 18924: a request that copies withdrawn fold words is not kept.
+    if words_withdrawn(&vault.store, wtxn, &draft.capture.fold_words)? {
+        return Ok(None);
+    }
     let key = draft.key();
     let key_bytes = CAPSULES.key_bytes(&key);
     let (capture, actor) = (draft.capture, draft.actor);
@@ -208,10 +227,17 @@ fn write_capsule_in_txn(
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
-    spill.holds(&[request.bytes.len(), start_len])?;
+    let start_len = start.as_ref().map_or(0, |start| start.bytes.len());
+    // FIX 4192: the request is kept as pieces the run holds once for the
+    // actor, and its manifest is the capsule's own body.
+    let scope = PieceScope { run, actor };
+    let pieces = RequestPieces::of(&request.bytes)?;
+    let mut lens = pieces.lens_in_txn(&vault.store, wtxn, scope)?;
+    lens.push(start_len);
+    spill.holds(&lens)?;
     let stored = &request.bytes;
-    let request_ref = spill.publish_in_txn(vault, wtxn, run, &draft.request_path, stored)?;
+    let request_ref = pieces.publish_in_txn(vault, wtxn, spill, scope, &draft.request_path)?;
+    let fold_words = capsule_fold_words(capture, start.as_ref());
     let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
     let capsule = StepReplayCapsule {
         attempt: draft.attempt,
@@ -237,9 +263,24 @@ fn write_capsule_in_txn(
         content: CapsuleContent::Kept { actor },
         context: None,
         answer: None,
+        fold_words,
     };
     CAPSULES.put(vault, wtxn, &key, &capsule)?;
     Ok(Some(capsule))
+}
+
+/// The folds whose words a new capsule's bodies copy (FIX 18924): its
+/// request's as its capture names them, its start's as its prefix records
+/// them, and none in a context it does not hold yet.
+fn capsule_fold_words(
+    capture: &StepCapture<'_>,
+    start: Option<&AdmittedStart>,
+) -> CapsuleFoldWords {
+    CapsuleFoldWords {
+        request: capture.fold_words.clone(),
+        start: start.map_or_else(Vec::new, |start| start.fold_words.clone()),
+        context: Vec::new(),
+    }
 }
 
 /// The capsule of a step whose request the wall refused outright (FIX
@@ -250,12 +291,13 @@ fn write_withheld_in_txn(
     wtxn: &mut RwTxn<'_>,
     spill: &Spill,
     draft: &CapsuleDraft<'_>,
-    start: Option<(Vec<u8>, u64)>,
+    start: Option<AdmittedStart>,
     reasons: &[&'static str],
 ) -> std::result::Result<Option<StepReplayCapsule>, Unwritten> {
     let capture = draft.capture;
-    let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
+    let start_len = start.as_ref().map_or(0, |start| start.bytes.len());
     spill.holds(&[0, start_len])?;
+    let fold_words = capsule_fold_words(capture, start.as_ref());
     let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
     let capsule = StepReplayCapsule {
         attempt: draft.attempt,
@@ -285,6 +327,7 @@ fn write_withheld_in_txn(
         content: CapsuleContent::Kept { actor: draft.actor },
         context: None,
         answer: None,
+        fold_words,
     };
     CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
     Ok(Some(capsule))
@@ -305,11 +348,15 @@ fn publish_start_in_txn(
     wtxn: &mut RwTxn<'_>,
     spill: &Spill,
     draft: &CapsuleDraft<'_>,
-    start: Option<(Vec<u8>, u64)>,
+    start: Option<AdmittedStart>,
 ) -> Result<Option<ExecutorStepStart>> {
     let run = draft.capture.run;
     Ok(match start {
-        Some((bytes, bridge_start)) => Some(ExecutorStepStart {
+        Some(AdmittedStart {
+            bytes,
+            bridge_start,
+            ..
+        }) => Some(ExecutorStepStart {
             body: spill.publish_in_txn(vault, wtxn, run, &draft.start_path, &bytes)?,
             path: draft.start_path.clone(),
             digest: *blake3::hash(&bytes).as_bytes(),
@@ -318,6 +365,14 @@ fn publish_start_in_txn(
         }),
         None => None,
     })
+}
+
+/// A step's start as the wall admitted it: its body, the bridge log's
+/// length at it, and the folds whose words its prefix records (FIX 18924).
+struct AdmittedStart {
+    bytes: Vec<u8>,
+    bridge_start: u64,
+    fold_words: Vec<FoldWordRef>,
 }
 
 /// A request as the wall admitted it: its canonical bytes as stored, its
@@ -396,7 +451,7 @@ fn admit_start_in_txn(
     wtxn: &mut RwTxn<'_>,
     key: &[u8],
     capture: &StepCapture<'_>,
-) -> Result<Option<(Vec<u8>, u64)>> {
+) -> Result<Option<AdmittedStart>> {
     let Some(start) = &capture.start else {
         return Ok(None);
     };
@@ -417,15 +472,19 @@ fn admit_start_in_txn(
 /// The start body from one admitted view of the run's row: the row as
 /// stored, read as the wall would store it now and kept so where that
 /// differs, and the prefix the body carries taken from that same view, so
-/// the run's row still descends from it byte for byte. The body goes through
-/// the wall too, and the prefix it carries must come back as it went in.
+/// the run's row still descends from it byte for byte. The body also holds
+/// the run's epochs and fold ledger from this same writer, inside that
+/// prefix (FIX 4198). The body goes through the wall too, and the prefix it
+/// carries must come back as it went in. FIX 18924: a prefix that records a
+/// fold answer whose words are withdrawn keeps no start, and the start
+/// names the folds whose words its prefix records.
 fn admitted_start(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     key: &[u8],
     capture: &StepCapture<'_>,
     start: &StepStartCapture<'_>,
-) -> Result<Option<(Vec<u8>, u64)>> {
+) -> Result<Option<AdmittedStart>> {
     let Some(stored) = REPLAY_RECORDS.get(&vault.store, wtxn, &capture.run)? else {
         return Ok(None);
     };
@@ -446,6 +505,10 @@ fn admitted_start(
     }
     let mut prefix = source;
     prefix.live_run = None;
+    let fold_words = recorded_fold_words(&prefix.bridge_calls);
+    if words_withdrawn(&vault.store, wtxn, &fold_words)? {
+        return Ok(None);
+    }
     let record = encode_code_run_replay_record(&prefix)?;
     let body = StepStartBody {
         record: record.clone(),
@@ -456,6 +519,9 @@ fn admitted_start(
         global_tier: start.global_tier.clone(),
         soft_steps: start.soft_steps,
         prompt_fingerprint: start.prompt_fingerprint.to_owned(),
+        // FIX 4198: the run's compaction at this cut, read in this writer.
+        // It holds no epoch's digest and no fold's words (FIX 18694).
+        compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
     admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, reads_start)?;
@@ -470,10 +536,11 @@ fn admitted_start(
             "the wall changed a step start's admitted prefix",
         ));
     }
-    Ok(Some((
-        encode_start(&body)?,
-        prefix.bridge_calls.len() as u64,
-    )))
+    Ok(Some(AdmittedStart {
+        bytes: encode_start(&body)?,
+        bridge_start: prefix.bridge_calls.len() as u64,
+        fold_words,
+    }))
 }
 
 fn encode_start(body: &StepStartBody) -> Result<Vec<u8>> {
