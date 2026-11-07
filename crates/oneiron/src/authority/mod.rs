@@ -149,6 +149,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod step_up;
 pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
@@ -303,6 +304,8 @@ pub use history_fetch::{
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
+#[cfg(feature = "sync")]
+pub(crate) use history_transfer::HandoffRoster;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
     JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
@@ -314,7 +317,9 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
-pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+pub use local_host_root::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
@@ -351,6 +356,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
@@ -368,12 +374,25 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub use step_up::{
+    EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
+    StepUpTotpReset, StepUpTotpResetRequest, TotpCode, TotpEnrollment,
+    STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
+    STEP_UP_REFUSED, STEP_UP_REQUIRED, StepUpCeremony, StepUpChallenge, StepUpDone, StepUpFactor,
+    StepUpPasskeysReset, StepUpPasskeysResetRequest, WeaveAdminDigestRequest,
+    WeaveAdminItemWrongRequest, WeaveAdminLensRequest, WeaveAdminLinkWrongRequest,
+    WeaveAdminReportRequest,
+};
+pub(crate) use step_up::{
+    erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
+    erase_step_up_records_actor_in_txn, erase_step_up_totp_actor_in_txn,
+};
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{

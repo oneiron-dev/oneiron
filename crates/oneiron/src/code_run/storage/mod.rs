@@ -70,8 +70,8 @@ pub(crate) use self::replay_capsule::{
     store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
-    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -86,8 +86,8 @@ pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
 };
 pub use self::secret_lift::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
-    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
+    CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
