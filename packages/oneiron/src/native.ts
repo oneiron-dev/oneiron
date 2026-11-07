@@ -521,6 +521,7 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultCoachTrainingRunsCancel(input: unknown): unknown
 vaultDraftersList(input: unknown): unknown
 vaultDraftersListAs(input: unknown): unknown
 vaultDraftersStatus(input: unknown): unknown
@@ -676,6 +677,7 @@ vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
 hostWake(input: unknown): unknown
 hostBudgetHit(input: unknown): unknown
+vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
@@ -877,6 +879,9 @@ peek(requestJson: string): string
 ask(input: unknown): unknown
 wait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
+tasksAnswerForwardChallenge(input: unknown): unknown
+tasksAnswerForward(input: unknown): unknown
+tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
@@ -1272,6 +1277,7 @@ vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
+vaultFilesSourcesConvert(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
