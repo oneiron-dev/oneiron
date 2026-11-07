@@ -565,6 +565,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
         | Row::VaultCodeOplog
+        | Row::VaultCodeSecretsGet
+        | Row::VaultCodeSecretsPropose
         | Row::VaultResultsStatus
         | Row::VaultResultsRecover
         | Row::VaultResultsRead
@@ -572,8 +574,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeTypeDiagnostics
         | Row::VaultCodeCorrections
-        | Row::VaultCodeWaitsResolve
-        | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport
         | Row::VaultCodeImport
         | Row::VaultCodeReposGet
@@ -696,7 +696,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultTrustedContactsConsent
         | Row::VaultTrustedContactsRevoke
         | Row::VaultSharedPolicyPropose
-        | Row::VaultSharedPolicyAnswer => {
+        | Row::VaultSharedPolicyAnswer
+        | Row::VaultCodeWaitsResolve
+        | Row::VaultCodeWaitsReceipt => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
@@ -729,6 +731,9 @@ pub(in crate::api::facade) fn door_admits(
         // bound principal whose one Grant the engine door admits.
         Row::VaultCodeExportPreview | Row::VaultCodeExportPreviewRead => {
             crate::api::facade::origin_doors::preview_admits(server, auth, verb)
+        }
+        Row::VaultCodeCheckoutHolderBind => {
+            crate::api::facade::origin_doors::checkout_holder_admits(server, auth)
         }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.

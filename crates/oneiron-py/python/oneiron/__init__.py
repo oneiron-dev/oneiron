@@ -4213,6 +4213,9 @@ class Oneiron:
         def oplog(self, spec):
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
             return json.loads(_translate(lambda: self._client.vault_code_oplog(json.dumps(spec))))
+        @property
+        def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs":
+            return Oneiron._VaultCodeSecretsVerbs(self._client)
         def model_heal_count(self, spec):
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
@@ -4282,14 +4285,23 @@ class Oneiron:
         def definitions(self, spec):
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
+    class _VaultCodeSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_get(json.dumps(spec))))
+        def propose(self, spec):
+            """Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_propose(json.dumps(spec))))
     class _VaultCodeWaitsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def resolve(self, spec):
-            """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
+            """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_resolve(json.dumps(spec))))
         def receipt(self, spec):
-            """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+            """Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_receipt(json.dumps(spec))))
     class _VaultCodeExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -4408,6 +4420,9 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def holder(self) -> "Oneiron._VaultCodeCheckoutHolderVerbs":
+            return Oneiron._VaultCodeCheckoutHolderVerbs(self._client)
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
@@ -4435,6 +4450,12 @@ class Oneiron:
         def teardown(self, spec):
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
+    class _VaultCodeCheckoutHolderVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_holder_bind(json.dumps(spec))))
     class _VaultCodeViewsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
