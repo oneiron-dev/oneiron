@@ -5,6 +5,9 @@
 //! A body spooled on a host's measured spool ([`SandboxProposalBody::spool_floored`])
 //! admits each append on the shared disk floor before writing it (FIX 7650).
 
+mod text;
+pub use text::SandboxProposalText;
+
 use super::spool::{ProposalSpoolClaim, ProposalSpoolFloor};
 use crate::{Error, Result};
 use std::{

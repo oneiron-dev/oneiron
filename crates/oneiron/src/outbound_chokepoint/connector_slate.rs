@@ -10,8 +10,8 @@
 //! `never allow` stops the request: its ledger row is abandoned, keeping
 //! what it knew of its delivery, so no later sweep sends it. `always ask`
 //! sends only on the owner's press on exactly this call: the press the
-//! current pass's own admission spent, carried in memory (its kept copy is
-//! best-effort); else the copy kept beside this row; else a still-available
+//! current pass's own admission spent, committed in its Pending row; else
+//! the original proof on this row; else a still-available
 //! marker for the row's own recomposed target, spent here once and kept for
 //! its retry. A spent marker is no fresh authority. With none of them the
 //! row stays Pending and names its approve-once digest. Nothing here

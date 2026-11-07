@@ -13,7 +13,9 @@
 //! parts do (FIX 8088). The runs signed are those of the frame with no
 //! witness and no signatures (`KeptExportOutput::copy_frame`), cut as any
 //! window carrier is, so no signature covers itself. A relay carries the
-//! signatures as they came and never signs one.
+//! signatures as they came and never signs one. A whole copy that rides in
+//! parts is judged by the same signatures over its own frame
+//! (`parts_verify`), so none is kept or relayed with one nobody verified.
 
 #[cfg(feature = "sync")]
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -73,13 +75,68 @@ impl OutputPartBinding {
         signature: &[u8; 64],
     ) -> bool {
         VerifyingKey::from_bytes(signer).is_ok_and(|key| {
-            key.verify_strict(
-                &self.transcript(count, index, run.len() as u64, blake3::hash(run).as_bytes()),
-                &Signature::from_bytes(signature),
+            self.verifies_by(
+                &key,
+                count,
+                index,
+                run.len() as u64,
+                blake3::hash(run).as_bytes(),
+                signature,
             )
-            .is_ok()
         })
     }
+
+    /// Whether `signature` is `key`'s, under strict Ed25519, over part
+    /// `index` of `count` whose run is `run_len` bytes with BLAKE3
+    /// `run_digest`.
+    #[cfg(feature = "sync")]
+    fn verifies_by(
+        &self,
+        key: &VerifyingKey,
+        count: u32,
+        index: u32,
+        run_len: u64,
+        run_digest: &[u8; 32],
+        signature: &[u8; 64],
+    ) -> bool {
+        key.verify_strict(
+            &self.transcript(count, index, run_len, run_digest),
+            &Signature::from_bytes(signature),
+        )
+        .is_ok()
+    }
+}
+
+/// Whether `signatures` are `signer`'s signature, under strict Ed25519, of
+/// each run `frame` is cut into, in order, each bound to `binding`, the part
+/// count and its own place, as [`sign_parts`] signs them (FIX 12373): one
+/// per run, none missing and none spare. `frame` is a copy's frame with no
+/// witness (`KeptExportOutput::copy_frame`), cut as its relay cuts it
+/// (`carrier_parts::split_parts`). A frame cut into more parts than a `u32`
+/// counts, or past its cut's codec, verifies none.
+#[cfg(feature = "sync")]
+pub(super) fn parts_verify(
+    binding: &OutputPartBinding,
+    signer: &[u8; 32],
+    frame: &[u8],
+    signatures: &[[u8; 64]],
+) -> bool {
+    let Ok((parts, pieces)) = split_parts(frame) else {
+        return false;
+    };
+    let (Ok(count), Ok(key)) = (
+        u32::try_from(parts.parts.len()),
+        VerifyingKey::from_bytes(signer),
+    ) else {
+        return false;
+    };
+    signatures.len() == parts.parts.len()
+        && (0_u32..)
+            .zip(parts.parts.iter().zip(&pieces))
+            .zip(signatures)
+            .all(|((index, (digest, (_, run))), signature)| {
+                binding.verifies_by(&key, count, index, run.len() as u64, digest, signature)
+            })
 }
 
 /// The signature, by `signing`, of each run `frame` is cut into, in order,

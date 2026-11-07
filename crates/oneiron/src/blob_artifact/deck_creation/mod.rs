@@ -9,6 +9,7 @@ use crate::blob_artifact::deck_creation::record::{
     OutlineFreshness,
 };
 use crate::write_envelope::provenance::made_by::MadeByTrigger;
+use oneiron_docedit::graphic::GraphicLimits;
 use outline::DeckOutline;
 use plan::DeckPlanView;
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,9 @@ pub struct DeckEmissionRequest {
     pub assets: BTreeMap<String, ArtifactVersionRef>,
     #[serde(default)]
     pub fonts: Vec<ArtifactVersionRef>,
+    /// Graphic ceilings for the brief's assets; absent, the engine defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     pub names: DeckEmissionNames,
     pub name: String,
     pub run_ref: String,
