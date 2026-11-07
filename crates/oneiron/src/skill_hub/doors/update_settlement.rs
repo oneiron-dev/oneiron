@@ -76,6 +76,11 @@ impl Vault {
                 adapter.fetch_package(&tracked.hub_ref)?,
                 adapter.resolved_commit().to_owned(),
             ),
+            // A local folder hub (FIX 21922) reads at its pinned commit, as Git does.
+            RefFetch::Local(adapter, _) => (
+                adapter.fetch_package(&tracked.hub_ref)?,
+                adapter.resolved_commit().to_owned(),
+            ),
             RefFetch::Http(adapter, _) => {
                 let package = adapter.fetch_package(&tracked.hub_ref)?;
                 let revision = package.content_hash()?.to_hex();
