@@ -611,7 +611,7 @@ export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::context_board::tasks::projection::ConsultWidening` */
 export type ConsultWidening = { child: string; from?: CommReach | null; to: CommReach }
 /** `oneiron::context_board::tasks::projection::TaskRow` */
-export type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null; widening?: ConsultWidening | null; fits?: string[] }
+export type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null; widening?: ConsultWidening | null; due_at?: number | null; fits?: string[] }
 /** `oneiron::context_board::tasks::projection::TasksOverflow` */
 export type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean }
 /** `oneiron::context_board::tasks::projection::TasksSection` */
