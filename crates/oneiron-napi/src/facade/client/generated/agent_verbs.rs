@@ -2088,6 +2088,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skill_hubs_clawhub_search(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.clawhub.search", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_clawhub_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.clawhub.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skill_hubs_publishers_admit(
         &self,
         input: serde_json::Value,
@@ -3669,6 +3687,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_files_sources_exclude(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.exclude", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_residence_mode(
         &self,
         input: serde_json::Value,
@@ -4869,6 +4896,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.connectors.calls.approve_once", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_replies_retry_failed(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.replies.retry_failed", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
