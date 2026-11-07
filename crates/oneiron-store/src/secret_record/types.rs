@@ -220,6 +220,10 @@ pub const SECRET_CUSTODY_STORED_SCHEMA_VERSION: u16 = 4;
 /// `EntityId` (`"vault_meta: name -> EntityId"`).
 pub const SECRET_NAME_INDEX_PREFIX: &str = "secret_custody:name:v1:";
 
-/// The longest secret name, in bytes. The name is the tail of its name-index
-/// key, and an LMDB key stops at 511 bytes.
-pub const SECRET_NAME_MAX_BYTES: usize = 255;
+/// LMDB's key width: a key stops at 511 bytes.
+const LMDB_KEY_BYTES: usize = 511;
+
+/// The longest secret name, in bytes (ABC row 27): the name is the tail of
+/// its name-index key, after [`SECRET_NAME_INDEX_PREFIX`], so it is LMDB's
+/// key width less that prefix (488 bytes), derived, not a fixed 255.
+pub const SECRET_NAME_MAX_BYTES: usize = LMDB_KEY_BYTES - SECRET_NAME_INDEX_PREFIX.len();

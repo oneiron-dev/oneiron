@@ -2,7 +2,8 @@
 //! Git tree, its pinned manifest, its frozen source bytes and exact-name Rust
 //! symbol definitions and recorded one-hop relations within it. Each projects
 //! an engine path that exists; none registers a repository, enforces an
-//! editable whitelist, grants repo membership or mints a receipt.
+//! editable whitelist or grants repo membership. An owner's import retains
+//! a capture receipt with its snapshot.
 //!
 //! Authority is the owner's live proof alone (`Memory::codebase_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.

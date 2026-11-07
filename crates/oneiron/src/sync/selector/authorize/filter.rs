@@ -135,6 +135,31 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if scope_error.is_some() {
             return;
         }
+        // Engine A: a selector is a restricted lane. A row bound to a source
+        // audience, or whose binding rides the window unlanded, or whose
+        // words came from such a row, never rides it (L02 2, 6 Nov 06:24).
+        if crate::sync::source_audiences::carries_record(source, &id) {
+            return;
+        }
+        // Fix list row 16256: and a row whose carried bytes name the
+        // source-audience obligation, judged by the bytes themselves, so a
+        // row with no canonical copy here is withheld whole, never stripped.
+        if crate::source_audience::row_obligation(blob).is_present() {
+            return;
+        }
+        match crate::source_audience::withheld_from_replication_in(
+            vault,
+            &rtxn,
+            &id,
+            crate::source_audience::ReplicationScope::Restricted,
+        ) {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,

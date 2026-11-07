@@ -2,10 +2,11 @@
 //!
 //! A slot holds one 32-byte secret that must never leave the machine. It must not
 //! reach a synced keychain, an OS backup, a vault checkpoint or sync. The engine
-//! keeps exactly one secret here: the seed of this machine's hybrid encryption key,
-//! which opens the world keys wrapped to this machine. Losing a slot loses nothing
-//! else. Another of the owner's machines, or the recovery kit, wraps the keys
-//! again for a new seed. One slot's secret has a second home the engine owns: a
+//! keeps install-local keys here. The machine's hybrid encryption seed opens the
+//! world keys wrapped to it; another owner's machine or the recovery kit wraps
+//! those keys again for a new seed. A host's legal-clone order seed instead has no
+//! exported recovery copy: losing or deleting it loses that order's clone.
+//! One slot's secret has a second home the engine owns: a
 //! vault's host issuer seed ([`SlotKind::HostIssuerSeed`]) is also escrowed in
 //! that vault's protected key custody, never through this crate, so a new install
 //! takes the same seed back into its own slot (FIX-LIST 10770).
@@ -98,6 +99,10 @@ pub enum SlotKind {
     /// id alone name each current piece's install (FIX 12054, FIX 12055) and
     /// each pending recovery-root kit's install.
     KitPiece(KitPieceSlot),
+    /// An independent legal-clone order's hybrid-key seed, held only by the host
+    /// process in its own store namespace. The order id belongs here, never in
+    /// the slot's real host install id. No exported or ordinary-vault copy.
+    LegalCloneOrder([u8; 16]),
 }
 
 impl SlotKind {
@@ -113,6 +118,13 @@ impl SlotKind {
             Self::HostIssuerSeed => "host-issuer-seed",
             Self::OwnerSigning => "owner-signing",
             Self::KitPiece(slot) => return slot.label(),
+            Self::LegalCloneOrder(order) => {
+                let mut label = String::from("legal-clone-order-");
+                for byte in order {
+                    push_hex(&mut label, byte);
+                }
+                return Cow::Owned(label);
+            }
         };
         Cow::Borrowed(label)
     }
