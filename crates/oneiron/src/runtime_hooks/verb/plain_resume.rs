@@ -14,6 +14,11 @@
 //! ceiling. Anything else ends the call refused, never run narrower or
 //! wider, and nothing waits for revoked authority to come back.
 //!
+//! An ask guest's companion call keeps the ids of the grant its handle was
+//! bound to (FIX 4743). The ask's write and the drain each prove that exact
+//! grant again, and the rebuilt handle carries it, so the task door proves
+//! it a third time in its own write.
+//!
 //! Where the caller sits admits and refuses nothing here. It is kept only
 //! so the resumed call reads what the call itself would have read
 //! (DEC-0005). A handle the drain cannot rebuild saves no target, wherever
@@ -22,7 +27,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authority::{ActSurface, HostActionIdentity};
+use crate::authority::{ActSurface, AdmittedTaskGrant, HostActionIdentity, TaskGrantStanding};
 use crate::claim::CallerLocality;
 use crate::error::ClaimError;
 use crate::memory::{
@@ -68,6 +73,10 @@ struct PlainCaller {
     /// drain never runs it as the host's own.
     transport: bool,
     origin_conversation: Option<EntityId>,
+    /// The ask guest's grant the handle was bound to (FIX 4743), by its ids
+    /// alone. A call bound to a grant never takes a pause of a call bound
+    /// to none, or to another grant.
+    task_grant: Option<AdmittedTaskGrant>,
 }
 
 /// Where the caller read from (DEC-0005), kept so the resumed call reads
@@ -198,6 +207,7 @@ impl PlainRowResume {
                 placement: locality.into(),
                 transport,
                 origin_conversation,
+                task_grant: None,
             },
             surface,
             // Metadata only until retain_in_txn proves this identity in the ask's writer.
@@ -211,6 +221,36 @@ impl PlainRowResume {
     /// whichever surface it came from.
     pub(super) fn same_caller(&self, call: &Self) -> bool {
         self.caller == call.caller
+    }
+
+    /// Keeps the ask guest's grant the caller's handle was bound to
+    /// (`Memory::with_task_grant`, FIX 4743), as provenance only: the ask's
+    /// write and the drain prove it again before it counts.
+    #[must_use]
+    pub(crate) fn with_task_grant(mut self, grant: Option<AdmittedTaskGrant>) -> Self {
+        self.caller.task_grant = grant;
+        self
+    }
+
+    /// Why this saved call no longer stands for `actor` in `txn`, or `None`
+    /// when it does: the ask guest's grant it was bound to, proved again
+    /// (FIX 4743), then the authority its ask saved.
+    fn refusal_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+    ) -> Result<Option<PlainRefusal>> {
+        let Some(authority) = &self.authority else {
+            return Ok(Some(PlainRefusal::ContextUnavailable));
+        };
+        if let Some(grant) = &self.caller.task_grant
+            && let Some(refusal) = task_grant_refusal_in_txn(vault, txn, actor, grant)?
+        {
+            return Ok(Some(refusal));
+        }
+        authority.refusal_in_txn(vault, txn, actor, class, self.host_action.as_ref())
     }
 }
 
@@ -229,7 +269,14 @@ pub(super) fn retain_in_txn(
         other => return other,
     };
     let class = super::super::filter::edge_class(call.class);
-    match authority_in_txn(vault, txn, call.actor, class, plain.host_action.as_ref()) {
+    match authority_in_txn(
+        vault,
+        txn,
+        call.actor,
+        class,
+        plain.host_action.as_ref(),
+        plain.caller.task_grant.as_ref(),
+    ) {
         Ok(authority) => {
             plain.authority = authority;
             plain.authority.is_some().then_some(VerbResume::Row(plain))
@@ -242,9 +289,10 @@ pub(super) fn retain_in_txn(
 }
 
 /// Runs a ready plain call again as its caller (`Vault::drain_verb_asks`).
-/// The authority its ask saved is proved again first. Then the native
-/// handle is rebuilt with the call's invocation, sitting, read placement,
-/// transport mark, origin conversation and owner surface, and the generated
+/// The authority its ask saved, and the ask guest's grant its handle was
+/// bound to (FIX 4743), are proved again first. Then the handle is rebuilt
+/// with the call's invocation, sitting, read placement, transport mark,
+/// origin conversation, that grant and owner surface, and the generated
 /// dispatcher runs the row, in its room's turn when it had one, whose
 /// current terms admit it again or refuse it. A saved authority that no
 /// longer stands ends the call refused before anything runs.
@@ -263,12 +311,7 @@ pub(super) fn run(
 ) -> Result<MemoryResult<Value>> {
     let refusal = {
         let txn = vault.store.env.read_txn()?;
-        match &plain.authority {
-            Some(authority) => {
-                authority.refusal_in_txn(vault, &txn, actor, class, plain.host_action.as_ref())?
-            }
-            None => Some(PlainRefusal::ContextUnavailable),
-        }
+        plain.refusal_in_txn(vault, &txn, actor, class)?
     };
     if let Some(refusal) = refusal {
         return Ok(Err(refusal.error()));
@@ -279,6 +322,7 @@ pub(super) fn run(
         placement,
         transport,
         origin_conversation,
+        task_grant,
     } = plain.caller;
     let mut memory = vault
         .memory(actor, class)
@@ -295,6 +339,11 @@ pub(super) fn run(
     if let Some(conversation) = origin_conversation {
         memory = memory.with_origin_conversation(conversation);
     }
+    // FIX 4743: the exact grant the preflight just proved, so the handle
+    // stays a guest's, never the host's own, and the task door proves it.
+    if let Some(grant) = task_grant {
+        memory = memory.with_task_grant(&grant);
+    }
     let _draining = DrainScope::enter(invocation);
     Ok(match room {
         Some(room) => memory
@@ -308,14 +357,21 @@ pub(super) fn run(
 /// when the one owner resolver names this person, else every live Grant
 /// naming the actor and the ceiling the gate projects for it. `None` for a
 /// call through a host action whose actor is no live owner: a host action
-/// acts only as the owner.
+/// acts only as the owner. `None` too for a call bound to an ask guest's
+/// grant that no longer proves it here (FIX 4743).
 fn authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     class: EdgeActorClass,
     host_action: Option<&HostActionIdentity>,
+    task_grant: Option<&AdmittedTaskGrant>,
 ) -> Result<Option<PlainAuthority>> {
+    if let Some(grant) = task_grant
+        && task_grant_refusal_in_txn(vault, txn, actor, grant)?.is_some()
+    {
+        return Ok(None);
+    }
     if class == EdgeActorClass::Human
         && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
     {
@@ -373,6 +429,25 @@ impl PlainAuthority {
             }
         }
     }
+}
+
+/// Why the ask guest's grant a call was bound to no longer proves `actor`
+/// in `txn` (FIX 4743), or `None` when the exact grant its ask recorded for
+/// its guest still does. A storage failure is an error, never a lapse.
+fn task_grant_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    grant: &AdmittedTaskGrant,
+) -> Result<Option<PlainRefusal>> {
+    Ok(
+        match vault.prove_admitted_task_grant_in_txn(txn, grant, actor)? {
+            TaskGrantStanding::Proven(_) => None,
+            TaskGrantStanding::OtherActor => Some(PlainRefusal::ContextUnavailable),
+            TaskGrantStanding::AskChanged => Some(PlainRefusal::AuthorityChanged),
+            TaskGrantStanding::Lapsed => Some(PlainRefusal::GrantLapsed),
+        },
+    )
 }
 
 /// The exact recorded host action still binds this person in this snapshot.

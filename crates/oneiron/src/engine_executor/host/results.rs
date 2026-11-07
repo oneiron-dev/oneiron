@@ -259,8 +259,19 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let output =
-            storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
+        let producing_step_start = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or(Some(self.step_start), |held| held.producing_step_start);
+        let output = storage.publish_code_run_output_produced(
+            path,
+            sink,
+            true,
+            self.run_id,
+            input_rows,
+            producing_step_start,
+        )?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
         }
@@ -428,22 +439,21 @@ impl RecordingJsHost<'_, '_> {
                 JsResultRef::Name(name) => child.delegated(true, name),
                 JsResultRef::Handle(handle) => child.delegated(false, handle),
             };
-            let Some((name, source)) = named else {
-                return Ok(None);
-            };
-            let Some(output) =
-                recorded_output(storage, source.owner, &source.path, &source.handle)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(ResolvedResult {
-                output,
-                name: Some(name.to_owned()),
-                owner: source.owner,
-                rows: Some(source.rows.clone()),
-                within: Some(source.range),
-                child_source: true,
-            }));
+            if let Some((name, source)) = named {
+                let Some(output) =
+                    recorded_output(storage, source.owner, &source.path, &source.handle)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(ResolvedResult {
+                    output,
+                    name: Some(name.to_owned()),
+                    owner: source.owner,
+                    rows: Some(source.rows.clone()),
+                    within: Some(source.range),
+                    child_source: true,
+                }));
+            }
         }
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);
