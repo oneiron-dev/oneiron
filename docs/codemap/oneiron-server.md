@@ -555,7 +555,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | s | 4 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/actor_dispatch/auth.rs` | src | m | 9 crate-vis | — | Who an MCP call acts as: its actor, resolved from its credential, proof headers and placement |
 | `src/api/mcp_gateway/actor_dispatch/execute.rs` | src | s | 3 crate-vis | — | How an admitted MCP tool call executes: its params, its validation and its dispatch |
-| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | s | 7 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential and execute_code |
+| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | s | 10 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, execute_code's session and each… |
 | `src/api/mcp_gateway/admission.rs` | src | m | 13 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
