@@ -141,6 +141,12 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// T1 `self.use` operations the host registered, by operation name: the
+    /// second table beside `SECRET_USE_OPERATIONS` (FIX 2616). Empty until
+    /// the server registers its callbacks; unknown names refuse as unknown.
+    pub(crate) secret_use_t1_operations: std::sync::Mutex<
+        std::collections::HashMap<String, crate::secret_custody::SecretUseT1Operation>,
+    >,
     /// The page-seal mirror read the last settle fused with its file
     /// identity, consumed by the next ready check instead of a second
     /// under-lease mirror read (FIX 12272). Set only by the settle's write
@@ -257,6 +263,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The served host's precision recalculator (LibreOffice headless) for
+    /// the workbooks the native formula engine refuses (FIX 2462), installed
+    /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,
+    /// a refused workbook is marked to recalculate when it is opened.
+    pub(crate) xlsx_precision_recalc:
+        std::sync::Mutex<Option<std::sync::Arc<crate::office_body::XlsxPrecisionRecalc>>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
