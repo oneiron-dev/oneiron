@@ -175,7 +175,12 @@ pub(super) fn decide_cleanup_proposal_sourced_in_txn(
     }
     sources.sort_unstable();
     sources.dedup();
-    PROPOSAL.delete(&vault.store, wtxn, &row.id)?;
+    super::entity_rows::delete_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Proposal,
+        row.id.as_bytes(),
+    )?;
     // The owner's verdict is the proposal's review, and it reached a person.
     crate::store::healer_oversight::reviewed_in_txn(
         vault,

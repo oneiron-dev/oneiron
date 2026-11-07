@@ -117,6 +117,7 @@ mod attempt_delete_receipts;
 mod attempt_delete_wire;
 use oneiron_store::vault_cleanup::cleanup_types;
 mod codec_receipts;
+mod entity_rows;
 mod erase;
 mod marks;
 mod owner_doors;

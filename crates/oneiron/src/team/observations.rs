@@ -170,3 +170,33 @@ fn member_spend(
     }
     Ok((!members.is_empty()).then_some(total))
 }
+
+/// A complete set of explicit choices by the leader and current member tries.
+/// No ballot on a current try leaves the tally unknown, not zero or inherited.
+pub(super) fn observed_tally(
+    vault: &Vault,
+    leader: AttemptId,
+    members: &[AttemptId],
+    team_ref: &str,
+) -> Result<Option<std::collections::BTreeMap<String, u32>>> {
+    let txn = vault.store.env.read_txn()?;
+    let participants: Vec<_> = std::iter::once(leader)
+        .chain(members.iter().copied())
+        .collect();
+    let tips = newest_tries(vault, &txn, &participants)?;
+    let mut seen = BTreeSet::new();
+    let mut tally = std::collections::BTreeMap::new();
+    for (tip, record) in tips {
+        if record.is_none() {
+            return Ok(None);
+        }
+        if !seen.insert(tip) {
+            continue;
+        }
+        let Some(choice) = super::ballot::choice_in_txn(vault, &txn, tip, team_ref)? else {
+            return Ok(None);
+        };
+        *tally.entry(choice).or_insert(0) += 1;
+    }
+    Ok(Some(tally))
+}

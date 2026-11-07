@@ -106,6 +106,11 @@ pub(crate) fn run_hook_verdict(
     (answered, calls)
 }
 
+/// The host-bound grant while this thread answers a hook verdict.
+pub(super) fn current_grant() -> Option<HookGrant> {
+    HOOK_GRANT.with(|slot| slot.borrow().clone())
+}
+
 /// The evidence views a verdict's ladder reads: every ref hydrated by
 /// `reader`, as for any caller; inside a hook's verdict, only those its
 /// grant shows, judged on these same views (FIX 10068). A view the grant
@@ -117,11 +122,10 @@ pub(super) fn evidence_views(
     if evidence.is_empty() {
         return Ok(Vec::new());
     }
-    let views = reader.hydrate(evidence)?.value;
-    let Some(grant) = HOOK_GRANT.with(|slot| slot.borrow().clone()) else {
-        return Ok(views);
+    let Some(grant) = current_grant() else {
+        return Ok(reader.hydrate(evidence)?.value);
     };
-    let (shown, withheld) = hook_evidence_views(reader, &grant, views)?;
+    let (shown, withheld) = hook_evidence_views(reader, &grant, evidence)?;
     if !withheld.is_empty() {
         let withheld: Vec<String> = withheld.iter().map(EntityId::to_hex).collect();
         tracing::debug!(

@@ -238,6 +238,7 @@ impl<'v> SessionWitnessContext<'v> {
     pub(in crate::memory::witness) fn project_stream_text(
         &self,
         text: &str,
+        complete: bool,
     ) -> MemoryResult<String> {
         let txn = self
             .caller
@@ -282,8 +283,12 @@ impl<'v> SessionWitnessContext<'v> {
                         return text.to_owned();
                     };
                     let data = text.as_bytes();
-                    let growing = known.growing(data);
-                    let mut limit = growing.opens.unwrap_or(data.len()).min(growing.held);
+                    let mut limit = if complete {
+                        data.len()
+                    } else {
+                        let growing = known.growing(data);
+                        growing.opens.unwrap_or(data.len()).min(growing.held)
+                    };
                     while !text.is_char_boundary(limit) {
                         limit -= 1;
                     }

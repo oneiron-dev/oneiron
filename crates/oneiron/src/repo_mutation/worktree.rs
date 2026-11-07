@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
+use crate::git_wire::git_path_os_str;
 
 use super::git::{git_common_dir, run_git, validate_relative_repo_path};
 use super::queue::PreparedCommitFile;
@@ -237,8 +238,11 @@ fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {
 
 pub(super) fn ensure_repo_parent_dirs_no_symlink(repo_root: &Path, path: &str) -> Result<PathBuf> {
     validate_relative_repo_path(path)?;
+    // The path's own bytes, so a name outside UTF-8 lands as Git holds it
+    // (FIX 21326).
+    let path = git_path_os_str(path)?;
     let mut current = repo_root.to_path_buf();
-    let mut components = Path::new(path).components().peekable();
+    let mut components = Path::new(&*path).components().peekable();
     while let Some(component) = components.next() {
         let Component::Normal(part) = component else {
             return Err(Error::Code(CodeError::InvalidRepoMutationRecord(

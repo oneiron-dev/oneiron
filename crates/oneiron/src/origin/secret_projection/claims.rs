@@ -85,6 +85,11 @@ pub(crate) enum RepoProjectionRecord {
         /// Every readable mark naming a blob of the copy's closure, sorted
         /// (FIX 9105): a mark no blob of it carries never moves the copy.
         marks: Vec<EntityId>,
+        /// The known-value history witness the copy was made under (FIX
+        /// 8966): every blob of it was masked against the values custody
+        /// knew then, so it stands only while custody knows the same ones.
+        /// `None` when custody knew none. Value-free.
+        known_history: Option<[u8; 32]>,
         /// Who the copy serves (FIX 9328).
         audience: RepoProjectionAudience,
     },
