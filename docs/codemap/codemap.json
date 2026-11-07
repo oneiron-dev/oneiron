@@ -89388,7 +89388,19 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
       "mod": 7,
-      "re-export": 7
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/backchannel.rs",
+     "purpose": "The person's backchannel while the agent holds the floor (FIX 4899, ARCH-0061 #backchannel): \"mm-hmm\"…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -89415,6 +89427,25 @@
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeardBasis",
+      "HeardCoverage",
+      "HeardLedger",
+      "HeardPlayback",
+      "HeardUtterance",
+      "SpeechAlignment"
+     ],
+     "path": "src/voice_cascade/heard.rs",
+     "purpose": "Heard-playback accounting (FIX 4899, ARCH-0061 #heard-playback): what the person actually heard of a reply…",
+     "surface": {
+      "enum": 2,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -89536,12 +89567,12 @@
      "purpose": "Exact, single-use handoff across host async enrichment",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AsrEvent",
@@ -89601,7 +89632,7 @@
      "path": "src/voice_cascade/safeguard.rs",
      "purpose": "Correlated sentence work",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -89611,6 +89642,7 @@
      "notable": [
       "AsrUpdate",
       "AudienceRefresh",
+      "FloorWords",
       "SafeguardUpdate",
       "VoiceCascadeSession",
       "VoiceContainerBinding",
@@ -89619,9 +89651,9 @@
      "path": "src/voice_cascade/session.rs",
      "purpose": "Session transitions only",
      "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 24,
+      "const": 2,
+      "enum": 2,
+      "fn": 25,
       "re-export": 1,
       "struct": 5
      }
@@ -95133,7 +95165,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch"
     },
     "voice_cascade": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -95191,7 +95223,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6739,
+   "source_files": 6741,
    "test_files": 895
   },
   "oneiron-android": {
@@ -132903,7 +132935,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ChatBrain",
@@ -132918,7 +132950,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/connection.rs",
@@ -132967,7 +132999,7 @@
      "path": "src/voice_host/media_bridge.rs",
      "purpose": "The host's own speech and hearing on the media seats (OF-410)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "struct": 1
      }
@@ -132986,7 +133018,7 @@
      "path": "src/voice_host/mod.rs",
      "purpose": "Private voice request adapter, not an audio/provider scheduler",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 8,
       "re-export": 5,
@@ -133080,7 +133112,7 @@
      "path": "src/voice_host/speech.rs",
      "purpose": "The brain's reply in the host's own voice (OF-410)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -133119,7 +133151,7 @@
      "path": "src/voice_host/wire.rs",
      "purpose": "The voice wire's media ops (OF-410)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "struct": 1
      }
     },
@@ -134234,7 +134266,7 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 59,
+   "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1733,
    "test_files": 182
@@ -146896,6 +146928,10 @@
       "HealthReviewReceipt",
       "HealthSilenceActivity",
       "HeapDropReport",
+      "HeardBasis",
+      "HeardCoverage",
+      "HeardPlayback",
+      "HeardUtterance",
       "HeldAttempt",
       "HeldFailureSignalBatchView",
       "HeldMedia",
@@ -149699,8 +149735,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1143,
-      "struct": 3508
+      "enum": 1145,
+      "struct": 3510
      }
     },
     {
