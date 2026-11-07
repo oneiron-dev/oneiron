@@ -670,6 +670,9 @@ impl Vault {
         };
         // An erased message's attachment artifacts owed their delete go first.
         super::attachments::collect_after_delete(self);
+        // Header revisions a body superseded and whose delete did not return
+        // go first, whether or not the provider lists them again (FIX 15413).
+        super::header_retire::retire_superseded_headers(self, source_ref);
         let mut owed = None;
         let outcome = (|| -> MemoryResult<()> {
             // Then a forget a failure stopped part-way (fix list row 18084).
