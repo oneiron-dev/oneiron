@@ -16,7 +16,9 @@ mod retrieval;
 pub(crate) use lmdb_retrieval::text_index;
 pub(crate) use retrieval::*;
 mod document_fields;
-pub(crate) use document_fields::{is_metadata_field, is_text_field, validate_metadata};
+pub(crate) use document_fields::{
+    is_metadata_field, is_text_field, validate_metadata, validate_metadata_shape,
+};
 mod document_rows;
 mod lmdb_document_rows;
 pub(crate) use document_rows::*;
@@ -71,8 +73,8 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
-    raw_readable_in_txn, withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_exportable_in_txn,
+    raw_readable_apart_from_use_in_txn, raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]

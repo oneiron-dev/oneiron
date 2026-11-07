@@ -30,7 +30,6 @@ use std::cell::Cell;
 
 use self::erased_read::{delivery_in_txn, settled_in_txn};
 pub(crate) use self::settlement::{deliver_wait_in_txn, deliver_wait_listing_in_txn};
-use super::records::REPLAY_RECORDS;
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
 use super::wait_holders::{
@@ -547,6 +546,30 @@ const OBSERVED_TAG: [u8; 1] = *b"c";
 
 const OBSERVED_CHANGES: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
+
+/// Retires the current waiter of `run` on `wait_id` in the caller's write.
+/// A turn-hook answer is consumed before a step exists to resume; its
+/// consumption commit owns this cleanup. Other runs and the settled reply stay.
+pub(crate) fn clear_parked_wait_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+    wait_id: EntityId,
+) -> Result<()> {
+    let waiter = (WAITER_TAG, wait_id, run);
+    let Some(generation) = WAITERS.get(&vault.store, txn, &waiter)? else {
+        return Ok(());
+    };
+    let key = WaitKey {
+        run,
+        wait_id,
+        generation,
+    };
+    WAITERS.delete(&vault.store, txn, &waiter)?;
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
 
 /// The waits some canonical run is parked on with no reply delivered yet,
 /// for a sweep that settles what is due on them.
