@@ -70,11 +70,11 @@ pub(crate) use crate::room_codec::room_parts;
 pub(crate) mod origin_positions;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
-pub(crate) mod source_audiences;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
 pub mod shared_leave;
+pub(crate) mod source_audiences;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;
