@@ -1779,6 +1779,8 @@ class Oneiron:
             """Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person."""
         def propose_remove_owner(self, spec: Facade.SharedRemoveOwnerRequest) -> Facade.PendingAuthorityAct:
             """Starts a shared vault's remove_owner act, with its export-first answer."""
+        def propose_add_owner(self, spec: Facade.SharedAddOwnerRequest) -> Facade.PendingAuthorityAct:
+            """Starts a shared vault's add_owner act: a live Owner adds another person as Owner."""
         def execute(self, spec: Facade.SharedActRequest) -> Facade.ActAnswer[Facade.SharedActExecuted]:
             """A live Owner runs a matured shared-vault act and gets its receipt."""
         def receipt(self, spec: Facade.SharedReceiptRequest) -> Facade.SharedActExecutionReceipt:
@@ -1803,6 +1805,8 @@ class Oneiron:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
         @property
         def policy(self) -> "Oneiron._VaultSharedPolicyVerbs": ...
+        @property
+        def owner_change_wait(self) -> "Oneiron._VaultSharedOwnerChangeWaitVerbs": ...
     class _VaultSharedPolicyVerbs:
         def get(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActPoliciesView:
             """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
@@ -1814,6 +1818,11 @@ class Oneiron:
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
         def changes(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedActPolicyChange]:
             """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
+    class _VaultSharedOwnerChangeWaitVerbs:
+        def set(self, spec: Facade.SharedOwnerChangeWaitSetRequest) -> int | None:
+            """One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> int | None:
+            """The shared vault's common owner-change wait in seconds, if one is set."""
     class _VaultOrgAdminVerbs:
         def configure(self, spec: Facade.OrgAdminConfigureRequest) -> Facade.OrgAdminConfigured:
             """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""

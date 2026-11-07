@@ -63,6 +63,30 @@ pub struct SharedRemoveOwnerRequest {
     pub export_first: bool,
 }
 
+/// `vault.shared.propose_add_owner`'s input: a live Owner starts an
+/// `add_owner` act making `owner` an Owner; nobody loses the role.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedAddOwnerRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    /// The new Owner's PERSON id, hex: a live person not yet an Owner.
+    pub owner: String,
+}
+
+/// `vault.shared.owner_change_wait.set`'s input: whole days, or `null` to
+/// remove the common wait. `Some(0)` persists an explicit zero.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedOwnerChangeWaitSetRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    #[serde(default)]
+    pub days: Option<u64>,
+}
+
 /// A started shared act, by the id its proposal answered.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +240,35 @@ pub fn propose_shared_remove_owner(
         input.target_keeps,
         input.export_first,
     )?)
+}
+
+/// `vault.shared.propose_add_owner`: start an `add_owner` act.
+pub fn propose_shared_add_owner(
+    vault: &Vault,
+    starter: &AuthenticatedOwner,
+    input: SharedAddOwnerRequest,
+) -> MemoryResult<PendingAuthorityAct> {
+    let owner = person_id("owner", &input.owner)?;
+    Ok(vault.propose_add_owner(starter, input.vault_id, owner)?)
+}
+
+/// `vault.shared.owner_change_wait.set`: one live Owner sets the common
+/// owner-change wait, and receives the effective wait in seconds.
+pub fn set_shared_owner_change_wait(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SharedOwnerChangeWaitSetRequest,
+) -> MemoryResult<Option<u64>> {
+    vault.set_owner_change_wait_days(owner, input.vault_id, input.days)?;
+    Ok(vault.owner_change_wait_secs()?)
+}
+
+/// `vault.shared.owner_change_wait.get`: the common wait in seconds, if set.
+pub fn read_shared_owner_change_wait(
+    vault: &Vault,
+    _owner: &AuthenticatedOwner,
+) -> MemoryResult<Option<u64>> {
+    Ok(vault.owner_change_wait_secs()?)
 }
 
 /// `vault.shared.execute`: run a matured act once; running it again answers

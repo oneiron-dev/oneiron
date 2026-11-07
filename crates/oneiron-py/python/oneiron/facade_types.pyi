@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1272 facade rows, 4609 declarations.
-Inputs: 1201 of 1272 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1101 of 1272 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1275 facade rows, 4611 declarations.
+Inputs: 1204 of 1275 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1104 of 1275 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7106,12 +7106,19 @@ class SharedRemoveOwnerRequest(TypedDict):
     successor: NotRequired[str | None]
     target_keeps: NotRequired[FederationGrantRole | None]
     export_first: bool
+class SharedAddOwnerRequest(TypedDict):
+    vault_id: str
+    owner: str
 class SharedActRequest(TypedDict):
     act_id: str
 class SharedVaultChangeVaultDeletedBody(TypedDict):
     backup_retain_until: int
 class SharedVaultChangeVaultDeleted(TypedDict):
     vault_deleted: SharedVaultChangeVaultDeletedBody
+class SharedVaultChangeOwnerAddedBody(TypedDict):
+    owner: str
+class SharedVaultChangeOwnerAdded(TypedDict):
+    owner_added: SharedVaultChangeOwnerAddedBody
 SharedVaultChangeOwnershipTransferredBody = TypedDict("SharedVaultChangeOwnershipTransferredBody", {"from": str, "to": str, "from_keeps": NotRequired[FederationGrantRole | None]})
 class SharedVaultChangeOwnershipTransferred(TypedDict):
     ownership_transferred: SharedVaultChangeOwnershipTransferredBody
@@ -7168,7 +7175,7 @@ class SharedVaultChangeRecordErasedBody(TypedDict):
     redaction: NotRequired[str | None]
 class SharedVaultChangeRecordErased(TypedDict):
     record_erased: SharedVaultChangeRecordErasedBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnerAdded | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -7496,6 +7503,9 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class SharedOwnerChangeWaitSetRequest(TypedDict):
+    vault_id: str
+    days: NotRequired[int | None]
 CoreferenceStatus = Literal["proposed", "confirmed"]
 class CoreferenceLinkRequest(TypedDict):
     local_person: EntityId

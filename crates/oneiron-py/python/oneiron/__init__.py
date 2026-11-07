@@ -2654,6 +2654,9 @@ class Oneiron:
         def propose_remove_owner(self, spec):
             """Starts a shared vault's remove_owner act, with its export-first answer."""
             return json.loads(_translate(lambda: self._client.vault_shared_propose_remove_owner(json.dumps(spec))))
+        def propose_add_owner(self, spec):
+            """Starts a shared vault's add_owner act: a live Owner adds another person as Owner."""
+            return json.loads(_translate(lambda: self._client.vault_shared_propose_add_owner(json.dumps(spec))))
         def execute(self, spec):
             """A live Owner runs a matured shared-vault act and gets its receipt."""
             return json.loads(_translate(lambda: self._client.vault_shared_execute(json.dumps(spec))))
@@ -2690,6 +2693,9 @@ class Oneiron:
         @property
         def policy(self) -> "Oneiron._VaultSharedPolicyVerbs":
             return Oneiron._VaultSharedPolicyVerbs(self._client)
+        @property
+        def owner_change_wait(self) -> "Oneiron._VaultSharedOwnerChangeWaitVerbs":
+            return Oneiron._VaultSharedOwnerChangeWaitVerbs(self._client)
     class _VaultSharedPolicyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2708,6 +2714,15 @@ class Oneiron:
         def changes(self, spec):
             """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_changes(json.dumps(spec))))
+    class _VaultSharedOwnerChangeWaitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds."""
+            return json.loads(_translate(lambda: self._client.vault_shared_owner_change_wait_set(json.dumps(spec))))
+        def get(self, spec=None):
+            """The shared vault's common owner-change wait in seconds, if one is set."""
+            return json.loads(_translate(lambda: self._client.vault_shared_owner_change_wait_get(json.dumps({} if spec is None else spec))))
     class _VaultOrgAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
