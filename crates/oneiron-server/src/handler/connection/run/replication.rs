@@ -16,10 +16,11 @@ use super::super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, relay_tick};
 use super::super::super::protocol_close::internal_fault_close;
 use super::super::super::socket_stop::StoppingTransport;
 use super::super::super::transport::GuardedTransport;
-use super::super::super::window_pads::send_released;
+use super::super::super::window_pads::{Released, send_released, send_released_outcome};
+use super::super::super::window_ready::{send_ready_window_requests, window_update_verdict};
 use super::super::{
     ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
-    session_gone, should_forward_broadcast, window_delivery, window_update_withheld,
+    session_gone, should_forward_broadcast, window_delivery,
 };
 
 use crate::auth::{CoreAuth, RevokedTokenJtis};
@@ -123,6 +124,10 @@ pub(super) async fn handle_connection(
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
     conn_state.bound_auth.clone_from(&owner);
+    // Where this socket stands in the windows a policy wake readied here
+    // (FIX 19634): a new socket asks again for every one.
+    let mut ready_windows = oneiron::sync::manager::ReadyProgress::default();
+    let mut last_ready_pass = std::time::Instant::now();
     tracing::debug!(
         conn_id,
         machine = ?conn_state.peer_machine(server.vault()),
@@ -166,6 +171,18 @@ pub(super) async fn handle_connection(
     // sit queued in this channel — or blocked mid-`send` — across the very
     // revocation that should have stopped it.
     loop {
+        // Ready windows keep a fair turn under sustained traffic, which can
+        // starve the leaf-key tick below: a pass a whole tick overdue runs
+        // before the next event, while no catch-up waits on the direct queue,
+        // so no queued exchange is split (FIX 19634).
+        if direct_rx.is_empty() && last_ready_pass.elapsed() >= LEAF_KEY_TICK * 2 {
+            last_ready_pass = std::time::Instant::now();
+            if !send_ready_window_requests(&server, &conn_state, &mut ready_windows, &mut transport)
+                .await
+            {
+                break;
+            }
+        }
         let event = tokio::select! {
             biased;
             // OF-237: the engine's stop ends the loop at its wait.
@@ -220,6 +237,20 @@ pub(super) async fn handle_connection(
             }
             ConnEvent::LeafKeys => {
                 relay_tick(&server, conn_id, &conn_state);
+                // The same one-second tick, its first at once, asks for the
+                // windows a policy wake readied here since this socket last
+                // asked (FIX 19634).
+                last_ready_pass = std::time::Instant::now();
+                if !send_ready_window_requests(
+                    &server,
+                    &conn_state,
+                    &mut ready_windows,
+                    &mut transport,
+                )
+                .await
+                {
+                    break;
+                }
                 continue;
             }
             ConnEvent::AppDelivery => {
@@ -479,12 +510,24 @@ pub(super) async fn handle_connection(
                     }
                 }
                 let peer = conn_state.peer_machine(server.vault());
+                // The window an answer the last door could not read now came
+                // from: its ready request is owed again (FIX 19634). Judged
+                // from the one reading that withholds the answer.
+                let mut uninspectable = None;
                 let ledger_withheld = if conn_state.window_sync_mode
                     == super::super::super::conn_state::WindowSyncMode::Selector
                 {
                     super::super::super::federation::selector_update_withheld(&server, &data, peer)
                 } else {
-                    window_update_withheld(&server, peer, &data)
+                    match window_update_verdict(&server, peer, &data) {
+                        Some((key, verdict)) => {
+                            if verdict == oneiron::sync::window::UpdateVerdict::Uninspectable {
+                                uninspectable = key;
+                            }
+                            verdict != oneiron::sync::window::UpdateVerdict::Portable
+                        }
+                        None => false,
+                    }
                 };
                 if ledger_withheld
                     || document_frame_withheld_for(server.vault(), peer, &data)
@@ -494,13 +537,22 @@ pub(super) async fn handle_connection(
                             &mut conn_state,
                         ))
                 {
+                    if let Some(key) = uninspectable {
+                        ready_windows.retry(&key);
+                    }
                     transport.app_jti = None;
                     continue;
                 }
-                let sent = send_released(&server, &conn_state, &mut transport, data).await;
+                let released =
+                    send_released_outcome(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
-                if !sent {
-                    break;
+                match released {
+                    Released::Failed => break,
+                    // A window answer whose copy or envelope could not be made
+                    // now: the window's ready request goes again on the next
+                    // tick (FIX 19634).
+                    Released::Retry(key) => ready_windows.retry(&key),
+                    Released::Sent | Released::Withheld => {}
                 }
                 continue;
             }
