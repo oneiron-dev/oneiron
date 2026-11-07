@@ -30,6 +30,7 @@ use super::{
 };
 
 mod construction;
+mod mcp;
 pub(super) mod pattern_workflow;
 mod usage;
 
@@ -107,6 +108,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The operator's renderer scratch source, resolved once with shared disk claims.
+    pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -164,6 +167,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `execute_code` runs parked on a durable wait, each entered again
+    /// once its reply is delivered (FIX 4606).
+    pub(crate) mcp_code_run_continuations: crate::api::McpCodeRunContinuations,
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
@@ -371,32 +377,6 @@ impl SyncServer {
         Ok(())
     }
 
-    /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes, running at most `runs` at once. Missing components or providers
-    /// keep execute_code unadvertised.
-    #[cfg(feature = "code-sandbox-wasmtime")]
-    #[must_use]
-    pub fn with_mcp_quickjs_provider(
-        mut self,
-        provider: crate::mcp::McpQuickJsProvider,
-        runs: crate::mcp::CodeRunLimits,
-    ) -> Self {
-        let provider = provider.with_run_receipts(self.run_receipts());
-        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
-            crate::mcp::McpEngineNativeCodeHost::new(
-                Arc::new(provider),
-                runs,
-                Arc::clone(self.wire_telemetry.limit_questions()),
-            )
-            .with_reader_seats(self.reader_runner.seats())
-            .with_git_door_base(self.config.git_door_base.clone()),
-        );
-        // Reader children run on the same provider and pool.
-        self.reader_runner.bind_host(Arc::clone(&host));
-        self.mcp_code_host = Some(host);
-        self
-    }
-
     /// Installs the node-side account API key verifier a host built
     /// around its control-plane checker (OF-448). Without one, no account
     /// key is ever admitted.
@@ -435,24 +415,6 @@ impl SyncServer {
 
     pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
         self.desktop_guest.as_ref()
-    }
-
-    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
-        self.mcp_code_host
-            .as_ref()
-            .filter(|host| host.production_runtime_available())
-    }
-
-    /// The surface `mode` registers on this server, or the verb row that
-    /// keeps it from registering: callers answer that as a typed error.
-    pub(crate) fn mcp_surface(
-        &self,
-        mode: crate::mcp::McpSurfaceMode,
-    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
-        crate::mcp::McpRegisteredSurface::register_with_execution(
-            mode,
-            self.code_execution_host().is_some(),
-        )
     }
 
     /// Attaches the ONE-207 deep-retrieval host.
