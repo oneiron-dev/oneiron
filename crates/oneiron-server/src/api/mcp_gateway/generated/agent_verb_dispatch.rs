@@ -390,6 +390,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.restoreDefaults" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.put" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.skill_hubs.clawhub.search" => a.spec.clone().ok_or_else(invalid),
+        "vault.skill_hubs.clawhub.import" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.publishers.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.publishers.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.refs.get" => a.spec.clone().ok_or_else(invalid),
@@ -2358,6 +2360,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skill_hubs.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skill_hubs.clawhub.search" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skill_hubs.clawhub.import" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skill_hubs.publishers.admit" => {
@@ -6162,6 +6170,12 @@ async fn execute_agent_verb_row_on(
         }
         "vault.skill_hubs.put" => boxed_mcp_verb_row_vault_skill_hubs_put(row).await,
         "vault.skill_hubs.get" => boxed_mcp_verb_row_vault_skill_hubs_get(row).await,
+        "vault.skill_hubs.clawhub.search" => {
+            boxed_mcp_verb_row_vault_skill_hubs_clawhub_search(row).await
+        }
+        "vault.skill_hubs.clawhub.import" => {
+            boxed_mcp_verb_row_vault_skill_hubs_clawhub_import(row).await
+        }
         "vault.skill_hubs.publishers.admit" => {
             boxed_mcp_verb_row_vault_skill_hubs_publishers_admit(row).await
         }
@@ -19938,6 +19952,112 @@ async fn mcp_verb_row_vault_skill_hubs_get(row: McpVerbRow<'_>) -> McpVerbRowRes
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skill_hubs_get(
         server, auth, input,
     ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_skill_hubs_clawhub_search<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_skill_hubs_clawhub_search(row))
+}
+async fn mcp_verb_row_vault_skill_hubs_clawhub_search(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.skill_hubs.clawhub.search", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::ClawHubSearchRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_skill_hubs_clawhub_search(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_skill_hubs_clawhub_import<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_skill_hubs_clawhub_import(row))
+}
+async fn mcp_verb_row_vault_skill_hubs_clawhub_import(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.skill_hubs.clawhub.import", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::skill_hub::ClawHubImportRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_skill_hubs_clawhub_import(server, auth, input),
+    )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

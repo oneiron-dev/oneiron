@@ -1298,6 +1298,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillHubRequest>(),
             ),
             (
+                "vault.skill_hubs.clawhub.search",
+                crate::code_run::vault_read::request_schema::<ClawHubSearchRequest>(),
+            ),
+            (
+                "vault.skill_hubs.clawhub.import",
+                crate::code_run::vault_read::request_schema::<crate::skill_hub::ClawHubImportRequest>(
+                ),
+            ),
+            (
                 "vault.skill_hubs.publishers.admit",
                 crate::code_run::vault_read::request_schema::<SkillPublisherRequest>(),
             ),
@@ -7590,6 +7599,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.restoreDefaults",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
+    "vault.skill_hubs.clawhub.search",
+    "vault.skill_hubs.clawhub.import",
     "vault.skill_hubs.publishers.admit",
     "vault.skill_hubs.publishers.revoke",
     "vault.skill_hubs.refs.get",
@@ -8787,6 +8798,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.skill_hubs.get" => {
             crate::code_run::vault_read::request_schema::<crate::skill_hub::SkillHubRecord>()
+        }
+        "vault.skill_hubs.clawhub.search" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::ClawHubSearchReply>()
+        }
+        "vault.skill_hubs.clawhub.import" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::ClawHubImportReply>()
         }
         "vault.skill_hubs.publishers.admit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillPublisherAdmission,
@@ -12823,6 +12840,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skill_hubs.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.clawhub.search" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.clawhub.import" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20409,6 +20440,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.restoreDefaults" => validate_input_vault_skills_restoreDefaults(value)?,
         "vault.skill_hubs.put" => validate_input_vault_skill_hubs_put(value)?,
         "vault.skill_hubs.get" => validate_input_vault_skill_hubs_get(value)?,
+        "vault.skill_hubs.clawhub.search" => validate_input_vault_skill_hubs_clawhub_search(value)?,
+        "vault.skill_hubs.clawhub.import" => validate_input_vault_skill_hubs_clawhub_import(value)?,
         "vault.skill_hubs.publishers.admit" => {
             validate_input_vault_skill_hubs_publishers_admit(value)?
         }
@@ -23140,6 +23173,16 @@ fn validate_input_vault_skill_hubs_put(value: &serde_json::Value) -> MemoryResul
 #[inline(never)]
 fn validate_input_vault_skill_hubs_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: SkillHubRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_skill_hubs_clawhub_search(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: ClawHubSearchRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_skill_hubs_clawhub_import(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::skill_hub::ClawHubImportRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29332,6 +29375,8 @@ pub fn invoke(
         "vault.skills.restoreDefaults" => invoke_vault_skills_restoreDefaults(memory, value),
         "vault.skill_hubs.put" => invoke_vault_skill_hubs_put(memory, value),
         "vault.skill_hubs.get" => invoke_vault_skill_hubs_get(memory, value),
+        "vault.skill_hubs.clawhub.search" => invoke_vault_skill_hubs_clawhub_search(memory, value),
+        "vault.skill_hubs.clawhub.import" => invoke_vault_skill_hubs_clawhub_import(memory, value),
         "vault.skill_hubs.publishers.admit" => {
             invoke_vault_skill_hubs_publishers_admit(memory, value)
         }
@@ -32443,6 +32488,20 @@ fn invoke_vault_skill_hubs_get(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_skill_hubs_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_skill_hubs_clawhub_search(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_skill_hubs_clawhub_search(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_skill_hubs_clawhub_import(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_skill_hubs_clawhub_import(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skill_hubs_publishers_admit(
@@ -42274,6 +42333,26 @@ pub fn vault_skill_hubs_get(
     crate::task_verb::sdk::skill_hub_get_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skill_hubs.get")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_clawhub_search(
+    memory: &Memory<'_>,
+    input: ClawHubSearchRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubSearchReply> {
+    crate::task_verb::sdk::skill_hub_clawhub_search_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.clawhub.search")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_clawhub_import(
+    memory: &Memory<'_>,
+    input: crate::skill_hub::ClawHubImportRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubImportReply> {
+    crate::task_verb::sdk::skill_hub_clawhub_import_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.clawhub.import")?,
         &input,
     )
 }
