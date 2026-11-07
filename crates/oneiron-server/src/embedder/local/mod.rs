@@ -19,6 +19,7 @@
 
 pub(super) mod attention;
 pub(super) mod batcher;
+pub(super) mod checkpoint;
 pub(super) mod cpu_q8;
 pub(super) mod device;
 pub(super) mod evidence;

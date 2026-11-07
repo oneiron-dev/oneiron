@@ -289,6 +289,10 @@ pub struct PolicyPassAudit {
     /// notes, as it does on a failed notes call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub model_notes_cut: bool,
+    /// The guard refused the notes call because its budget was exhausted;
+    /// the decided verdict stands without notes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_notes_budget_exhausted: bool,
     /// Registered row questions and their shared-ladder receipts. These
     /// contain answers and hashes/ids, never the candidate or policy text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -330,6 +334,7 @@ impl PolicyPassAudit {
             && self.model_rule_ids_dropped == 0
             && self.model_confidence.is_none()
             && self.model_rationale.is_none()
+            && !self.model_notes_budget_exhausted
             && self.typed_decisions.is_empty()
             && self.read_error.is_none()
     }

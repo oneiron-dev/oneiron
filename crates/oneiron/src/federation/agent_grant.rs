@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{
     ActSurface, AgentGrantAct, AgentGrantActRecord, AgentGrantActRef, AgentGrantChange,
-    AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityEntryHash, AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
 };
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
@@ -96,6 +96,16 @@ pub(crate) struct AgentGrantRevokeOutcome {
     pub(crate) agent: Option<EntityId>,
     /// The signed record of this revoke; `None` for a repeat.
     pub(crate) act: Option<AgentGrantActRef>,
+}
+
+/// One retained authority-log entry the authority fold counted, of an agent
+/// Grant act or a membership withdrawal.
+pub(super) struct CountedGrantAct {
+    /// The BLAKE3 hash of the entry's canonical signed body.
+    pub(super) hash: AuthorityEntryHash,
+    pub(super) op: AuthorityOp,
+    /// The log row's recording time (Unix seconds).
+    pub(super) recorded_at: u64,
 }
 
 /// Signed mint fields and withdrawals retained for the registry's audit view.
@@ -365,8 +375,41 @@ impl Vault {
     }
 
     fn logged_owner_grants_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<LoggedOwnerGrants> {
-        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = LoggedOwnerGrants::default();
+        for act in self.counted_grant_acts_in_txn(txn)? {
+            match act.op {
+                AuthorityOp::AgentGrantAct(record) => match &record.change {
+                    AgentGrantChange::Mint { .. } => {
+                        grants.mints.insert(record.grant, (record, act.recorded_at));
+                    }
+                    AgentGrantChange::Revoke { .. } => {
+                        grants.owner_revoked.insert(record.grant);
+                    }
+                },
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
+                    grants.membership_revoked.insert(grant_ref);
+                }
+                // A membership change no host issuer signed, signed later
+                // by its carrier (FIX 12335), withdraws each Grant it names.
+                AuthorityOp::MembershipExecution(record) => {
+                    grants.membership_revoked.extend(record.withdrawn_grants);
+                }
+                _ => {}
+            }
+        }
+        Ok(grants)
+    }
+
+    /// Each retained authority-log entry the authority fold counted whose op
+    /// is an agent Grant act or a membership withdrawal, in log-row id
+    /// order. An entry whose body this vault no longer holds (an adopted
+    /// checkpoint covers it) is not among them.
+    pub(super) fn counted_grant_acts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<CountedGrantAct>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut acts = Vec::new();
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -386,31 +429,20 @@ impl Vault {
                 AuthorityOp::AgentGrantAct(_)
                     | AuthorityOp::SlipGrantRevoke { .. }
                     | AuthorityOp::MembershipExecution(_)
-            ) || !fold.valid_entries.contains(&authority_entry_hash(&entry)?)
-            {
+            ) {
                 continue;
             }
-            match entry.op {
-                AuthorityOp::AgentGrantAct(record) => match &record.change {
-                    AgentGrantChange::Mint { .. } => {
-                        grants.mints.insert(record.grant, (record, row.learned_at));
-                    }
-                    AgentGrantChange::Revoke { .. } => {
-                        grants.owner_revoked.insert(record.grant);
-                    }
-                },
-                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
-                    grants.membership_revoked.insert(grant_ref);
-                }
-                // A membership change no host issuer signed, signed later
-                // by its carrier (FIX 12335), withdraws each Grant it names.
-                AuthorityOp::MembershipExecution(record) => {
-                    grants.membership_revoked.extend(record.withdrawn_grants);
-                }
-                _ => {}
+            let hash = authority_entry_hash(&entry)?;
+            if !fold.valid_entries.contains(&hash) {
+                continue;
             }
+            acts.push(CountedGrantAct {
+                hash,
+                op: entry.op,
+                recorded_at: row.learned_at,
+            });
         }
-        Ok(grants)
+        Ok(acts)
     }
 
     /// Every live agent grant of this vault, in id order. A row that does
