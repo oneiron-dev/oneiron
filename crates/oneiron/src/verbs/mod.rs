@@ -3,6 +3,7 @@ mod act_answer;
 mod agent_grant;
 mod agents;
 mod anonymous_chat;
+mod answer_forward;
 mod asr;
 mod authority_history;
 mod board_layout;
@@ -49,6 +50,7 @@ mod live_run;
 mod live_voice;
 mod mesh;
 mod model_manifest;
+mod model_pack;
 mod note_history;
 mod off_record;
 mod off_record_rooms;
@@ -61,6 +63,8 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -250,7 +254,6 @@ pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -432,6 +435,7 @@ pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
+pub use self::answer_forward::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
@@ -480,6 +484,7 @@ pub use self::live_run::*;
 pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
+pub use self::model_pack::*;
 pub use self::note_history::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
@@ -492,6 +497,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -1046,5 +1053,4 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
-
 pub mod voice_records;

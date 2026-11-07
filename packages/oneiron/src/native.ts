@@ -37,6 +37,7 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 vaultCommitmentsCreate(input: unknown): unknown
 vaultCommitmentsGet(input: unknown): unknown
+vaultCommitmentsLedger(input: unknown): unknown
 vaultCommitmentsInstances(input: unknown): unknown
 vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
@@ -284,6 +285,7 @@ vaultPacksSync(input: unknown): unknown
 vaultPacksGet(input: unknown): unknown
 vaultSkillsImport(input: unknown): unknown
 vaultSkillsSync(input: unknown): unknown
+vaultSkillsProposalSettle(input: unknown): unknown
 vaultSkillsReceipts(input: unknown): unknown
 vaultSkillsConvert(input: unknown): unknown
 vaultSkillsGet(input: unknown): unknown
@@ -522,6 +524,7 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultCoachTrainingRunsCancel(input: unknown): unknown
 vaultDraftersList(input: unknown): unknown
 vaultDraftersListAs(input: unknown): unknown
 vaultDraftersStatus(input: unknown): unknown
@@ -677,6 +680,7 @@ vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
 hostWake(input: unknown): unknown
 hostBudgetHit(input: unknown): unknown
+vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
@@ -727,8 +731,11 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeSecretsGet(input: unknown): unknown
+vaultCodeSecretsPropose(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeCorrections(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -762,6 +769,7 @@ vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeCheckoutHolderBind(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
 vaultCodeCheckoutClaim(input: unknown): unknown
 vaultCodeCheckoutGet(input: unknown): unknown
@@ -875,6 +883,9 @@ peek(requestJson: string): string
 ask(input: unknown): unknown
 wait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
+tasksAnswerForwardChallenge(input: unknown): unknown
+tasksAnswerForward(input: unknown): unknown
+tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
@@ -937,6 +948,9 @@ vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
 vaultSettingsWebConnectorReplace(input: unknown): unknown
+vaultSettingsModelPack(input: unknown): unknown
+vaultSettingsModelPackReplace(input: unknown): unknown
+vaultModelPackRevert(input: unknown): unknown
 vaultConnectorsWebUsage(input: unknown): unknown
 vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown
@@ -958,6 +972,7 @@ aiStreamsEvents(input: unknown): unknown
 aiStreamsDetach(input: unknown): unknown
 aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
+aiStreamsRelease(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 vaultReceiptsCraftReplyManifest(input: unknown): unknown
@@ -1009,6 +1024,8 @@ vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsPrepare(input: unknown): unknown
+vaultQuestionsAdmit(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsOutcomeWindows(input: unknown): unknown
@@ -1270,6 +1287,9 @@ vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
+vaultFilesSourcesConvert(input: unknown): unknown
+vaultSyncRepoManifestsConflictReview(input: unknown): unknown
+vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

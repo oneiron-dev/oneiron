@@ -446,9 +446,8 @@ impl Vault {
     /// Whether `person` reads the setting: a live PERSON who is the vault's
     /// live owner, stands here as a live Connect guest on a personal or
     /// shared vault (`federation::connect_guest_standing_in_txn`, FIX 5538),
-    /// holds a live member or guest standing in this shared vault
-    /// (`Vault::membership_standing_in_txn`), or holds a live Delegate grant
-    /// over it (`Vault::delegate_standing_in_txn`).
+    /// or holds a live member, Delegate or guest standing in this shared
+    /// vault (`Vault::membership_standing_in_txn`).
     ///
     /// # Errors
     /// Storage faults: never a reader.
@@ -468,13 +467,9 @@ impl Vault {
         let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
             return Ok(false);
         };
-        if self
+        Ok(self
             .membership_standing_in_txn(txn, creation.vault_id, &person)?
-            .is_some()
-        {
-            return Ok(true);
-        }
-        self.delegate_standing_in_txn(txn, creation.vault_id, &person)
+            .is_some())
     }
 
     /// The setting's view on `fold`, its line naming who set it.
