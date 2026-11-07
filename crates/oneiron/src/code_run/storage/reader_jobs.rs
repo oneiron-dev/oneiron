@@ -1107,7 +1107,10 @@ impl ExecutorStorage<'_> {
         max_bytes: u64,
     ) -> Result<SummaryRead> {
         let refused = |reason: &str| Ok(SummaryRead::Refused(reason.to_owned()));
-        let Some((_, members)) = self.live_summary(task, generation)? else {
+        let Some((job, members)) = self.live_summary(task, generation)? else {
+            return refused("reader_task_settled");
+        };
+        let ReaderJobKind::Summarize { window_tokens, .. } = job.kind else {
             return refused("reader_task_settled");
         };
         let total = members
@@ -1116,7 +1119,9 @@ impl ExecutorStorage<'_> {
             .fold(0_u64, u64::saturating_add);
         if total > max_bytes {
             return refused(&crate::code_run::summary_exceeds_window_bytes(
-                total, max_bytes,
+                total,
+                max_bytes,
+                window_tokens,
             ));
         }
         let mut read = Vec::with_capacity(members.len());
