@@ -701,6 +701,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.oplog`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.corrections`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -847,6 +848,9 @@ both bindings and their export-census tests in one change.
 - `ask`
 - `wait`
 - `tasks.answer`
+- `tasks.answer.forward.challenge`
+- `tasks.answer.forward`
+- `tasks.answer.forward.status`
 - `tasks.outcomes`
 - `vault.rooms.list`
 - `vault.rooms.messages`
