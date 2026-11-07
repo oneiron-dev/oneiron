@@ -43,6 +43,7 @@ mod note_reads;
 mod residence_mode;
 mod server_close;
 mod session;
+mod shared_leave;
 mod steady;
 mod topology;
 
@@ -236,31 +237,37 @@ impl SyncConnection {
             .is_ok()
     }
 
-    /// Asks the sync server for this member's own leave notices with the
-    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
-    /// confirms the first one this env verifies that ends `member`'s
-    /// membership in `vault_id`, the vault's deletion included
-    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
-    /// names the heads this env's authority fold stands at, so the home
-    /// sends beside its notices only the signed handoff past them (FIX 2053).
-    /// The lane ends for good before the leave discards its queue. `None`
-    /// while no verified notice says so. A refused or failed request is an
-    /// error, never a leave.
-    pub async fn check_shared_leave(
+    /// This member's own leave notices and their continuity, asked of the
+    /// sync server with the lane's slip, revoked or not (`POST
+    /// /v1/shared/left-notices`), naming `heads` as where this env's
+    /// authority chain stands; naming none asks for the whole delegation
+    /// chain. A refused request, or an answer that does not decode, one
+    /// without a continuity included, is an error.
+    async fn left_notices(
         &self,
-        vault_id: u64,
-        member: &str,
-    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
-    {
+        heads: &[String],
+    ) -> Result<
+        (
+            Vec<crate::federation::SignedSharedActOutcome>,
+            crate::authority::LeaveNoticeContinuity,
+        ),
+        crate::sync::TransportError,
+    > {
         use crate::sync::TransportError;
 
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
-            /// The signed rows, hex, that hand the root on from where this
-            /// env's chain stands to the key that signed the notices, and
-            /// the rows they stand on, parents first.
-            handoff: Vec<String>,
+            continuity: Continuity,
+        }
+
+        /// The authority vault, 64 hex, and the leave-notice delegations,
+        /// hex, on the home's root chain to the key that signed the notices
+        /// (FIX 7932).
+        #[derive(serde::Deserialize)]
+        struct Continuity {
+            authority_vault_id: String,
+            delegations: Vec<String>,
         }
 
         let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
@@ -280,18 +287,10 @@ impl SyncConnection {
             .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
         url.set_path(LEFT_NOTICES_PATH);
         url.set_query(None);
+        shared_leave::require_credential_transport(&url)?;
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
-        // Where this env's authority chain stands (FIX 2053).
-        let heads: Vec<String> = self
-            .manager
-            .vault()
-            .leave_notice_heads()
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .iter()
-            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
-            .collect();
         // FIX 6969: a redirect is answered, never followed with the slip
         // headers; the status check below refuses a redirect answer.
         let client = reqwest::Client::builder()
@@ -325,36 +324,111 @@ impl SyncConnection {
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
                 .collect()
         };
-        let handoff = answer
-            .handoff
+        let undecoded =
+            || TransportError::InvalidPayload("the leave notice continuity does not decode");
+        let authority_vault_id = unhex(&answer.continuity.authority_vault_id)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or_else(undecoded)?;
+        let delegations = answer
+            .continuity
+            .delegations
             .iter()
-            .map(|row| unhex(row))
+            .map(|delegation| unhex(delegation))
             .collect::<Option<Vec<_>>>()
-            .ok_or(TransportError::InvalidPayload(
-                "the leave notice handoff does not decode",
-            ))?;
-        // The home signs every notice (FIX 2053). One this env does not
-        // verify against the home root it already trusts, or that root's
-        // successor the handoff names, changes nothing.
-        let mut confirmed = None;
-        for signed in &answer.notices {
-            if let Some(notice) = crate::sync::shared_leave::VerifiedLeaveNotice::verify(
-                self.manager.vault(),
-                vault_id,
-                member,
-                signed,
-                &handoff,
-            )
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-                && notice.kind().is_some()
-            {
-                confirmed = Some(notice);
-                break;
-            }
-        }
-        let Some(notice) = confirmed else {
+            .ok_or_else(undecoded)?;
+        Ok((
+            answer.notices,
+            crate::authority::LeaveNoticeContinuity {
+                authority_vault_id,
+                delegations,
+            },
+        ))
+    }
+
+    /// Asks the sync server for this member's own leave notices with the
+    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
+    /// confirms the first one this env verifies that ends `member`'s
+    /// membership in `vault_id`, the vault's deletion included
+    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
+    /// names the heads this env's authority fold stands at, so the home
+    /// sends beside its notices only the leave-notice delegations past them
+    /// (FIX 7932). Where those do not reach the notices' signer from a root
+    /// this env trusts, so a leave notice is pending
+    /// ([`crate::sync::shared_leave::LeaveNoticeCheck`]), it asks once more
+    /// naming no head, and the home sends its whole delegation chain, never
+    /// an authority row. A notice still pending confirms and purges nothing:
+    /// the home keeps it, and the next round asks again.
+    /// The lane ends for good before the leave discards its queue. `None`
+    /// while no verified notice says so. A refused or failed request is an
+    /// error, never a leave.
+    pub async fn check_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
+    {
+        let Some(notice) = self.fetch_shared_leave_notice(vault_id, member).await? else {
             return Ok(None);
         };
+        self.confirm_shared_leave_notice(&notice).await.map(Some)
+    }
+
+    async fn fetch_shared_leave_notice(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::VerifiedLeaveNotice>, crate::sync::TransportError>
+    {
+        use crate::sync::TransportError;
+        use crate::sync::shared_leave::{LeaveNoticeCheck, first_verified_leave};
+
+        // Where this env's authority chain stands (FIX 2053).
+        let heads: Vec<String> = self
+            .manager
+            .vault()
+            .leave_notice_heads()
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .iter()
+            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
+            .collect();
+        // The home signs every notice (FIX 2053). One this env does not
+        // verify against the home root it already trusts, or a successor
+        // that root delegated leave-notice verification on to, changes
+        // nothing.
+        let judge = |notices: &[crate::federation::SignedSharedActOutcome],
+                     continuity: &crate::authority::LeaveNoticeContinuity| {
+            first_verified_leave(self.manager.vault(), vault_id, member, notices, continuity)
+                .map_err(|e| TransportError::Storage(e.to_string()))
+        };
+        let (notices, continuity) = self.left_notices(&heads).await?;
+        let mut check = judge(&notices, &continuity)?;
+        if matches!(check, LeaveNoticeCheck::Pending) && !heads.is_empty() {
+            // The delegations past this env's heads do not reach the signer:
+            // the whole delegation chain (FIX 7932).
+            let (notices, continuity) = self.left_notices(&[]).await?;
+            check = judge(&notices, &continuity)?;
+        }
+        let notice = match check {
+            LeaveNoticeCheck::Verified(notice) => notice,
+            LeaveNoticeCheck::Pending => {
+                tracing::warn!(
+                    vault_id = vault_id,
+                    "a leave notice waits on a delegation from a root this env trusts \
+                     to its signer; nothing is confirmed or purged, and the next round asks again"
+                );
+                return Ok(None);
+            }
+            LeaveNoticeCheck::Refused => return Ok(None),
+        };
+        Ok(Some(notice))
+    }
+
+    async fn confirm_shared_leave_notice(
+        &self,
+        notice: &crate::sync::shared_leave::VerifiedLeaveNotice,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        use crate::sync::TransportError;
+
         if !self.stop_for_leave().await {
             return Err(TransportError::Storage(
                 "the sync lane did not quiesce for the leave; retry next round".to_owned(),
@@ -379,10 +453,9 @@ impl SyncConnection {
         };
         crate::sync::shared_leave::confirm_verified_shared_leave(
             self.manager.vault(),
-            &notice,
+            notice,
             unqueued,
         )
-        .map(Some)
         .map_err(|e| TransportError::Storage(e.to_string()))
     }
 

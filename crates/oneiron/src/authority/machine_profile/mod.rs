@@ -490,14 +490,48 @@ impl AuthorityFold {
     /// answers (CALLS "selfprofile serving-install role", amendment (a)).
     #[must_use]
     pub fn machine_proof_key(&self, machine: EntityId) -> Option<[u8; 32]> {
+        self.proving_profile(machine)
+            .map(|profile| profile.machine_key)
+    }
+
+    /// The PERSON who answered for `machine`, as the profile whose key
+    /// [`Self::machine_proof_key`] reads records it now: the one member a
+    /// row that machine wrote may name as its author on a shared vault (FIX
+    /// 21272). `None` wherever the machine proves no key here, and wherever a
+    /// chain this install trusts removed it or conflicts, or those chains'
+    /// keys disagree: the veto that keeps the machine from being trusted
+    /// keeps the roster fallback from naming its owner too (Engine R1, R2).
+    #[must_use]
+    pub(crate) fn machine_proof_owner(&self, machine: EntityId) -> Option<EntityId> {
+        let folded = self.machines.get(&machine)?;
+        let admitter = self
+            .pinned_root
+            .as_ref()
+            .map_or(MachineAdmitter::Roster, |pin| {
+                MachineAdmitter::Anchor(pin.anchor_key)
+            });
+        let chains = folded.trust_chains(&admitter);
+        if folded.keys_unsettled(&admitter, &chains)
+            || chains
+                .iter()
+                .any(|(_, chain)| chain.removed || chain.conflicted)
+        {
+            return None;
+        }
+        self.proving_profile(machine).map(|profile| profile.owner)
+    }
+
+    /// The profile a connection proves `machine` by: its trusted identity's
+    /// under this install's pin, else its live, answered roster revision.
+    fn proving_profile(&self, machine: EntityId) -> Option<&MachineProfile> {
         let folded = self.machines.get(&machine)?;
         match folded.trusted(self.pinned_root.as_ref()) {
-            Some(trusted) => Some(trusted.profile.machine_key),
+            Some(trusted) => Some(trusted.profile),
             None => folded
                 .roster
                 .as_ref()
                 .filter(|roster| roster.is_live() && roster.profile.role.answered())
-                .map(|roster| roster.profile.machine_key),
+                .map(|roster| &roster.profile),
         }
     }
 }

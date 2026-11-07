@@ -13,6 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 6 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
 | `src/session.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 1 re-export · 1 crate-vis | SessionHint, SessionHintEffect, SessionLifecycleDriver, SessionTicks | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
+| `src/session/pending.rs` | src | s | 5 crate-vis | — | Caller-retained session opens and causal queues for their actor/machine key |
 | `src/session/policy.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | SessionLifecycleConfig | The host's side of the sitting policy (FIX 8600) |
 | `src/session/tests.rs` | test | L | — | — | — |
 | `src/supervisor/arbiter.rs` | src | s | 7 crate-vis | — | The supervisor's one arbitration point (FIX 8601) |
@@ -53,7 +54,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | s | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
-| `src/tick/timer.rs` | src | L | 3 struct · 8 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
+| `src/tick/timer.rs` | src | L | 3 struct · 9 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
 | `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `src/wave/tests.rs` | test | s | — | — | — |
 | `src/wave_dispatch.rs` | src | m | 2 struct · 3 enum · 1 fn · 10 crate-vis | WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |
