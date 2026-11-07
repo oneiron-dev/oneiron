@@ -127,6 +127,7 @@ pub(super) fn binding(
                 StoredIdentityOpAction::Merge { .. }
                     | StoredIdentityOpAction::Split { .. }
                     | StoredIdentityOpAction::Facet { .. }
+                    | StoredIdentityOpAction::ParkedFacet { .. }
             ) {
                 return Err(MemoryError::bad_request(
                     "only merge, split and facet events join run review",
