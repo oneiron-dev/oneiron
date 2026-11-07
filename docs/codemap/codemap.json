@@ -6913,7 +6913,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -38832,6 +38832,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/confirm/lifetime.rs",
+     "purpose": "A locally attached critical confirmation's lifetime as a policy value (FIX 8760): the vault-scope…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/confirm/status_grant.rs",
      "purpose": "The settlement status rewrite a critical confirm's timeout or answer grants: the single-use authority and…",
      "surface": {
@@ -52816,8 +52826,8 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 54,
-      "re-export": 20
+      "crate-vis": 55,
+      "re-export": 21
      }
     },
     {
@@ -52827,6 +52837,20 @@
      "path": "src/note/adapter_tests.rs",
      "purpose": "Canonical program adapter laws; no native snapshot grants authority",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImportedNoteRead"
+     ],
+     "path": "src/note/archive_import.rs",
+     "purpose": "Whole-vault archive import of NOTE rows (FIX 7777)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -74750,7 +74774,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -92693,7 +92717,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92966,7 +92990,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93640,7 +93664,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6610,
+   "source_files": 6612,
    "test_files": 895
   },
   "oneiron-android": {
