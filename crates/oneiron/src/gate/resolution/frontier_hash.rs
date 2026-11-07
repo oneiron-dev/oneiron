@@ -116,6 +116,14 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "auto_checker");
         hash_str(hasher, auto_checker);
     }
+    // The common owner-change wait moves start deadlines, so naming one
+    // moves the frontier; a manifest that never names it keeps its exact
+    // no-common frontier hash. A domain tag rides with the value so no
+    // future optional field can collide with this one.
+    if let Some(wait_secs) = resolution.owner_change_wait_secs {
+        hash_str(hasher, "owner_change_wait_secs");
+        hash_u64(hasher, wait_secs);
+    }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.

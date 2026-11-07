@@ -14,6 +14,7 @@ pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
+pub use oneiron_store::settings::model_pack;
 pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;

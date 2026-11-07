@@ -67,11 +67,11 @@ impl PipelineBuilder<'_> {
                 critical: Default::default(),
             });
         }
-        self.claim_aging_profiles =
-            crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
-        if let Some(weights) =
-            crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?
-        {
+        let aging = crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
+        self.claim_aging_profiles = aging.profiles;
+        let weights_view =
+            crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?;
+        if let Some(weights) = weights_view.as_ref().map(|view| view.weights) {
             if !self.affect_policy_overridden {
                 self.affect_policy.emotion_weight = weights.affect;
                 self.affect_policy.arousal_stretch = weights.arousal;
@@ -79,6 +79,21 @@ impl PipelineBuilder<'_> {
             self.ppr_vad_alpha = weights.vad;
             self.ppr_community.beta = weights.community;
         }
+        // FIX 7315: the run's policy witness is the pair its two actual typed
+        // reads agreed on, byte-exact, weights present. Independent original
+        // snapshots stay independent: any absence or mismatch keeps both None.
+        let (policy_manifest_ref, policy_manifest_body_hash) = match &weights_view {
+            Some(weights)
+                if weights.manifest_ref == aging.manifest_ref
+                    && weights.body_hash == aging.body_hash =>
+            {
+                (
+                    Some(weights.manifest_ref.clone()),
+                    Some(weights.body_hash.clone()),
+                )
+            }
+            _ => (None, None),
+        };
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
             crate::config::validate_ppr_vad_alpha(self.ppr_vad_alpha)?;
         }
@@ -542,6 +557,8 @@ impl PipelineBuilder<'_> {
                 .map(|(reranker, _)| reranker.id().to_owned());
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;
+            run_record.policy_manifest_ref = policy_manifest_ref;
+            run_record.policy_manifest_body_hash = policy_manifest_body_hash;
             // ONE-1728 K10: a retrieval issued inside a room registers through the
             // room's door, which writes under the route the run captured — into
             // the room's overlay `VaultMeta` while it is off record (so the base
