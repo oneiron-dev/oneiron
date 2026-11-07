@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1292 facade rows, 4683 declarations.
-Inputs: 1221 of 1292 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1121 of 1292 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1293 facade rows, 4685 declarations.
+Inputs: 1222 of 1293 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1122 of 1293 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8129,11 +8129,13 @@ class FilesSourceList(TypedDict):
     sources: list[FilesSourceView]
 class FilesSourceFilesRequest(TypedDict):
     source: EntityId
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
 class FileHandle(TypedDict):
     source: EntityId
     path: str
 FilesFileState = Literal["landed", "proposed", "retracted", "name_only"]
-NameOnlyReason = Literal["unsupported", "not_text", "unreadable", "empty", "linked"]
+NameOnlyReason = Literal["unsupported", "not_text", "unreadable", "empty", "linked", "refused"]
 class FileReadinessNameOnlyBody(TypedDict):
     why: NameOnlyReason
 class FileReadinessNameOnly(TypedDict):
@@ -8153,6 +8155,15 @@ class FilesFileView(TypedDict):
 class FilesSourceFiles(TypedDict):
     source: EntityId
     files: list[FilesFileView]
+    next_cursor: NotRequired[str | None]
+class FilesSourceExcludeRequest(TypedDict):
+    source: EntityId
+    include: NotRequired[list[str] | None]
+    exclude: NotRequired[list[str] | None]
+class FilesSourceExcludeAnswer(TypedDict):
+    source: EntityId
+    include: list[str]
+    exclude: list[str]
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId

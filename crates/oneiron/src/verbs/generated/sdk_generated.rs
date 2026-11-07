@@ -2237,6 +2237,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.files.sources.exclude",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceExcludeRequest,
+                >(),
+            ),
+            (
                 "vault.residence.mode",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResidenceModeRequest,
@@ -7732,6 +7738,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.files.sources.detach",
     "vault.files.sources.list",
     "vault.files.sources.files",
+    "vault.files.sources.exclude",
     "vault.residence.directives",
     "vault.off_record.start",
     "vault.off_record.status",
@@ -9233,6 +9240,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.files.sources.files" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FilesSourceFiles>()
         }
+        "vault.files.sources.exclude" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceExcludeAnswer,
+        >(),
         #[cfg(feature = "sync")]
         "vault.residence.directives" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::ResidenceDirectiveView>,
@@ -14086,6 +14096,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.files.sources.files" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.exclude" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20702,6 +20719,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.files.sources.detach" => validate_input_vault_files_sources_detach(value)?,
         "vault.files.sources.list" => validate_input_vault_files_sources_list(value)?,
         "vault.files.sources.files" => validate_input_vault_files_sources_files(value)?,
+        "vault.files.sources.exclude" => validate_input_vault_files_sources_exclude(value)?,
         "vault.residence.mode" => validate_input_vault_residence_mode(value)?,
         "vault.residence.open" => validate_input_vault_residence_open(value)?,
         "vault.residence.index" => validate_input_vault_residence_index(value)?,
@@ -24141,6 +24159,11 @@ fn validate_input_vault_files_sources_list(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_files_sources_files(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::FilesSourceFilesRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_files_sources_exclude(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::FilesSourceExcludeRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29625,6 +29648,7 @@ pub fn invoke(
         "vault.files.sources.detach" => invoke_vault_files_sources_detach(memory, value),
         "vault.files.sources.list" => invoke_vault_files_sources_list(memory, value),
         "vault.files.sources.files" => invoke_vault_files_sources_files(memory, value),
+        "vault.files.sources.exclude" => invoke_vault_files_sources_exclude(memory, value),
         "vault.residence.mode" => invoke_vault_residence_mode(memory, value),
         "vault.residence.open" => invoke_vault_residence_open(memory, value),
         "vault.residence.index" => invoke_vault_residence_index(memory, value),
@@ -33802,6 +33826,13 @@ fn invoke_vault_files_sources_files(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_files_sources_files(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_files_sources_exclude(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_files_sources_exclude(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_residence_mode(
@@ -43819,6 +43850,12 @@ pub fn vault_files_sources_files(
     input: crate::task_verb::sdk::FilesSourceFilesRequest,
 ) -> MemoryResult<crate::task_verb::sdk::FilesSourceFiles> {
     crate::task_verb::sdk::files_source_files_embedded(memory, input)
+}
+pub fn vault_files_sources_exclude(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceExcludeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceExcludeAnswer> {
+    crate::task_verb::sdk::exclude_files_source_embedded(memory, input)
 }
 pub fn vault_residence_mode(
     memory: &Memory<'_>,

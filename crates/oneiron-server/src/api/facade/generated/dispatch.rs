@@ -13479,6 +13479,40 @@ async fn vault_files_sources_files(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_files_sources_exclude(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.files.sources.exclude")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.files.sources.exclude", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.files.sources.exclude", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_files_sources_exclude(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_residence_mode(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -44283,6 +44317,14 @@ fn boxed_vault_files_sources_files<'a>(
     Box::pin(vault_files_sources_files(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_files_sources_exclude<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_exclude(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_residence_mode<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52049,6 +52091,9 @@ async fn call_verb_row(
         "vault.files.sources.detach" => boxed_vault_files_sources_detach(server, call, input).await,
         "vault.files.sources.list" => boxed_vault_files_sources_list(server, call, input).await,
         "vault.files.sources.files" => boxed_vault_files_sources_files(server, call, input).await,
+        "vault.files.sources.exclude" => {
+            boxed_vault_files_sources_exclude(server, call, input).await
+        }
         "vault.residence.mode" => boxed_vault_residence_mode(server, call, input).await,
         "vault.residence.open" => boxed_vault_residence_open(server, call, input).await,
         "vault.residence.index" => boxed_vault_residence_index(server, call, input).await,

@@ -572,6 +572,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.files.sources.detach" => a.spec.clone().ok_or_else(invalid),
         "vault.files.sources.list" => a.spec.clone().ok_or_else(invalid),
         "vault.files.sources.files" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.exclude" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.open" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.index" => a.spec.clone().ok_or_else(invalid),
@@ -2896,6 +2897,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.files.sources.files" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.exclude" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.residence.mode" => {
@@ -6522,6 +6526,7 @@ async fn execute_agent_verb_row_on(
         "vault.files.sources.detach" => boxed_mcp_verb_row_vault_files_sources_detach(row).await,
         "vault.files.sources.list" => boxed_mcp_verb_row_vault_files_sources_list(row).await,
         "vault.files.sources.files" => boxed_mcp_verb_row_vault_files_sources_files(row).await,
+        "vault.files.sources.exclude" => boxed_mcp_verb_row_vault_files_sources_exclude(row).await,
         "vault.residence.mode" => boxed_mcp_verb_row_vault_residence_mode(row).await,
         "vault.residence.open" => boxed_mcp_verb_row_vault_residence_open(row).await,
         "vault.residence.index" => boxed_mcp_verb_row_vault_residence_index(row).await,
@@ -29526,6 +29531,57 @@ async fn mcp_verb_row_vault_files_sources_files(row: McpVerbRow<'_>) -> McpVerbR
     let input: oneiron::task_verb::sdk::FilesSourceFilesRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_files_sources_files(
+        server, auth, input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_files_sources_exclude<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_files_sources_exclude(row))
+}
+async fn mcp_verb_row_vault_files_sources_exclude(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.files.sources.exclude", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::FilesSourceExcludeRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_files_sources_exclude(
         server, auth, input,
     ))
     .await;
