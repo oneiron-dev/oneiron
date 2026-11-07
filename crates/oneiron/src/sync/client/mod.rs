@@ -42,6 +42,7 @@
 //!   loading the window doc.
 
 mod artifacts;
+mod ask_forward;
 mod base;
 mod connect;
 mod documents;
@@ -78,7 +79,7 @@ pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
     ResidenceSearchPage, SealedBundleRelay, SealedBundleRelayObservation, SearchSource, ThinItem,
     UnmergedUpload, fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit,
-    sealed_bundle_relay_observation,
+    request_ask_option_link, sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,

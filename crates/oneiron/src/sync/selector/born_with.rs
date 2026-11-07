@@ -72,6 +72,25 @@ fn decode(bytes: &[u8]) -> Option<BornWith> {
     (encode(&text).ok()? == bytes).then_some(text)
 }
 
+/// Canonical born-with field names by their actual key in this document.
+/// Empty or unreadable entries are omitted; no prose is returned.
+pub(super) fn row_born_with_fields(doc: &LoroDoc) -> BTreeMap<String, Vec<BornWithField>> {
+    let mut out = BTreeMap::new();
+    map_for_each_value_bytes(&doc.get_map(ROW_BORN_WITH_MAP), |key, blob| {
+        let Some(bytes) = blob else {
+            return;
+        };
+        let Some(text) = decode(bytes) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        out.insert(key.to_owned(), text.keys().copied().collect());
+    });
+    out
+}
+
 /// Every row `doc` carries as an entity, by its canonical hex key.
 fn carried_rows(doc: &LoroDoc) -> Vec<(EntityId, u8)> {
     let mut rows = Vec::new();
