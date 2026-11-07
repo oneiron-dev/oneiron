@@ -37,6 +37,7 @@ use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::session_lifecycle::SessionKey;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
+use super::credential::VerbAskDrainPermit;
 use super::state::DrainScope;
 use super::{InvocationId, VerbAskRefusal, VerbCall, VerbResume};
 
@@ -326,6 +327,7 @@ pub(super) fn run(
     let mut memory = vault
         .memory(actor, class)
         .with_invocation(invocation)
+        .with_drain_permit(VerbAskDrainPermit::new(invocation))
         .at(placement.into())
         .with_owner_surface(plain.surface);
     if let Some(session) = session {

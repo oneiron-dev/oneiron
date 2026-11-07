@@ -42,8 +42,10 @@ mod residence_work;
 mod resident_pump;
 mod run_host_door;
 pub(crate) use run_host_door::RunMediaStep;
+pub(crate) mod self_brief_custody;
 mod space_move;
 mod tagging;
+mod trained_embedding;
 mod wave_door;
 mod web_fetch;
 mod windows;
@@ -78,6 +80,7 @@ pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, Reade
 pub(crate) use self::recall::blocking;
 pub(crate) use self::resident_pump::{LEASE_OWNER as RUN_LEASE_OWNER, seated_planner};
 pub(crate) use self::run_host_door::{RunHostDoor, answer_as_agent};
+pub(crate) use self::trained_embedding::TrainedEmbedding;
 pub(crate) use self::wave_door::{wave_plan, wave_receipt};
 
 #[cfg(test)]
