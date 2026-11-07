@@ -41105,7 +41105,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/git_wire/process.rs",
@@ -41158,7 +41158,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -54844,6 +54844,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginGitPublishPush",
+      "OriginGitPushReport",
+      "OriginGitTransport"
+     ],
+     "path": "src/origin/git_transport.rs",
+     "purpose": "The served host's transport for an exact publish's outbound git (ARCH-0069 OSH-3, ARCH-0068 RC4, FIX 19083)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -55071,7 +55088,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 13,
-      "mod": 16,
+      "mod": 17,
       "re-export": 5
      }
     },
@@ -55187,7 +55204,7 @@
      "path": "src/origin/publish/dispatch.rs",
      "purpose": "The one dispatch of an approved exact publish request (FIX 6866)",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -55353,7 +55370,8 @@
      "path": "src/origin/publish/reconcile.rs",
      "purpose": "An exact publish's outbound IO and its settlement (FIX 6866; CALLS \"FIX 6866 retry\" and \"FIX 6866 unknown…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -55384,7 +55402,7 @@
      "path": "src/origin/publish/store.rs",
      "purpose": "The one store of exact publish requests (`ORIGIN_PUBLISH_REQUEST`, LIVE): each request's row and, beside it…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -92829,7 +92847,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 150,
+     "files": 151,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93482,7 +93500,7 @@
    },
    "over_bar": 178,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6597,
+   "source_files": 6598,
    "test_files": 895
   },
   "oneiron-android": {
@@ -97335,7 +97353,7 @@
      "path": "src/send.rs",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 16,
       "struct": 1
      }
     },
@@ -116579,6 +116597,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/broker_relay.rs",
+     "purpose": "What every loopback relay that sends Git's exchanges through the credential broker shares (ARCH-0069 OSH-3)…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -116615,7 +116643,17 @@
      "path": "src/api/git_http/import_source_relay.rs",
      "purpose": "An outside import's bound source fetch through the credential broker (ARCH-0069 OSH-3, FIX 15702)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/mirror_relay.rs",
+     "purpose": "An exact publish's mirror git through the credential broker on a served host (ARCH-0069 OSH-3, ARCH-0068…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -116625,7 +116663,7 @@
      "path": "src/api/git_http/mod.rs",
      "purpose": "Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -117617,7 +117655,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 57
+      "crate-vis": 58
      }
     },
     {
@@ -126436,7 +126474,7 @@
      "path": "src/models/broker_context.rs",
      "purpose": "One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -126446,7 +126484,7 @@
      "path": "src/models/broker_context/git.rs",
      "purpose": "The vault's broker for git exchanges (ARCH-0069 OSH-3): the same site the vault-secret keys send through…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -131215,7 +131253,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 698,
+     "files": 700,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131735,7 +131773,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1675,
+   "source_files": 1677,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134913,7 +134951,7 @@
      "path": "src/git_wire.rs",
      "purpose": "Store-layer modules of core `git_wire`; core re-exports each one at its old path",
      "surface": {
-      "mod": 22
+      "mod": 23
      }
     },
     {
@@ -135048,6 +135086,7 @@
      "purpose": "The fixed process profile of an outside import's Git legs (FIX 6871)",
      "surface": {
       "const": 1,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 1
      }
@@ -135104,6 +135143,19 @@
       "const": 1,
       "enum": 2,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginRelayEgress"
+     ],
+     "path": "src/git_wire/origin_relay.rs",
+     "purpose": "The fixed process profile of an exact publish's Git legs on a served host (ARCH-0069 OSH-3, FIX 19083)",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -141247,7 +141299,7 @@
      "purpose": "Gate outcomes, stable reason codes, and pure metric classification"
     },
     "git_wire": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -142215,7 +142267,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 634,
+   "source_files": 635,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -142854,6 +142906,7 @@
       "BriefIntent",
       "BriefKindStamp",
       "BriefStamp",
+      "BrokerIsolation",
       "BrowserAnswerBatchOutput",
       "BrowserAnswerDemonstrationOutput",
       "BrowserAnswerDemonstrationStarted",
@@ -147089,7 +147142,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1138,
+      "enum": 1139,
       "struct": 3461
      }
     },
