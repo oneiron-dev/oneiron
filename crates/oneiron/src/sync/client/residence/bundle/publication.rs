@@ -25,8 +25,10 @@
 //! Busy, offline, missing keys, a refused upload or an uncertain ack leave it
 //! pending for the next pass. Each pass keeps what it saw for the owner's
 //! diagnostics (FIX 4784, 4785): the home it reached, or why none, and how
-//! the newest generation's outer capsules opened here. It decides nothing:
-//! who executes and what is carried stay as they are.
+//! the newest generation's outer capsules opened here. An upload it assembles
+//! notes the sections it carries unmerged in the record the slot's own upload
+//! notes too (`relay_observation`, FIX 19525), which outlives the request. It
+//! decides nothing: who executes and what is carried stay as they are.
 
 use std::sync::Arc;
 
@@ -183,7 +185,12 @@ async fn publish_one(
     // An attempt this install persisted and has not resolved comes first
     // (CALLS BUNDLE_PUBLISH_RECONCILE).
     match work::reconcile_request(rpc, vault, request, home).await? {
-        work::WorkFate::Committed(_) => return enact(manager, request).await,
+        work::WorkFate::Committed(attempt) => {
+            // What it carries unmerged stays shown to the owner once the
+            // request has its result (FIX 19525).
+            super::relay_observation::restore_upload(vault, &attempt);
+            return enact(manager, request).await;
+        }
         work::WorkFate::Uncertain => return Ok(()),
         work::WorkFate::Open => {}
     }
@@ -268,6 +275,14 @@ async fn publish_one(
         upload.incomplete_authority.clone(),
     );
     let generation = upload.bundle.generation();
+    // And each readable section it carries unmerged, in the one record the
+    // slot's own upload notes too, which outlives the request (FIX 19525).
+    super::relay_observation::observe_upload(
+        vault,
+        Some(home),
+        generation,
+        &upload.unmerged_sections,
+    );
     let staged = put_object(
         rpc,
         &generation,
@@ -283,7 +298,7 @@ async fn publish_one(
         )
         .await?;
     if staged {
-        let attempt = attempt::BundleAttempt {
+        let mut attempt = attempt::BundleAttempt {
             home: Some(home),
             executor,
             generation,
@@ -296,10 +311,12 @@ async fn publish_one(
             pads_digest: upload.pads.digest(),
             incomplete_authority: upload.incomplete_authority.clone(),
             awaiting_reader: Vec::new(),
+            unmerged_sections: upload.unmerged_sections.clone(),
+            assembled_at: Some(vault.store.clock.peek_recorded_at()),
         };
         // The exact attempt persists before the first commit send, so an ack
         // lost on the way resumes, never reuploads.
-        attempt::persist(vault, AttemptKey::Request(request), &attempt).map_err(storage)?;
+        attempt::persist(vault, AttemptKey::Request(request), &mut attempt).map_err(storage)?;
         match work::begin_work(rpc, &attempt).await? {
             work::WorkOutcome::Accepted(status) => match status.state {
                 work::WorkState::Pending => return Ok(()),
