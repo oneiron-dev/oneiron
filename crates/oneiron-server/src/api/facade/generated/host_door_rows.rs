@@ -512,6 +512,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersStatus,
     VaultDraftersPolicySet,
@@ -1259,6 +1260,7 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.coach.training_runs.cancel" => Self::VaultCoachTrainingRunsCancel,
             "vault.drafters.list" => Self::VaultDraftersList,
             "vault.drafters.status" => Self::VaultDraftersStatus,
             "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,

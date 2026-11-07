@@ -635,6 +635,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.coach.training_offers.pilots.complete" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.get" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.sources" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_runs.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.drafters.list" => a.spec.clone().ok_or_else(invalid),
         "vault.drafters.list_as" => a.spec.clone().ok_or_else(invalid),
         "vault.drafters.status" => a.spec.clone().ok_or_else(invalid),
@@ -3067,6 +3068,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.coach.training_offers.sources" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_runs.cancel" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.drafters.list" => {
@@ -6572,6 +6576,9 @@ async fn execute_agent_verb_row_on(
         }
         "vault.coach.training_offers.sources" => {
             boxed_mcp_verb_row_vault_coach_training_offers_sources(row).await
+        }
+        "vault.coach.training_runs.cancel" => {
+            boxed_mcp_verb_row_vault_coach_training_runs_cancel(row).await
         }
         "vault.drafters.list" => boxed_mcp_verb_row_vault_drafters_list(row).await,
         "vault.drafters.list_as" => boxed_mcp_verb_row_vault_drafters_list_as(row).await,
@@ -32611,6 +32618,59 @@ async fn mcp_verb_row_vault_coach_training_offers_sources(row: McpVerbRow<'_>) -
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_coach_training_offers_sources(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_coach_training_runs_cancel<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_coach_training_runs_cancel(row))
+}
+async fn mcp_verb_row_vault_coach_training_runs_cancel(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_runs.cancel", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::skill_optimize::offer_doors::TrainingRunRef =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_coach_training_runs_cancel(server, auth, input),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

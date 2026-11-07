@@ -4230,6 +4230,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_coach_training_runs_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_runs.cancel", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_drafters_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.drafters.list", js_json(input))

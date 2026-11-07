@@ -549,6 +549,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCoachTrainingOffersPilotsComplete
         | Row::VaultCoachTrainingOffersPilotsGet
         | Row::VaultCoachTrainingOffersSources
+        | Row::VaultCoachTrainingRunsCancel
         | Row::VaultDraftersList
         | Row::VaultDraftersStatus
         | Row::VaultDraftersPolicySet

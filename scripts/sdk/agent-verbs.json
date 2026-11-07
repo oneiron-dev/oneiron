@@ -7603,6 +7603,22 @@
       "openapi": true
     },
     {
+      "name": "vault.coach.training_runs.cancel",
+      "description": "Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door.",
+      "input": "crate::skill_optimize::offer_doors::TrainingRunRef",
+      "output": "crate::embed::PendingEmbedderBinding",
+      "call": "crate::skill_optimize::offer_doors::cancel_training_run(memory.vault(), &memory.embedded_owner(\"vault.coach.training_runs.cancel\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.drafters.list",
       "description": "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible.",
       "input": "crate::drafter::DrafterListRequest",

@@ -492,6 +492,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.coach.training_runs.cancel`
 - `vault.drafters.list`
 - `vault.drafters.list_as`
 - `vault.drafters.status`
