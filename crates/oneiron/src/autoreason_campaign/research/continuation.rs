@@ -18,7 +18,7 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::is_budget_refusal;
+use super::budget::{is_budget_refusal, settle_research_work_unknown};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
@@ -481,21 +481,18 @@ fn expected_gain_for(
     )
 }
 
-/// What a finished run spent, at most its reservation: the metered tokens of
-/// the spend scope it ran under.
-fn run_spend_units(vault: &Vault, run: AttemptId, reserved: u64) -> Result<u64> {
+/// The token-denominated spend recorded by a finished run's native scope,
+/// without clipping to its reservation. Other units and absent scopes are
+/// unknown, not interchangeable with a token reservation.
+fn run_spend_units(vault: &Vault, run: AttemptId) -> Result<Option<u64>> {
     let dispatcher = AgentDispatcher::new(vault);
     let scope = match dispatcher.spend_scope_for_attempt(run)? {
         Some(id) => dispatcher.read_spend_scope(&id)?,
         None => None,
     };
-    Ok(match scope {
-        Some(scope) if scope.unit == LeaseUnit::tokens() => scope.spent_units.min(reserved),
-        // FIX: a run under an unmetered campaign root, or in a non-token
-        // unit, reports no token spend; it settles the whole reservation
-        // until the research dispatch opens a token spend scope for its runs.
-        _ => reserved,
-    })
+    Ok(scope
+        .filter(|scope| scope.unit == LeaseUnit::tokens())
+        .map(|scope| scope.spent_units))
 }
 
 /// The text of a finished agent run's answer: the observation its result

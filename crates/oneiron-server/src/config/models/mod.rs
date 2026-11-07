@@ -44,7 +44,9 @@ mod tests;
 mod training;
 mod validation;
 mod voice;
+mod worker_controller;
 mod workers;
+pub(crate) use worker_controller::worker_controller_config;
 
 pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
@@ -138,6 +140,8 @@ struct DreamerFile {
     task_prompt_file: Option<PathBuf>,
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
+    compaction_check_prompt: Option<String>,
+    compaction_check_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
     drafting: Option<drafting::DraftingFile>,
     /// `[models.dreamer.wording]`: the host's wording of the engine's asks
@@ -310,6 +314,12 @@ pub struct DreamerSettings {
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
+    /// The rubric the compaction check reads a self-written summary by (FIX
+    /// 4814): the operator's `compaction_check_prompt` or
+    /// `compaction_check_prompt_file`, else the built-in rubric. Only the
+    /// wording changes; the typed support question, the parser and the
+    /// verdict kinds stay fixed.
+    pub compaction_check_rubric: String,
     pub(crate) drafting: drafting::DraftingSettings,
     /// The wording the engine's own asks go out in (FIX 8696): the shipped
     /// default for each piece the owner left unset.
@@ -427,6 +437,10 @@ const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
+/// The compaction check's built-in rubric (FIX 4465 B). An unset
+/// `compaction_check_prompt` keeps it word for word (FIX 4814).
+const DEFAULT_COMPACTION_CHECK_RUBRIC: &str =
+    include_str!("../../ai_host/dreamer/compaction_check_rubric.md");
 
 impl ModelsFile {
     /// Validates and expands the section. `base` is the config file's
@@ -484,6 +498,13 @@ impl ModelsFile {
                 self.dreamer.person_about_prompt_file,
                 base,
             )?,
+            compaction_check_rubric: levels::prompt_text(
+                "models.dreamer.compaction_check_prompt",
+                self.dreamer.compaction_check_prompt,
+                self.dreamer.compaction_check_prompt_file,
+                base,
+            )?
+            .unwrap_or_else(|| DEFAULT_COMPACTION_CHECK_RUBRIC.to_owned()),
             urgent_digest_question: self
                 .dreamer
                 .urgent_digest_question

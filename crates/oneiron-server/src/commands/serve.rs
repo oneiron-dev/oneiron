@@ -244,19 +244,17 @@ pub(super) async fn serve_anchored(
     // Connections are admitted, and their headers timed, before any route
     // runs. Both listeners draw on one pool, so the descriptor floor and each
     // address's unauthenticated share hold for the daemon, not per socket.
-    // Past the floor the API listener's sockets may take the pool's owner
-    // reserve, which this server judges (FIX 8274).
+    // The floor is the process's descriptor line the server's construction
+    // sized, which its guests' network work shares (FIX 6299). Past the
+    // floor the API listener's sockets may take the pool's owner reserve,
+    // which this server judges (FIX 8274).
     let limits = config.limits.connections();
-    let pool = crate::http_listener::ConnectionPool::new(
-        &limits,
-        questions,
-        Some(Arc::clone(&mesh_server.retained)),
-    );
-    let floor_vault = mesh_server.vault();
-    floor_vault.lend_host_net_floor(pool.host_net_floor());
+    let pool = crate::http_listener::ConnectionPool::served(&limits, &questions);
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
-    floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
+    mesh_server
+        .vault()
+        .lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
     let owner_judge = Arc::clone(&mesh_server);
     // Each listener's connections are tasks of its set here (FIX 9261).
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
@@ -365,6 +363,7 @@ pub(crate) async fn build_server(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,

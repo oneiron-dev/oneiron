@@ -36,8 +36,8 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
-    cut_text, fit_state_with_budget, routine_choice,
+    HumanAskReason, LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider,
+    RoutineOutcome, RoutineTrail, cut_text, fit_state_with_budget, routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
@@ -302,6 +302,100 @@ pub(crate) fn run_verdict(
     answered
 }
 
+/// What an admitted job lends each verdict it asks (FIX 7817, L07-A): its
+/// caller, its own line, the payer that line bills and the session its
+/// calls are captured under. The job's clock rides each request's
+/// `until_ms`, never a clock of the verdict's own.
+pub(crate) struct JobVerdictLine<'a> {
+    pub(crate) principal: EntityId,
+    pub(crate) class: EdgeActorClass,
+    /// The job's one line: every rung of every verdict the job asks spends
+    /// on it, under the reserve it was opened with.
+    pub(crate) meter: &'a BudgetGuard,
+    /// The PERSON the job's line bills; `None` bills the vault owner.
+    pub(crate) payer: Option<&'a PayerPerson>,
+    /// The bound session the model-call capture attributes; `None` only at
+    /// unbound sources.
+    pub(crate) session_ref: Option<&'a str>,
+}
+
+/// One job verdict: the answer, and why the ladder gave none when it gave
+/// none, which the wire answer does not carry.
+pub(crate) struct JobVerdict {
+    pub(crate) verdict: AiVerdict,
+    pub(crate) no_answer: Option<HumanAskReason>,
+}
+
+/// Asks `request` through the host's ladder as one question of an admitted
+/// job (FIX 7817, L07-A): the same question family, evidence rule and
+/// ladder as [`run_verdict`], with every rung spending on the job's own line
+/// and billing its payer, each evidence ref read under `reader`, the job's
+/// scoped read, and the call bounded by the time the job has left (the
+/// request's `until_ms`). It opens no line, starts no clock and takes no
+/// reserve of its own, so a job's verdicts draw the job's budget, not a
+/// fresh one each; [`run_verdict`] stays the door for a caller with no job.
+/// The caller's spend check counts what this verdict drew from the line.
+/// Beside the answer it names why the ladder gave none, so the job tells a
+/// ladder that could not take the step, or ran out of time, from a judged
+/// abstain.
+///
+/// Every model rung blocks on the server's runtime: call this on a blocking
+/// thread.
+pub(crate) fn run_job_verdict(
+    server: &SyncServer,
+    job: &JobVerdictLine<'_>,
+    reader: &Memory<'_>,
+    request: &AiVerdictRequest,
+    evidence_read: &mut Vec<EntityId>,
+) -> MemoryResult<JobVerdict> {
+    let vault = server.vault();
+    let before = job.meter.read().used_units;
+    let answered = model_calls::scoped(job.principal, job.session_ref, || {
+        on_caller_meter(job.meter, || {
+            on_caller_payer(job.payer, || {
+                answer_verdict_reasoned(
+                    server,
+                    job.principal,
+                    job.class,
+                    reader,
+                    None,
+                    None,
+                    request,
+                    evidence_read,
+                )
+            })
+        })
+    });
+    // The line is the job's, shared by its verdicts: this one's spend is
+    // what the line gained while it ran.
+    let spent = job.meter.read().used_units.saturating_sub(before);
+    let now = vault.now_recorded_at();
+    if let Some((window, tally)) =
+        server
+            .decision_host()
+            .verdict_spend()
+            .add(job.principal, spent, now)
+    {
+        tracing::warn!(
+            caller = %job.principal.to_hex(),
+            spent = tally,
+            threshold = VERDICT_SPEND_CHECK_UNITS,
+            "a caller's ai.verdict spend crossed its check; is everything okay?"
+        );
+        if let Err(error) = crate::wire_health::raise_verdict_spend(
+            vault,
+            job.principal,
+            tally,
+            VERDICT_SPEND_CHECK_UNITS,
+            window,
+            now,
+        ) {
+            tracing::warn!(%error, "the ai.verdict spend check was not kept");
+        }
+    }
+    answered.map(|(verdict, no_answer)| JobVerdict { verdict, no_answer })
+}
+
 /// [`run_verdict`]'s question through the ladder, on whatever line the
 /// calling thread meters.
 #[expect(
@@ -318,6 +412,39 @@ fn answer_verdict(
     request: &AiVerdictRequest,
     evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<AiVerdict> {
+    answer_verdict_reasoned(
+        server,
+        principal,
+        class,
+        reader,
+        lane,
+        held,
+        request,
+        evidence_read,
+    )
+    .map(|(verdict, _)| verdict)
+}
+
+/// [`answer_verdict`], with the ladder's reason when it gave no answer (FIX
+/// 7817): no rung up to the ceiling could take the step, the deadline cut
+/// it, or the read was uncertain. A rung's own abstain carries no reason or
+/// an uncertain one. The verdict's wire shape carries no such reason, so a
+/// job that must tell an unavailable ladder from a judged abstain reads it
+/// here.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run_verdict's axes and its evidence list"
+)]
+fn answer_verdict_reasoned(
+    server: &SyncServer,
+    principal: EntityId,
+    class: EdgeActorClass,
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
+    request: &AiVerdictRequest,
+    evidence_read: &mut Vec<EntityId>,
+) -> MemoryResult<(AiVerdict, Option<HumanAskReason>)> {
     let started = Instant::now();
     oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
     let ceiling = request.ceiling.unwrap_or(DecisionRung::Big);
@@ -359,7 +486,7 @@ fn answer_verdict(
                 &["Take the screenshot again in this run, and name the ref it gave."],
             ));
         }
-        (Some(handle), None) => vec![pull(lane, handle)?],
+        (Some(handle), None) => vec![pull(reader, lane, handle)?],
         (None, _) => Vec::new(),
     };
     evidence.extend(images.iter().map(|image| image.evidence.id));
@@ -440,13 +567,17 @@ fn answer_verdict(
             }
             .record(outcome)
         });
-        return Ok(AiVerdict {
-            outcome,
-            screenshot,
-            until_ms: Some(until_ms),
-            evidence_cut_at_bytes: cut_at,
-            ..located_verdict(located)
-        });
+        let no_answer = located.human_ask();
+        return Ok((
+            AiVerdict {
+                outcome,
+                screenshot,
+                until_ms: Some(until_ms),
+                evidence_cut_at_bytes: cut_at,
+                ..located_verdict(located)
+            },
+            no_answer,
+        ));
     }
     if request.routine {
         let routine = ladder
@@ -466,13 +597,17 @@ fn answer_verdict(
             misses: request.misses,
         };
         let screenshot = trail.record(&routine.outcome);
-        return Ok(AiVerdict {
-            outcome: Some(routine.outcome),
-            screenshot,
-            until_ms: Some(until_ms),
-            evidence_cut_at_bytes: cut_at,
-            ..routine.decision.into()
-        });
+        let no_answer = routine.decision.human_ask;
+        return Ok((
+            AiVerdict {
+                outcome: Some(routine.outcome),
+                screenshot,
+                until_ms: Some(until_ms),
+                evidence_cut_at_bytes: cut_at,
+                ..routine.decision.into()
+            },
+            no_answer,
+        ));
     }
     let decision = ladder
         .run_images(
@@ -487,11 +622,15 @@ fn answer_verdict(
             &deadline,
         )
         .map_err(failed)?;
-    Ok(AiVerdict {
-        until_ms: Some(until_ms),
-        evidence_cut_at_bytes: cut_at,
-        ..decision.into()
-    })
+    let no_answer = decision.human_ask;
+    Ok((
+        AiVerdict {
+            until_ms: Some(until_ms),
+            evidence_cut_at_bytes: cut_at,
+            ..decision.into()
+        },
+        no_answer,
+    ))
 }
 
 /// The ladder's state for a verdict, fitted by the engine's own cut step
@@ -716,20 +855,27 @@ fn clock(request: &AiVerdictRequest) -> (Duration, u64) {
 }
 
 /// The image behind `handle`, pulled through the caller's own scoped read
-/// before any model reads it, as an evidence ref with its body version.
-fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionImage> {
-    let lane = lane.ok_or_else(|| {
-        MemoryError::bad_request_with(
-            "this caller reads no image through ai.verdict",
-            &["Ask through the SDK host door, which reads under your scoped read."],
-        )
-    })?;
+/// or a fact hook's host-bound grant before any model reads its body version.
+fn pull(
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    handle: &str,
+) -> MemoryResult<DecisionImage> {
     let request = ImageViewRequest {
         handle: handle.to_owned(),
         region: None,
         edge: None,
     };
-    let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
+    let mut pulled = if let Some(lane) = lane {
+        oneiron::memory::pull_image(lane, &request, true)?.value
+    } else if let Some(grant) = hook::current_grant() {
+        oneiron::runtime_hooks::hook_pull_image(reader, &grant, &request)?.value
+    } else {
+        return Err(MemoryError::bad_request_with(
+            "this caller reads no image through ai.verdict",
+            &["Ask through the SDK host door, which reads under your scoped read."],
+        ));
+    };
     let image = pulled.image.take().ok_or_else(internal)?;
     let evidence = pulled.evidence.take().ok_or_else(internal)?;
     readable(DecisionImage {

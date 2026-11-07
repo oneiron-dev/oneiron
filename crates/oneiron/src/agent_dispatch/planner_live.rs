@@ -437,6 +437,7 @@ impl AgentDispatcher<'_> {
                     parent,
                     spend,
                     budget_ask,
+                    None,
                     &AgentDispatchTarget::Custom(seat.agent_def),
                     Some(&seat.model),
                     at,

@@ -100,6 +100,7 @@ oxc_codegen = { version = "=0.152.0", default-features = false, features = ["sou
 oxc_parser = "=0.152.0"
 oxc_semantic = "=0.152.0"
 oxc_span = "=0.152.0"
+oxc_syntax = "=0.152.0"
 oxc_transformer = "=0.152.0"
 
 [workspace.lints.rust]
