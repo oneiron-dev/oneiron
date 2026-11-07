@@ -44,6 +44,7 @@ mod output;
 mod receipt;
 mod seal_key;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
 
@@ -60,7 +61,7 @@ use crate::connector_key::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
-use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
+use crate::secret_lease::{SecretGrantRef, SecretGrantTarget, stamp_use_lease_in_txn};
 use crate::skill_hub::pack_catalog::{PackSetupAuth, PackSetupSecret};
 use crate::store::{GateDecisionId, Store};
 use crate::vault::Vault;
@@ -158,6 +159,37 @@ impl fmt::Debug for SecretUseOperation {
             .field("effector", &self.effector)
             .finish_non_exhaustive()
     }
+}
+
+/// The TTL of a `self.use` T1 lease: the lease covers one call, not a
+/// session (FIX 2616). The door dial still caps actual exposure, enforced at
+/// stamp time.
+pub const SECRET_USE_T1_LEASE_TTL_SECS: u64 = 300;
+
+/// A host callback a T1 operation hands the value to: it receives the value
+/// bytes under the stamped T1 lease — never inside the credential door — and
+/// the operation's arguments, and answers with the operation's result or why
+/// it failed. The engine clears the answer of the value before it goes
+/// anywhere; implementations never log, return or store the bytes they are
+/// handed outside the call.
+pub type SecretUseCallback =
+    std::sync::Arc<dyn Fn(&[u8], &Value) -> std::result::Result<Value, String> + Send + Sync>;
+
+/// One registered T1 operation: the second table beside
+/// [`SECRET_USE_OPERATIONS`] (FIX 2616). Entries are host-registered, not
+/// compiled in: the engine ships the door and an empty table, whose every
+/// name refuses as unknown until the server registers its callbacks. A
+/// separate table because [`SecretUseConsumer`]'s type and doc fix the T0
+/// contract (presents through the credential door); a T1 entry names a
+/// callback instead.
+#[derive(Clone)]
+pub(crate) struct SecretUseT1Operation {
+    /// The effector the record's binding must name.
+    pub(crate) effector: String,
+    /// What it does with the secret, and what comes back, in plain words.
+    pub(crate) what: String,
+    /// The code that receives the value under the stamped T1 lease.
+    pub(crate) callback: SecretUseCallback,
 }
 
 /// An operation's consumer: it presents the secret named by `target` through
@@ -364,6 +396,46 @@ pub struct SecretUseOutcome {
 }
 
 impl Vault {
+    /// Registers a T1 `self.use` operation (FIX 2616): `operation` names it
+    /// in `self.use`, `effector` is the effector the record's binding must
+    /// name, `what` says what it does in plain words, and `callback`
+    /// receives the value under the stamped T1 lease. The server calls this
+    /// at boot for its operations; until it does, every T1 name refuses as
+    /// unknown. Re-registering an operation replaces its entry.
+    pub fn register_secret_use_callback(
+        &self,
+        operation: &str,
+        effector: &str,
+        what: &str,
+        callback: SecretUseCallback,
+    ) {
+        self.secret_use_t1_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                operation.to_owned(),
+                SecretUseT1Operation {
+                    effector: effector.to_owned(),
+                    what: what.to_owned(),
+                    callback,
+                },
+            );
+    }
+
+    /// The registered T1 operations, each its name and what it does: for
+    /// the unknown-operation refusal's list.
+    pub(crate) fn secret_use_t1_operations(&self) -> Vec<(String, String)> {
+        let mut operations: Vec<(String, String)> = self
+            .secret_use_t1_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(name, operation)| (name.clone(), operation.what.clone()))
+            .collect();
+        operations.sort();
+        operations
+    }
+
     /// Hands the secret `handle` names to `operation`, one of
     /// [`SECRET_USE_OPERATIONS`], with its `arguments`, for `user`.
     ///
@@ -383,28 +455,43 @@ impl Vault {
         operation: &str,
         arguments: &Value,
     ) -> Result<SecretUseOutcome> {
-        let op = SECRET_USE_OPERATIONS
-            .iter()
-            .find(|op| op.name == operation)
-            .ok_or_else(|| {
-                Error::Gate(GateError::InvalidConsentBound(
-                    "self.use takes one of its operations, such as slack.auth_test",
-                ))
-            })?;
+        if let Some(op) = SECRET_USE_OPERATIONS.iter().find(|op| op.name == operation) {
+            if !arguments.is_object() {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "an operation's arguments are a JSON object",
+                )));
+            }
+            return self.use_secret_with(user, handle, op.name, op.effector, &mut |target| {
+                // A consumer blocks on its provider. It runs on a thread of
+                // its own, outside whatever async runtime the caller's door
+                // is on.
+                let answer = std::thread::scope(|scope| {
+                    scope.spawn(|| (op.consume)(self, target, arguments)).join()
+                })
+                .unwrap_or_else(|_| Err("the operation stopped before it answered".to_owned()));
+                SecretUseConsumed::of_answer(answer)
+            });
+        }
+        // A T1 operation hands the value to a host-registered callback under
+        // a stamped T1 lease, never inside the credential door (FIX 2616).
+        let t1 = self
+            .secret_use_t1_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(operation)
+            .cloned();
+        let Some(t1) = t1 else {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "the operation is not in the self.use table",
+            )));
+        };
         if !arguments.is_object() {
             return Err(Error::Gate(GateError::InvalidConsentBound(
                 "an operation's arguments are a JSON object",
             )));
         }
-        self.use_secret_with(user, handle, op.name, op.effector, &mut |target| {
-            // A consumer blocks on its provider. It runs on a thread of its
-            // own, outside whatever async runtime the caller's door is on.
-            let answer = std::thread::scope(|scope| {
-                scope.spawn(|| (op.consume)(self, target, arguments)).join()
-            })
-            .unwrap_or_else(|_| Err("the operation stopped before it answered".to_owned()));
-            SecretUseConsumed::of_answer(answer)
-        })
+        let (used, _, admitted) = self.begin_use(user, handle, operation, &t1.effector)?;
+        self.use_admitted_t1(&used, admitted, &t1.callback, arguments)
     }
 
     /// The use every operation shares: the handle resolved, the record's
@@ -423,6 +510,21 @@ impl Vault {
         effector: &str,
         consume: &mut dyn FnMut(&SecretUseTarget<'_>) -> SecretUseConsumed,
     ) -> Result<SecretUseOutcome> {
+        let (used, name, admitted) = self.begin_use(user, handle, operation, effector)?;
+        self.use_admitted(&used, &name, admitted, None, consume)
+    }
+
+    /// The half of a use every operation shares before its rung's admission:
+    /// the handle resolved, and the record's binding for `effector` checked
+    /// for liveness, status and read grant — everything before the T0 door
+    /// check or the T1 lease stamp. The rung's own admission still decides.
+    fn begin_use<'operation>(
+        &self,
+        user: &SecretUser,
+        handle: &str,
+        operation: &'operation str,
+        effector: &'operation str,
+    ) -> Result<(Used<'operation>, String, Result<()>)> {
         let txn = self.store.env.read_txn()?;
         let (short, id) = handle_record_in_txn(&self.store, &txn, handle)?;
         let rec = read_secret_custody_admission_in_txn(&self.store, &txn, &id)?
@@ -437,6 +539,7 @@ impl Vault {
             operation,
             effector,
             grant: None,
+            lease: None,
             first_intent: None,
         };
         let admitted = if !live || rec.status != SecretCustodyStatus::Active {
@@ -453,7 +556,126 @@ impl Vault {
         } else {
             self.check_secret_at_door(&rec.name, effector)
         };
-        self.use_admitted(&used, &rec.name, admitted, None, consume)
+        Ok((used, rec.name, admitted))
+    }
+
+    /// The T1 half of a use once [`Self::begin_use`] settled: the intent
+    /// record committed, then the T1 lease stamped under the committing
+    /// writer — the one T1 admission evaluation, against the live floor —
+    /// then the host callback run with the value post-commit, its answer
+    /// cleared of the value, and the outcome recorded at the stamp's
+    /// generation with the lease beside the presented record (FIX 2616).
+    /// Nothing runs inside an LMDB transaction but the stamp.
+    ///
+    /// # Errors
+    /// As [`Self::use_secret_handle`]: a refused admission writes one
+    /// refused outcome and returns the refusal; a refused stamp writes the
+    /// refused outcome linked to the intent (no lease row, no receipt row,
+    /// no value) and returns the refusal.
+    fn use_admitted_t1(
+        &self,
+        used: &Used<'_>,
+        admitted: Result<()>,
+        callback: &SecretUseCallback,
+        arguments: &Value,
+    ) -> Result<SecretUseOutcome> {
+        if let Err(refusal) = admitted {
+            used.record(
+                self,
+                UsePhase::Outcome,
+                None,
+                SecretUseDecision::Refused,
+                SecretUseSend::NotSent,
+                None,
+            )?;
+            return Err(refusal);
+        }
+        // The intent is durable before the stamp: a crash past it leaves it
+        // alone, its send `pending`, never an invented outcome.
+        let intent = used
+            .record(
+                self,
+                UsePhase::Intent,
+                None,
+                SecretUseDecision::Used,
+                SecretUseSend::Pending,
+                None,
+            )?
+            .receipt;
+        // The stamp is the T1 admission: the live floor, the binding's T1
+        // ceiling and the door dial, under the committing writer. A failure
+        // writes nothing the caller can commit — no lease row, no receipt
+        // row, no value — and the outcome answers the intent refused.
+        let stamped = {
+            let mut wtxn = self.store.env.write_txn()?;
+            let stamped = match stamp_use_lease_in_txn(
+                self,
+                &mut wtxn,
+                &used.secret,
+                used.effector,
+                SECRET_USE_T1_LEASE_TTL_SECS,
+            ) {
+                Ok(stamped) => stamped,
+                Err(refusal) => {
+                    drop(wtxn);
+                    used.record(
+                        self,
+                        UsePhase::Outcome,
+                        Some(intent),
+                        SecretUseDecision::Refused,
+                        SecretUseSend::NotSent,
+                        None,
+                    )?;
+                    return Err(refusal);
+                }
+            };
+            wtxn.commit()?;
+            stamped
+        };
+        // A callback blocks on whatever it calls. It runs on a thread of
+        // its own, outside whatever async runtime the caller's door is on.
+        let answer = std::thread::scope(|scope| {
+            scope.spawn(|| (callback)(&stamped.value, arguments)).join()
+        })
+        .unwrap_or_else(|_| Err("the operation stopped before it answered".to_owned()));
+        // The answer is cleared of the value with the stamped bytes before
+        // it goes anywhere: the bytes are in hand, so the clearing is
+        // total — no reread, no Withheld.
+        let text = output::handle_text(&used.handle);
+        let sent_value = output::SentValue::new(&stamped.value, &text);
+        let (result, failure, send) = match answer {
+            Ok(mut answered) => {
+                sent_value.clear_json(&mut answered);
+                (Some(answered), None, SecretUseSend::Answered)
+            }
+            Err(mut failed) => {
+                sent_value.clear_string(&mut failed);
+                (None, Some(failed), SecretUseSend::Failed)
+            }
+        };
+        let sent = Some(SentPresentation::cleared(
+            used.secret,
+            stamped.lease.value_generation,
+        ));
+        // The receipt names the generation the stamp released, never the
+        // admitted one in its place, and the lease beside the presented
+        // record — the stamp, not the admission, is what the send saw.
+        let receipt = used
+            .at_sent(sent)
+            .with_lease(stamped.lease.lease_id)
+            .record(
+                self,
+                UsePhase::Outcome,
+                Some(intent),
+                SecretUseDecision::Used,
+                send,
+                sent,
+            )?;
+        Ok(SecretUseOutcome {
+            receipt,
+            result,
+            failure,
+        })
     }
 
     /// The half of a use every entry shares once its admission is settled:
