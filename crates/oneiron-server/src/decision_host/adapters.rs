@@ -27,11 +27,11 @@ impl DecisionReadGate for HouseGate {
         // The host's own work: its turn comes while no caller waits for one,
         // and the wait ends with the caller's work time (FIX 9526). A turn
         // that never came admits nothing and pays nothing.
-        let Ok(_turn) = self
-            .admission
-            .turns
-            .admit_background_blocking_for(deadline.decision_time_left())
-        else {
+        let cancel = deadline.work_cancel();
+        let Ok(_turn) = self.admission.turns.admit_background_blocking_for_cancel(
+            deadline.decision_time_left(),
+            cancel.cancelled(),
+        ) else {
             return Ok(GatedRead::NotStarted);
         };
         // Inside a verdict, the caller's own line (FIX 1123), billing the
@@ -82,11 +82,15 @@ impl DecisionReadGate for RunHouseGate<'_> {
         // The host's own work: its turn comes while no caller waits for one,
         // and the wait ends with the caller's work time (FIX 9526). A turn
         // that never came admits nothing and pays nothing.
+        let cancel = deadline.work_cancel();
         let Ok(_turn) = self
             .gate
             .admission
             .turns
-            .admit_background_blocking_for(deadline.decision_time_left())
+            .admit_background_blocking_for_cancel(
+                deadline.decision_time_left(),
+                cancel.cancelled(),
+            )
         else {
             return Ok(GatedRead::NotStarted);
         };
