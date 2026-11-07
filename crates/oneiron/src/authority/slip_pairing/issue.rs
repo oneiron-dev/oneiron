@@ -121,18 +121,7 @@ impl Vault {
             principal.holder_ref.as_deref(),
         )?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let (code, row_key) = loop {
-            let code = draw_code();
-            let row_key = pairing_row_key(issuer, &code)?;
-            let free = match PAIRING_PENDING.get(&self.store, &txn, &row_key) {
-                Ok(Some(pending)) => now >= pending.expires_at,
-                Ok(None) => true,
-                Err(_) => false,
-            };
-            if free {
-                break (code, row_key);
-            }
-        };
+        let (code, row_key) = self.free_pairing_code_in_txn(&txn, issuer, now)?;
         let expires_at = now.saturating_add(CODE_TTL_SECS);
         // A vault with an attested checkpoint pins it for the joining device,
         // bound to this single-use link's fresh challenge (OF-469).
@@ -150,6 +139,7 @@ impl Vault {
             machine,
             pin,
             owner,
+            invitation: None,
         };
         PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
         txn.commit()?;
@@ -158,6 +148,74 @@ impl Vault {
             expires_at,
             pin: pin_ref,
             comm,
+        })
+    }
+    /// A fresh code and its row key: one no outstanding link holds at `now`.
+    fn free_pairing_code_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        issuer: &HostSlipIssuer,
+        now: u64,
+    ) -> Result<(String, String)> {
+        loop {
+            let code = draw_code();
+            let row_key = pairing_row_key(issuer, &code)?;
+            let free = match PAIRING_PENDING.get(&self.store, txn, &row_key) {
+                Ok(Some(pending)) => now >= pending.expires_at,
+                Ok(None) => true,
+                Err(_) => false,
+            };
+            if free {
+                return Ok((code, row_key));
+            }
+        }
+    }
+    /// Stores, in the writer of `owner`'s act, an invitation pairing code
+    /// (FIX 8745): a one-hour single-use link for `invitation`'s invitee,
+    /// whose redemption binds that invitation to the redeeming key and mints
+    /// the invitee's slip for it (`Vault::redeem_invitation_link_in_txn`).
+    /// The owner passes the code on by any channel, as an invite link; it
+    /// carries no verb and pairs no ordinary credential. The caller has
+    /// checked `owner` and that the invitation is pending.
+    pub(crate) fn issue_invitation_pairing_link_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        owner: crate::EntityId,
+        invitation: PendingInvitationLink,
+        invitation_expires_at: u64,
+    ) -> Result<PairingLink> {
+        require_host(&self.authority_fold_readonly_in_txn(txn)?, issuer)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
+        let expires_at = now.saturating_add(CODE_TTL_SECS).min(invitation_expires_at);
+        if expires_at <= now {
+            return Err(invalid_authority());
+        }
+        let pending = PairingPending {
+            expires_at,
+            slip_lifetime_secs: invitation_expires_at.saturating_sub(now),
+            scope: Scope {
+                verbs: oneiron_authority::federation::ScopeAxis::Bottom,
+                ..Scope::top()
+            },
+            host_key: issuer.binding_key(),
+            principal: PairingPrincipal {
+                holder_ref: Some(invitation.invitee.to_hex()),
+                actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
+                ..PairingPrincipal::default()
+            },
+            machine: None,
+            pin: None,
+            owner: Some(owner),
+            invitation: Some(invitation),
+        };
+        PAIRING_PENDING.put(&self.store, txn, &row_key, &pending)?;
+        Ok(PairingLink {
+            code,
+            expires_at,
+            pin: None,
+            comm: effective_slip_comm(None),
         })
     }
 }

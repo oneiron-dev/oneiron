@@ -246,17 +246,19 @@ impl Bridge {
             .take()
             .ok_or_else(|| anyhow::anyhow!("no bridge stdout"))?;
         let (send, lines) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut stdout = BufReader::new(stdout);
-            loop {
-                let mut line = Vec::new();
-                match stdout.read_until(b'\n', &mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) if send.send(line).is_err() => break,
-                    Ok(_) => {}
+        crate::engine_thread("hook-recall-bridge".into())
+            .spawn(move || {
+                let mut stdout = BufReader::new(stdout);
+                loop {
+                    let mut line = Vec::new();
+                    match stdout.read_until(b'\n', &mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) if send.send(line).is_err() => break,
+                        Ok(_) => {}
+                    }
                 }
-            }
-        });
+            })
+            .expect("failed to spawn thread");
         Ok(Self {
             stdin: child.stdin.take(),
             child,
