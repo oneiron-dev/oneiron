@@ -20,6 +20,7 @@ use std::time::Duration;
 pub(super) mod cache_warmth;
 mod call_deadline;
 mod decision_posture;
+mod device_bound;
 mod live_fork;
 mod model_call;
 mod model_list;
@@ -68,6 +69,9 @@ use super::served::served_receipt;
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
+
+/// Why a rung past its ladder's locality ceiling is passed over (FIX 12735).
+const PAST_LOCALITY_CEILING: &str = "the rung would send past its ladder's locality ceiling";
 
 /// A chat call's answer and the binding of the rung that gave it (FIX 12743).
 type ServedFuture<'a> = std::pin::Pin<
@@ -279,6 +283,31 @@ impl OfferLadder {
     pub(super) fn scoped(mut self, scope: SeatScope) -> Self {
         self.scope = scope;
         self
+    }
+
+    /// A call-local copy of this ladder whose owner's fallbacks stay within
+    /// `ceiling` (FIX 5366, review #6390): a model pack's local-GPU pick
+    /// never falls back to a third party. A stricter ceiling this ladder
+    /// already has stays.
+    #[must_use]
+    pub(super) fn with_locality_ceiling(&self, ceiling: ModelLocality) -> Self {
+        let locality_ceiling = Some(
+            self.scope
+                .locality_ceiling
+                .map_or(ceiling, |own| own.min(ceiling)),
+        );
+        Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                locality_ceiling,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        }
     }
 
     /// This ladder with its rungs in the order `routes` names them (FIX
@@ -520,6 +549,12 @@ impl OfferLadder {
         self.rungs.len()
     }
 
+    /// Each rung's host-bound offer, in ladder order: the access a vault's
+    /// model pack resolves against reads their payers (FIX 5366).
+    pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
+        self.rungs.iter().map(|rung| &rung.offer.binding)
+    }
+
     /// Whether every rung a call on this ladder may reach is free keyless
     /// own-server work (FIX 10592): each rung's bound offer is `Payer::Local`
     /// on `OwnServer` with `KeyCustody::Keyless`. Any keyed, third-party or
@@ -562,6 +597,14 @@ impl OfferLadder {
         })
     }
 
+    /// Whether the rung at `index` sits within this ladder's locality
+    /// ceiling (I2-LOCAL, FIX 12735); every rung does without one.
+    fn rung_within_ceiling(&self, index: usize) -> bool {
+        self.scope
+            .locality_ceiling
+            .is_none_or(|ceiling| self.rungs[index].offer.binding.locality <= ceiling)
+    }
+
     /// Whether every call this ladder sends goes to a managed worker this
     /// server supervises, over its native channel alone (I2-LOCAL): each rung
     /// is such an on-device offer ([`OfferEndpoint::SupervisedNative`]), and
@@ -584,8 +627,9 @@ impl OfferLadder {
     /// `locality` on this ladder, for the engine's inference admission: the
     /// supervised native attestation when the call's route is on device and
     /// this ladder sends only over supervised native channels
-    /// ([`Self::native_local`], I2-LOCAL); otherwise the advertised route,
-    /// with `keyless` as the calling door verified it.
+    /// ([`Self::native_local`], I2-LOCAL), `paid` when a rung of it is paid
+    /// work ([`Self::all_free_work`] false, FIX 18407); otherwise the
+    /// advertised route, with `keyless` as the calling door verified it.
     #[must_use]
     pub(crate) fn host_binding(
         &self,
@@ -594,7 +638,10 @@ impl OfferLadder {
         keyless: bool,
     ) -> HostInferenceBinding {
         if locality == ModelLocality::OnDevice && self.native_local() {
-            HostInferenceBinding::SupervisedNativeLocal { model }
+            HostInferenceBinding::SupervisedNativeLocal {
+                model,
+                paid: !self.all_free_work(),
+            }
         } else {
             HostInferenceBinding::Advertised {
                 model,
@@ -718,11 +765,12 @@ impl OfferLadder {
 
     /// Whether the call passes the rung at `index` without sending it: it
     /// does not hold the call's voice (FIX 1746), its world's order does not
-    /// name its route (FIX 11768), a fallback to it would take the work off
-    /// the device and the call's world stays on it, its offer rests from an
-    /// earlier refusal, or its offer is on probation with its one probation
-    /// request out. The voice, the order and the device come first, so a rung
-    /// the call may not use is never one it waits for.
+    /// name its route (FIX 11768), it sits past the ladder's locality ceiling
+    /// (FIX 12735), a fallback to it would take the work off the device and
+    /// the call's world stays on it, its offer rests from an earlier refusal,
+    /// or its offer is on probation with its one probation request out. The
+    /// voice, the order, the ceiling and the device come first, so a rung the
+    /// call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.voice_not_held(call, index) {
             walk.note(index, Passed::VoiceNotHeld);
@@ -730,6 +778,10 @@ impl OfferLadder {
         }
         if !self.route_admitted(call.routes, index) {
             self.refuse_route(call, index, walk);
+            return true;
+        }
+        if !self.rung_within_ceiling(index) {
+            self.hold(call, index, walk, PAST_LOCALITY_CEILING);
             return true;
         }
         if let Some(reason) = self.kept_on_device(index, call.request) {
@@ -1585,7 +1637,15 @@ impl OfferLadder {
                     return Ok(Sent::Answer(response));
                 }
                 Err(error) => {
-                    let fallback = rung.offer.backend.fallback(&error);
+                    // The alternate wire is the same offer, sent where that
+                    // offer sends: taken only while the rung sits within
+                    // the ladder's locality ceiling (FIX 12735); else the
+                    // rung fails as any failure does.
+                    let fallback = rung
+                        .offer
+                        .backend
+                        .fallback(&error)
+                        .filter(|_| self.rung_within_ceiling(index));
                     let sent = settle_failed(permit);
                     if let Some(backend) = fallback {
                         // The failed wire keeps its own truthful receipt. Its
@@ -2312,7 +2372,13 @@ impl OfferLadder {
                     error,
                     spoken: false,
                 } => {
-                    let fallback = rung.offer.backend.fallback(&error);
+                    // The same offer's alternate wire, within the ceiling
+                    // alone, as a generation's (FIX 12735).
+                    let fallback = rung
+                        .offer
+                        .backend
+                        .fallback(&error)
+                        .filter(|_| self.rung_within_ceiling(index));
                     let sent = settle_failed(permit);
                     if let Some(backend) = fallback {
                         walk.passed.push((
