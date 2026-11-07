@@ -3,12 +3,12 @@
 //! The server definition, fields, and shared helpers stay in the parent module.
 
 use super::{
-    Arc, AtomicU32, BTreeMap, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc,
-    Materializer, McpConnectorActorRegistry, McpCredentialHashKey, Mutex,
-    NEXT_LIFECYCLE_SESSION_ID, Ordering, ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext,
-    SyncServer, SyncServerConfig, UsageLedger, WindowManager, add_window_to_root, broadcast,
-    host_root_secret, init_window_list, insert_root_schema_version, live_rows,
-    mcp_registry_hash_key, read_window_list, server_state, spawn_local_change_producer,
+    Arc, AtomicU32, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc, Materializer,
+    McpConnectorActorRegistry, McpCredentialHashKey, Mutex, NEXT_LIFECYCLE_SESSION_ID, Ordering,
+    ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext, SyncServer, SyncServerConfig, UsageLedger,
+    WindowManager, add_window_to_root, broadcast, host_root_secret, init_window_list,
+    insert_root_schema_version, live_rows, mcp_registry_hash_key, read_window_list, server_state,
+    spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -234,6 +234,11 @@ impl SyncServer {
         live_runs.close_sessions_with(crate::api::run_session_closer(Arc::clone(
             &memories_cursors,
         )));
+        // FIX 17594 D3 (Engine call RESUME C): a live run that ends closes
+        // the self brief its entries installed.
+        let self_brief_sessions =
+            Arc::new(crate::server::self_brief_custody::SelfBriefCustody::default());
+        live_runs.close_briefs_with(Arc::clone(&self_brief_sessions));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
         // FIX 8335: no run-bound record outlives a restart, so a host that
@@ -338,7 +343,7 @@ impl SyncServer {
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
             memories_cursors,
-            self_brief_sessions: Mutex::new(BTreeMap::new()),
+            self_brief_sessions,
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
             model_setup: None,
@@ -375,6 +380,7 @@ impl SyncServer {
             artifact_port: None,
             api_addr: None,
             artifact_socket: false,
+            booking_calls: Default::default(),
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]
