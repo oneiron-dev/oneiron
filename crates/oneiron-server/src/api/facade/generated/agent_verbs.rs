@@ -1388,6 +1388,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.sync.repo_manifests.conflict.discard",
             post(facade_route),
         )
+        .route("/vault.dreamer.follower.keyframe", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))
