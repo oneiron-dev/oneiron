@@ -1711,7 +1711,7 @@ export_facade! {
     let output = client.vault_members_projection(&input)?;
     crate::codec::lift_record("vault.members.projection", &output)
 };
-"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedMemberInvited = |client| {
+"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberAddRequest = crate::codec::lower_record("vault.members.add", input)?;
     let output = client.vault_members_add(&input)?;
     crate::codec::lift_record("vault.members.add", &output)
@@ -1720,6 +1720,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::InvitationSlipRequest = crate::codec::lower_record("vault.members.invitation_slip", input)?;
     let output = client.vault_members_invitation_slip(&input)?;
     crate::codec::lift_record("vault.members.invitation_slip", &output)
+};
+"vault.members.invitation_code" => fn vault_members_invitation_code(&self, input: InvitationCodeRequest) -> InvitationCode = |client| {
+    let input: oneiron::task_verb::sdk::InvitationCodeRequest = crate::codec::lower_record("vault.members.invitation_code", input)?;
+    let output = client.vault_members_invitation_code(&input)?;
+    crate::codec::lift_record("vault.members.invitation_code", &output)
 };
 "vault.members.change" => fn vault_members_change(&self, input: SharedMemberRoleRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberRoleRequest = crate::codec::lower_record("vault.members.change", input)?;
@@ -2925,6 +2930,11 @@ export_facade! {
     let input: oneiron::code_run::CodeRunSecretLiftRequest = crate::codec::lower_record("vault.secrets.code_run_lifts", input)?;
     let output = client.vault_secrets_code_run_lifts(&input)?;
     crate::codec::lift_record("vault.secrets.code_run_lifts", &output)
+};
+"vault.secrets.code_run_room_lifts" => fn vault_secrets_code_run_room_lifts(&self, input: CodeRunRoomSecretLiftRequest) -> Vec<CodeRunSecretLiftProposalView> = |client| {
+    let input: oneiron::code_run::CodeRunRoomSecretLiftRequest = crate::codec::lower_record("vault.secrets.code_run_room_lifts", input)?;
+    let output = client.vault_secrets_code_run_room_lifts(&input)?;
+    crate::codec::lift_record("vault.secrets.code_run_room_lifts", &output)
 };
 "vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
     let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
@@ -5046,8 +5056,8 @@ export_facade! {
     let output = client.vault_calendar_ics_import(&input)?;
     crate::codec::lift_record("vault.calendar.ics.import", &output)
 };
-"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesRequest) -> ScopedReadResultCalendarOccurrenceViewList = |client| {
-    let input: oneiron::calendar::query::CalendarOccurrencesRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
+"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesPageRequest) -> ScopedReadResultCalendarOccurrencesPage = |client| {
+    let input: oneiron::calendar::query::CalendarOccurrencesPageRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
     let output = client.vault_calendar_occurrences(&input)?;
     crate::codec::lift_record("vault.calendar.occurrences", &output)
 };
@@ -5061,13 +5071,13 @@ export_facade! {
     let output = client.vault_calendar_read(&input)?;
     crate::codec::lift_record("vault.calendar.read", &output)
 };
-"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchRequest) -> ScopedReadResultCalendarEventViewList = |client| {
-    let input: oneiron::calendar::CalendarSearchRequest = crate::codec::lower_record("vault.calendar.search", input)?;
+"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchPageRequest) -> ScopedReadResultCalendarSearchPage = |client| {
+    let input: oneiron::calendar::query::CalendarSearchPageRequest = crate::codec::lower_record("vault.calendar.search", input)?;
     let output = client.vault_calendar_search(&input)?;
     crate::codec::lift_record("vault.calendar.search", &output)
 };
-"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyRequest) -> ScopedReadResultCalendarFreebusyDto = |client| {
-    let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
+"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyPageRequest) -> ScopedReadResultCalendarFreebusyPage = |client| {
+    let input: oneiron::calendar::query::CalendarFreebusyPageRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
 };
