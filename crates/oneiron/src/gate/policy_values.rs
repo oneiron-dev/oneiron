@@ -8,6 +8,7 @@ pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
     CalendarOutcomeGraceSeconds,
     CommOptOutPosture,
+    CriticalConfirmLifetimeSeconds,
     DreamerRetryParkSeconds,
     EsignRateDocumentThreshold,
     EsignRateRecipientThreshold,
@@ -30,6 +31,7 @@ impl PolicyValueKey {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "calendar_outcome_grace_seconds" => Some(Self::CalendarOutcomeGraceSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
+            "critical_confirm_lifetime_seconds" => Some(Self::CriticalConfirmLifetimeSeconds),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
             "esign_rate_document_threshold" => Some(Self::EsignRateDocumentThreshold),
             "esign_rate_recipient_threshold" => Some(Self::EsignRateRecipientThreshold),
@@ -53,6 +55,7 @@ impl PolicyValueKey {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CalendarOutcomeGraceSeconds => "calendar_outcome_grace_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
+            Self::CriticalConfirmLifetimeSeconds => "critical_confirm_lifetime_seconds",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
             Self::EsignRateDocumentThreshold => "esign_rate_document_threshold",
             Self::EsignRateRecipientThreshold => "esign_rate_recipient_threshold",
@@ -91,9 +94,12 @@ impl PolicyValueKey {
             // trusted session axes exist (FIX 8600), and the served runners read
             // their try caps on the vault's rows (FIX 7748). A calendar EVENT
             // carries no world placement, so its check-in grace is the vault's.
+            // A critical confirm's lifetime is read where the gate attaches
+            // it, on the vault's clock (FIX 8760).
             Self::ArtifactAnswerQuietSeconds
             | Self::CalendarOutcomeGraceSeconds
             | Self::CommOptOutPosture
+            | Self::CriticalConfirmLifetimeSeconds
             | Self::DreamerRetryParkSeconds
             | Self::EsignRateDocumentThreshold
             | Self::EsignRateRecipientThreshold
@@ -296,6 +302,12 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                         }
                         _ => return None,
                     })
+                }
+                // A zero lifetime would time a confirm out as it is attached.
+                PolicyValueKey::CriticalConfirmLifetimeSeconds => {
+                    PolicyValue::CriticalConfirmLifetimeSeconds(
+                        raw.as_u64().filter(|seconds| *seconds > 0)?,
+                    )
                 }
                 PolicyValueKey::DreamerRetryParkSeconds => {
                     PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
