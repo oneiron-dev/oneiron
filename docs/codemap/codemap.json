@@ -20846,6 +20846,7 @@
      "path": "src/commitment_ledger.rs",
      "purpose": "Counterparty commitment ledger projection (CMT-5)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 3
      }
@@ -25780,7 +25781,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -49477,6 +49478,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommitmentLedgerItem",
+      "CommitmentLedgerRequest",
+      "CommitmentLedgerView"
+     ],
+     "path": "src/memory/commitment_doors/ledger.rs",
+     "purpose": "Scoped, owner-bound counterparty commitment ledger",
+     "surface": {
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49484,7 +49500,7 @@
      "purpose": "Typed indexed commitment birth, observation and explicit lifecycle effects",
      "surface": {
       "fn": 7,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -87751,7 +87767,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1316
+      "fn": 1317
      }
     },
     {
@@ -94436,7 +94452,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 374,
+     "files": 375,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95152,7 +95168,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6736,
+   "source_files": 6737,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110015,7 +110031,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1284
+      "fn": 1285
      }
     },
     {
@@ -111808,7 +111824,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1285
+      "fn": 1286
      }
     },
     {
@@ -116877,7 +116893,7 @@
      "path": "src/api/facade/commitment_doors.rs",
      "purpose": "Owner-bound projections of the typed commitment lifecycle",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -145849,6 +145865,9 @@
       "CommitmentFulfillRequest",
       "CommitmentFulfillmentSource",
       "CommitmentIndexOutcome",
+      "CommitmentLedgerItem",
+      "CommitmentLedgerRequest",
+      "CommitmentLedgerView",
       "CommitmentLifecycleReceipt",
       "CommitmentObligor",
       "CommitmentObligorKind",
@@ -149656,7 +149675,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1143,
-      "struct": 3503
+      "struct": 3506
      }
     },
     {
