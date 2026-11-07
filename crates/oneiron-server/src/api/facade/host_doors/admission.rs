@@ -62,6 +62,7 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Row::VaultSecretsCodeRunLifts
+        | Row::VaultSecretsCodeRunRoomLifts
         | Row::VaultIngestAgUiImport
         | Row::VaultModelsManifestRead
         | Row::VaultModelsManifestReplace
@@ -500,6 +501,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultWeaveOwnerDigestRender
         | Row::VaultInboxConcernsReview
         | Row::VaultInboxLens
+        | Row::VaultProactivityDigest
         | Row::VaultInboxGroups
         | Row::VaultBudgetsLeaseOpen
         | Row::VaultBudgetsLease
@@ -673,6 +675,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
+        | Row::VaultMembersInvitationCode
         | Row::VaultSharedObject
         | Row::VaultSharedWithdrawObjection
         | Row::VaultSharedStarted
