@@ -376,21 +376,20 @@ pub(super) fn revertible_person_abouts_in_txn(
 impl Vault {
     /// `person`'s `about` line for a reader whose sensitivity ceiling is
     /// `ceiling`: the line of the highest band at or below it. `None` reads
-    /// no band. A person whose facts moved since its lines were written shows
-    /// none until the Dreamer writes them again. The line is clipped to what
-    /// the board prints.
+    /// no band. A person whose facts moved since its lines were written, or
+    /// one of whose facts the Dreamer no longer reads (FIX 12251), shows none
+    /// until the Dreamer writes them again. The line is clipped to what the
+    /// board prints.
     pub fn person_about(&self, person: EntityId, ceiling: Option<u8>) -> Result<Option<String>> {
         let Some(ceiling) = ceiling else {
             return Ok(None);
         };
-        let txn = self.store.env.read_txn()?;
+        let txn = snapshot(self)?;
         let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
             return Ok(None);
         };
-        Ok(
-            sources::current_line_in_txn(&self.store, &txn, &row, ceiling)?
-                .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()),
-        )
+        Ok(sources::current_line_in_txn(self, &txn, &row, ceiling)?
+            .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
     }
 }
 
@@ -495,6 +494,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("about host binding needs locality".into()))?;
         let keyless = self.inference.selected_keyless();
+        let paid = self.inference.selected_paid();
         let mut charges = StepChargeTally::default();
         let mut lines: Vec<AboutLine> = Vec::new();
         let mut below: Option<[u8; 32]> = None;
@@ -539,6 +539,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     response_format: ResponseFormat::Text,
                     locality,
                     host_keyless: keyless,
+                    host_paid: paid,
                 }
                 .with_purpose_defaults(),
                 messages: vec![

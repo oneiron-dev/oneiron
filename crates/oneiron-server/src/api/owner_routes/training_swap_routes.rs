@@ -59,6 +59,16 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(swap),
         ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/cancel",
+                summary: "Cancels a staged trained embedder swap while its binding still waits or fills.",
+                row: None,
+                shape: None,
+            },
+            post(cancel),
+        ),
     ]
 }
 
@@ -258,4 +268,30 @@ async fn swap(
     })
     .await?;
     Ok(Json(receipt))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelTrainingRun {
+    /// A training run id, as 32 hex.
+    run: String,
+}
+
+/// `POST /v1/owner/coach/training-runs/cancel`: cancels a staged trained
+/// embedder swap while its binding still waits or fills. The staged move is
+/// abandoned in the same owner write; an applied swap keeps the existing
+/// space-move undo door.
+async fn cancel(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<CancelTrainingRun>,
+) -> OwnerReply<PendingEmbedderBinding> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let binding = blocking(move || -> OwnerResult<PendingEmbedderBinding> {
+        let id = entity_id("run", &request.run)?;
+        Ok(server.vault().cancel_training_embedder_swap(&owner, &id)?)
+    })
+    .await?;
+    Ok(Json(binding))
 }

@@ -358,7 +358,7 @@ impl Chain<'_> {
 /// hook, merged into the caller's `original` args (FIX 10084): a value the
 /// hook left withheld keeps the caller's original; every value it wrote
 /// stands. The merged args are then checked whole, as any Rewrite is.
-pub(super) fn merge_withheld(original: &Value, rewritten: Value) -> Value {
+pub(crate) fn merge_withheld(original: &Value, rewritten: Value) -> Value {
     if is_withheld(&rewritten) {
         return original.clone();
     }

@@ -12,24 +12,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/api.rs` | src | m | 15 struct · 11 enum · 4 trait · 2 fn · 1 type · 4 const · 1 mod · 2 re-export · 6 crate-vis | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +22 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
-| `src/api/report.rs` | src | m | 6 struct · 10 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind +8 | Evidence-oriented verification report |
+| `src/api/report.rs` | src | m | 7 struct · 11 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionCoverage, RevisionKind, RevisionReport +10 | Evidence-oriented verification report |
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
 | `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 21 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 24 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
 | `src/native/cms/oids.rs` | src | s | 14 crate-vis | — | Canonical CMS, suite, and attribute OID constants |
-| `src/native/cms/parse.rs` | src | s | 8 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
+| `src/native/cms/parse.rs` | src | m | 7 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
 | `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/held_bytes.rs` | src | s | 7 crate-vis | — | What the seal's own copies and decodes allocate, for the holds that admit them to the operation's memory… |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
-| `src/native/pdf/admitted.rs` | src | s | 7 crate-vis | — | — |
+| `src/native/pdf/admitted.rs` | src | s | 10 crate-vis | — | — |
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
 | `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
 | `src/native/profile/material.rs` | src | m | 4 crate-vis | — | B-LT validation material: working CRLs first, then OCSP for uncovered certificates |
-| `src/native/profile/material/ocsp.rs` | src | s | 1 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
+| `src/native/profile/material/ocsp.rs` | src | s | 3 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
 | `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 8 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
-| `src/native/verify/verify_revocation.rs` | src | m | 7 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
+| `src/native/verify/verify_revocation.rs` | src | m | 8 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
 | `src/native/verify/verify_sig_pipeline.rs` | src | m | 16 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
 | `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 23 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |

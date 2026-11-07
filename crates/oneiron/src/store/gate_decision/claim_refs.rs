@@ -179,3 +179,14 @@ impl Store {
         Ok(records)
     }
 }
+
+impl Store {
+    /// Exact bundle membership bytes, without rebuilding its derived index.
+    pub(crate) fn gate_clone_claim_refs_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision: GateDecisionId,
+    ) -> Result<Option<Vec<u8>>> {
+        CLAIM_REFS.get_bytes(self, txn, &decision)
+    }
+}
