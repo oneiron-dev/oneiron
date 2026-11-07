@@ -62,12 +62,9 @@ impl BudgetGuard {
     /// constructor performs no fallible row validation. Public so `oneiron`'s
     /// policy-manifest fold (its one caller outside this module) builds the guard
     /// across the crate line. A guard built from any table still issues every
-    /// lease itself; a caller that builds one governs only its own calls.
-    ///
-    /// # Panics
-    ///
-    /// When `policy` has more rows than a `u16` row index can address (65,536), which
-    /// `resolve_policy_manifest` already refuses.
+    /// lease itself; a caller that builds one governs only its own calls. A row
+    /// is addressed by its position in the table, so a table of any length is
+    /// metered whole (FIX 8781).
     #[must_use]
     pub fn with_policy_table(
         attempt_id: impl Into<String>,
@@ -77,12 +74,6 @@ impl BudgetGuard {
         actor: WriteActor,
         policy: &BudgetPolicyTable,
     ) -> Self {
-        // A hard check, not a debug one: this constructor is public now, and a row past the
-        // u16 index range would be dropped silently instead of enforced.
-        assert!(
-            policy.rows().len() <= usize::from(u16::MAX) + 1,
-            "resolved budget policy rows must stay addressable by a u16 row index"
-        );
         let state = BudgetState::new(
             attempt_id.into(),
             limit_units,
@@ -130,24 +121,48 @@ impl BudgetGuard {
     /// unmetered lease that reserves nothing ([`Self::admit_local`]) before
     /// any paid policy, row cap or capacity is read, so a full or exhausted
     /// paid line never holds it. Every other call reserves on the paid line,
-    /// its purpose's policy rows capping it.
+    /// its purpose's policy rows capping it. A call its door attested as
+    /// paid (`envelope.host_paid`, FIX 18407: a rung of its host-bound ladder
+    /// is paid work, such as a paid provider's managed worker over its native
+    /// channel on this device) is never free here, whatever its locality: it
+    /// reserves on the paid line, its purpose's policy rows capping it, so
+    /// the step's and pass's own lines see a paid on-device call (FIX 14889).
     ///
     /// This low-level door trusts the request it is given (FIX 8998): its
     /// `envelope.locality` must be host-bound (the seat, route or offer that
     /// will actually serve the call, stamped by host code before the request
     /// is hashed or admitted), never a value read from caller JSON, and so
-    /// must its `envelope.host_keyless` (the stamping door verified every
-    /// rung that may serve the call from the host-bound ladder). A caller
-    /// that relays a request someone else built inherits that binding, and
-    /// one that cannot vouch for it binds the locality itself before this
-    /// call; this door adds no second check.
+    /// must its `envelope.host_keyless` and `envelope.host_paid` (the
+    /// stamping door read every rung that may serve the call from the
+    /// host-bound ladder). A caller that relays a request someone else built
+    /// inherits that binding, and one that cannot vouch for it binds the
+    /// locality itself before this call; this door adds no second check.
     pub fn admit_for_request(&self, request: &LlmRequest) -> Result<BudgetAdmission, BudgetDenied> {
-        if request.envelope.locality == ModelLocality::OnDevice
+        let free_route = request.envelope.locality == ModelLocality::OnDevice
             || (request.envelope.host_keyless
-                && request.envelope.locality == ModelLocality::OwnServer)
-        {
+                && request.envelope.locality == ModelLocality::OwnServer);
+        if free_route && !request.envelope.host_paid {
             return self.admit_local();
         }
+        let mut state = self.lock_state();
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
+        Ok(state.metered_admission(lease))
+    }
+
+    /// Admits one call of `request` as paid work, whatever its locality
+    /// (FIX 14889): it reserves on the paid line, its purpose's policy rows
+    /// capping it, as [`Self::admit_for_request`] does for a call off the
+    /// device. For a door whose host-bound ladder may send the call to a paid
+    /// offer on this device (a paid provider's managed worker over its native
+    /// channel), which the request's on-device locality alone would admit
+    /// unmetered. The door decides from that ladder, never from caller JSON;
+    /// a door that stamps `envelope.host_paid` (FIX 18407) gets the same
+    /// admission from [`Self::admit_for_request`].
+    pub fn admit_paid_for_request(
+        &self,
+        request: &LlmRequest,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
         let reserve_units = state.reserve_units;
         let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;

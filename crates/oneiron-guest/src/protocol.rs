@@ -13,7 +13,6 @@ pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
 pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
-pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
 /// Source identities and exact lengths; seeded bytes stay in the workspace.
@@ -95,6 +94,10 @@ enum GuestFrame<'a> {
     StepResult {
         result_json: &'a str,
     },
+    /// The program's own error, as its `run-step` returned it (FIX 9209).
+    StepError {
+        message: &'a str,
+    },
     Finish {
         status: i32,
     },
@@ -116,7 +119,6 @@ struct SeedFile {
 
 pub(crate) struct Session<T> {
     channel: T,
-    requests: usize,
     finished: bool,
 }
 
@@ -124,7 +126,6 @@ impl<T: Read + Write> Session<T> {
     pub(crate) fn new(channel: T) -> Self {
         Self {
             channel,
-            requests: 0,
             finished: false,
         }
     }
@@ -162,16 +163,10 @@ impl<T: Read + Write> Session<T> {
         let mut files = BTreeMap::new();
         let mut shape = WorkspaceShape::new();
         let mut open: Option<SeedFile> = None;
-        let mut requests = 1;
+        // No frame count ends the source: each frame is checked as it comes
+        // (FIX 8026).
         loop {
             let frame = self.read()?;
-            // One logical file spends one request, regardless of byte length.
-            if !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose) {
-                if requests == MAX_REQUESTS {
-                    return Err(Error::Protocol("source request count exhausted"));
-                }
-                requests += 1;
-            }
             if open.is_some()
                 && !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose)
             {
@@ -350,6 +345,16 @@ impl<T: Read + Write> Session<T> {
         self.send(&GuestFrame::StepResult { result_json })
     }
 
+    /// Sends the program's own error text, header included, in place of a
+    /// step result (FIX 9209). A text the frame bound cannot hold is not
+    /// sent, so the host keeps its fixed failure. The nonzero finish follows.
+    pub(crate) fn step_error(&mut self, message: &str) -> Result<()> {
+        if self.finished {
+            return Err(Error::Protocol("step error after finish"));
+        }
+        self.send(&GuestFrame::StepError { message })
+    }
+
     pub(crate) fn finish(&mut self, status: i32) -> Result<()> {
         if self.finished {
             return Err(Error::Protocol("finish is consume-once"));
@@ -359,11 +364,11 @@ impl<T: Read + Write> Session<T> {
     }
 
     fn request(&mut self, frame: &GuestFrame<'_>) -> Result<bool> {
-        // Reserve the terminal step-result and finish frames.
-        if self.finished || self.requests >= MAX_REQUESTS - 2 {
-            return Err(Error::Protocol("outbound request count exhausted"));
+        // No lifetime count ends a run's requests (FIX 8026); none follows
+        // its finish.
+        if self.finished {
+            return Err(Error::Protocol("outbound request after finish"));
         }
-        self.requests += 1;
         self.send(frame)?;
         match self.read()? {
             HostFrame::Receipt { accepted } => Ok(accepted),

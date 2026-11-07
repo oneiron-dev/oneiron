@@ -16,6 +16,8 @@ pub use oneiron_store::entity_doc::document_resources;
 mod forks;
 mod history_erase;
 mod lift;
+#[cfg(feature = "sync")]
+mod local_discard;
 mod message_parts;
 mod message_stream;
 mod metadata;
@@ -29,6 +31,7 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+pub(crate) use quote_citation::{source_texts_at_in_txn, span_in_masked_sight};
 mod recovery;
 mod registry;
 mod summary;
@@ -39,6 +42,7 @@ pub(crate) use summary::{
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
 mod storage;
+mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
@@ -47,6 +51,8 @@ pub(crate) use token_uses::engine_stamp_token;
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use commit_receipts::commit_input_rows_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use local_discard::discard_local_copies_in_txn;
 pub(crate) use message_parts::append_message_parts_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
@@ -89,7 +95,8 @@ pub use storage::TextField;
 pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
-    record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    record_document, record_head_bytes, record_head_key, record_head_row_in_txn, record_head_slot,
+    reindex_repo_document_in_txn, resolve_record_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};

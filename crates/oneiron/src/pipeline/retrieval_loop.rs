@@ -334,7 +334,7 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                     .cloned()
                     .collect();
                 let reads: Vec<_> = selected.iter().map(point_read).collect();
-                let read = self.reader.read(&reads, Some(&requested))?;
+                let read = self.reader.retrieval_loop_read(&reads, &requested)?;
                 let mut retained = HashSet::new();
                 for (handle, row) in selected.into_iter().zip(read.value) {
                     let Some(row) = row else { continue };
