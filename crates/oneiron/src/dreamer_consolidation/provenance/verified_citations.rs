@@ -31,6 +31,7 @@ fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
                 return Err(invalid_consolidation("locator message must be a map"));
             };
             let (mut message, mut span, mut revision, mut frontier) = (None, None, None, None);
+            let mut attribution = None;
             for (key, value) in fields {
                 match (key.as_str(), value) {
                     (Some("message"), value) if message.is_none() => {
@@ -53,6 +54,14 @@ fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
                     (Some("frontier"), Value::Binary(bytes)) if frontier.is_none() => {
                         frontier = Some(bytes.clone());
                     }
+                    (Some("attribution"), Value::Binary(bytes)) if attribution.is_none() => {
+                        attribution =
+                            Some(<[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+                                invalid_consolidation(
+                                    "locator message attribution must have 32 bytes",
+                                )
+                            })?);
+                    }
                     _ => {
                         return Err(invalid_consolidation(
                             "unknown, duplicate or mistyped locator message key",
@@ -72,6 +81,8 @@ fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
                 revision: revision
                     .ok_or_else(|| invalid_consolidation("missing locator message revision"))?,
                 frontier,
+                attribution: attribution
+                    .ok_or_else(|| invalid_consolidation("missing locator message attribution"))?,
             })
         })
         .collect()

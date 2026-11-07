@@ -37,8 +37,8 @@ use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
-    next_witness_message_order,
+    Memory, MemoryError, MemoryResult, SourceAttribution, WitnessAuthor, WitnessMessage,
+    WitnessTurn, next_witness_message_order,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
@@ -608,6 +608,7 @@ impl Import<'_> {
             conversation_body: self.conversation_body.clone(),
             message_occurred: occurred,
             source_audience: None,
+            attribution: SourceAttribution::Unbound,
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {
