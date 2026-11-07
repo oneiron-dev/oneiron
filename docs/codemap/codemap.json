@@ -74026,7 +74026,7 @@
      "path": "src/store/checkpoint_payload/retirement.rs",
      "purpose": "What an owner's deletion does to its checkpoint payload leaves (KS7-4, FIX 5688)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75858,7 +75858,7 @@
      "path": "src/store/legal_hold/use_limit.rs",
      "purpose": "Shared storage-only admission, with legal holds and a recipient's cooperative review restriction kept as…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
