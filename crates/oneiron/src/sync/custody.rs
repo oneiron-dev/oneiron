@@ -54,7 +54,12 @@
 
 pub(super) mod checkpoint;
 mod export_output;
+mod materialize;
 mod witness;
+
+pub(super) use export_output::ExportOutputBatch;
+pub(super) use materialize::{CustodyInputBatch, CustodyPieceBatch};
+pub(super) use witness::WitnessBatch;
 
 use std::collections::BTreeMap;
 
@@ -69,8 +74,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncEngineContext};
 use crate::secret_custody::{
     CustodyApplied, CustodyPieces, CustodyTransition, RelayedInput, SecretCustodyStatus,
-    apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
-    held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn, keep_input_in_txn,
+    apply_custody_transition_in_txn, custody_transitions, held_inputs, keep_custody_piece_in_txn,
+    keep_input_in_txn,
 };
 
 /// Which input rows a window admits and prunes (CALLS CUSTODY_INPUT_PRUNE,
@@ -524,52 +529,21 @@ fn apply_carriers(
     // one of the owner's machines has no secret, and keeps every value sealed.
     let secret = vault.machine_secret_outside_txn().ok();
     let outcome = (|| -> Result<usize> {
-        let (arrived, whole) = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut arrived = Vec::new();
-            for (map_key, bytes) in &rows {
-                let transition = match CustodyTransition::decode(bytes) {
-                    Ok(transition) if transition.row_key() == *map_key => transition,
-                    _ => {
-                        tracing::warn!(window, key = %map_key, "custody transition malformed; left out");
-                        continue;
-                    }
-                };
-                if skip_held && holds_custody_carrier_in_txn(vault, &rtxn, &transition)? {
-                    continue;
-                }
-                if let Err(error) = transition.verify(&fold) {
-                    tracing::warn!(window, key = %map_key, error = %error, "custody transition does not stand on its request here; left out");
-                    continue;
-                }
-                arrived.push(transition);
-            }
-            // A piece alone has no custody effect: only a group the pieces
-            // make with those kept here, whole and standing as one, does.
-            let mut whole = Vec::new();
-            for group in completed_custody_groups_in_txn(vault, &rtxn, &arrived)? {
-                if group.verify(&fold).is_err() {
-                    continue;
-                }
-                // A value sealed under its carrier key (FIX 7402) opens once
-                // that key is answered here; until then the group is kept.
-                let value = match (&secret, fold.vault_id) {
-                    (Some(secret), Some(vault_id)) => {
-                        vault.open_custody_value(&group, &vault_id, secret)
-                    }
-                    _ => None,
-                };
-                whole.push((group, value));
-            }
-            (arrived, whole)
+            CustodyPieceBatch::prepare_in_txn(
+                vault,
+                &rtxn,
+                window,
+                &rows,
+                skip_held,
+                secret.as_ref(),
+            )?
         };
-        if arrived.is_empty() {
+        if batch.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            stage_custody_pieces_in_txn(vault, wtxn, &arrived, &whole)
-        })
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(written) if written > 0 => {
@@ -594,34 +568,14 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let (machine, due) = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let Some(machine) = crate::identity::read_machine_id_in_txn(vault, &rtxn)? else {
-                return Ok(0);
-            };
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut due: Vec<RelayedInput> = Vec::new();
-            for (map_key, bytes) in &rows {
-                let Some(input) = RelayedInput::decode(bytes) else {
-                    continue;
-                };
-                let key = input.row_key();
-                if *map_key == input_row(&key)
-                    && input_awaits(&fold, machine, &input)
-                    && witness::input_genuine(vault, &rtxn, &input)?
-                    && witness::input_slot_open(vault, &rtxn, &key)?
-                {
-                    due.push(input);
-                }
-            }
-            (machine, due)
+            CustodyInputBatch::prepare_in_txn(vault, &rtxn, &rows)?
         };
-        if due.is_empty() {
+        let Some(batch) = batch else {
             return Ok(0);
-        }
-        vault.with_write_txn_grouped(|wtxn| {
-            stage_custody_inputs_in_txn(vault, wtxn, machine, &due)
-        })
+        };
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {
@@ -686,7 +640,9 @@ impl Vault {
     /// Judges again every custody transition and input the live base
     /// windows carry, as a window open does: one whose request this vault
     /// had not folded when it arrived stands once the request is in, and
-    /// the holder a request names keeps its input. A rebind this vault keeps
+    /// the holder a request names keeps its input. An export copy whose
+    /// holder's standing this vault had not folded, waiting in its window,
+    /// is kept once it proves itself (FIX 12352). A rebind this vault keeps
     /// pending because its live floor refused the bindings is judged again
     /// from its kept carrier, and applies once the floor admits it (CALLS
     /// CUSTODY_REBIND_PENDING_FLOOR). The owner work drain runs it after an

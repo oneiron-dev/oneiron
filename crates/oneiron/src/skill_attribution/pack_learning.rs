@@ -16,6 +16,7 @@ use super::credit_join::{
     joined_fields_in_txn, record_credit_in_txn, seal_decay_in_txn,
 };
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, credit_decay_in_txn, receipt_id};
+use super::outcome_source::{OutcomeWitness, WitnessedPackOutcome, require_witness_in_txn};
 use super::{
     AttemptOutcome, AttributionVerdict, FollowedState, attribution_judgments,
     judgment_displaced_in_txn,
@@ -42,14 +43,23 @@ pub struct AnchoredPackOutcome {
 /// read resolved for the run (FIX 10107), so replay never re-learns a newer
 /// decay. All learning heads and this receipt commit together and are
 /// idempotent; a check or late landing after it is reconciled beside it
-/// ([`super::credit_join`]).
+/// ([`super::credit_join`]). The outcome was read from a stored source
+/// with its witness (FIX 3611): this writer reads that source again beside
+/// its other rechecks, and a source erased or changed since mints nothing.
 pub fn project_anchored_pack_outcome(
     vault: &Vault,
     attempt_receipt: &str,
-    outcome: &AnchoredPackOutcome,
+    outcome: &WitnessedPackOutcome,
     now: u64,
 ) -> Result<LateCreditReceipt> {
-    project(vault, None, attempt_receipt, outcome, now)
+    project(
+        vault,
+        None,
+        Some(&outcome.witness),
+        attempt_receipt,
+        &outcome.outcome,
+        now,
+    )
 }
 
 /// An owner's external verdict, revalidated in the projection transaction.
@@ -67,12 +77,13 @@ pub fn project_anchored_pack_outcome_as_owner(
             "the owner door requires an owner verdict",
         ));
     }
-    project(vault, Some(owner), attempt_receipt, outcome, now)
+    project(vault, Some(owner), None, attempt_receipt, outcome, now)
 }
 
 fn project(
     vault: &Vault,
     owner: Option<&crate::consent::AuthenticatedOwner>,
+    witness: Option<&OutcomeWitness>,
     attempt_receipt: &str,
     outcome: &AnchoredPackOutcome,
     now: u64,
@@ -164,6 +175,8 @@ fn project(
                     "the attribution judgments changed before their credit was written",
                 ));
             }
+            // The outcome's stored source reads as it did (FIX 3611).
+            require_witness_in_txn(vault, txn, attempt_receipt, outcome, witness)?;
         }
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
