@@ -58762,7 +58762,7 @@ async fn mcp_verb_row_vault_calendar_occurrences(row: McpVerbRow<'_>) -> McpVerb
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::calendar::query::CalendarOccurrencesRequest =
+    let input: oneiron::calendar::query::CalendarOccurrencesPageRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::vault_calendar_occurrences(&memory, input)
         .map_err(mcp_facade_error)?;
@@ -58897,7 +58897,7 @@ async fn mcp_verb_row_vault_calendar_search(row: McpVerbRow<'_>) -> McpVerbRowRe
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::calendar::CalendarSearchRequest =
+    let input: oneiron::calendar::query::CalendarSearchPageRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output =
         oneiron::task_verb::sdk::vault_calendar_search(&memory, input).map_err(mcp_facade_error)?;
@@ -58938,7 +58938,7 @@ async fn mcp_verb_row_vault_calendar_freebusy(row: McpVerbRow<'_>) -> McpVerbRow
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::task_verb::sdk::CalendarFreebusyRequest =
+    let input: oneiron::calendar::query::CalendarFreebusyPageRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::vault_calendar_freebusy(&memory, input)
         .map_err(mcp_facade_error)?;
