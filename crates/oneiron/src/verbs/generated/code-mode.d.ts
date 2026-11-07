@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1346 code-mode rows (1304 host rows, 42 run rows), 4747 declarations.
-// Replies: 1154 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1349 code-mode rows (1307 host rows, 42 run rows), 4757 declarations.
+// Replies: 1157 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -706,7 +706,7 @@ declare namespace Sdk {
   type RetrievalTraceChannelRecord = { stage: RetrievalTraceStage; signal: RetrievalSignal; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTraceStageRecord = { stage: RetrievalTraceStage; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTrace = { fork_hash?: RetrievalTraceForkHash; per_channel: RetrievalTraceChannelRecord[]; fused: RetrievalTraceStageRecord; blended: RetrievalTraceStageRecord; reranked: RetrievalTraceStageRecord; final: RetrievalTraceStageRecord; fusion_list_length?: number };
-  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; query_expander_id?: string | null; reranker_id?: string | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
+  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; query_expander_id?: string | null; dispatch_attempt?: AttemptId | null; policy_manifest_ref?: string | null; policy_manifest_body_hash?: string | null; reranker_id?: string | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
   type RetrievalRewardEvidence = { retrievalRunIds: RetrievalRunId[]; turn_id: number[]; gate_score: number; confirmed_fact_hit: boolean; latency_scale_us: number; cost_weight: number };
   type RetrievalOutcomeRecord = { version: number; run_id: RetrievalRunId; key: string; reward?: number | null; accepted?: boolean | null; metadata: Record<string, string>; updated_at: number; reward_evidence?: RetrievalRewardEvidence | null };
   type RetrievalRunEvidence = { run: RetrievalRunRecord; outcomes: RetrievalOutcomeRecord[] };
@@ -1101,6 +1101,13 @@ declare namespace Sdk {
   type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
   type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
   type SkillHubRequest = { hub: EntityId };
+  type ClawHubSearchRequest = { hub: EntityId; q: string; limit?: number | null; highlighted_only?: boolean | null; non_suspicious_only?: boolean | null; response_limit_bytes?: number | null };
+  type ClawHubSearchOwner = { handle?: string | null; displayName?: string | null; image?: string | null };
+  type ClawHubSearchHit = { score?: number | null; slug?: string | null; displayName?: string | null; summary?: string | null; version?: string | null; updatedAt?: number | null; ownerHandle?: string | null; owner?: ClawHubSearchOwner | null };
+  type ClawHubSearchReply = { outcome: "results"; results?: ClawHubSearchHit[] | null } | { outcome: "provider_error"; status: number; retry_after?: string | null; body: string };
+  type ClawHubImportRequest = { hub: EntityId; slug: string; version?: string | null; tag?: string | null; publisher: string; expected_skill_id?: string | null; expected_skill_version?: string | null; expected_content_hash?: string | null; response_limit_bytes?: number | null };
+  type ClawHubGitHubHandoff = { sourceRef: string; repo: string; commit: string; path: string; contentHash: string; archiveUrl: string };
+  type ClawHubImportReply = { outcome: "imported"; entity: EntityId; source: HubRef; github_handoff?: ClawHubGitHubHandoff | null } | { outcome: "provider_error"; status: number; retry_after?: string | null; body: string };
   type SkillPublisherRequest = { hub: EntityId; identity: string };
   type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
   type HubRefRequest = { hub: EntityId; ref_string: string };
@@ -1613,13 +1620,15 @@ declare namespace Sdk {
   type FilesSourceDetachAnswer = { source: EntityId; folder?: string | null; detached: boolean };
   type FilesSourceListRequest = Record<string, never>;
   type FilesSourceList = { world?: FilesWorldView | null; sources: FilesSourceView[] };
-  type FilesSourceFilesRequest = { source: EntityId };
+  type FilesSourceFilesRequest = { source: EntityId; cursor?: string | null; limit?: number | null };
   type FileHandle = { source: EntityId; path: string };
   type FilesFileState = "landed" | "proposed" | "retracted" | "name_only";
-  type NameOnlyReason = "unsupported" | "not_text" | "unreadable" | "empty" | "linked";
+  type NameOnlyReason = "unsupported" | "not_text" | "unreadable" | "empty" | "linked" | "refused";
   type FileReadiness = "text" | { name_only: { why: NameOnlyReason } };
   type FilesFileView = { handle: FileHandle; state: FilesFileState; readiness: FileReadiness; note?: EntityId | null; fork?: EntityId | null; revision?: string | null; bytes?: number | null; modified_at?: number | null; first_seen_at?: number | null; indexed_at?: number | null };
-  type FilesSourceFiles = { source: EntityId; files: FilesFileView[] };
+  type FilesSourceFiles = { source: EntityId; files: FilesFileView[]; next_cursor?: string | null };
+  type FilesSourceExcludeRequest = { source: EntityId; include?: string[] | null; exclude?: string[] | null };
+  type FilesSourceExcludeAnswer = { source: EntityId; include: string[]; exclude: string[] };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
@@ -3827,9 +3836,10 @@ declare namespace Sdk {
   type CalendarIcsFeedRequest = { system: string };
   type CalendarIcsFeedStatus = { config: IcsFeedPollConfig; cursor?: IcsFeedCursorSnapshot | null; last_poll?: CalendarIcsPollCompletion | null };
   type CalendarPassportReadRequest = { event_ref: string; system: string; uid: string };
+  type CalendarPassportSource = { artifact: EntityId; version: number };
   type CalendarPassportDirection = "inbound" | "outbound" | "two_way";
   type CalendarPassportPresence = "live" | "absent";
-  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
+  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; source?: CalendarPassportSource | null; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
   type CalendarPassportRevision = { claim_ref: string; event_ref: string; recorded_at: number; approval: string; lifecycle: string; stale: boolean; passport: CalendarPassportValue };
   type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
   type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
@@ -6546,6 +6556,8 @@ declare const vault: Sdk.VaultHost & {
       convert(input: Sdk.FilesSourceConvertRequest): Promise<Sdk.FilesSourceAttachAnswer | StoredResult>;
       /** The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay. */
       detach(input: Sdk.FilesSourceDetachRequest): Promise<Sdk.FilesSourceDetachAnswer | StoredResult>;
+      /** The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it. */
+      exclude(input: Sdk.FilesSourceExcludeRequest): Promise<Sdk.FilesSourceExcludeAnswer | StoredResult>;
       /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
       files(input: Sdk.FilesSourceFilesRequest): Promise<Sdk.FilesSourceFiles | StoredResult>;
       /** The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts. */
@@ -7750,6 +7762,12 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skill_hubs: {
+    clawhub: {
+      /** Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin. */
+      import(input: Sdk.ClawHubImportRequest): Promise<Sdk.ClawHubImportReply | StoredResult>;
+      /** Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages. */
+      search(input: Sdk.ClawHubSearchRequest): Promise<Sdk.ClawHubSearchReply | StoredResult>;
+    };
     default: {
       /** Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.DefaultSkillHub | StoredResult>;
