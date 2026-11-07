@@ -12,6 +12,8 @@
 //! NDJSON and SSE are not `application/json`, and a streamed body has no exact
 //! size, so a stream still flushes each event plain.
 
+mod stream;
+
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -128,18 +130,25 @@ async fn decode_request(request: Request, floor: usize) -> Result<Request, ApiEr
             ));
         }
     };
+    let staged = stream::stages(&request);
     let (mut parts, body) = request.into_parts();
-    let raw = axum::body::to_bytes(body, cap)
-        .await
-        .map_err(|_| too_large(cap))?;
-    let decoded = tokio::task::spawn_blocking(move || decode(codec, &raw, cap))
-        .await
-        .map_err(|_| ApiError::internal_server_error("the request body decoder stopped"))??;
+    let (body, length) = if staged {
+        stream::decode_body(body, codec, cap).await?
+    } else {
+        let raw = axum::body::to_bytes(body, cap)
+            .await
+            .map_err(|_| too_large(cap))?;
+        let decoded = tokio::task::spawn_blocking(move || decode(codec, &raw, cap))
+            .await
+            .map_err(|_| ApiError::internal_server_error("the request body decoder stopped"))??;
+        let length = decoded.len() as u64;
+        (Body::from(decoded), length)
+    };
     parts.headers.remove(header::CONTENT_ENCODING);
     parts
         .headers
-        .insert(header::CONTENT_LENGTH, HeaderValue::from(decoded.len()));
-    Ok(Request::from_parts(parts, Body::from(decoded)))
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+    Ok(Request::from_parts(parts, body))
 }
 
 /// Decodes `raw` and holds at most `cap + 1` bytes of what it decodes to.

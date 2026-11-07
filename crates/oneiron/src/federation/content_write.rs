@@ -36,8 +36,8 @@ impl ContentOwner {
 const ACTIVE_ACTOR: SideTable<(), InflightActor, Raw> =
     SideTable::new(&side_table::FEDERATION_ACTOR_CONTENT_INFLIGHT);
 
-/// [`ACTIVE_ACTOR`]'s value: actor id16 + class byte, then the 32-byte
-/// authority frontier when the writer carries one.
+/// [`ACTIVE_ACTOR`]'s value: actor id16 + class byte, followed by the
+/// optional 32-byte authority frontier and 16-byte run attempt.
 struct InflightActor(WriteActor);
 
 impl RawValue for InflightActor {
@@ -47,11 +47,14 @@ impl RawValue for InflightActor {
         if let Some(frontier) = self.0.authority_frontier() {
             bytes.extend_from_slice(&frontier);
         }
+        if let Some(run_attempt) = self.0.run_attempt() {
+            bytes.extend_from_slice(&run_attempt);
+        }
         Ok(bytes)
     }
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        if raw.len() != 17 && raw.len() != 49 {
+        if !matches!(raw.len(), 17 | 33 | 49 | 65) {
             return Err(Error::CorruptedIndex("actor content in-flight binding").into());
         }
         let actor = EntityId::from_bytes(
@@ -61,16 +64,22 @@ impl RawValue for InflightActor {
         )?;
         let class = EdgeActorClass::try_from_u8(raw[16])
             .ok_or(Error::CorruptedIndex("actor content class"))?;
-        let writer = WriteActor::new(actor, class);
-        Ok(Self(if raw.len() == 49 {
-            writer.with_authority_frontier(
-                raw[17..]
+        let mut writer = WriteActor::new(actor, class);
+        if matches!(raw.len(), 49 | 65) {
+            writer = writer.with_authority_frontier(
+                raw[17..49]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("actor content frontier"))?,
-            )
-        } else {
-            writer
-        }))
+            );
+        }
+        if matches!(raw.len(), 33 | 65) {
+            writer = writer.with_run_attempt(
+                raw[raw.len() - 16..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("actor content run attempt"))?,
+            );
+        }
+        Ok(Self(writer))
     }
 }
 

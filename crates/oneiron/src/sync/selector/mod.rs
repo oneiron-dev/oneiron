@@ -86,6 +86,7 @@ pub(crate) fn keep_carried_born_with(
     born_with::keep_carried(vault, carried)
 }
 pub(in crate::sync) use self::codec::granted_window_doc;
+pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
