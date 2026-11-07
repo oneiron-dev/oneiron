@@ -127,7 +127,6 @@ pub(super) fn persist_review(
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts,
-            receipts: receipts.to_vec(),
             spawn_attempt: request.spawn_attempt,
             receipts: receipts.to_vec(),
         };
@@ -242,7 +241,6 @@ struct StoredReview {
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
-    pub receipts: Vec<DecisionReceipt>,
     /// The launched run the review was first declared for. A review declared
     /// for none stores none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
