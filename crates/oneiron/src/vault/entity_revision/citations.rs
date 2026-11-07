@@ -193,7 +193,7 @@ impl Vault {
     }
 
     /// The record that retains `revision` in `txn` (FIX 3959), named by the
-    /// revision alone: how a provenance audit finds the document an
+    /// revision alone: how the scoped CLAIM admission finds the record an
     /// `edge.provenance` Claim's `source_revision_ref` cites. `None` when no
     /// record retains it, as for an opaque legacy value.
     pub(crate) fn revision_record_in(
