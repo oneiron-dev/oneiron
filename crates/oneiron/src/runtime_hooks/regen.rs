@@ -727,11 +727,10 @@ impl Vault {
         candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
+        let actor = owner.revalidate(self)?;
         self.enact_hook_regen(
             HookPut::Owner(owner),
-            &HookRegenActor::Owner {
-                actor: owner.actor(),
-            },
+            &HookRegenActor::Owner { actor },
             binding,
             candidate_hash,
             stamped,

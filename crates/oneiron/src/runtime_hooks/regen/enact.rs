@@ -267,15 +267,15 @@ impl Vault {
             for id in std::iter::once(binding).chain(rebound) {
                 REGEN.put(self, txn, &id, &reverted)?;
             }
+            // The receipt names the owner this act's own transaction proves.
+            let actor = owner.revalidate_in_txn(self, txn)?;
             history::append_in_txn(
                 self,
                 txn,
                 binding,
                 &current,
                 &prior.body_hash,
-                &HookRegenActor::Owner {
-                    actor: owner.actor(),
-                },
+                &HookRegenActor::Owner { actor },
                 HookRegenEvent::Reverted {
                     from_hash: adopted_hash.to_owned(),
                     to_hash: prior.body_hash.clone(),

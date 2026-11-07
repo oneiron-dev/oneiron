@@ -273,9 +273,8 @@ impl Memory<'_> {
             runtime,
             regenerator,
             input.binding,
-            &HookRegenActor::Owner {
-                actor: owner.actor(),
-            },
+            // `hook_regen_owner` proved the owner is this door's actor.
+            &HookRegenActor::Owner { actor: self.actor },
         )?;
         Ok(self
             .vault
