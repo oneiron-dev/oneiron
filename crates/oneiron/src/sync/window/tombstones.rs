@@ -132,10 +132,12 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
         map_delete(&entities, &hex_id)?;
     }
     // The deleted row's birth leaves with its carrier, and so does a peer's
-    // origin for it (FIX 4550).
+    // origin for it (FIX 4550), and its binding with each policy no other
+    // binding reaches (Engine A).
     crate::sync::row_birth::remove_birth_carrier(doc, id)?;
     crate::sync::origin_positions::remove_carrier(doc, id)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, [*id])?;
+    crate::sync::source_audiences::remove_record(doc, id)?;
     // FIX 7608 (KEY STORE = A, FIX 10799): a masked copy row a peer sent
     // under the item's derived copy id goes with it. Only a carrier present
     // under that exact key is touched.
@@ -147,6 +149,10 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
         crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
         crate::sync::origin_positions::remove_carrier(doc, &copy)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
+    }
+    // A copy's binding goes whether or not its row was carried.
+    if let Some(copy) = copy {
+        crate::sync::source_audiences::remove_record(doc, &copy)?;
     }
 
     // Edge keys are swept on the EFFECTIVE hardness, not just the incoming

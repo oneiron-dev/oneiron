@@ -239,8 +239,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Registration reflects this server's verified host binding. A bound
         // QuickJS provider enables durable execute_code on both endpoints;
         // without one, admission returns code_host_unbound before any run.
-        .route("/mcp", post(mcp_gateway))
-        .route("/mcp/tool-first", post(mcp_tool_first_gateway))
+        //
+        // Each is MCP Streamable HTTP (FIX 4902): a POST carries every
+        // message, and GET and DELETE answer 405, since the server opens no
+        // stream of its own and holds no session.
+        .route(
+            "/mcp",
+            post(mcp_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
+        .route(
+            "/mcp/tool-first",
+            post(mcp_tool_first_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
         .route(
@@ -270,8 +284,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
-        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
-        // limit stays a property of this nest alone.
+        // by the storage-shaped `/v1/core` routes above. Its bodies read up to
+        // the request floor this router sets (ABC transport row T2).
         .nest(
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
@@ -294,6 +308,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
+        .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
         .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))

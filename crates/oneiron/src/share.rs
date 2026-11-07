@@ -798,6 +798,19 @@ fn share_claim_facets(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
+    // Every facet is read: a long list raises the advisory edge-scan check,
+    // never a refusal of the recipient's view (FIX 10013).
+    let mut count = crate::scan_check::ScanCount::start(
+        store,
+        txn,
+        crate::store::EngineScan::EdgePeerRows,
+        &[
+            &[crate::ports::EdgeDirection::Out as u8][..],
+            id.as_bytes(),
+            &[EdgeKind::FacetOf as u8][..],
+        ]
+        .concat(),
+    )?;
     let mut facets = Vec::new();
     for entry in store.port_edges(
         txn,
@@ -806,12 +819,11 @@ fn share_claim_facets(
         Some(EdgeKind::FacetOf),
         None,
     )? {
-        if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("share claim facets"));
-        }
+        count.row();
         let edge_row = entry?;
         facets.push(edge_row.target);
     }
+    count.defer(store);
     // Match the existing read lane's edge-first, scope-map fallback convention.
     if facets.is_empty()
         && let Some(Value::Map(entries)) = body.scope.as_ref()

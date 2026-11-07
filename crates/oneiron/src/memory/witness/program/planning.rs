@@ -3,6 +3,9 @@
 //! `memory::witness::program` defines `WitnessPlan`, `WitnessAdmission` and `AssertionRead`.
 
 use super::*;
+use crate::store::source_audience_obligation::{
+    decode_source_audience_obligation, encode_source_audience_required,
+};
 
 impl Memory<'_> {
     pub(super) fn plan_witness<'t>(
@@ -48,11 +51,21 @@ impl Memory<'_> {
             Landing::Base { imported, .. } => imported.cloned(),
             Landing::Overlay { .. } => None,
         };
+        // A source landing's proof stamps every row of the turn with the
+        // source-audience obligation (fix list row 16256).
+        let source_bound = imported
+            .as_ref()
+            .is_some_and(|stamp| stamp.source_audience.is_some());
         let mut messages = Vec::with_capacity(turn.messages.len());
         for (position, message) in turn.messages.iter().enumerate() {
             let id = id_from_optional_hex(self.vault, message.id.as_deref())?;
             let envelope = witness_message_envelope(message);
             let body = envelope.encode_body()?;
+            let stamped = if source_bound {
+                Some(envelope.encode_source_bound_body()?)
+            } else {
+                None
+            };
             let at = imported
                 .as_ref()
                 .and_then(|stamp| stamp.message_occurred.get(position).copied())
@@ -63,6 +76,7 @@ impl Memory<'_> {
                 occurred: TimeRange { start: at, end: at },
                 envelope,
                 body,
+                stamped,
             });
         }
         // A witnessed row is learned as it occurs; an imported one when it is
@@ -75,6 +89,18 @@ impl Memory<'_> {
             .as_ref()
             .map_or(turn.occurred_at, |stamp| stamp.imported_at);
         let conversation_body = match &imported {
+            // The landing's proof stamps the conversation it mints.
+            Some(stamp) if stamp.source_audience.is_some() => {
+                encode_source_audience_required(&stamp.conversation_body)?
+            }
+            // Without it, no conversation body names the obligation.
+            Some(stamp)
+                if decode_source_audience_obligation(&stamp.conversation_body).is_present() =>
+            {
+                return Err(MemoryError::bad_request(
+                    "an imported conversation carries no source-audience obligation of its own",
+                ));
+            }
             Some(stamp) => stamp.conversation_body.clone(),
             None => encode_rmpv(&Value::Map(Vec::new()))?,
         };
@@ -151,7 +177,23 @@ impl Memory<'_> {
         let policy = resolve_policy_manifest(&self.vault.store, wtxn)?;
         let write_actor = self.write_actor();
         let mut authorized = Vec::with_capacity(plan.messages.len());
+        let source_audience = plan.source_audience();
         for planned in &plan.messages {
+            // A source landing's row: the same ceiling over its plain
+            // encoding, then its source-bound bytes, under the landing's
+            // proof (fix list row 16256).
+            if let (Some(birth), Some(stamped)) = (source_audience, planned.stamped.as_deref()) {
+                authorized.push(check_source_bound_witness_message_ceiling(
+                    &self.vault.store,
+                    wtxn,
+                    write_actor,
+                    &planned.envelope,
+                    stamped,
+                    &policy,
+                    birth,
+                )?);
+                continue;
+            }
             // The Coach's own question about a pending training offer may
             // carry its scoped reach to the System-author floor (OF-577);
             // every other message carries none.
@@ -197,6 +239,13 @@ impl Memory<'_> {
             &plan.conversation_id,
             existing_turn.as_ref(),
         )?;
+        validate_container_obligation(
+            dbs,
+            wtxn,
+            source_audience.is_some(),
+            &plan.conversation_id,
+            existing_turn.as_ref(),
+        )?;
         // Expected present and gone (a concurrent delete). Recreating it here
         // would silently mint the turn the caller asked to append to.
         if existing_turn.is_none() && !plan.turn_is_new {
@@ -212,7 +261,7 @@ impl Memory<'_> {
                 dbs,
                 wtxn,
                 &planned.id,
-                &planned.body,
+                planned.stored_body(),
                 &plan.turn_id,
                 &plan.conversation_id,
                 attributed.then_some(self.actor),
@@ -251,7 +300,11 @@ impl Memory<'_> {
                     let agent = self.actor_class == crate::edge::EdgeActorClass::Agent;
                     let author = person_author.or(agent.then_some(self.actor));
                     let body = match &plan.imported {
-                        Some(stamp) => encode_imported_turn_body(speaker, stamp.source)?,
+                        Some(stamp) => encode_imported_turn_body(
+                            speaker,
+                            stamp.source,
+                            stamp.source_audience.as_ref(),
+                        )?,
                         None => encode_witness_turn_body(speaker, author, quoted)?,
                     };
                     AdmittedTurn::Mint {
