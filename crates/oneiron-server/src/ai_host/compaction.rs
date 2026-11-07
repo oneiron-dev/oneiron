@@ -456,7 +456,8 @@ impl LiveCompaction {
     /// a backend this host does not serve falls back to the host's own seat,
     /// so the run still compacts. A profile naming `self` (FIX 4465) is
     /// recognized first and never falls back: its definition comes back with
-    /// it, for the run's own writer.
+    /// it, for the run's own writer. A definition that carries no profile
+    /// writes as itself on the host's window (FIX 7744).
     fn run_profile(
         &self,
         byline: WriteActor,
@@ -475,7 +476,7 @@ impl LiveCompaction {
             return (self.profile.clone(), None);
         };
         let Some(mut profile) = definition.memory_profile.clone() else {
-            return (self.profile.clone(), None);
+            return (self.profile.clone().as_self_writer(), Some(definition));
         };
         if profile.compaction == CompactionOwnership::Engine && profile.writes_as_self() {
             return (profile, Some(definition));
@@ -585,9 +586,8 @@ impl CompactionSpawn for ThreadSpawn {
                 );
                 return;
             };
-            if let Err(error) = std::thread::Builder::new()
-                .name("code-mode-compaction".to_owned())
-                .spawn(move || {
+            if let Err(error) =
+                crate::engine_thread("code-mode-compaction".to_owned()).spawn(move || {
                     let _permit = permit;
                     pass();
                 })

@@ -46,7 +46,7 @@ use super::proposals::{
     NoteFork, PendingNoteForkErase,
 };
 use super::side_keys::HexPair;
-use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
+use super::sync_rows::{NOTE_FORK_AUTHORITY, NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
 use super::title_index;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -158,6 +158,11 @@ fn capture_operation_receipts(
             None => out.unclassified(row.at, None, Unresolved::NoOwner),
         }
     }
+    // Each mark on a fork its authority sent, under the NOTE its key leads
+    // with (FIX 12789).
+    for row in rows::typed_rows(dbs, txn, NOTE_FORK_AUTHORITY, out)? {
+        out.exact(OwnerRef::entity(&row.key.0.0), row.at, row.bytes);
+    }
     for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT_BY_REQUEST, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         rows::split_actors(out, owner, NOTE_RECEIPT_BY_REQUEST, row, |receipt| {
@@ -179,6 +184,7 @@ fn owns(at: &RowLocator) -> bool {
         NOTE_PROPOSAL_DOC.decl(),
         SYNC_NC_E.decl(),
         NOTE_RECEIPT_BY_REQUEST.decl(),
+        NOTE_FORK_AUTHORITY.decl(),
     ]
     .into_iter()
     .any(|decl| at.in_table(decl))
@@ -213,6 +219,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(SYNC_NC_E, at, value)
     } else if at.in_table(NOTE_RECEIPT_BY_REQUEST.decl()) {
         rows::check_row(NOTE_RECEIPT_BY_REQUEST, at, value)
+    } else if at.in_table(NOTE_FORK_AUTHORITY.decl()) {
+        rows::check_row(NOTE_FORK_AUTHORITY, at, value)
     } else if pins::owns(at) {
         pins::check(at, value)
     } else if title_index::checkpoint::owns(at) {

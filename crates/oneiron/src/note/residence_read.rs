@@ -88,7 +88,7 @@ fn thin_note_view(
         .document
         .strip_prefix(&[crate::store::document_frame_tags::TAG_DOCUMENT])
         .ok_or_else(|| invalid("opened NOTE document frame"))?;
-    let frame = crate::sync::transport::decode_document(bytes)
+    let frame = crate::sync::transport::decode_unsplit_document(bytes)
         .map_err(|_| invalid("opened NOTE document frame"))?;
     if frame.entity != thin.entity_id
         || frame.kind != crate::store::document_frame_tags::document_sub_tags::STATE
