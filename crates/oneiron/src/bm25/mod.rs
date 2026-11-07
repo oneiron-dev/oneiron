@@ -60,7 +60,9 @@ use self::query::{
     QueryTerm, apply_recency_blend, collapse_lexical_query_hint_scores, collect_query_terms,
     compute_avgdl, lexical_query_hint_scope_id, scores_for_withdrawn,
 };
-use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer};
+#[cfg(test)]
+use crate::analyzer::AnalyzerChannel;
+use crate::analyzer::{AnalyzerContext, MultilingualAnalyzer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;

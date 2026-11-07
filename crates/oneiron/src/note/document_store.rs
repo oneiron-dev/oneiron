@@ -147,9 +147,13 @@ fn persist_structural_with_origin(
         Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),
         None => vault.batch_in(),
     };
-    batch
-        .text(&doc.id, &[("markdown", markdown.as_str())])
-        .apply(txn)?;
+    // Title, tags and body, each the NOTE field it ranks as (FIX 7789).
+    let fields = doc.index_fields(&markdown)?;
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(name, text)| (*name, text.as_str()))
+        .collect();
+    batch.text(&doc.id, &fields).apply(txn)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
