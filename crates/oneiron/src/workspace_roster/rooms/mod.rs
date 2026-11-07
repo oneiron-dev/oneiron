@@ -474,6 +474,27 @@ impl Vault {
         }
     }
 
+    /// [`Self::room_audience_members_in_txn`] in the order the room's
+    /// owning record holds them (FIX 10567): a project home room's
+    /// validated effective seats, an ordinary Conversation's ledger members
+    /// as its typed body lists them
+    /// ([`Self::members_in_record_order_in_txn`]). The same members, never
+    /// sorted: a caller that binary-searches them sorts its own copy.
+    pub(crate) fn room_audience_members_in_record_order_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        match project_room_of(self, txn, room)? {
+            Some(room) => room
+                .member_ids
+                .iter()
+                .map(|id| EntityId::from_hex(id))
+                .collect(),
+            None => self.members_in_record_order_in_txn(txn, room),
+        }
+    }
+
     /// Host roster configuration, not a user message. A platform handle maps
     /// to exactly one present actor. The mapping never creates grants.
     pub fn bind_room_handle(&self, room: EntityId, handle: &str, actor: EntityId) -> Result<()> {

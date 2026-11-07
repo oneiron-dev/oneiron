@@ -16,7 +16,7 @@ use super::work::{self, FeedbackTriageNodeAnswer, FeedbackTriageStep, FeedbackTr
 use super::{
     COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET, FeedbackTriageHandoff,
-    FeedbackTriageOutput, FeedbackTriageSourceRef, FeedbackTriageWorkNode, HANDOFFS,
+    FeedbackTriageOutput, FeedbackTriageSourceRef, FeedbackTriageWorkNode,
     check_feedback_triage_findings, erased, handoff_key, job_handoff_in_txn,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
@@ -265,7 +265,7 @@ pub(super) fn reconcile_in_txn(
     };
     let queued = enqueue_owed_in_txn(vault, txn, &owner, work, now)?;
     if queued > 0 {
-        HANDOFFS.put(&vault.store, txn, key, handoff)?;
+        super::handoff_index::put_handoff_in_txn(&vault.store, txn, key, handoff)?;
     }
     Ok(queued > 0)
 }
@@ -353,7 +353,7 @@ impl Vault {
                 // The pin changed, so unlike Wait this persists the handoff
                 // before the host continues on it.
                 handoff.work = Some(work.clone());
-                HANDOFFS.put(
+                super::handoff_index::put_handoff_in_txn(
                     &self.store,
                     txn,
                     &handoff_key(handoff.retained()?.0),
@@ -384,7 +384,7 @@ impl Vault {
                 return Err(lost_lease());
             }
             handoff.work = Some(work.clone());
-            HANDOFFS.put(
+            super::handoff_index::put_handoff_in_txn(
                 &self.store,
                 txn,
                 &handoff_key(handoff.retained()?.0),
@@ -522,7 +522,7 @@ impl Vault {
                     served_model: served.to_owned(),
                     recorded_at: now,
                 });
-                HANDOFFS.put(
+                super::handoff_index::put_handoff_in_txn(
                     &self.store,
                     txn,
                     &handoff_key(handoff.retained()?.0),

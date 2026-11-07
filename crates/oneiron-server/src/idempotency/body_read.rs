@@ -60,13 +60,17 @@ fn too_large(headers: &HeaderMap, limit: usize, sent: u64) -> ApiError {
         "keyed request body is past the keyed routes' limit"
     );
     ApiError::new(
-        format!("the request body exceeds the {limit} byte limit a keyed request is read up to"),
+        format!(
+            "the request body exceeds limits.request_body_bytes ({limit} bytes), the limit a keyed request is read up to"
+        ),
         ApiErrorDetails::PayloadTooLarge {
             field: BODY_FIELD.to_owned(),
             max_bytes: limit,
             received_bytes: usize::try_from(received).unwrap_or(usize::MAX),
         },
-        [format!("Send a request body of at most {limit} bytes.")],
+        [format!(
+            "Send a request body of at most {limit} bytes, or raise limits.request_body_bytes on this server."
+        )],
     )
 }
 

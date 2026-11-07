@@ -162,7 +162,7 @@ impl LimitQuestions {
             },
         }
     }
-    /// Nobody waits in `row`'s line since its crossing `epoch`.
+    /// `row`'s crossing `epoch` is over: nobody waits, and no bundle lacks room.
     pub(crate) fn drained(&self, row: LimitRow, epoch: u64) {
         if row == LimitRow::Connections
             && let Some(pressure) = &self.pool_pressure

@@ -337,7 +337,7 @@ impl Vault {
             );
             let new_reviewers = card.reviewer_revisions();
             sync_reviewer_membership(&self.store, txn, &key, &old_reviewers, &new_reviewers)?;
-            CARDS.put(&self.store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
             Ok(card)
@@ -407,7 +407,7 @@ impl Memory<'_> {
                 &old_reviewers,
                 &new_reviewers,
             )?;
-            CARDS.put(&self.vault().store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&self.vault().store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self.vault(), txn);
             Ok(ConcernCardSummary::of(&card))

@@ -216,6 +216,63 @@ fn refuse(id: Option<EntityId>, err: Error) -> EntityStep {
     })
 }
 
+/// The source-audience landing of the row the ladder's `step` wrote in
+/// `savepoint` under `key`. Engine A (6 Nov 03:46): the row's carried
+/// binding and its policy closure, from `doc` when one carries them, land in
+/// the savepoint that admitted the row. One that contradicts the held word
+/// refuses the row with all it staged; one whose closure has not arrived
+/// holds the row back with it, pending, as a pad reference waits for its
+/// pad. Fix list row 16256: a row whose own bytes name the source-audience
+/// obligation lands bound, or waits pending with its raw bytes kept until
+/// its binding comes: it is never materialized unbound, whether its window
+/// carries no binding for it or carries no map at all. Every door that
+/// writes a replicated row out of a window lands it through here.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(in crate::sync) fn land_source_audience_in(
+    vault: &Vault,
+    savepoint: &mut heed::RwTxn<'_>,
+    doc: Option<&loro::LoroDoc>,
+    window_key: &str,
+    key: &str,
+    mut step: EntityStep,
+) -> Result<EntityStep> {
+    if !matches!(step, EntityStep::Quarantine(_) | EntityStep::Pending)
+        && let Some(doc) = doc
+        && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
+        && crate::vault::live_entity_row_in_txn(&vault.store, savepoint, &id)?.is_live()
+    {
+        match crate::sync::source_audiences::apply_record_in_txn(
+            vault, savepoint, doc, window_key, &id,
+        )? {
+            crate::source_audience::ReplicaMerge::Conflict => {
+                step = refuse(Some(id), crate::sync::source_audiences::conflict_error());
+            }
+            crate::source_audience::ReplicaMerge::Pending => {
+                step = EntityStep::Quarantine(EntityRefusal {
+                    id: Some(id),
+                    err: crate::sync::source_audiences::pending_error(),
+                    retry: RefusalRetry::DependencyPending,
+                });
+            }
+            crate::source_audience::ReplicaMerge::Held
+            | crate::source_audience::ReplicaMerge::Written => {}
+        }
+    }
+    if let Some(id) = step.written()
+        && crate::source_audience::unbound_obligation_in(vault, savepoint, &id)?
+    {
+        step = EntityStep::Quarantine(EntityRefusal {
+            id: Some(id),
+            err: crate::sync::source_audiences::pending_error(),
+            retry: RefusalRetry::DependencyPending,
+        });
+    }
+    Ok(step)
+}
+
 /// [`ingest_entity_in_txn`] inside a savepoint of `parent`: a refusal rolls back whatever the
 /// door staged (project ancestry and room reconciliation can reject after staging a row) and
 /// records the op in `x:` on the parent; every other step commits into the parent.
@@ -234,6 +291,14 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         _ => false,
     };
     let step = ingest_entity_in_txn(ctx, &mut savepoint, key, value)?;
+    let step = land_source_audience_in(
+        ctx.vault,
+        &mut savepoint,
+        ctx.carrier_doc(),
+        ctx.window_key,
+        key,
+        step,
+    )?;
     if let EntityStep::Quarantine(refusal) = &step {
         drop(savepoint);
         quarantine_rejected_op_in_txn(

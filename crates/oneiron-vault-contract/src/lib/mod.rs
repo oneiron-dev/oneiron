@@ -22,6 +22,8 @@ pub mod artifact_origin;
 /// The backup handoff: a label's retention pin and the supervisor's
 /// root-stage ack (LC backup shipper).
 pub mod backup_handoff;
+/// The supervisor-pinned public recipient for checkpoint host-order members.
+pub mod checkpoint_recipient;
 /// The publisher training outbox: offers, controls and receipts (OF-420).
 pub mod conversation_training;
 mod ctl;
@@ -59,6 +61,7 @@ pub mod settings_policy;
 pub mod slim_control;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
 pub mod tenancy;
+mod usage_export;
 /// The host's vault UID allocation table: its path, file shape and row codec.
 pub mod vault_uids;
 mod version;
@@ -136,6 +139,7 @@ pub use self::preview::{
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };
+pub use self::usage_export::{UsageExportChunk, UsageExportCursor, UsageExportPage};
 pub use self::version::{CONTRACT_VERSION, SLIM_CONTRACT_VERSION, supports_slim};
 pub use self::wake::{
     Schedule, UnixTs, WakeEntry, now_ts, valid_vault_name, validate_wake_entries,

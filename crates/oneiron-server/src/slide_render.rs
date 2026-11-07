@@ -13,8 +13,10 @@
 //! and a stop flag its caller sets on leaving. The memory it reads pages into
 //! is leased from the machine's ([`MachineMemory`](crate::machine::MachineMemory))
 //! before it is read, and named allocated once it is (FIX 8240). Its
-//! scratch lives in the vault disk's private spool, and each write claims
-//! its room on that disk's floor first. A turn that does not come, memory
+//! scratch normally lives in the vault disk's private spool. An explicit
+//! `ONEIRON_RENDER_SCRATCH` selects a capped Linux tmpfs instead (FIX 8239,
+//! file-content boundary only; see docs/ops/renderer-scratch.md). Each write
+//! claims room on its actual filesystem's floor. A turn that does not come, memory
 //! that does not fit, or a disk at its reserve answers typed:
 //! [`RENDER_DEADLINE`], [`RENDER_MEMORY_FLOOR`], [`RENDER_DISK_FLOOR`].
 use std::path::{Path, PathBuf};
@@ -26,12 +28,15 @@ use std::time::{Duration, Instant};
 use oneiron::edit_roundtrip::slides_review::SlideRenderer;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::office_body::DeckPreview;
-use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{EntityId, Error, Result};
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
-use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
+use crate::machine::{DiskClaim, MemoryLease, MemoryRefusal};
 use crate::server::SyncServer;
+
+mod scratch;
+pub(crate) use scratch::RendererScratch;
+use scratch::{Scratch, Source};
 
 /// The whole deck's export to PDF, and one page's raster.
 const CONVERT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -93,24 +98,25 @@ struct LibreOfficeSlides {
 static RENDERER: OnceLock<Option<LibreOfficeSlides>> = OnceLock::new();
 
 /// The host's renderer, looked for once, inside admitted work, its probe
-/// run in a private directory under `spool`.
-fn host_renderer(spool: &Path) -> Option<&'static LibreOfficeSlides> {
+/// run in a private directory on the selected scratch filesystem.
+fn host_renderer(source: &Source) -> Option<&'static LibreOfficeSlides> {
     RENDERER
-        .get_or_init(|| LibreOfficeSlides::find(spool))
+        .get_or_init(|| LibreOfficeSlides::find(source))
         .as_ref()
 }
 
 impl LibreOfficeSlides {
-    fn find(spool: &Path) -> Option<Self> {
+    fn find(source: &Source) -> Option<Self> {
         let soffice = on_path("soffice")?;
         let pdftoppm = on_path("pdftoppm")?;
-        let scratch = Scratch::new(spool).ok()?;
+        let scratch = Scratch::new(source).ok()?;
         let out = scratch.path.join("version");
-        let mut version = Command::new(&soffice);
+        let child_path = scratch.child_path();
+        let mut version = scratch.command(&soffice).ok()?;
         version
-            .arg(profile_arg(&scratch.path))
+            .arg(profile_arg(&child_path))
             .arg("--version")
-            .env("TMPDIR", &scratch.path)
+            .env("TMPDIR", &child_path)
             .stdout(std::fs::File::create(&out).ok()?);
         // The one look keeps its own timeout: no caller's deadline or
         // leaving ends it, as its answer stands for every later render.
@@ -151,6 +157,8 @@ pub(crate) enum RenderRefusal {
     /// The vault disk has no room past its reserve for what the render
     /// writes.
     DiskFloor,
+    /// The explicitly selected scratch filesystem is at its reserve.
+    ScratchDiskFloor,
 }
 
 impl RenderRefusal {
@@ -164,6 +172,7 @@ impl RenderRefusal {
                 "the deck render needs {needed} bytes of memory, and past its free-memory reserve this machine holds {available} for work"
             ),
             Self::DiskFloor => "the vault's disk is at its free-space reserve (limits.disk_reserve_bytes), and the deck render writes its scratch there".to_owned(),
+            Self::ScratchDiskFloor => "the configured renderer scratch filesystem is at its free-space reserve (limits.disk_reserve_bytes)".to_owned(),
         }
     }
 
@@ -183,6 +192,10 @@ impl RenderRefusal {
                 RENDER_DISK_FLOOR,
                 "Ask again once the vault's disk has room past limits.disk_reserve_bytes.",
             ),
+            Self::ScratchDiskFloor => (
+                RENDER_DISK_FLOOR,
+                "The configured scratch mount needs room past limits.disk_reserve_bytes; check its chosen size and usage.",
+            ),
         };
         let mut error = MemoryError::new(code, self.message(), &[suggestion]);
         if !matches!(self, Self::MemoryFloor { .. }) {
@@ -194,7 +207,7 @@ impl RenderRefusal {
 
 /// One request's renderer (FIX 7653): the host's LibreOffice renderer under
 /// that request's turn in the renderer line, its deadline and stop flag, the
-/// memory it has leased and the vault disk's floor its scratch claims on.
+/// memory it has leased and the selected filesystem's floor its scratch claims on.
 /// Its lease lives as long as it does, and so does a turn taken before the
 /// work began: its caller keeps it until what it admitted is gone, past the
 /// encoding of a preview's answer.
@@ -208,9 +221,7 @@ pub(crate) struct AdmittedRenderer {
     /// One lease, empty at first, grown by each admission; what the work
     /// allocated under it is named so (FIX 8240).
     lease: Mutex<MemoryLease>,
-    disk: DiskFloor,
-    /// The vault disk's private spool, the scratch's parent.
-    spool: PathBuf,
+    source: Source,
     /// The refusal the work failed with, beside the message its error
     /// carries.
     refused: Mutex<Option<(RenderRefusal, String)>>,
@@ -239,11 +250,21 @@ impl AdmittedRenderer {
         turn: Permit,
         stop: Arc<AtomicBool>,
     ) -> MemoryResult<Option<Self>> {
-        let Some(spool) = server.transfers.disk.spool_dir() else {
+        let source = server
+            .renderer_scratch
+            .source(&server.transfers.disk)
+            .map_err(|err| {
+                MemoryError::new(
+                    "invalid_config",
+                    format!("renderer scratch unavailable: {err}"),
+                    &[],
+                )
+            })?;
+        let Some(source) = source else {
             return Err(RenderRefusal::DiskFloor.memory_error());
         };
         let turn = Turn::Held { _permit: turn };
-        Ok(host_renderer(&spool).map(|host| Self::new(server, host, turn, spool, stop)))
+        Ok(host_renderer(&source).map(|host| Self::new(server, host, turn, source, stop)))
     }
 
     /// The renderer for work whose renders each take their turn as they
@@ -259,7 +280,14 @@ impl AdmittedRenderer {
         caller: Option<EntityId>,
         stop: Arc<AtomicBool>,
     ) -> Option<Self> {
-        let Some(spool) = server.transfers.disk.spool_dir() else {
+        let source = match server.renderer_scratch.source(&server.transfers.disk) {
+            Ok(source) => source,
+            Err(error) => {
+                tracing::warn!(%error, "renderer scratch unavailable; the work reads as with no renderer");
+                return None;
+            }
+        };
+        let Some(source) = source else {
             tracing::warn!(
                 kind = RENDER_DISK_FLOOR,
                 "the vault disk keeps no spool to render in; the work reads as with no renderer"
@@ -277,18 +305,18 @@ impl AdmittedRenderer {
                     );
                     return None;
                 };
-                host_renderer(&spool)?
+                host_renderer(&source)?
             }
         };
         let turn = Turn::AtRender { line, caller };
-        Some(Self::new(server, host, turn, spool, stop))
+        Some(Self::new(server, host, turn, source, stop))
     }
 
     fn new(
         server: &SyncServer,
         host: &'static LibreOfficeSlides,
         turn: Turn,
-        spool: PathBuf,
+        source: Source,
         stop: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -297,8 +325,7 @@ impl AdmittedRenderer {
             deadline: Instant::now() + RENDER_TIME,
             stop,
             lease: Mutex::new(server.memory.empty_lease()),
-            disk: server.transfers.disk.clone(),
-            spool,
+            source,
             refused: Mutex::default(),
         }
     }
@@ -343,15 +370,23 @@ impl AdmittedRenderer {
         })
     }
 
-    /// Room for `bytes` the render is about to write, claimed on the vault
-    /// disk's floor past its reserve and every other claim. Dropped once the
-    /// bytes are written, when the disk itself shows them.
+    fn disk_refusal(&self) -> RenderRefusal {
+        if self.source.is_bounded() {
+            RenderRefusal::ScratchDiskFloor
+        } else {
+            RenderRefusal::DiskFloor
+        }
+    }
+
+    /// Room for the impending write on the selected filesystem, past this
+    /// server's reserve and every other claim. Dropped once the filesystem
+    /// itself shows the bytes.
     fn claim(&self, bytes: u64) -> Result<Arc<DiskClaim>> {
-        let claim = self.disk.claim();
-        if self.disk.hold(&claim, bytes) {
+        let claim = self.source.disk.claim();
+        if self.source.disk.hold(&claim, bytes) {
             Ok(claim)
         } else {
-            Err(self.refuse(RenderRefusal::DiskFloor))
+            Err(self.refuse(self.disk_refusal()))
         }
     }
 
@@ -359,10 +394,10 @@ impl AdmittedRenderer {
     /// that took the disk past its reserve, counting every other claim, ends
     /// the render.
     fn floor_holds(&self) -> Result<()> {
-        if self.disk.has_room_for(0) {
+        if self.source.disk.has_room_for(0) {
             Ok(())
         } else {
-            Err(self.refuse(RenderRefusal::DiskFloor))
+            Err(self.refuse(self.disk_refusal()))
         }
     }
 
@@ -376,7 +411,7 @@ impl AdmittedRenderer {
     }
 
     /// `slides` of `deck`, drawn by `deadline` in a private directory of the
-    /// vault disk's spool: each write claims its room on that disk's floor
+    /// selected scratch filesystem: each write claims its room on that floor
     /// first, the floor is checked again once a child wrote, and each page's
     /// bytes are leased before they are read and its file removed once they
     /// are.
@@ -385,15 +420,17 @@ impl AdmittedRenderer {
             deadline,
             stop: &self.stop,
         };
-        let scratch = Scratch::new(&self.spool)?;
+        let scratch = Scratch::new(&self.source)?;
         let input = scratch.path.join("deck.pptx");
+        let child_path = scratch.child_path();
+        let child_input = child_path.join("deck.pptx");
         let deck_bytes = u64::try_from(deck.len()).unwrap_or(u64::MAX);
         let writing = self.claim(deck_bytes)?;
         std::fs::write(&input, deck)?;
         drop(writing);
-        let mut convert = Command::new(&self.host.soffice);
+        let mut convert = scratch.command(&self.host.soffice)?;
         convert
-            .arg(profile_arg(&scratch.path))
+            .arg(profile_arg(&child_path))
             .args([
                 "--headless",
                 "--invisible",
@@ -405,11 +442,10 @@ impl AdmittedRenderer {
                 PDF_FILTER,
                 "--outdir",
             ])
-            .arg(&scratch.path)
-            .arg(&input)
-            // LibreOffice's own temp files land in the scratch, on the
-            // floored disk.
-            .env("TMPDIR", &scratch.path)
+            .arg(&child_path)
+            .arg(&child_input)
+            // LibreOffice's own temp files use the selected scratch filesystem.
+            .env("TMPDIR", &child_path)
             .stdout(Stdio::null());
         let exporting = self.claim(
             deck_bytes
@@ -421,18 +457,19 @@ impl AdmittedRenderer {
         self.ran(cut)?;
         self.floor_holds()?;
         let pdf = scratch.path.join("deck.pdf");
+        let child_pdf = child_path.join("deck.pdf");
         non_empty(&pdf)?;
         slides
             .iter()
             .map(|slide| {
-                let stem = scratch.path.join(format!("slide-{slide}"));
+                let stem = child_path.join(format!("slide-{slide}"));
                 let page = slide.to_string();
-                let mut raster = Command::new(&self.host.pdftoppm);
+                let mut raster = scratch.command(&self.host.pdftoppm)?;
                 raster
                     .args(["-png", "-singlefile", "-r"])
                     .arg(PAGE_DPI.to_string())
                     .args(["-f", &page, "-l", &page])
-                    .arg(&pdf)
+                    .arg(&child_pdf)
                     .arg(&stem)
                     .stdout(Stdio::null());
                 let rasterizing = self.claim(PAGE_DISK_BYTES)?;
@@ -551,29 +588,6 @@ pub(crate) fn rendered(
             Some(renderer) => renderer.typed(error),
             None => error,
         }),
-    }
-}
-
-/// A private directory removed with everything in it when dropped.
-struct Scratch {
-    path: PathBuf,
-}
-
-impl Scratch {
-    /// A fresh private directory under `spool`.
-    fn new(spool: &Path) -> Result<Self> {
-        let path = spool.join(format!("oneiron-slides-{}", EntityId::now().to_hex()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-        builder.create(&path)?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 
