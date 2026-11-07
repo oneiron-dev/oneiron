@@ -24,6 +24,8 @@ mod credential;
 /// Engine-owned open-web relay and owner-local receipts.
 pub mod egress;
 pub mod foreign;
+/// A guest program's own error text, masked before it leaves the host (FIX 9209).
+pub mod guest_error;
 mod paths;
 mod proposal;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
@@ -52,10 +54,10 @@ pub use self::paths::{
 };
 pub use self::proposal::{
     ProposalSpoolClaim, ProposalSpoolFloor, SandboxClaimProposal, SandboxDirectoryOpaqueProposal,
-    SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal,
+    SandboxFileDeleteProposal, SandboxFileEdit, SandboxFileEditProposal, SandboxFileRenameProposal,
     SandboxFileWriteProposal, SandboxProposalBody, SandboxProposalBodyReader,
-    SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
-    SpoolAtFloor, SpoolFloorRefusal,
+    SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalText,
+    SandboxProposalWrite, SpoolAtFloor, SpoolFloorRefusal,
 };
 
 #[cfg(test)]

@@ -149,7 +149,7 @@ pub(super) fn replayed(
 /// The tool result that says only that the call ran and its details stay
 /// on this device: `{"details_on_device": true}` as its structured content
 /// and its text.
-fn details_on_device_result() -> Value {
+pub(super) fn details_on_device_result() -> Value {
     let ran = crate::api::facade::details_on_device();
     json!({
         "content": [mcp_text_content(ran.to_string())],
