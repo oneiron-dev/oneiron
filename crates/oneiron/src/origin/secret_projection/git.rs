@@ -18,9 +18,13 @@
 //! and the readable marks naming a blob of its closure are the ones it was
 //! made under (FIX 9105: a mark on another blob or store keeps it), and it
 //! is admitted again before any byte of it is released. No TTL, size or
-//! count ends it. A vault with no readable mark, or roots whose closure no
-//! mark touches, gets no copy at all: the caller keeps the canonical path,
-//! and nothing is written.
+//! count ends it. Each blob is masked against the values custody knows
+//! too (FIX 8966), mark or none, and the copy is bound to a value-free
+//! witness of that history: one made while custody knew other values is
+//! not admitted, and the next read makes it again. A vault with no
+//! readable mark and no known value, or roots whose closure neither
+//! touches, gets no copy at all: the caller keeps the canonical path, and
+//! nothing is written.
 //!
 //! A copy is built in its own building directory, its graph id unknown
 //! until its walk has found its closure's marks; its records land next,
@@ -221,25 +225,40 @@ const BUILDING_DIR_PREFIX: &str = "building-";
 
 /// What one materialization is keyed by, read once: the masked graph
 /// record `roots` would be made under with its marks still empty (they are
-/// its closure's, FIX 9105), and the readable marks.
+/// its closure's, FIX 9105) and the known-value history's witness (FIX
+/// 8966), and the readable marks.
 struct ProjectionInputs {
     base: RepoProjectionRecord,
     store_id: EntityId,
     facts: RepoMarkFacts,
 }
 
+impl ProjectionInputs {
+    /// The known-value history witness the base was read under.
+    fn known_history(&self) -> Option<[u8; 32]> {
+        match &self.base {
+            RepoProjectionRecord::Graph { known_history, .. } => *known_history,
+            _ => None,
+        }
+    }
+}
+
 /// The inputs `roots` of `canonical` would be copied under now; `None`
-/// when no mark is readable, which needs no copy.
+/// when no mark is readable and custody knows no value, which needs no
+/// copy.
 fn projection_inputs(
     vault: &Vault,
     canonical: &GitWireRepo,
     roots: &RepoGitProjectionRoots,
 ) -> Result<Option<ProjectionInputs>> {
-    let facts = {
+    let (facts, known_history) = {
         let txn = vault.store.env.read_txn()?;
-        RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?
+        (
+            RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?,
+            vault.store.known_history_witness_in_txn(&txn)?,
+        )
     };
-    if facts.is_empty() {
+    if facts.is_empty() && known_history.is_none() {
         return Ok(None);
     }
     let store_identity = canonical.identity().as_hex();
@@ -254,6 +273,7 @@ fn projection_inputs(
             .collect(),
         private_root: roots.private_root.clone(),
         marks: Vec::new(),
+        known_history,
         audience: RepoProjectionAudience::Masked,
     };
     Ok(Some(ProjectionInputs {
@@ -376,8 +396,13 @@ fn standing_for_base(
 
 /// Makes the masked copy of `roots` of the canonical store `canonical`,
 /// or loads the one that already stands for them (module docs). `None`
-/// when no readable mark touches the closure: the caller keeps the
-/// canonical path, and nothing is written.
+/// when no readable mark and no value custody knows touches the closure:
+/// the caller keeps the canonical path, and nothing is written. The walk
+/// reads the known values in one pass under the custody read guard, after
+/// the witness its record names was read; once it ends the witness is read
+/// again, and a walk that custody learned or erased a value during is done
+/// again (FIX 8966), so neither a copy nor a clean answer leaves out a
+/// value custody knew before it was returned.
 ///
 /// # Errors
 /// An object the canonical store lacks, a failed git effect or write, or
@@ -389,57 +414,72 @@ pub(crate) fn materialize_masked_git_graph(
     roots: &RepoGitProjectionRoots,
     now: u64,
 ) -> Result<Option<RepoGitProjection>> {
-    let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
-        return Ok(None);
-    };
-    require_store_not_erased(vault, inputs.store_id)?;
-    let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
-    let _building_lock = building_lock(vault, inputs.store_id, key)?;
-    if let Some(standing) = standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)? {
-        return Ok(Some(standing));
+    loop {
+        let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
+            return Ok(None);
+        };
+        require_store_not_erased(vault, inputs.store_id)?;
+        let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
+        let _building_lock = building_lock(vault, inputs.store_id, key)?;
+        if let Some(standing) =
+            standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)?
+        {
+            return Ok(Some(standing));
+        }
+        let building = building_dir(vault, inputs.store_id, key)?;
+        // A building directory is an interrupted copy: it starts over.
+        if building.exists() {
+            std::fs::remove_dir_all(&building)?;
+        }
+        let copy_store = wire.init_projection_store(&building)?;
+        let copy = vault.with_known_values(|known| {
+            copy_repo_projection_objects(
+                vault,
+                wire,
+                canonical,
+                &copy_store,
+                &roots.tips(),
+                &inputs.facts,
+                inputs.store_id,
+                None,
+                known,
+            )
+        })?;
+        let witness = {
+            let txn = vault.store.env.read_txn()?;
+            vault.store.known_history_witness_in_txn(&txn)?
+        };
+        if witness != inputs.known_history() {
+            std::fs::remove_dir_all(&building)?;
+            continue;
+        }
+        if !copy.changed_any() {
+            std::fs::remove_dir_all(&building)?;
+            return Ok(None);
+        }
+        let marks = closure_marks(&inputs.facts, &copy)?;
+        let graph = RepoProjectionClaim::graph(graph_record_with(
+            &inputs.base,
+            marks,
+            RepoProjectionAudience::Masked,
+        ))?;
+        return land_copy(
+            vault,
+            wire,
+            &building,
+            &graph,
+            inputs.store_id,
+            roots,
+            &copy,
+            now,
+        )
+        .map(Some);
     }
-    let building = building_dir(vault, inputs.store_id, key)?;
-    // A building directory is an interrupted copy: it starts over.
-    if building.exists() {
-        std::fs::remove_dir_all(&building)?;
-    }
-    let copy_store = wire.init_projection_store(&building)?;
-    let copy = copy_repo_projection_objects(
-        vault,
-        wire,
-        canonical,
-        &copy_store,
-        &roots.tips(),
-        &inputs.facts,
-        inputs.store_id,
-        None,
-    )?;
-    if !copy.changed_any() {
-        std::fs::remove_dir_all(&building)?;
-        return Ok(None);
-    }
-    let marks = closure_marks(&inputs.facts, &copy)?;
-    let graph = RepoProjectionClaim::graph(graph_record_with(
-        &inputs.base,
-        marks,
-        RepoProjectionAudience::Masked,
-    ))?;
-    land_copy(
-        vault,
-        wire,
-        &building,
-        &graph,
-        inputs.store_id,
-        roots,
-        &copy,
-        now,
-    )
-    .map(Some)
 }
 
 /// The masked copy that stands for `roots` of `canonical` now, admitted
-/// afresh; `None` when none does (no readable mark, no copy made, or one
-/// whose sources moved).
+/// afresh; `None` when none does (no readable mark and no known value, no
+/// copy made, or one whose sources moved).
 ///
 /// # Errors
 /// A store failure, or a record that does not decode.
@@ -459,8 +499,10 @@ pub(crate) fn load_repo_git_projection(
 /// approved and unchanged, its canonical store was not erased (FIX 10274:
 /// the owner's erase, carried out, whatever its marks still say), and the
 /// readable marks naming a blob of its closure are exactly the ones it was
-/// made under (FIX 9105). A copy is admitted again here before any byte of
-/// it is released.
+/// made under (FIX 9105), and custody knows the values it was masked
+/// against (FIX 8966: the known-value history's witness is the one its
+/// record names). A copy is admitted again here before any byte of it is
+/// released.
 ///
 /// # Errors
 /// A store failure, or a record that does not decode.
@@ -473,10 +515,18 @@ pub(crate) fn admit_repo_git_projection_in_txn(
     else {
         return Ok(false);
     };
-    let RepoProjectionRecord::Graph { store_id, .. } = &stored.record else {
+    let RepoProjectionRecord::Graph {
+        store_id,
+        known_history,
+        ..
+    } = &stored.record
+    else {
         return Ok(false);
     };
-    if stored != projection.graph || vault.local_hard_delete_marker_exists_in_txn(txn, store_id)? {
+    if stored != projection.graph
+        || vault.local_hard_delete_marker_exists_in_txn(txn, store_id)?
+        || *known_history != vault.store.known_history_witness_in_txn(txn)?
+    {
         return Ok(false);
     }
     let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;

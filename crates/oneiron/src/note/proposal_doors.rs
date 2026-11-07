@@ -139,6 +139,8 @@ pub struct NoteVersionTree {
 fn actor_ref(actor: NoteActor) -> Option<String> {
     match actor {
         NoteActor::Actor(id) => Some(id.to_hex()),
+        // The source author, in its own `imported:` spelling (FIX 7777).
+        imported @ NoteActor::Imported(_) => Some(imported.to_wire()),
         NoteActor::Erased => None,
     }
 }

@@ -122,7 +122,9 @@ pub(crate) fn bind_owner_pair_ask_in_txn(
     match pair.route {
         OwnerPairRoute::Reserved => {}
         OwnerPairRoute::Asked { ask: bound, .. } => return Ok(bound == ask),
-        OwnerPairRoute::Judged(_) | OwnerPairRoute::Closed { .. } => return Ok(false),
+        OwnerPairRoute::Accepted { .. }
+        | OwnerPairRoute::Judged(_)
+        | OwnerPairRoute::Closed { .. } => return Ok(false),
     }
     let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
         return Ok(false);
@@ -138,6 +140,35 @@ pub(crate) fn bind_owner_pair_ask_in_txn(
     row.value = ForkValue::OwnerPair(Box::new(pair));
     FORKS.put(vault, txn, &key, &row)?;
     Ok(true)
+}
+
+/// Keeps a word admitted by the ask's settling writer when a temporary
+/// subject fence prevents scoring. It carries no owner proof; a retry uses
+/// the existing capsule, provenance and held-answer checks.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn accept_owner_pair_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &ForkKey,
+    with_passed: bool,
+    without_passed: bool,
+    judgment: OwnerJudgment,
+) -> Result<()> {
+    let Some(mut row) = FORKS.get(&vault.store, txn, key)? else {
+        return Ok(());
+    };
+    let ForkValue::OwnerPair(pair) = &mut row.value else {
+        return Ok(());
+    };
+    pair.route = OwnerPairRoute::Accepted {
+        with_passed,
+        without_passed,
+        judgment,
+    };
+    FORKS.put(vault, txn, key, &row)
 }
 
 /// Closes the pending pair at `key` unscored, its ask `ask` settled at
