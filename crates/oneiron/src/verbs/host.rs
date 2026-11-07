@@ -162,7 +162,7 @@ pub fn remove_pack_embedded(
 }
 
 /// `vault.connectors.subscriptions.put`'s input: the agent that answers a
-/// built-in channel (OF-519), and the channel, `slack` or `line`.
+/// built-in channel (OF-519), and the channel, `slack`, `line` or `email`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSubscriptionRequest {

@@ -89,8 +89,8 @@ pub use self::reply_job::{
 };
 pub use self::served_sink::{
     APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment, LINE_API_BASE,
-    OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints, ServedTransports,
-    TELEGRAM_API_BASE,
+    OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedConnectorCalls,
+    ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
 };
 
 pub(crate) use self::connector_task::{

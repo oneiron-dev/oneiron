@@ -195,6 +195,8 @@ fn admit_federated_entity_blob_graded(
         return Ok((here, blob.to_vec()));
     }
 
+    // The claim meets its class's synced descriptor too, read in this
+    // admission's txn (ARCH-0057 §4.1; FIX 12237).
     let body = validate_claim_body_and_decode_in_txn(
         &vault.store,
         txn,

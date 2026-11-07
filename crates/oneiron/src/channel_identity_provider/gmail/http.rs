@@ -176,6 +176,20 @@ impl GmailSendWire for HttpGmailSendWire {
     }
 }
 
+/// Authorization for a Gmail API call inside its admitted credential door.
+/// Uses the same access-first, refresh-only-grant handling as Gmail sends.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] when the stored credential is unusable or its
+/// refresh grant cannot be exchanged.
+pub fn gmail_authorization(
+    client: &reqwest::blocking::Client,
+    stored: &[u8],
+) -> Result<HeaderValue> {
+    bearer_header_for_client(client, stored)
+}
+
 /// Keeps every usable access credential unchanged, otherwise exchanges the
 /// stored refresh grant inside the same already-admitted custody callback.
 pub(super) fn bearer_header_for_client(

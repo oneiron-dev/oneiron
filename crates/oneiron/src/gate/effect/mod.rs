@@ -21,8 +21,8 @@ pub(crate) use self::effect_contacts::{
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
 use self::effect_grants::{
-    channel_identity_envelope_admission_in_txn, standing_outbound_grant_for_effect,
-    touch_standing_outbound_grant_in_txn,
+    channel_identity_envelope_admission_in_txn, record_standing_outbound_grant_use_in_txn,
+    standing_outbound_grant_for_effect,
 };
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
@@ -80,7 +80,7 @@ pub(crate) struct ExternalEffectGovernance {
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
-    matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    matched_grant: Option<StandingOutboundGrant>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
