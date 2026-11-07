@@ -725,6 +725,10 @@ side_tables! {
     /// waits for its policy, or the vault it came from withheld it after it travelled. Key:
     /// id16(row).
     SOURCE_AUDIENCE_HELD: VaultMeta b"source_audience:held:v1:" Named;
+    /// Whether a row a source landed was ever written here, by any door (fix list row 16255):
+    /// until one is, no row's words came from one, and the source-audience walk answers at
+    /// once. Key: ().
+    SOURCE_AUDIENCE_LANDED: VaultMeta b"source_audience:landed:v1:seen" Named;
     /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
     /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
     SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
