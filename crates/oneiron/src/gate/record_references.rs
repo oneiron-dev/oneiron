@@ -153,42 +153,60 @@ fn without_archived_evidence_subject(
     Ok(kept)
 }
 
-/// Whether `reference` names a record the vault owner's own read would
-/// admit but for its cleanup archive (FIX 21997): the writer reads as the
-/// vault owner, the record's row is stored, its archive marker is a cleanup
-/// archive, and nothing else withholds its words (no removal, stale mark,
-/// legal-hold use limit or withdrawn source; `raw_exportable_in_txn`). An
-/// unresolvable ref names no such record and stays for the ordinary refusal.
+/// Whether `reference` names the archived subject
+/// [`archived_evidence_subject_in_txn`] admits for a `predicate` CLAIM
+/// written under `memory`'s read. An unresolvable ref names no such record
+/// and stays for the ordinary refusal.
 fn archived_subject_admitted(memory: &Memory<'_>, reference: &str) -> MemoryResult<bool> {
     let owner = memory
         .read_lane(crate::claim::ClaimReadStatus::Recorded)?
         .actor_key()
         .reads_as_vault_owner();
-    if !owner {
-        return Ok(false);
-    }
     let vault = memory.vault();
     let Ok(id) = crate::vault::entity_refs::resolve_entity_ref(vault, reference) else {
         return Ok(false);
     };
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    Ok(archived_evidence_subject_in_txn(
+        vault,
+        &txn,
+        owner,
+        crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT,
+        &id,
+    )?)
+}
+
+/// Whether `subject`, the subject of a `predicate` CLAIM, is the archived
+/// record the resolver's evidence may name, judged in `txn` (FIX 21997): the
+/// predicate is `provider.enrichment`, the writer reads as the vault owner
+/// (`owner`), the record's row is stored, its archive marker is a cleanup
+/// archive, and nothing else withholds its words (no removal, stale mark,
+/// legal-hold use limit or withdrawn source; `raw_exportable_in_txn`). The
+/// pre-call admission and the committing writer's own reference check both
+/// ask it, so the one exception holds in the final snapshot too.
+pub(crate) fn archived_evidence_subject_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: bool,
+    predicate: &str,
+    subject: &crate::EntityId,
+) -> crate::Result<bool> {
+    if !owner || predicate != crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT {
+        return Ok(false);
+    }
     let cleanup_archive = vault
-        .archive_tombstone_in_txn(&txn, &id)?
+        .archive_tombstone_in_txn(txn, subject)?
         .is_some_and(|marker| {
             marker.reason == Some(crate::deletion::TombstoneReason::ArchivedByCleanup)
         });
     if !cleanup_archive {
         return Ok(false);
     }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, subject)?
+    else {
         return Ok(false);
     };
-    Ok(crate::ports::raw_exportable_in_txn(
-        &vault.store,
-        &txn,
-        &id,
-        &raw,
-    )?)
+    crate::ports::raw_exportable_in_txn(&vault.store, txn, subject, &raw)
 }
 
 /// The refusal a write naming an unresolved record ref gets: the field
