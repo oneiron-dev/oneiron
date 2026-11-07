@@ -2134,7 +2134,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/legal_hold/clone/auth.rs` | src | s | 2 struct · 3 fn | HostLegalChannel, HostLegalConnection | The inherited manager-created listener is the native transport authority |
 | `src/deletion/legal_hold/clone/collector.rs` | src | s | 7 crate-vis | — | Streaming ciphertext and exact completion shared by native source families |
 | `src/deletion/legal_hold/clone/live.rs` | src | m | 1 fn · 7 crate-vis | — | Exact HOST order standing for a live entry, independent of any one socket |
-| `src/deletion/legal_hold/clone/messages.rs` | src | s | 1 crate-vis | — | Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner… |
+| `src/deletion/legal_hold/clone/messages.rs` | src | m | 1 crate-vis | — | Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner… |
 | `src/deletion/legal_hold/clone/mod.rs` | src | s | 1 fn · 1 re-export · 1 crate-vis | — | Native source half of an order-scoped legal clone |
 | `src/deletion/legal_hold/clone/outbox.rs` | src | s | 5 crate-vis | — | The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its… |
 | `src/deletion/legal_hold/confirmation.rs` | src | m | 2 struct · 4 fn · 2 crate-vis | LiftAndEraseShownState, ShownCustomerHold | The owner's one "Lift the hold and erase?" confirm, bound to what it showed (OF-470, FIX 1462), and the… |

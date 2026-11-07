@@ -26004,7 +26004,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/legal_hold/clone/messages.rs",
@@ -124348,7 +124348,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -124362,7 +124362,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/connection.rs",
@@ -124654,7 +124654,7 @@
      "path": "src/livequery/routing.rs",
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -131614,7 +131614,7 @@
     "livequery": {
      "files": 45,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -131829,7 +131829,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1678,
    "test_files": 182

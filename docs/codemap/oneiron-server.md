@@ -1226,9 +1226,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
-| `src/livequery.rs` | src | m | 35 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
+| `src/livequery.rs` | src | m | 36 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
-| `src/livequery/connection.rs` | src | m | 22 crate-vis | — | Socket attachment and bounded reconnect retention |
+| `src/livequery/connection.rs` | src | L | 22 crate-vis | — | Socket attachment and bounded reconnect retention |
 | `src/livequery/connection/refresh_loop.rs` | src | s | 1 crate-vis | — | The hub's refresh loop: one task per hub, driving every kept session's refresh on a short tick and, at once… |
 | `src/livequery/device_local_tests.rs` | test | m | — | — | Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live subscription keeps the pushes it derived… |
 | `src/livequery/error.rs` | src | s | 18 crate-vis | — | The HTTP facade error body on app frames |
@@ -1257,7 +1257,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/search.rs` | src | s | 1 crate-vis | — | A window's home search: the candidates a residence search returns for one query |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
-| `src/livequery/routing.rs` | src | s | 6 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
+| `src/livequery/routing.rs` | src | s | 7 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
 | `src/livequery/rpc.rs` | src | m | 7 crate-vis | — | The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the… |
 | `src/livequery/rule5_tests.rs` | test | m | 4 crate-vis | — | Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits… |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
