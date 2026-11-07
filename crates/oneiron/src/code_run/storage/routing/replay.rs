@@ -38,21 +38,7 @@ impl SessionBinding<'_> {
             return self
                 .session
                 .routed_side_txn(&self.route, |txn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
-                    let RoutedDbs::Base(vault) = write else {
-                        return Err(crate::Error::InvariantViolation(
-                            "a base route wrote outside base",
-                        ));
-                    };
-                    let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
-                    REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
-                    if let Some(model) = healed_model {
-                        let key = model.as_str().to_owned();
-                        let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
-                        let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
-                        MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
-                    }
+                    put_base_replay_in_txn(txn, read, write, record, expected, healed_model)?;
                     also(txn, write)
                 });
         }
@@ -132,4 +118,47 @@ impl SessionBinding<'_> {
         })?;
         Ok(next_generation)
     }
+
+    /// Appends a resumed record to base and retires the full keys that its
+    /// writer changed from the sealed room, only after the base commit.
+    pub(in crate::code_run::storage) fn put_base_replay_routed_retiring(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<Vec<Vec<u8>>>,
+    ) -> Result<()> {
+        self.session
+            .routed_reader_txn(&self.route, |txn, read, write| {
+                put_base_replay_in_txn(txn, read, write, record, expected, None)?;
+                let mut keys = also(txn, read, write)?;
+                keys.push(REPLAY_RECORDS.key_bytes(&record.run_id));
+                Ok(((), keys))
+            })
+    }
+}
+
+fn put_base_replay_in_txn(
+    txn: &mut heed::RwTxn<'_>,
+    read: RoutedDbs<'_>,
+    write: RoutedDbs<'_>,
+    record: &CodeRunReplayRecord,
+    expected: Option<CodeRunReplayGeneration>,
+    healed_model: Option<&ModelId>,
+) -> Result<()> {
+    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
+    replay_generation_matches(current.as_ref(), expected)?;
+    let RoutedDbs::Base(vault) = write else {
+        return Err(crate::Error::InvariantViolation(
+            "a base route wrote outside base",
+        ));
+    };
+    let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
+    REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
+    if let Some(model) = healed_model {
+        let key = model.as_str().to_owned();
+        let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
+        let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
+        MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
+    }
+    Ok(())
 }

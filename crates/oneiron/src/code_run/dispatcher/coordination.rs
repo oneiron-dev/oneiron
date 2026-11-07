@@ -37,6 +37,19 @@ fn invalid() -> Error {
     ))
 }
 
+/// The run reference the dispatcher of agent attempt `attempt` runs under:
+/// the attempt's `run_id`, else `agent:` and the attempt's hex. The run's
+/// write receipts are keyed by it, so a continuation of a failed run reads
+/// the source's receipts under it (FIX 4199).
+pub(crate) fn agent_attempt_run_ref(attempt: AttemptId, run_id: Option<String>) -> String {
+    run_id.unwrap_or_else(|| {
+        format!(
+            "agent:{}",
+            crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+        )
+    })
+}
+
 /// What a run lends one callable skill its program calls (OF-353): the vault
 /// as the host holds it, and the running attempt's lease, read live.
 pub(crate) struct CallableSkillLease {
@@ -65,12 +78,7 @@ impl<'a> HostSelfDispatcher<'a> {
         {
             return Err(invalid());
         }
-        let run_ref = status.attempt.run_id.unwrap_or_else(|| {
-            format!(
-                "agent:{}",
-                crate::entity_id::bytes_to_hex_lower(parent.as_bytes())
-            )
-        });
+        let run_ref = agent_attempt_run_ref(parent, status.attempt.run_id);
         let mut dispatcher = Self::new(vault, actor, run_ref)?;
         dispatcher.agent_parent = Some(parent);
         Ok(dispatcher)
