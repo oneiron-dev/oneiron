@@ -1,9 +1,7 @@
-//! The driver's reads of the vault: the trigger-time durable watermark,
-//! and whether a row is stored or tombstoned. Moved whole from `mod.rs`
-//! (FIX 4933); the bodies are as they were.
+//! The driver's read of the vault's trigger-time durable watermark. Moved
+//! whole from `mod.rs` (FIX 4933); the body is as it was.
 
 use super::CompactionWatermark;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
 
@@ -26,18 +24,4 @@ pub(super) fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
         turn_id: watermark.last_turn_id,
         turn: None,
     })
-}
-
-/// Whether the vault stores `id`, or stored it until a deletion whose
-/// tombstone stands.
-pub(super) fn stored_or_deleted_in(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, rtxn, id)?.is_some()
-            || crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, rtxn, id)?
-                .deleted,
-    )
 }
