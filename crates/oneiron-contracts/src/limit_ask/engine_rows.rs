@@ -3,10 +3,31 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 145] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
+        Self::KeyedNamespaceSegments,
+        Self::KeyedNamespaceBytes,
+        Self::KeyedKeyBytes,
+        Self::BookingEmailBytes,
+        Self::BookingIntakeAnswers,
+        Self::BookingIntakeValueBytes,
+        Self::BookingLocalTimeWindows,
+        Self::ClaimInputJsonBytes,
+        Self::CoreBatchEntities,
+        Self::LegacyBatchEntities,
+        Self::BlobContentBytes,
+        Self::BookingAvailabilityCallsPerMinute,
+        Self::BookingHoldCallsPerMinute,
+        Self::BookingWriteCallsPerMinute,
+        Self::BookingQuarantineCallsPerMinute,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -27,6 +48,8 @@ impl EngineLimit {
         Self::ImportFolderNotes,
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
+        Self::WitnessMetadataNodes,
+        Self::WitnessMetadataBytes,
         Self::SignatureDecodeBytes,
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
@@ -148,6 +171,7 @@ impl EngineLimit {
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
@@ -157,6 +181,23 @@ impl EngineLimit {
     pub const fn key(self) -> &'static str {
         match self {
             Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
+            Self::KeyedNamespaceSegments => "limits.keyed_namespace_segments",
+            Self::KeyedNamespaceBytes => "limits.keyed_namespace_bytes",
+            Self::KeyedKeyBytes => "limits.keyed_key_bytes",
+            Self::BookingEmailBytes => "limits.booking_email_bytes",
+            Self::BookingIntakeAnswers => "limits.booking_intake_answers",
+            Self::BookingIntakeValueBytes => "limits.booking_intake_value_bytes",
+            Self::BookingLocalTimeWindows => "limits.booking_local_time_windows",
+            Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
+            Self::CoreBatchEntities => "limits.core_batch_entities",
+            Self::LegacyBatchEntities => "limits.legacy_batch_entities",
+            Self::BlobContentBytes => "limits.blob_content_bytes",
+            Self::BookingAvailabilityCallsPerMinute => {
+                "limits.booking_availability_calls_per_minute"
+            }
+            Self::BookingHoldCallsPerMinute => "limits.booking_hold_calls_per_minute",
+            Self::BookingWriteCallsPerMinute => "limits.booking_write_calls_per_minute",
+            Self::BookingQuarantineCallsPerMinute => "limits.booking_quarantine_calls_per_minute",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -177,6 +218,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => "limits.import_folder_notes",
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
+            Self::WitnessMetadataNodes => "limits.witness_metadata_nodes",
+            Self::WitnessMetadataBytes => "limits.witness_metadata_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
@@ -298,6 +341,7 @@ impl EngineLimit {
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
@@ -308,6 +352,21 @@ impl EngineLimit {
     pub fn default_bound(self) -> u64 {
         match self {
             Self::KeyedFilterJsonBytes => 64 << 20,
+            Self::KeyedNamespaceSegments => 65_536,
+            Self::KeyedNamespaceBytes => 1_048_576,
+            Self::KeyedKeyBytes => 1_048_576,
+            Self::BookingEmailBytes => 1_048_576,
+            Self::BookingIntakeAnswers => 65_536,
+            Self::BookingIntakeValueBytes => 67_108_864,
+            Self::BookingLocalTimeWindows => 65_536,
+            Self::ClaimInputJsonBytes => 67_108_864,
+            Self::CoreBatchEntities => 1_048_576,
+            Self::LegacyBatchEntities => 1_048_576,
+            Self::BlobContentBytes => memory_share(16),
+            Self::BookingAvailabilityCallsPerMinute => 1_000_000,
+            Self::BookingHoldCallsPerMinute => 1_000_000,
+            Self::BookingWriteCallsPerMinute => 1_000_000,
+            Self::BookingQuarantineCallsPerMinute => 1_000_000,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,
@@ -329,6 +388,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => 100_000,
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
+            Self::WitnessMetadataNodes => 1_048_576,
+            Self::WitnessMetadataBytes => 67_108_864,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
@@ -529,6 +590,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
             // Owner-ruled ABC row 11 (FIX 62).
             Self::ContextEdgeHops => 1_024,
             // Owner-ruled ABC row 12 (FIX 63).

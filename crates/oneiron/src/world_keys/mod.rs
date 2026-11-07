@@ -56,11 +56,13 @@ mod tests;
 pub(crate) use self::bundle::BundleCarry;
 #[cfg(feature = "sync")]
 pub(crate) use self::bundle::PadEraseSubject;
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::publication_grant_requests;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
-    retired_bundle_generations, sealed_bundle_slot,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, UnmergedSection,
+    UnmergedStage, WorldCapsuleImport, retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
 pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
@@ -68,6 +70,8 @@ pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublic
 pub(crate) use self::content::purge_world_mirrors_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::content_window::rewrite_mirrors_in_txn;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{
@@ -82,7 +86,7 @@ pub use self::owner_work::{
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
     OwnerWorkDiagnostics, OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
     PublicationDiagnostics, PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics,
-    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation,
+    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation, UnmergedUploadView,
 };
 pub(crate) use self::pad_custody::world_pad_recipients_in_txn;
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]

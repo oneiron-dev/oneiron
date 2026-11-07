@@ -7,9 +7,11 @@
 //! filing it settles nothing again (resident dreaming's separate-line rule:
 //! never two settlements of one call on one meter). Its job is the run whose
 //! window it compacted and its run the run's host-derived source: no Dreamer
-//! attempt is made up for it. Its surface is not the Dreamer runner's, so the
-//! memo index never admits it and no replay returns it as a memo; the pass's
-//! receipt names it by claim.
+//! attempt is made up for it. The memo index admits a step filed in base by
+//! its stamped surface and job (FIX 4816), so `vault.runs.step` finds it by
+//! job and step hash; a step staged in a room's overlay stays unindexed. Its
+//! surface is not the Dreamer runner's, so no replay returns it as a memo.
+//! The pass's receipt still names it by claim.
 //!
 //! The route is the run's own. A canonical run files in base. A room's run
 //! on a route that went on record files in base under the room's saver, as
@@ -32,7 +34,7 @@ use super::step_claim::{
     EncodedStepClaim, call_purpose_str, encode_step_claim_value, request_params_hash,
 };
 use super::types::{
-    DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE,
+    COMPACTION_STEP_SURFACE, DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
     StepProgression,
 };
@@ -52,9 +54,6 @@ use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
-
-/// The provenance surface a compaction step is stamped with.
-const COMPACTION_STEP_SURFACE: &str = "code-run-compaction";
 
 /// The refusal a step filing takes when a record its call was read from is
 /// already gone or withdrawn (FIX 5977): its words may not land past that

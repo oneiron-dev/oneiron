@@ -317,9 +317,10 @@ impl StepRunner {
                 objectives,
             });
         }
-        // FIX 6290: the memory and chat rows the step's context selected, as
-        // text read on its run's own lanes. A row that no longer reads is
-        // counted left out, never refused.
+        // FIX 6290: the memory and chat rows the step's context selected, and
+        // the results of the sibling tasks it names (FIX 7742), as text read
+        // on its run's own lanes. A row that no longer reads is counted left
+        // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
         if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
@@ -381,6 +382,11 @@ impl StepRunner {
         }
         if let Some(chat) = selected.chat_text() {
             messages.push(message(LlmMessageRole::User, chat));
+        }
+        // The results of the sibling tasks the step names (`context_from`),
+        // read on its run's own lanes (FIX 7742): context, never a request.
+        if let Some(siblings) = selected.sibling_results_text() {
+            messages.push(message(LlmMessageRole::User, siblings));
         }
         let has_earlier = !earlier.is_empty();
         messages.extend(earlier);
@@ -572,6 +578,7 @@ impl StepRunner {
                 })?;
             let mut request = call.request;
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             (
                 request,
                 call.ladder,
@@ -664,6 +671,7 @@ impl StepRunner {
                     response_format,
                     locality: seat.locality,
                     host_keyless: false,
+                    host_paid: false,
                 },
                 messages,
                 tools: Vec::new(),
@@ -682,8 +690,11 @@ impl StepRunner {
             let mut request = call.request;
             // FIX 10592: beside the door-stamped locality, the request carries
             // whether its ladder may only serve free keyless own-server work, so
-            // the replay below admits unmetered. Unstamped stays paid.
+            // the replay below admits unmetered. Unstamped stays paid. FIX
+            // 18407: it also carries whether a rung is paid work, so a paid
+            // on-device try reserves on the step's own budget line.
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
             (
                 request,
@@ -857,7 +868,9 @@ impl StepRunner {
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Foreground;
-            context.physical = if request.envelope.host_keyless {
+            // A free on-device try is free work too, as physical_for says
+            // (FIX 18407); a paid rung keeps the try paid.
+            context.physical = if ladder.all_free_work() {
                 WorkPhysical::KeylessOwnServer
             } else {
                 WorkPhysical::Paid

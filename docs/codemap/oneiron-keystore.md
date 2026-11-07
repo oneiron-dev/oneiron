@@ -13,7 +13,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/apple.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | AppleKeychain | Apple: the data-protection keychain, one generic-password item per slot |
 | `src/apple_enclave.rs` | src | m | 1 struct · 1 fn | SecureEnclaveKeychain | Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES… |
-| `src/file.rs` | src | m | 1 struct · 1 fn | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
-| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 8 fn · 1 type · 1 const · 5 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
+| `src/file.rs` | src | m | 1 struct · 1 fn · 2 crate-vis | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
+| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 8 fn · 1 type · 1 const · 6 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
+| `src/linux_tpm.rs` | src | m | 1 struct · 1 fn | LinuxTpmKeystore | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
 | `src/memory.rs` | src | s | 1 struct · 1 fn | MemoryKeystore | Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here |
 | `src/windows.rs` | src | s | 1 struct · 1 fn | WindowsDpapiKeystore | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
