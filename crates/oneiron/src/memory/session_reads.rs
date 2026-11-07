@@ -384,8 +384,10 @@ impl<'s> SessionReadContext<'s> {
 
     /// The entity `reference` names in the room, at the frontier it names:
     /// a 32-hex id, the room's own short ref (`s<n>:<hash>`) or the vault's,
-    /// each optionally pinned as `<ref>@<revision>`. `None` is a ref that
-    /// names nothing here, never a withheld row: admission is the lane's.
+    /// each optionally pinned as `<ref>@<revision>`. A pinned room alias
+    /// names the revision this call's view holds (FIX 5162). `None` is a ref
+    /// that names nothing here, never a withheld row: admission is the
+    /// lane's.
     fn target(&self, reference: &str) -> MemoryResult<ReadTargetSlot> {
         let (reference, mode) = match reference.rsplit_once('@') {
             Some((reference, revision)) => (
@@ -397,8 +399,16 @@ impl<'s> SessionReadContext<'s> {
         if let Some((alias, hash)) = room_short_ref(reference) {
             // A room's alias names its row; a pin of one is checked by the
             // lane's read of that revision on this view, as a pinned id is
-            // (FIX 5162). A revision the row does not hold reads as none.
-            return Ok(self.room_alias(alias, hash)?.map(|id| (id, mode)));
+            // (FIX 5162). A revision the row does not hold reads as none. A
+            // pin whose hash names that revision's own bytes still names its
+            // row after an edit moved the live alias.
+            let id = match (self.room_alias(alias, hash)?, mode) {
+                (None, ReadMode::Pinned(revision)) => {
+                    self.room_pinned_alias(alias, hash, revision)?
+                }
+                (id, _) => id,
+            };
+            return Ok(id.map(|id| (id, mode)));
         }
         let id = match mode {
             // A pinned vault ref resolves against its pin, as on base; a
@@ -420,14 +430,10 @@ impl<'s> SessionReadContext<'s> {
     /// room, else what the ref names as the vault resolves it, with the
     /// vault's refusals. Nothing is read on the key's lane here: whether the
     /// row stands is the write's own check, in the transaction that stages
-    /// it.
+    /// it. The resolver is [`resolve_room_write_subject`], which a write
+    /// with no read key calls too (FIX 5302).
     pub(crate) fn write_subject(&self, reference: &str) -> MemoryResult<EntityId> {
-        if let Some((alias, hash)) = room_short_ref(reference.trim())
-            && let Some(id) = self.room_alias(alias, hash)?
-        {
-            return Ok(id);
-        }
-        resolve_entity_ref(self.vault, reference)
+        resolve_room_write_subject(self.vault, &self.view, reference)
     }
 
     /// The evidence refs a room write's caller supplied (FIX 4281; Engine
@@ -481,21 +487,80 @@ impl<'s> SessionReadContext<'s> {
     /// The row the room's alias `alias` names at content hash `hash`, in this
     /// call's view of the room.
     fn room_alias(&self, alias: &str, hash: u8) -> MemoryResult<Option<EntityId>> {
+        room_alias_in_view(self.vault, &self.view, alias, hash)
+    }
+
+    /// The row the room's alias `alias` names at `revision`, whose bytes
+    /// hash to `hash`, in this call's view of the room (FIX 5162). Identity,
+    /// alias and bytes are read in one view and one transaction. The
+    /// resolver grants nothing: the lane admits the row and its revision.
+    fn room_pinned_alias(
+        &self,
+        alias: &str,
+        hash: u8,
+        revision: RevisionRef,
+    ) -> MemoryResult<Option<EntityId>> {
         let txn = self
             .vault
             .store
             .env
             .read_txn()
             .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
-        let mut key = alias.as_bytes().to_vec();
-        key.push(hash);
-        let Some(raw) = self.view.short_ids.get(&txn, &key)? else {
-            return Ok(None);
-        };
-        Ok(<[u8; 16]>::try_from(&raw[..])
-            .ok()
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
+        crate::vault::entity_revision::resolve_room_pinned_alias_in_txn(
+            self.vault, &self.view, &txn, alias, hash, revision,
+        )
+        .map_err(MemoryError::from)
     }
+}
+
+/// The row a room write names as its subject, in `view`, one view of the
+/// room (WILL L11-01 S01-2a; FIX 5302). The room's own alias for a row it
+/// staged comes first. Every other ref resolves as the vault resolves it,
+/// with the vault's refusals. It needs no read key. It answers only an id:
+/// it reads no body and admits no read. So a caller whose credential grants
+/// Write and no Read names the room's rows as a reader names them. Whether
+/// the row stands is the write's own check, in the transaction that stages
+/// it.
+///
+/// # Errors
+///
+/// The vault's refusal of a malformed ref or of one that names nothing;
+/// storage errors reading the room's aliases.
+pub(crate) fn resolve_room_write_subject(
+    vault: &Vault,
+    view: &SessionStoreView<'_>,
+    reference: &str,
+) -> MemoryResult<EntityId> {
+    if let Some((alias, hash)) = room_short_ref(reference.trim())
+        && let Some(id) = room_alias_in_view(vault, view, alias, hash)?
+    {
+        return Ok(id);
+    }
+    resolve_entity_ref(vault, reference)
+}
+
+/// The row the room's alias `alias` names at content hash `hash`, in
+/// `view`, one view of the room. The room's reads and its write-subject
+/// resolver share this one lookup (FIX 5302).
+fn room_alias_in_view(
+    vault: &Vault,
+    view: &SessionStoreView<'_>,
+    alias: &str,
+    hash: u8,
+) -> MemoryResult<Option<EntityId>> {
+    let txn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+    let mut key = alias.as_bytes().to_vec();
+    key.push(hash);
+    let Some(raw) = view.short_ids.get(&txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(<[u8; 16]>::try_from(&raw[..])
+        .ok()
+        .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
 }
 
 /// One BM25 search of `view`, a room's view, on `lane`, a narrow key's lane

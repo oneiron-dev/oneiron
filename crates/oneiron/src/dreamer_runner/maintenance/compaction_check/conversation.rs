@@ -202,8 +202,9 @@ pub(super) async fn run_conversation_check(
     };
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality, keyless)?;
+    let request = judge_request(&model, &input, locality, keyless, paid)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -218,6 +219,7 @@ pub(super) async fn run_conversation_check(
         state: &input,
         locality,
         keyless,
+        paid,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -327,6 +329,7 @@ fn judge_request(
     input: &serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
         "type": "object", "additionalProperties": false,
@@ -344,7 +347,7 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    judge_call(model, schema, input, locality, keyless)
+    judge_call(model, schema, input, locality, keyless, paid)
 }
 
 /// What the judge reads: the span's length in turns, the summary and the
