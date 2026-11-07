@@ -30306,6 +30306,32 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AttributionLabelReport",
+      "UnclearPatternDecisions"
+     ],
+     "path": "src/dreamer_runner/maintenance/attribution_labels.rs",
+     "purpose": "The Coach's unclear-note clustering (ARCH-0056 §5 #unclear, FIX 7824): the recurring `no_label_fits` notes…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/attribution_labels/store.rs",
+     "purpose": "The Coach's unclear-note clustering state (FIX 7824): where a pass resumes, which pattern each judged note…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -30387,7 +30413,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 36,
+      "const": 38,
       "crate-vis": 13,
       "fn": 11,
       "re-export": 6,
@@ -31213,9 +31239,9 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1,
-      "mod": 22,
+      "mod": 23,
       "re-export": 10
      }
     },
@@ -33273,7 +33299,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -68928,7 +68954,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -68981,22 +69007,24 @@
      "path": "src/skill_attribution/trace.rs",
      "purpose": "What the standing attribution classifier reads about one terminal attempt (ARCH-0056 §5, ARCH-0066 T2): the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "UnclearAttribution"
+      "UnclearAttribution",
+      "UnclearContext"
      ],
      "path": "src/skill_attribution/unclear.rs",
      "purpose": "The unclear ledger: every outcome the judge left `unclear`, kept for the Dreamer to cluster (ARCH-0056 §5…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 2,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -92447,7 +92475,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 205,
+     "files": 207,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93518,9 +93546,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 179,
+   "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6600,
+   "source_files": 6602,
    "test_files": 895
   },
   "oneiron-android": {
@@ -111843,6 +111871,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/attribution_labels.rs",
+     "purpose": "The unclear-note clustering on the host's ladder (ARCH-0056 §5 #unclear, FIX 7824)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/fork_promote.rs",
      "purpose": "The host side of the project tree fork (ARCH-0079 #task-type, OF-420): the engine forks a project's…",
      "surface": {
@@ -122913,7 +122951,7 @@
      "path": "src/decision_host/doors.rs",
      "purpose": "Decision host doors: the ladder, dials and the hooks built on them",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 14
      }
     },
@@ -131266,7 +131304,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 124,
+     "files": 125,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131793,7 +131831,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1677,
+   "source_files": 1678,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -136111,7 +136149,7 @@
      "path": "src/model_decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 50,
+      "const": 51,
       "fn": 1,
       "struct": 1
      }
