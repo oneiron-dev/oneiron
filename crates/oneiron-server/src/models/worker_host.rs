@@ -36,6 +36,8 @@
 //! settlement or its cancellation, and the worker runs one inference at a
 //! time.
 mod bundle;
+mod controller;
+pub(crate) use controller::start_worker_controller;
 mod drafter_binding;
 // FIX 14975: the drafter evaluator's incarnations of the vault's own row.
 #[cfg(unix)]
