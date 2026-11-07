@@ -288,7 +288,7 @@ fn atoms_at(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<Vec<Atom>> {
 /// birth names the compartment's entity; a NOTE document is that NOTE's,
 /// its updates at sequence keys. Each row's bytes, by its locator, for the
 /// restore's join to write.
-pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
+pub(crate) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
     let mut slots: BTreeMap<String, OpenedSlot<'_>> = BTreeMap::new();
     for part in &opened.rows {
         let RowPart::NoActor { at, value } = part else {
