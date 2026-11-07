@@ -46,6 +46,7 @@ pub(crate) use self::reader_folds::{
 };
 pub(crate) use self::reader_jobs::{
     NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
+    settle_evaporated_reader_spend,
 };
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
