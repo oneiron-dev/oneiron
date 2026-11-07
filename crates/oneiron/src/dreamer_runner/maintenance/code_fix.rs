@@ -107,13 +107,6 @@ const CLASSES: [FailureClassV1; 9] = [
     FailureClassV1::SilentDegradation,
     FailureClassV1::Other,
 ];
-const CLASS_WORDING: &str = "Which kind of failure is this? refusal_overreach: the agent \
-    refused what it should have done; task_failure: it did not get its task done; \
-    user_frustration: it left the person frustrated; memory_miss: it missed something it \
-    should have remembered; memory_intrusion: it brought up something it should have left \
-    alone; persona_break: it broke its character or voice; latency_abandon: it took so long \
-    the work was given up; silent_degradation: its work got worse with no error; other: none \
-    of these.";
 
 /// One failure's code-fix work and its local verdicts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +237,8 @@ pub struct CodeFixDecisions<'a> {
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
     pub budget: Duration,
+    /// The host's wording of the failure-class question.
+    pub wording: String,
 }
 
 impl CodeFixDecisions<'_> {
@@ -295,7 +290,7 @@ impl CodeFixDecisions<'_> {
         Ok(
             match self.ask(
                 "class",
-                CLASS_WORDING,
+                &self.wording,
                 AnswerContract::Choice { options },
                 evidence,
                 state,
