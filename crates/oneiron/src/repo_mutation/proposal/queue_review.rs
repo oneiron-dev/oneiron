@@ -10,19 +10,25 @@
 //! catalog's critics. Only an explicit catalog makes a proposal eligible
 //! outside its queue: a vault-default proposal lands through its merge queue
 //! alone, whose stack admission seals the review each member met.
+//!
+//! A queue check that finds a removed public name routes it here as a
+//! person review (FIX 4365). The verdict stays red. No stack admits the
+//! proposal until a person decides that evidence.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::actor_erase::ProposalActor;
 use super::settlement::RepoProposalDecision;
-use super::{RepoProposal, invalid};
+use super::{PROPOSAL, RepoProposal, RepoProposalStatus, invalid, store};
 use crate::critic::{CriticLens, CritiqueArtifact, CritiqueVerdict, LensCatalog, triage_critiques};
 use crate::error::{Error, Result};
 use crate::merge_queue::{
     ActiveQueueReviewPolicy, QueueReviewRequirement, StoredQueueReviewPolicy,
     review_policy_unreadable_hold,
 };
+use crate::{EntityId, Vault};
 
 /// The review a proposal is held to. Stored under the row's `catalog` key
 /// with the wire of an optional catalog: every row before FIX 8268 reads as
@@ -83,6 +89,46 @@ pub struct QueueReviewAdmission {
     pub policy: Option<String>,
 }
 
+/// What a removed-name person review is bound to (FIX 4365): the red
+/// verdict, its baseline, the exact tree it judged and every proposal on
+/// that tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractReviewEvidence {
+    /// The content id of the verdict that lists the removed names.
+    pub verdict: String,
+    /// The contract baseline the verdict compared against.
+    pub baseline: String,
+    /// The batch whose staged path the verdict judged.
+    pub batch: String,
+    /// The exact candidate tree the verdict judged.
+    pub tree: String,
+    /// Every proposal on that tree, as hex ids in batch order.
+    pub proposals: Vec<String>,
+}
+
+/// One person review a removed public name routed a proposal to (FIX
+/// 4365). Its decision answers this evidence only. Approve leaves the
+/// verdict red. Reject requires a repair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractReviewRequest {
+    pub evidence: ContractReviewEvidence,
+    /// The person's decision and its receipt, once a person decided.
+    pub decision: Option<ContractReviewSettlement>,
+}
+
+/// A person's decision on a removed-name review, with its receipt claim
+/// (FIX 4365). An actor erase names no one in its place. The decision and
+/// its time stay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractReviewSettlement {
+    pub receipt: EntityId,
+    /// The owner who decided; [`ProposalActor::Erased`] once that actor
+    /// was erased.
+    pub actor: ProposalActor,
+    pub decision: RepoProposalDecision,
+    pub settled_at: u64,
+}
+
 /// What a queue decision waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QueueReviewWait {
@@ -90,6 +136,8 @@ pub(crate) enum QueueReviewWait {
     Critics,
     /// The vault policy it inherits does not read.
     Unreadable,
+    /// A person has not yet decided a removed public name (FIX 4365).
+    ContractReview,
 }
 
 impl QueueReviewWait {
@@ -102,6 +150,10 @@ impl QueueReviewWait {
             Self::Unreadable => {
                 format!("{} (proposal {proposal})", review_policy_unreadable_hold())
             }
+            Self::ContractReview => format!(
+                "proposal {proposal} removed a public name and waits for a person review of \
+                 that evidence"
+            ),
         }
     }
 
@@ -110,6 +162,7 @@ impl QueueReviewWait {
         match self {
             Self::Critics => invalid("every stack member needs unused unanimous critic approval"),
             Self::Unreadable => Error::Refused(review_policy_unreadable_hold()),
+            Self::ContractReview => invalid("a removed public name waits for a person review"),
         }
     }
 }
@@ -223,7 +276,8 @@ impl RepoProposal {
     }
 
     /// Whether it met `requirement` now: the review a stack admitting it in
-    /// `batch` seals, or what it waits for.
+    /// `batch` seals, or what it waits for. A removed-name review no person
+    /// decided holds it first, whatever the requirement (FIX 4365).
     ///
     /// # Errors
     /// A catalog or critique that no longer validates.
@@ -232,6 +286,9 @@ impl RepoProposal {
         requirement: &QueueReviewRequirement,
         batch: &str,
     ) -> Result<std::result::Result<QueueReviewAdmission, QueueReviewWait>> {
+        if self.contract_review_waits() {
+            return Ok(Err(QueueReviewWait::ContractReview));
+        }
         let (explicit, policy) = match requirement {
             QueueReviewRequirement::LandOnGreen => (false, None),
             QueueReviewRequirement::Unreadable => return Ok(Err(QueueReviewWait::Unreadable)),
@@ -325,5 +382,96 @@ impl RepoProposal {
                 critique.verdict == CritiqueVerdict::Accept && !critique.out_of_scope
             })
             && triage_critiques(catalog, &votes, &[])?.verdict == CritiqueVerdict::Accept)
+    }
+
+    /// Whether a removed-name review of it waits for a person (FIX 4365).
+    pub(crate) fn contract_review_waits(&self) -> bool {
+        self.contract_reviews
+            .iter()
+            .any(|request| request.decision.is_none())
+    }
+
+    /// The verdicts of its removed-name reviews no person decided yet (FIX
+    /// 4365), in the order they were routed.
+    pub(crate) fn undecided_contract_verdicts(&self) -> Vec<String> {
+        self.contract_reviews
+            .iter()
+            .filter(|request| request.decision.is_none())
+            .map(|request| request.evidence.verdict.clone())
+            .collect()
+    }
+
+    /// Records `settled` as the decision of every removed-name review of it
+    /// no person decided yet (FIX 4365). A Reject closes an open proposal:
+    /// a repair comes as a fresh proposal. Approve changes no status, and
+    /// the verdict stays red.
+    pub(super) fn decide_contract_reviews(&mut self, settled: &ContractReviewSettlement) {
+        for request in &mut self.contract_reviews {
+            if request.decision.is_none() {
+                request.decision = Some(settled.clone());
+            }
+        }
+        let open = matches!(
+            self.status,
+            RepoProposalStatus::Proposed | RepoProposalStatus::Approved
+        ) && self.operation_seq.is_none()
+            && self.merge_stack.is_none();
+        if settled.decision == RepoProposalDecision::Reject && open {
+            self.status = RepoProposalStatus::Rejected;
+        }
+    }
+}
+
+impl Vault {
+    /// Routes `evidence`, a verdict that lists a removed public name, to a
+    /// person review on each stored proposal it names, in the caller's
+    /// writer (FIX 4365). That writer settles the verdict's slot, after its
+    /// own checks, so a refused completion routes nothing. A repeated check
+    /// finds the request it routed before, decided or not, and writes
+    /// nothing. An id that names no stored proposal has no review route and
+    /// is skipped. Answers the hex ids of the named proposals whose review
+    /// no person decided yet.
+    ///
+    /// # Errors
+    /// A store failure, or a kept request for this verdict whose binding
+    /// differs.
+    pub(crate) fn route_contract_review_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        evidence: &ContractReviewEvidence,
+    ) -> Result<Vec<String>> {
+        let mut waiting = Vec::new();
+        for hex in &evidence.proposals {
+            let Ok(id) = EntityId::from_hex(hex) else {
+                continue;
+            };
+            let Some(mut row) = PROPOSAL.get(&self.store, txn, &id)? else {
+                continue;
+            };
+            let kept = row
+                .contract_reviews
+                .iter()
+                .position(|request| request.evidence.verdict == evidence.verdict);
+            match kept {
+                Some(index) => {
+                    let request = &row.contract_reviews[index];
+                    if request.evidence != *evidence {
+                        return Err(Error::CorruptedIndex("removed-name review binding differs"));
+                    }
+                    if request.decision.is_none() {
+                        waiting.push(hex.clone());
+                    }
+                }
+                None => {
+                    row.contract_reviews.push(ContractReviewRequest {
+                        evidence: evidence.clone(),
+                        decision: None,
+                    });
+                    store(self, txn, &row)?;
+                    waiting.push(hex.clone());
+                }
+            }
+        }
+        Ok(waiting)
     }
 }
