@@ -1133,6 +1133,7 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       if (row.label !== "private-community") allowed.push(saved.id);
       if (row.vad) {
         const consolidated = await engine.client.call("vault.affect.claims.consolidate", { claim_ref: saved.ref });
+        if (consolidated.vad == null) throw new Error("Expected consolidated VAD for authored affect evidence");
         // G-PRECISION (FIX21914): f32 VAD coordinates compare with tight tolerance.
         expect(consolidated.vad.valence).toBeCloseTo(row.vad.valence, 7);
         expect(consolidated.vad.arousal).toBeCloseTo(row.vad.arousal, 7);
