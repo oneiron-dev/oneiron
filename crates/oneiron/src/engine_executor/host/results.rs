@@ -359,15 +359,26 @@ impl RecordingJsHost<'_, '_> {
             None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
-        match self.withholds_rows(rows.clone())? {
+        let withheld = self.withholds_rows(rows.clone())?;
+        // A read of another run's result keeps its row check's answer, a
+        // refusal too, for a shadow arm to answer the read by (FIX 6352).
+        if found.rows.is_some() {
+            self.observe_retained_read(&target.reference, callable, withheld);
+        }
+        match withheld {
             Ok(false) => {}
             Ok(true) => return Ok(Err(result_refusal("result_withheld"))),
             Err(code) => return Ok(Err(result_refusal(code))),
         }
         if let Some(extra) = &found.rows {
-            // Another run's result reaches this one (FIX 6130).
-            let cause = crate::code_run::ReadWorldUnknown::RetainedResult;
-            self.gated_write.read_worlds_unknown(self.run_id, cause);
+            // Another run's result reaches this one (FIX 6130): the origins
+            // its descriptor froze are noted at the step's bridge position,
+            // or, unknown, the ledger misses it (FIX 7084).
+            self.gated_write.read_worlds_retained(
+                self.run_id,
+                self.next_seq,
+                found.origins.as_ref(),
+            );
             let held = self.callable_rows.1.take();
             self.callable_rows.1 = held
                 .zip(extra.clone())
@@ -396,7 +407,8 @@ impl RecordingJsHost<'_, '_> {
     /// then a reader child's source (a scoped child's lent inputs, each by
     /// its name or handle, FIX 7507), then a finding of one of its children.
     /// The step's replay context keeps the findings the lookup read (FIX
-    /// 6352).
+    /// 6352). Another run's result keeps the origins its descriptor froze
+    /// (FIX 7084).
     pub(super) fn resolve_for_read(
         &mut self,
         storage: &ExecutorStorage<'_>,
@@ -408,6 +420,7 @@ impl RecordingJsHost<'_, '_> {
                 name,
                 owner: self.run_id,
                 rows: None,
+                origins: None,
                 within: None,
                 child_source: false,
             }));
@@ -431,6 +444,7 @@ impl RecordingJsHost<'_, '_> {
                     name: Some(name.to_owned()),
                     owner: source.owner,
                     rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
                     within: Some(source.range),
                     child_source: true,
                 }));
@@ -439,22 +453,22 @@ impl RecordingJsHost<'_, '_> {
                 JsResultRef::Name(name) => child.delegated(true, name),
                 JsResultRef::Handle(handle) => child.delegated(false, handle),
             };
-            let Some((name, source)) = named else {
-                return Ok(None);
-            };
-            let Some(output) =
-                recorded_output(storage, source.owner, &source.path, &source.handle)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(ResolvedResult {
-                output,
-                name: Some(name.to_owned()),
-                owner: source.owner,
-                rows: Some(source.rows.clone()),
-                within: Some(source.range),
-                child_source: true,
-            }));
+            if let Some((name, source)) = named {
+                let Some(output) =
+                    recorded_output(storage, source.owner, &source.path, &source.handle)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(ResolvedResult {
+                    output,
+                    name: Some(name.to_owned()),
+                    owner: source.owner,
+                    rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
+                    within: Some(source.range),
+                    child_source: true,
+                }));
+            }
         }
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);
@@ -471,6 +485,7 @@ impl RecordingJsHost<'_, '_> {
             name: None,
             owner: finding.owner,
             rows: Some(finding.rows),
+            origins: finding.origins,
             within: None,
             child_source: false,
         }))
@@ -511,7 +526,7 @@ impl RecordingJsHost<'_, '_> {
     /// read's does.
     ///
     /// With `child`, a readable result is also checked as a spawn's source
-    /// would be, writing nothing: the run's own result, then the seat, the
+    /// would be, writing nothing: its own or inherited source, then the seat, the
     /// clock and the scope. The verdict names the children's cutoff and the
     /// meter they spend on (`scope`, with what it may still spend, or
     /// `host`, the host's own meter, with no figure), or why a spawn would be
@@ -528,7 +543,9 @@ impl RecordingJsHost<'_, '_> {
         if !child || verdict["can"] != json!(true) {
             return Ok(json!({"output": verdict}));
         }
-        if self.resolve_result(&target.reference).is_none() {
+        if self.resolve_result(&target.reference).is_none()
+            && !self.is_inherited_reader_source(&target.reference)
+        {
             return Ok(json!({"output": {"can": false, "reason": "unknown_handle"}}));
         }
         match self

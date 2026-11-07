@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
     (
         "/v1/shared/left-notices",
-        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed authority rows, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to this host's signing root, and every row they stand on that those heads do not cover; empty when already folded).",
+        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the whole delegation chain). The JSON answer has `notices` (signed shared-act outcomes) and `continuity`: `authority_vault_id` (64 hex) and `delegations` (array of hex-encoded canonical leave-notice delegations, in chain order, that each root signed at the ReRoot handing on to its successor, from those heads to this host's signing root; empty when already folded). No authority row rides.",
     ),
     (
         "/v1/shared/removal-export",
@@ -66,16 +66,23 @@ fn left_slip_shapes(path: &str) -> (Option<Value>, Value) {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "authority_heads": {"type": "array", "items": {"type": "string"}, "description": "The authority-entry hashes the person's env folded, 64 hex each; omitted or empty asks for the whole handoff chain."}
+                "authority_heads": {"type": "array", "items": {"type": "string"}, "description": "The authority-entry hashes the person's env folded, 64 hex each; omitted or empty asks for the whole delegation chain."}
             }
         }}}
     });
     let answer = json!({
         "type": "object",
-        "required": ["notices", "handoff"],
+        "required": ["notices", "continuity"],
         "properties": {
             "notices": {"type": "array", "items": {"type": "object"}, "description": "The person's signed shared-act outcomes."},
-            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed authority rows, hex, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to the key that signed `notices`, and every row they stand on that those heads do not cover; empty when already folded."}
+            "continuity": {
+                "type": "object",
+                "required": ["authority_vault_id", "delegations"],
+                "properties": {
+                    "authority_vault_id": {"type": "string", "description": "The authority vault the notices name, 64 hex."},
+                    "delegations": {"type": "array", "items": {"type": "string"}, "description": "The canonical leave-notice delegations, hex, in chain order: each a root's signed hand-on of leave-notice verification to its ReRoot's successor, on the chain from those heads to the key that signed `notices`; empty when already folded."}
+                }
+            }
         }
     });
     (Some(body), answer)

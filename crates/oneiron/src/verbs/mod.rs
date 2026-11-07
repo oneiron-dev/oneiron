@@ -3,6 +3,7 @@ mod act_answer;
 mod agent_grant;
 mod agents;
 mod anonymous_chat;
+mod answer_forward;
 mod asr;
 mod authority_history;
 mod board_layout;
@@ -249,7 +250,6 @@ pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -431,6 +431,7 @@ pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
+pub use self::answer_forward::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
@@ -1044,5 +1045,4 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
-
 pub mod voice_records;

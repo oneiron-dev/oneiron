@@ -92,6 +92,15 @@ impl EntityId {
         derive_with(domain, parts, is_reserved_entity_id_bytes)
     }
 
+    /// Whether this id carries the version and variant stamp every
+    /// [`EntityId::derive`] output has. A minted id can carry it by chance, so
+    /// the stamp only rules derivation out: it never proves it.
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn has_derived_stamp(&self) -> bool {
+        self.0[6] & 0xF0 == 0x80 && self.0[8] & 0xC0 == 0x80
+    }
+
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
     ///
     /// The all-zero, all-`0xFF`, and `[entity_type, 0xFF×15]` patterns are
