@@ -155,7 +155,7 @@ impl EngineNativeExecutor<'_> {
                         .map_err(Error::from)?
                 }
             };
-            let mut request =
+            let (mut request, mut console) =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
             match self.feed_compaction(config, &record, &request)? {
                 Ok(Some(reason)) => {
@@ -203,9 +203,16 @@ impl EngineNativeExecutor<'_> {
             // FIX 17594 (map §2.2): folds by kind the feed landed after this
             // request was built are a brief boundary. With a brief port bound,
             // the request is built and counted again before it is hashed,
-            // captured or sent.
+            // captured or sent, with the console slot it carries (FIX 3608).
             let refreshed = self.refresh_brief_request(&mut request, completed_steps, |this| {
-                this.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())
+                let (rebuilt, slot) = this.build_llm_request(
+                    config,
+                    &record,
+                    &wire_prompt.text,
+                    continuation.as_ref(),
+                )?;
+                console = slot;
+                Ok(rebuilt)
             })?;
             if let Some(status) = refreshed {
                 return Ok(self.outcome(status, steps_run, record));
@@ -222,6 +229,7 @@ impl EngineNativeExecutor<'_> {
                 config,
                 completed_steps,
                 &request,
+                console,
                 &record,
                 &wire_prompt.stamp.resolved_fingerprint,
             );
