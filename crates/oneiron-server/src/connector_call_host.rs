@@ -56,7 +56,7 @@ use oneiron::outbound_consent::{
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
-    ProviderWait, RemoteTaskHandle,
+    ProviderWait, RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll,
 };
 use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -76,6 +76,7 @@ mod json_wire;
 mod live_exchange;
 mod presenting;
 mod remote_task;
+mod remote_task_poll;
 mod reply_read;
 mod resume;
 mod sent;
@@ -83,6 +84,7 @@ mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
@@ -242,9 +244,13 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
+        let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation)
+        else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
+        // FIX 11023: a grant's redemption or a run's record cannot be
+        // presented after the send, so its task keeps no poll or session.
+        exchange.pollable = self.grant.is_none() && self.run.is_none();
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
@@ -326,6 +332,16 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.awaiting = sent.awaiting;
         self.resume = sent.resume;
         self.remote_task = sent.remote_task;
+        // FIX 11023: a poll presents again the call's own custody record, or
+        // what the route presents of its own.
+        if let Some(poll) = self
+            .remote_task
+            .as_mut()
+            .and_then(|handle| handle.poll.as_mut())
+            && let Some(custody) = self.credential
+        {
+            poll.credential = RemoteTaskCredential::Record(custody);
+        }
         self.held = sent.held;
         self.provider_wait = sent.provider_wait;
         OutboundTransportResult {
@@ -551,6 +567,9 @@ struct Exchange<'a> {
     /// send without elicitation still rechecks the hold before it answers
     /// a server request with the kept header.
     issuer: Option<(&'a Arc<Vault>, EntityId, &'a str)>,
+    /// Whether a task this call becomes can be polled: its credential can
+    /// be presented again (FIX 11023), so its session stays open for that.
+    pollable: bool,
 }
 
 impl<'a> Exchange<'a> {
@@ -592,6 +611,7 @@ impl<'a> Exchange<'a> {
                 .key_ref()
                 .and_then(|hex| EntityId::from_hex(hex).ok())
                 .map(|key_ref| (vault, key_ref, view.tool())),
+            pollable: false,
         })
     }
 
@@ -845,7 +865,22 @@ impl<'a> Exchange<'a> {
         }
         // FIX 7960: a connector that takes the call as a remote task answers
         // with its task, not the tool's result.
-        if let Some(handle) = remote_task::remote_task_from_result(message) {
+        if let Some(mut handle) = remote_task::remote_task_from_result(message) {
+            // FIX 11023: the session stays open for the task's polls; the
+            // host names the credential they present again.
+            if self.pollable
+                && let Some(open) = live.take()
+            {
+                handle.poll = Some(RemoteTaskPoll {
+                    session: open
+                        .session
+                        .as_ref()
+                        .and_then(|session| session.to_str().ok())
+                        .map(str::to_owned),
+                    protocol: open.protocol.to_str().unwrap_or_default().to_owned(),
+                    credential: RemoteTaskCredential::Route,
+                });
+            }
             return Sent::deferred(handle, body);
         }
         match tool_result(message) {
