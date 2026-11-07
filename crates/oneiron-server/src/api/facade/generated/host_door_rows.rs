@@ -5,6 +5,7 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
@@ -96,6 +97,7 @@
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
@@ -105,6 +107,8 @@
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -650,6 +654,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
     VaultCodeCorrections,
@@ -685,6 +691,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeViewsMaterialize,
     VaultCodeViewsGet,
@@ -1405,6 +1412,8 @@ impl HostDoorRow {
             "vault.code.proposal_settle" => Self::VaultCodeProposalSettle,
             "vault.code.proposal_settlement" => Self::VaultCodeProposalSettlement,
             "vault.code.oplog" => Self::VaultCodeOplog,
+            "vault.code.secrets.get" => Self::VaultCodeSecretsGet,
+            "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
             "vault.code.corrections" => Self::VaultCodeCorrections,
@@ -1440,6 +1449,7 @@ impl HostDoorRow {
             "vault.code.origin.authority.get" => Self::VaultCodeOriginAuthorityGet,
             "vault.code.origin.authority.set" => Self::VaultCodeOriginAuthoritySet,
             "vault.code.origin.publications" => Self::VaultCodeOriginPublications,
+            "vault.code.checkout.holder.bind" => Self::VaultCodeCheckoutHolderBind,
             "vault.code.checkout.bind" => Self::VaultCodeCheckoutBind,
             "vault.code.views.materialize" => Self::VaultCodeViewsMaterialize,
             "vault.code.views.get" => Self::VaultCodeViewsGet,
@@ -1684,7 +1694,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
     HostDoorRow::from_verb(verb).is_some()
         || matches!(
             verb,
-            "self.focus.wakes"
+            "vault.commitments.ledger"
+                | "self.focus.wakes"
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
@@ -1776,6 +1787,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
                 | "vault.connectors.web.usage"
+                | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
                 | "ai.ask_image"
@@ -1784,6 +1796,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.create"
                 | "vault.questions.edit"
                 | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
                 | "vault.questions.backfill"
                 | "vault.questions.read"
                 | "vault.questions.outcome_windows"

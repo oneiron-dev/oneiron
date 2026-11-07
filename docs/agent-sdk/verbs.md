@@ -8,6 +8,7 @@ both bindings and their export-census tests in one change.
 
 - `vault.commitments.create`
 - `vault.commitments.get`
+- `vault.commitments.ledger`
 - `vault.commitments.instances`
 - `vault.commitments.proposals`
 - `vault.commitments.fulfill`
@@ -700,6 +701,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `vault.code.secrets.get`
+- `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.corrections`
@@ -736,6 +739,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
 - `vault.code.checkout.get`
@@ -935,6 +939,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.detach`
 - `ai.streams.abort`
 - `ai.streams.terminal`
+- `ai.streams.release`
 - `ai.reply`
 - `vault.receipts.context`
 - `vault.receipts.craft_reply_manifest`
@@ -986,6 +991,8 @@ both bindings and their export-census tests in one change.
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
+- `vault.questions.prepare`
+- `vault.questions.admit`
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.outcome_windows`

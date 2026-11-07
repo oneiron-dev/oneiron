@@ -37,6 +37,7 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 vaultCommitmentsCreate(input: unknown): unknown
 vaultCommitmentsGet(input: unknown): unknown
+vaultCommitmentsLedger(input: unknown): unknown
 vaultCommitmentsInstances(input: unknown): unknown
 vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
@@ -729,6 +730,8 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeSecretsGet(input: unknown): unknown
+vaultCodeSecretsPropose(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
@@ -765,6 +768,7 @@ vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeCheckoutHolderBind(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
 vaultCodeCheckoutClaim(input: unknown): unknown
 vaultCodeCheckoutGet(input: unknown): unknown
@@ -964,6 +968,7 @@ aiStreamsEvents(input: unknown): unknown
 aiStreamsDetach(input: unknown): unknown
 aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
+aiStreamsRelease(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 vaultReceiptsCraftReplyManifest(input: unknown): unknown
@@ -1015,6 +1020,8 @@ vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsPrepare(input: unknown): unknown
+vaultQuestionsAdmit(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsOutcomeWindows(input: unknown): unknown
