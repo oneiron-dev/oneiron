@@ -30,6 +30,7 @@ use crate::secret_custody::{
 use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::PENDING_CALLS;
+use super::connector_call_sent::{SentGeneration, SentGenerations};
 
 /// How a live exchange is taken up again after a restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,10 @@ pub struct ConnectorResumeState {
     pub generation: u64,
     pub protocol: ConnectorResumeProtocol,
     pub state: Zeroizing<Vec<u8>>,
+    /// What the send that met the first round presented (fix list row
+    /// 10550): the row keeps it when it binds that round; a later round's
+    /// state leaves it as the row has it.
+    pub sent: SentGenerations,
 }
 
 impl ConnectorResumeState {
@@ -134,6 +139,9 @@ pub struct OpenedConnectorResume {
     /// answer re-sends, its grant checked again first (FIX 8226). `None`
     /// for a stream, or when the ledger does not read it.
     pub original: Option<FrozenOutboundCall>,
+    /// Each credential presentation the exchange made before (fix list row
+    /// 10550): what the resumed worker clears, beside what it presents now.
+    pub sent: SentGenerations,
 }
 
 /// The custody generation round `round`'s state is sealed at.
@@ -179,6 +187,41 @@ impl Vault {
             input.resume = Some(ConnectorInputResume::seal_in_txn(
                 self, txn, call_ref, sealed_at, protocol, state,
             )?);
+            PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
+            Ok(true)
+        })?)
+    }
+
+    /// Adds `sent`, what a resume presented, to the presentations the call
+    /// `call_ref`'s exchange made (fix list row 10550), before the resumed
+    /// exchange sends anything: its round `generation` of the questions
+    /// `handle` names, unanswered and standing uncertain. `true` when the
+    /// row kept it; a row whose round is another's, answered, or live
+    /// again keeps what it has, and the exchange is not resumed.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_connector_input_sent(
+        &self,
+        call_ref: &EntityId,
+        handle: &str,
+        generation: u64,
+        sent: SentGeneration,
+    ) -> Result<bool, IntentLedgerError> {
+        Ok(self.with_write_txn(|txn| {
+            let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
+                return Ok(false);
+            };
+            if row.settled.is_some() {
+                return Ok(false);
+            }
+            let Some(input) = row.input.as_mut().filter(|input| {
+                input.handle == handle && input.generation == generation && input.uncertain
+            }) else {
+                return Ok(false);
+            };
+            input.sent = std::mem::take(&mut input.sent).with(sent);
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
             Ok(true)
         })?)
@@ -244,6 +287,7 @@ impl Vault {
                     .as_ref()
                     .and_then(|secret_use| secret_use.run),
                 original,
+                sent: input.sent,
             });
         }
         Ok(opened)

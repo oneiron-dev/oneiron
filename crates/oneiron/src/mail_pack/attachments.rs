@@ -163,25 +163,19 @@ impl Memory<'_> {
         };
         let key = attachment_key(source, &provider_id, &attachment.part_id);
         let at = crate::unix_seconds_now();
-        let held = occurrence_key(source, &provider_id);
         let row = vault
             .with_write_txn_grouped(|txn| {
                 if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
                     return Ok(Some(row));
                 }
-                // A message erased since the read above keeps no attachment: its
-                // row is never made again, so no fetch brings its bytes back.
-                let still_held =
-                    OCCURRENCES
-                        .get(&vault.store, txn, &held)?
-                        .is_some_and(|current| {
-                            !matches!(current.presence, MailPresence::Forgotten { .. })
-                                && current
-                                    .attachments
-                                    .iter()
-                                    .any(|described| described.part_id == attachment.part_id)
-                        });
-                if !still_held {
+                // A message erased since the read above queues nothing.
+                if !attachment_described_in(
+                    &vault.store,
+                    txn,
+                    source,
+                    &provider_id,
+                    &attachment.part_id,
+                )? {
                     return Ok(None);
                 }
                 let row = MailAttachmentRow {
@@ -201,6 +195,28 @@ impl Memory<'_> {
             .ok_or_else(unknown)?;
         Ok(view(&row))
     }
+}
+
+/// Whether `source`'s message `provider_id` still stands, not forgotten,
+/// and still describes the attachment `part_id`. An erase scrubs the
+/// message's occurrence, so nothing of its attachments is queued or stored
+/// after it, whatever a reader or a fetch read before (REVIEW-6005).
+fn attachment_described_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    provider_id: &str,
+    part_id: &str,
+) -> Result<bool> {
+    Ok(OCCURRENCES
+        .get(store, txn, &occurrence_key(source, provider_id))?
+        .is_some_and(|occurrence| {
+            !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+                && occurrence
+                    .attachments
+                    .iter()
+                    .any(|attachment| attachment.part_id == part_id)
+        }))
 }
 
 /// The artifacts the opened attachments of one message were stored in.
@@ -433,6 +449,15 @@ fn claim_artifact(
         let Some(mut held) = ATTACHMENTS.get(&vault.store, txn, key)? else {
             return Ok(None);
         };
+        if !attachment_described_in(
+            &vault.store,
+            txn,
+            source,
+            &row.provider_id,
+            &row.attachment.part_id,
+        )? {
+            return Ok(None);
+        }
         if let Some(data) = &body {
             vault
                 .batch_in()
