@@ -309,22 +309,33 @@ fn keep_once_answered(
         subscription,
         outcome,
     } = answering;
-    let message = handle.message_id();
+    let expected_message = handle.recorded_message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let Ok(ended) = outcome.await else {
             return;
         };
-        let saved = ended
-            .saved
-            .as_ref()
-            .is_some_and(|saved| saved.actor == awaited.agent && saved.message_id == message);
+        let mut awaited = awaited;
+        let saved = ended.saved.as_ref().filter(|saved| {
+            saved.actor == awaited.agent && match expected_message {
+                Some(message) => saved.message_id == message,
+                None => ended.native.as_ref().is_some_and(|finished| {
+                    matches!(&finished.outcome,
+                        oneiron::memory::SessionStreamOutcome::Retained(receipt) if receipt == *saved)
+                        && finished.turn_id.is_some()
+                }),
+            }
+        });
+        if let Some(finished) = &ended.native {
+            awaited.turn = finished.turn_id;
+        }
+        let message = saved.map(|saved| saved.message_id);
         let stood = !awaited.fallback_only || ended.fell_back;
-        let text = (saved && stood && !ended.text.is_empty()).then(|| ended.text.clone());
+        let text = (saved.is_some() && stood && !ended.text.is_empty()).then(|| ended.text.clone());
         // The outcome goes on as it ended, before any record is read or
         // written; a caller that went away stops neither.
         let _ = finished.send(ended);
-        let Some(text) = text else {
+        let (Some(text), Some(message)) = (text, message) else {
             return;
         };
         let kept = tokio::task::spawn_blocking(move || {

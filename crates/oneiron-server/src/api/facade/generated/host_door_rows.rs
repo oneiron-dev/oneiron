@@ -34,6 +34,7 @@
 //! - `vault.weave.admin.item.wrong`
 //! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`
@@ -139,6 +140,8 @@
 //! - `self.run.attach`
 //! - `self.folds.describe`
 //! - `self.history`
+//! - `vault.sync.repo_manifests.conflict.review`
+//! - `vault.sync.repo_manifests.conflict.discard`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -1711,6 +1714,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.admin.item.wrong"
                 | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
+                | "vault.skills.proposal.settle"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
                 | "vault.packs.sections.list"
@@ -1815,6 +1819,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.run.attach"
                 | "self.folds.describe"
                 | "self.history"
+                | "vault.sync.repo_manifests.conflict.review"
+                | "vault.sync.repo_manifests.conflict.discard"
                 | "connector.answer"
                 | "self.browser.open"
                 | "self.browser.observe"
