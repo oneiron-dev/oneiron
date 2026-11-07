@@ -31142,7 +31142,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 38,
+      "const": 39,
       "crate-vis": 13,
       "fn": 11,
       "re-export": 6,
@@ -31978,7 +31978,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "mod": 23,
       "re-export": 10
@@ -42752,7 +42752,7 @@
      "purpose": "Who decided a topology seal, and whether that decision stands here (mesh PR2-topology, amended 10-19 03:0x…",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 4,
       "fn": 8,
       "struct": 1
@@ -42852,8 +42852,8 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 19,
-      "re-export": 12
+      "crate-vis": 21,
+      "re-export": 13
      }
     },
     {
@@ -42913,6 +42913,78 @@
      "purpose": "One merge, split or facet decision too large for one record, carried across bounded records of the same…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TopologyAuditCorrection",
+      "TopologyAuditDecider",
+      "TopologyAuditEvidence",
+      "TopologyAuditIntent",
+      "TopologyAuditOutcome",
+      "TopologyAuditResult",
+      "TopologyAuditScope",
+      "TopologyAuditSelection"
+     ],
+     "path": "src/identity_topology/post_hoc_review.rs",
+     "purpose": "The receipted post-hoc review of automatic topology (FIX 7817, ARCH-0055 §8 \"sampled post-hoc audit replaces…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/post_hoc_review/home.rs",
+     "purpose": "FIX 7817: the topology-audit tables a home move carries, as one section on L03's carrier C1…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/post_hoc_review/home/partition.rs",
+     "purpose": "FIX 8875 for the topology-audit section: its rows split into content-free facts and each actor's content…",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/post_hoc_review/receipts.rs",
+     "purpose": "The topology-audit receipt projector (FIX 7817): one `Gate` receipt per candidate, from its three tables",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "TopologyAuditAnswer",
+      "TopologyAuditCase",
+      "TopologyAuditRecipe",
+      "TopologyAuditReport",
+      "TopologyAuditReviewer"
+     ],
+     "path": "src/identity_topology/post_hoc_review/run.rs",
+     "purpose": "The Coach's drain of pending topology-audit candidates (FIX 7817): the first selection kept before any…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -94108,7 +94180,7 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 25,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94962,9 +95034,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 189,
+   "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6722,
+   "source_files": 6727,
    "test_files": 895
   },
   "oneiron-android": {
@@ -113485,6 +113557,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/topology_audit.rs",
+     "purpose": "The host's topology-audit recipe (FIX 7817, ARCH-0055 §8): the Coach's post-hoc review of automatic merges…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/type_tree_upkeep.rs",
      "purpose": "The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the…",
      "surface": {
@@ -124817,7 +124899,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -133366,7 +133448,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 129,
+     "files": 130,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133907,7 +133989,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1728,
+   "source_files": 1729,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

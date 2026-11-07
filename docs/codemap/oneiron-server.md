@@ -29,6 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_host/research_oracle.rs` | src | s | 1 crate-vis | — | The research tick's goal oracle (FIX 1331) |
 | `src/ai_host/coach_host/seal_checks.rs` | src | s | 3 crate-vis | — | The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession… |
 | `src/ai_host/coach_host/seal_checks/checker.rs` | src | s | 6 crate-vis | — | The seal checker's protocol (OF-544): the judge's instruction, which models count as independent of the… |
+| `src/ai_host/coach_host/topology_audit.rs` | src | s | 1 crate-vis | — | The host's topology-audit recipe (FIX 7817, ARCH-0055 §8): the Coach's post-hoc review of automatic merges… |
 | `src/ai_host/coach_host/type_tree_upkeep.rs` | src | s | 1 crate-vis | — | The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the… |
 | `src/ai_host/coach_host/wake.rs` | src | s | 3 crate-vis | — | The installed host Coach's complete dispatcher, lent to a wake pass |
 | `src/ai_host/coach_host/weave_digest_settings.rs` | src | s | 1 crate-vis | — | The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the… |
@@ -1120,7 +1121,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 1 const · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_host/notes.rs` | src | s | 2 crate-vis | — | The host's notes beside decided answers (FIX 3040, 654): a critic review's evidence refs and suggested… |
 | `src/decision_host/refresh.rs` | src | s | 2 crate-vis | — | Decision host person- and think-threshold refresh |
-| `src/decision_verdict.rs` | src | L | 18 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
+| `src/decision_verdict.rs` | src | L | 21 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/decision_verdict/hook.rs` | src | s | 3 crate-vis | — | `ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any… |
 | `src/decision_verdict/model_calls.rs` | src | s | 3 crate-vis | — | The capture caller a model-call capture attributes (FIX 12516/12742) |
 | `src/device_local.rs` | src | s | 10 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
