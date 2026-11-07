@@ -92,13 +92,13 @@ pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 #[cfg(all(unix, feature = "sync"))]
 pub(crate) use shared_act::removal_archive_body_keys_in_txn;
 pub use shared_act::{
-    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
-    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
-    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
-    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
-    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
-    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind,
+    EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization,
+    REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive, ReceivedRemovalArchiveState,
+    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
+    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
+    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
