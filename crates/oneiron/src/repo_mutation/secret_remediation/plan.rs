@@ -16,12 +16,33 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::git_wire::git_path_bytes;
 use crate::origin::secret_manifest::SECRET_MANIFEST_PATH;
 use crate::origin::secret_marks::{RepoBlobMarks, RepoMarkFacts, RepoSecretPlacement};
 use crate::repo_mutation::snapshot::SnapshotCustody;
 use crate::secret_manifest::{SECRET_MANIFEST_SCHEMA_VERSION, parse_secret_manifest};
 
 /// The example file the names of moved literals go into.
+/// The ignore rule naming the removed dotenv file whose path text is `path`
+/// (FIX 21326): the path itself when it is UTF-8. A byte outside UTF-8 cannot
+/// stand in the ignore file, which lands as a UTF-8 code document, so each
+/// one is written `?`, which Git's matcher reads as any one byte but `/`:
+/// the rule still matches the file's exact bytes.
+fn ignore_rule(path: &str) -> Result<String> {
+    let bytes = git_path_bytes(path)?;
+    if std::str::from_utf8(&bytes).is_ok() {
+        return Ok(path.to_owned());
+    }
+    let mut rule = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        rule.push_str(chunk.valid());
+        for _ in chunk.invalid() {
+            rule.push('?');
+        }
+    }
+    Ok(rule)
+}
+
 const ROOT_EXAMPLE_PATH: &str = ".env.example";
 
 /// The ignore file a remediation extends.
@@ -131,7 +152,7 @@ impl Plan {
             return Ok(());
         }
         self.write_examples(files);
-        self.write_ignore(files);
+        self.write_ignore(files)?;
         self.write_manifest(manifest);
         Ok(())
     }
@@ -448,8 +469,11 @@ impl Plan {
     }
 
     /// The ignore file gains `.env` and each removed dotenv file's exact
-    /// path, unless a line already names it.
-    fn write_ignore(&mut self, files: &BTreeMap<String, CommitFile>) {
+    /// path, unless a line already names it. The ignore file lands as a code
+    /// document, so it stays UTF-8: a removed file's name outside UTF-8 is
+    /// written as [`ignore_rule`], which still matches its exact bytes
+    /// (FIX 21326).
+    fn write_ignore(&mut self, files: &BTreeMap<String, CommitFile>) -> Result<()> {
         let mut text = files
             .get(IGNORE_PATH)
             .map(|file| file.content.clone())
@@ -461,12 +485,16 @@ impl Plan {
             .collect();
         let mut wanted = std::mem::take(&mut self.ignored);
         wanted.insert(".env".to_owned());
-        let missing: Vec<String> = wanted
-            .into_iter()
-            .filter(|entry| !present.contains(entry))
-            .collect();
+        let mut rules = BTreeSet::new();
+        for entry in &wanted {
+            let rule = ignore_rule(entry)?;
+            if !present.contains(&rule) {
+                rules.insert(rule);
+            }
+        }
+        let missing: Vec<String> = rules.into_iter().collect();
         if missing.is_empty() {
-            return;
+            return Ok(());
         }
         if !text.is_empty() && !text.ends_with(b"\n") {
             text.push(b'\n');
@@ -483,6 +511,7 @@ impl Plan {
                 custody: Vec::new(),
             },
         );
+        Ok(())
     }
 
     /// The manifest gains one entry per secret it does not declare yet,
