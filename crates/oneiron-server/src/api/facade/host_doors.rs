@@ -137,6 +137,13 @@ pub(crate) use super::weave_doors::*;
 pub(crate) use super::repo_copy_edit_doors::{
     vault_sync_documents_copy_edit_review, vault_sync_documents_copy_edit_settle,
 };
+// The owner's reset of a person's step-up passkeys (FIX 17553).
+pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
+// The weave Admin's served rows, on the passkey step-up (FIX 11694).
+pub(crate) use super::weave_admin_doors::{
+    vault_weave_admin_digest, vault_weave_admin_item_wrong, vault_weave_admin_lens,
+    vault_weave_admin_link_wrong, vault_weave_admin_report,
+};
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
