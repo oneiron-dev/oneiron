@@ -11280,9 +11280,10 @@ async fn mcp_verb_row_describe(row: McpVerbRow<'_>) -> McpVerbRowResult {
     };
     oneiron::task_verb::sdk::validate_input("describe", &input).map_err(mcp_facade_error)?;
     if input.get("self").and_then(Value::as_bool) == Some(true) {
-        let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-        let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(
-            server, auth, &input,
+        // A code-mode call names its trusted durable run; a direct call names none.
+        let run = surface.run.as_ref().map(|run| run.run_id);
+        let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(
+            server, actor, run, &input,
         ))
         .await
         .map_err(|_| invalid())?;
