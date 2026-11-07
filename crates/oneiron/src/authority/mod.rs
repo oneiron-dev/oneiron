@@ -102,6 +102,7 @@ mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
+mod leave_notice_continuity;
 mod left_notices;
 mod local_host_root;
 mod local_open;
@@ -191,10 +192,10 @@ pub use oneiron_authority::authority::{
     FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
-    GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ModelOrder,
-    OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    GenesisRecoveryStep, GrantTravelSet, LeaveNoticeDelegation, LeaveNoticeDelegationPurpose,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
@@ -304,8 +305,6 @@ pub use history_fetch::{
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
-#[cfg(feature = "sync")]
-pub(crate) use history_transfer::HandoffRoster;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
     JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
@@ -317,6 +316,9 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
+pub use leave_notice_continuity::LeaveNoticeContinuity;
+#[cfg(feature = "sync")]
+pub(crate) use leave_notice_continuity::{LeaveNoticeDelegationRows, NoticeSignerStanding};
 pub use local_host_root::{
     HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
 };
