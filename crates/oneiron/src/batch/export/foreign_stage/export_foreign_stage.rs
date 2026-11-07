@@ -1,8 +1,10 @@
 //! Sync-gated foreign-import staging operations and test hooks.
+use std::collections::BTreeSet;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::window_protocol::FederationAdmissionRole;
 use crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES;
@@ -10,6 +12,7 @@ use crate::sync::selector::admit_staged_window_update;
 use crate::window_key::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
+use super::body_work::StagedImportBodyWork;
 use super::content::{StagedWindowPart, decode_staged_import_parts, encode_staged_import_parts};
 use super::export_foreign_receipt::{
     CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT, STAMPS,
@@ -59,10 +62,15 @@ impl StagedImportHooks {
     }
 }
 
+/// Moves the receipt from `expected` (Pending) to `confirmed` in one write,
+/// or returns false when another writer moved it first. With bodies still
+/// owed (`work`, FIX 12408), the write keeps the admitted content and staged
+/// stamps beside the work for their later delivery; with none, it drops them.
 pub(crate) fn vault_import_confirm_if_pending(
     vault: &Vault,
     expected: &VaultImportStageReceipt,
     confirmed: &VaultImportStageReceipt,
+    work: Option<&StagedImportBodyWork>,
 ) -> Result<bool> {
     let key = Hex64(expected.receipt_id);
     let a = encode_vault_import_receipt(expected)?;
@@ -75,35 +83,52 @@ pub(crate) fn vault_import_confirm_if_pending(
             return Ok(false);
         }
         RECEIPT.put(&vault.store, w, &key, &b)?;
-        // The staged payload exists only to recover a Pending receipt. Once this CAS
-        // wins the receipt leaves Pending forever, so drop the content in the same
-        // write txn: the terminal receipt and the GC commit or roll back together.
-        CONTENT.delete(&vault.store, w, &key)?;
-        STAMPS.delete(&vault.store, w, &key)?;
+        // The staged payload recovers a Pending receipt, and after this CAS
+        // delivers the bodies it still owes. With none owed, drop it in the
+        // same write txn: the terminal receipt and the GC commit or roll back
+        // together.
+        match work {
+            Some(work) if !work.owed.is_empty() => {
+                super::body_work::keep_body_work_in_txn(
+                    &vault.store,
+                    w,
+                    &expected.receipt_id,
+                    work,
+                )?;
+            }
+            _ => {
+                CONTENT.delete(&vault.store, w, &key)?;
+                STAMPS.delete(&vault.store, w, &key)?;
+            }
+        }
         Ok(true)
     })
 }
 
-/// Reads the admitted bytes retained solely to make a Pending receipt recoverable
-/// after the caller loses its in-memory `StagedVaultImport`.
+/// Reads the admitted bytes retained to make a Pending receipt recoverable
+/// after the caller loses its in-memory `StagedVaultImport`, and to deliver
+/// the bodies a confirmed one still owes (FIX 12408).
 ///
-/// The row exists only while the receipt is Pending: `vault_import_confirm_if_pending`
-/// deletes it atomically in the same write txn that moves the receipt out of Pending,
-/// so a confirmed (or otherwise terminal) receipt never retains staged content.
+/// The row exists while the receipt is Pending, and after its confirmation
+/// only while its body work names an owed body: `vault_import_confirm_if_pending`
+/// deletes it in the same write txn that confirms a receipt owing none, and
+/// the body work drops it with the last owed body, a cancellation or an erase
+/// of a row it carries.
 pub fn vault_import_staged_content(vault: &Vault, id: &[u8; 32]) -> Result<Option<Vec<u8>>> {
     vault.sync_state_get(&content_key(id))
 }
 
 /// The record of the facet stamps the artifact staged under `id` holds ahead
-/// of their rows, kept exactly as long as its content: only while the
-/// receipt is Pending.
+/// of their rows, kept exactly as long as its content: while the receipt is
+/// Pending, and after its confirmation while it owes bodies.
 pub(crate) fn vault_import_staged_stamps(vault: &Vault, id: &[u8; 32]) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
     STAMPS.get(&vault.store, &txn, &Hex64(*id))
 }
 
 /// Whether the receipt `id` still keeps a record of staged stamps, that is,
-/// whether it is Pending with stamps of its own, judged in `txn`.
+/// whether it is Pending, or confirmed and owing bodies, with stamps of its
+/// own, judged in `txn`.
 pub(crate) fn vault_import_keeps_stamps_in(
     dbs: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
@@ -140,7 +165,7 @@ pub(crate) fn rewrite_staged_stamps_for_test(
 fn put_stage_if_absent(
     vault: &Vault,
     receipt: &VaultImportStageReceipt,
-    admitted: Option<(&[u8], &[u8])>,
+    admitted: Option<(&[u8], &[u8], &BTreeSet<EntityId>)>,
 ) -> Result<bool> {
     let key = Hex64(receipt.receipt_id);
     let encoded = encode_vault_import_receipt(receipt)?;
@@ -148,7 +173,15 @@ fn put_stage_if_absent(
         if RECEIPT.contains(&vault.store, w, &key)? {
             return Ok(false);
         }
-        if let Some((content, stamps)) = admitted {
+        if let Some((content, stamps, discarded)) = admitted {
+            // The content was projected for these marks; a discard since
+            // owes it a projection of its own (FIX 14534 part E, E4 = A).
+            if crate::sync::residence::discarded_rows_in(&vault.store, w)? != *discarded {
+                return Err(Error::InvalidConfig(
+                    "the owner's discard marked rows while this import staged; stage it again"
+                        .into(),
+                ));
+            }
             CONTENT.put(&vault.store, w, &key, &content.to_vec())?;
             if !stamps.is_empty() {
                 STAMPS.put(&vault.store, w, &key, &stamps.to_vec())?;
@@ -157,6 +190,49 @@ fn put_stage_if_absent(
         RECEIPT.put(&vault.store, w, &key, &encoded)?;
         Ok(true)
     })
+}
+
+/// Deletes, in the owner's discard's write, every Pending staged import
+/// whose admitted parts hold a row in `discarded`, with its content and its
+/// record of stamps (FIX 14534 part E, E4 = A); its held stamps retire with
+/// the receipt. The artifact can be staged again, and that staging projects
+/// it for the marks. Content exists only while its receipt is Pending.
+/// Returns how many went.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn cancel_staged_imports_holding_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    discarded: &BTreeSet<EntityId>,
+) -> Result<usize> {
+    if discarded.is_empty() {
+        return Ok(0);
+    }
+    let mut cancelled = 0;
+    for (key, content) in CONTENT.scan(store, txn)? {
+        // A carrier that does not decode stays: its confirmation fails closed.
+        let holds = decode_staged_import_parts(&content).is_ok_and(|parts| {
+            parts.iter().any(|part| {
+                part.born_with
+                    .iter()
+                    .any(|(id, _, _)| discarded.contains(id))
+                    || crate::sync::window::update_holds_discarded(
+                        &part.key,
+                        &part.update,
+                        discarded,
+                    )
+            })
+        });
+        if holds {
+            CONTENT.delete(store, txn, &key)?;
+            STAMPS.delete(store, txn, &key)?;
+            RECEIPT.delete(store, txn, &key)?;
+            cancelled += 1;
+        }
+    }
+    Ok(cancelled)
 }
 
 fn staged_from_pending(
@@ -283,14 +359,29 @@ pub fn stage_foreign_vault_import(
             }
         };
     }
-    let (admitted, stamps) = match admit_staged_window_update(
+    // What the owner's discard of a world copy marks never persists here: the
+    // admitted parts are projected for the marks before any content does,
+    // and the write checks the marks again (FIX 14534 part E, E4 = A).
+    let discarded = {
+        let txn = vault.store.env.read_txn()?;
+        crate::sync::residence::discarded_rows_in(&vault.store, &txn)?
+    };
+    let admission = admit_staged_window_update(
         vault,
         key,
         remote,
         FederationAdmissionRole::Guest,
         &id,
         classification.exported_vault_id.as_ref(),
-    ) {
+    )
+    .and_then(|mut admitted| {
+        // A projection that fails is no defect of the artifact: retryable.
+        admitted
+            .project_for_discard(&discarded)
+            .map_err(|error| Error::InvalidConfig(format!("discard projection: {error}")))?;
+        Ok(admitted)
+    });
+    let (admitted, stamps) = match admission {
         Ok(a)
             if a.parts()
                 .all(|part| part.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES) =>
@@ -428,7 +519,7 @@ pub fn stage_foreign_vault_import(
         failure: None,
         staged_stamps_digest: Some(*blake3::hash(&stamps).as_bytes()),
     };
-    if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps)))? {
+    if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps, &discarded)))? {
         return Ok(StagedVaultImport {
             receipt: pending,
             admitted_update: admitted,
