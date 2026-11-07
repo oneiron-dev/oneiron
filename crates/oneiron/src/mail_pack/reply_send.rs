@@ -44,6 +44,7 @@ use super::imap::submission_account;
 use super::microsoft365::{GRAPH_ME_URL, MICROSOFT365_CONNECTOR_EFFECTOR, reads_mailbox};
 use super::reply_attachments::MAX_GRAPH_SEND_BODY_BYTES;
 use super::reply_mime::{ReplyMessage, ReplyMessageFiles};
+use super::reply_smtp::SmtpEndpoint;
 use super::rest::{self, bearer_header, refused};
 use super::smtp_client::{SmtpAuth, SmtpSession, Submitted};
 use super::wire::MailSyncSource;
@@ -68,10 +69,11 @@ const RECEIPT_REPLY_MESSAGE_REF: &str = "mail_reply_message_ref";
 const RECEIPT_SEND_ERROR: &str = "mail_reply_send_error";
 
 /// The authenticated submission session of the IMAP mailbox `source`, opened
-/// with `secret`, its credential at its door: the submission server it
-/// names, over TLS, `EHLO` naming the domain of `from`, the mailbox's
-/// address, then `AUTH` with its token, else its password. The send and the
-/// size check of a reply with files (`reply_smtp`) open it alike.
+/// with `secret`, its credential at its door, and the server it is open to:
+/// the submission server the credential names, over TLS, `EHLO` naming the
+/// domain of `from`, the mailbox's address, then `AUTH` with its token, else
+/// its password. The send and the size check of a reply with files
+/// (`reply_smtp`, which records the server) open it alike.
 ///
 /// # Errors
 ///
@@ -81,7 +83,7 @@ pub(super) fn open_submission(
     source: &MailSyncSource,
     secret: &[u8],
     from: &str,
-) -> Result<SmtpSession> {
+) -> Result<(SmtpSession, SmtpEndpoint)> {
     let account = submission_account(source, secret)?;
     let auth = match (&account.access_token, &account.password) {
         (Some(token), _) => SmtpAuth::Token(token),
@@ -94,7 +96,11 @@ pub(super) fn open_submission(
     let mut session =
         SmtpSession::connect(&account.host, account.port, account.security, client_name)?;
     session.authenticate(&account.username, &auth)?;
-    Ok(session)
+    let endpoint = SmtpEndpoint {
+        host: account.host.clone(),
+        port: account.port,
+    };
+    Ok((session, endpoint))
 }
 
 /// How a reply leaves its mailbox.
@@ -198,7 +204,7 @@ impl<'v> ReplySink<'v> {
             SMTP_SUBMISSION_CONNECTOR_EFFECTOR,
             self.retained,
             &mut |secret: &[u8]| {
-                let mut session = open_submission(&self.source, secret, &self.message.from)?;
+                let (mut session, _) = open_submission(&self.source, secret, &self.message.from)?;
                 let recipients = self.message.delivery_addresses();
                 let submitted = session.submit(&self.message.from, &recipients, raw, unadvertised);
                 session.quit();
