@@ -186,9 +186,12 @@ fn write_in_txn(
     attempt: &AttemptId,
     fields: Vec<(Value, Value)>,
 ) -> Result<()> {
-    RUN.put(
+    // Its slots and snapshot entries are indexed with it, so an erase finds
+    // it (FIX 7616).
+    super::entity_rows::put_in_txn(
         &vault.store,
         txn,
+        super::entity_rows::Listing::Run,
         attempt.as_bytes(),
         &encode_row(&Value::Map(fields), RUN_LABEL)?,
     )
