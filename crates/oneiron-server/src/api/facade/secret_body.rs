@@ -54,15 +54,23 @@ impl FacadeSecret {
     }
 }
 
-/// The arrival's own digest, for the invocation claim: a redacted body
-/// digests differently, but a retry naming another value is still another
-/// call.
+/// The original request's digest for the invocation claim. A wiped custody
+/// arrival includes its secret's hash: a redacted body digests differently,
+/// but a retry naming another value is still another call.
 #[derive(Clone)]
 pub(super) struct FacadeOriginalDigest(String);
 
 impl FacadeOriginalDigest {
     pub(super) fn digest(&self) -> &str {
         &self.0
+    }
+}
+
+/// Keeps a request digest already read by the receipt layer, without replacing
+/// the original arrival digest of a wiped custody value.
+pub(super) fn retain_request_digest(extensions: &mut Extensions, digest: &str) {
+    if extensions.get::<FacadeOriginalDigest>().is_none() {
+        extensions.insert(FacadeOriginalDigest(digest.to_owned()));
     }
 }
 
