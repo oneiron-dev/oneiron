@@ -56,6 +56,30 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, u64::from(*minimum));
         }
     }
+    if let Some(row) = &resolution.code_consent_settlement {
+        use crate::gate::code_consent_settlement::CodeConsentSettlementEligibility;
+        hash_str(hasher, crate::gate::code_consent_settlement::KEY);
+        match &row.eligible {
+            CodeConsentSettlementEligibility::AllPowerHolders => {
+                hash_str(hasher, "all_power_holders")
+            }
+            CodeConsentSettlementEligibility::Named(holders) => {
+                hash_str(hasher, "named");
+                hash_len(hasher, holders.len());
+                for holder in holders {
+                    hash_str(hasher, holder);
+                }
+            }
+        }
+        hash_bool(hasher, row.conflicting_authored_rows);
+        hash_len(hasher, row.sources.len());
+        for source in &row.sources {
+            hash_str(hasher, &source.manifest_ref);
+            hash_bytes(hasher, &source.body_hash);
+            hash_u64(hasher, u64::from(source.version));
+            hash_str(hasher, source.origin.as_str());
+        }
+    }
     // A new project's birth and the vault ceiling read these resolved policy
     // rows. A policy edit must move the frontier even if other gate axes agree.
     if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
