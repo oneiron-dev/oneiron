@@ -166,6 +166,11 @@ impl Vault {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
             crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+            if erase {
+                crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                    self, wtxn, id,
+                )?;
+            }
             // Saved tags read the turn's messages through their PartOf edges, so
             // they go before the graph is torn down.
             let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -357,6 +362,11 @@ impl Vault {
             crate::batch::deindex_entity(&write, txn, id)
         })?;
         crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+        if erase {
+            crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                self, wtxn, id,
+            )?;
+        }
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,

@@ -19,9 +19,11 @@
 //! leader loaded, the leader as the deciding actor, a market's signed
 //! referee. It counts the members' confessions, calls and spend itself
 //! ([`super::observations`]), and leaves unknown what it cannot count. The
-//! guest names only what the host cannot observe: the axis (a planned team's
-//! is the one its pattern froze), a vote's tally or an unsigned referee's
-//! rule, the roles and coverage. A team below its pattern's floor records
+//! guest names what the host cannot observe: the axis (a planned team's
+//! is the one its pattern froze), an unsigned referee's rule, the roles and
+//! coverage. Explicit `self.team.vote` choices supply a complete current-try
+//! tally; otherwise the guest's declared tally remains available. A team below
+//! its pattern's floor records
 //! what ran, and its receipt says so. A tournament's receipt is its
 //! finalizer's, never the leader's. Settlement stays with the anchored outcome
 //! ([`settle_team_outcome`](super::settle_team_outcome)), such as the
@@ -111,6 +113,14 @@ pub struct TeamRecordInput {
     pub coverage: Option<TeamCoverageInput>,
 }
 
+/// `self.team.vote`: the calling participant's own choice in its team.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamVoteInput {
+    pub team_ref: String,
+    pub choice: String,
+}
+
 /// Who decided. A leader or a chair is the calling agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -143,6 +153,7 @@ pub struct TeamCoverageInput {
 pub enum SelfTeamCall {
     Start(TeamStartInput),
     Record(TeamRecordInput),
+    Vote(TeamVoteInput),
 }
 
 /// What a `self.team.*` call answered.
@@ -163,6 +174,9 @@ pub enum TeamRunAnswer {
         pattern: TeamPattern,
         members: Vec<TeamMemberAnswer>,
     },
+    /// The bound participant's own choice, not a team result or tally.
+    #[serde(rename_all = "camelCase")]
+    Voted { team_ref: String, choice: String },
     #[serde(rename_all = "camelCase")]
     Recorded {
         team_ref: String,
@@ -346,7 +360,7 @@ pub(crate) fn record_led_team(
         None => BTreeMap::from([("lead".to_owned(), 1), ("member".to_owned(), width - 1)]),
     };
     let actor = lead_input.target.agent_definition_ref()?;
-    let decided_by = match &input.decided_by {
+    let mut decided_by = match &input.decided_by {
         TeamDecisionInput::Leader => DecidedBy::Leader { actor },
         TeamDecisionInput::Chair => DecidedBy::Chair { actor },
         TeamDecisionInput::Vote { tally } => DecidedBy::Vote {
@@ -368,6 +382,12 @@ pub(crate) fn record_led_team(
     }
     if let Some(existing) = team_receipt(vault, &input.team_ref)? {
         return Ok(Ok(recorded(&existing, true)));
+    }
+    if let DecidedBy::Vote { tally } = &mut decided_by
+        && let Some(observed) =
+            super::observations::observed_tally(vault, leader, &members, &input.team_ref)?
+    {
+        *tally = observed;
     }
     let observed = team_run_observations(vault, leader, &members)?;
     // The leader's model, and each member's newest try's, as measured beside

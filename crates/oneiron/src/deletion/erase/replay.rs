@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ports::EntityStoreRead;
+
 impl Vault {
     /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
     /// the ONE primitive every sync replay surface routes through (Observer
@@ -45,15 +47,23 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
+            let is_claim = EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
             let (outcome, _changed, effects) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+            let claims_changed = is_claim && outcome.changed_local_state();
             wtxn.commit()?;
-            Ok((outcome, effects))
+            Ok((outcome, effects, claims_changed))
         });
         self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
-        let (outcome, effects) = applied?;
+        let (outcome, effects, claims_changed) = applied?;
+        if claims_changed {
+            self.verb_hook_bindings_changed();
+        }
         effects.committed(self);
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
