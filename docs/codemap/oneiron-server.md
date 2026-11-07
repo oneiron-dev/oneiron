@@ -235,7 +235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/mod.rs` | src | L | 30 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
 | `src/api/context_board/reply.rs` | src | m | 1 crate-vis | — | The actual context-bearing text emit behind the generated `ai.reply` door |
-| `src/api/context_board/run_self.rs` | src | s | 1 crate-vis | — | A pumped run's own `describe(self)` (FIX 2086): the self brief of the run's agent, rendered by the… |
+| `src/api/context_board/run_self.rs` | src | s | 2 crate-vis | — | A pumped run's own `describe(self)` (FIX 2086): the self brief of the run's agent, rendered by the… |
 | `src/api/context_board/scratchpad.rs` | src | m | 11 crate-vis | — | POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548) |
 | `src/api/context_board/session.rs` | src | s | 3 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/split.rs` | src | s | 5 crate-vis | — | A live chat turn's board in two parts (I1 = C, ARCH-0067 turn order: committed history, state-only board… |
