@@ -974,6 +974,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/mcp_bridge/call_meta.rs` | src | s | 5 crate-vis | — | What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and… |
 | `src/commands/mcp_bridge/link.rs` | src | m | 8 crate-vis | — | The one connection `oneiron mcp` holds to its server (ARCH-0044 "anything that loops holds a socket"; owner… |
 | `src/commands/mcp_bridge/link/replies.rs` | src | s | 4 crate-vis | — | Reply forwarding on the bridge's shared socket driver |
+| `src/commands/mcp_bridge/wake.rs` | src | s | 2 crate-vis | — | The bridge's wake pump (OF-385): it polls `oneiron/wakes` for one host instance on its own cadence and hands… |
 | `src/commands/model_workers.rs` | src | s | 1 fn | — | — |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
 | `src/commands/oneironer.rs` | src | m | 5 struct · 5 enum · 1 fn | DistillArgs, ExportArgs, FetchArgs, FetchPlatforms, OneironerCommand, PublishArgs, QualifyArgs, QualifyDevice +2 | `oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 "one base, two… |
@@ -1368,10 +1369,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/state_serve.rs` | src | m | 3 struct · 15 fn · 1 type · 1 const · 2 re-export · 22 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/state_serve/admission.rs` | src | m | 31 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 6 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
-| `src/managed/state_serve/carrier_watch.rs` | src | m | 3 crate-vis | — | A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684) |
+| `src/managed/state_serve/carrier_watch.rs` | src | m | 3 crate-vis | — | Live looks at a vault VM's outbox carrier and a process host's argv recipients (FIX 6683, FIX 6684, FIX 11852) |
 | `src/managed/state_serve/carrier_watch/diverged_ask.rs` | src | s | 2 crate-vis | — | The owner's ask for each copy the outbox carrier keeps unagreed (FIX 11074): one inbox Ask per live owner… |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn · 4 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
-| `src/managed/state_serve/coordinator.rs` | src | m | 1 fn | — | Supervised vault startup, serving, and shutdown |
+| `src/managed/state_serve/coordinator.rs` | src | L | 1 fn | — | Supervised vault startup, serving, and shutdown |
 | `src/managed/state_serve/coordinator/ledger_report.rs` | src | s | 1 crate-vis | — | Wake-ledger changes reported while the managed vault is serving |
 | `src/managed/state_serve/coordinator/teardown.rs` | src | s | 2 crate-vis | — | One retained set of managed workers, drained on startup errors and normal stop |
 | `src/managed/state_serve/deletion.rs` | src | s | 2 crate-vis | — | The vault's deletion as `Ping` reports it (FIX 11710): the marker itself lives beside the host's write gate… |
@@ -1871,7 +1872,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `src/voice_host/wire.rs` | src | s | 1 struct · 13 crate-vis | VoiceWireBindings | The voice wire's media ops (OF-410) |
 | `src/wake_adapters/board_stream.rs` | src | s | 5 crate-vis | — | STREAM frames for the production host wake handoff |
-| `src/wake_adapters/delivery.rs` | src | s | 1 crate-vis | — | The preference/degrade ladder belongs to this host, never the engine |
+| `src/wake_adapters/delivery.rs` | src | m | 1 crate-vis | — | The preference/degrade ladder belongs to this host, never the engine |
 | `src/wake_adapters/inbox.rs` | src | s | 6 crate-vis | — | A local handoff inbox and occurrence-id acknowledgements |
 | `src/wake_adapters/mod.rs` | src | s | 4 crate-vis | — | Host-side, per-config-directory wake delivery (OF-385) |
 | `src/web_client.rs` | src | s | 1 struct · 1 enum · 1 fn · 5 crate-vis | DeploymentPosition, EndpointDescriptor | Endpoint discovery and browser access for an external shared web client |
