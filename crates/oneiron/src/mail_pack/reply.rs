@@ -7,16 +7,30 @@
 //! recorded dispatcher. A changed draft is a new revision with its own plan;
 //! an approval names the revision it saw.
 //!
-//! This first slice sends from a Google mailbox (Workspace or not) whose
-//! source reads through a delegated identity granted `gmail.send`: one
-//! plain-text reply to the message's `Reply-To`, else its sender, threaded on
-//! the provider (`threadId`, `In-Reply-To`, `References`, the subject). A
-//! group address, a Microsoft 365 mailbox, more than one recipient and
-//! attachments are refused, not dropped.
+//! A reply is one plain-text message to the answered message's `Reply-To`,
+//! else its sender, threaded by `In-Reply-To`, `References` and the
+//! subject. It leaves by the mailbox's own provider:
+//!
+//! - **Google** (Workspace or not): through the source's delegated identity
+//!   granted `gmail.send`, on the Gmail thread (`threadId`); the plan is
+//!   kept by the Gmail plan store until it sends, or its draft is discarded
+//!   or redrafted (fix list row 17646).
+//! - **IMAP** (fix list row 17872): submitted over SMTP to the server the
+//!   mailbox's credential names, as the mailbox's own account.
+//! - **Microsoft 365** (fix list row 17643): one MIME `sendMail` on Graph
+//!   with the mailbox's own token.
+//!
+//! An IMAP or Microsoft 365 reply names no sender identity: the frozen
+//! message rides in the draft itself, its dispatch pins as one
+//! communication (FIX 6606, a provider rail), and the owner's one press is
+//! minted for exactly that send's digest. A group address, more than one
+//! recipient and attachments are refused, not dropped.
 
 use serde::{Deserialize, Serialize};
 
 use super::inbox::sources_by_audience_in;
+use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
+use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailOccurrence, MailPresence, MailReplyHeaders, OCCURRENCES};
 use crate::channel_identity_provider::gmail::{
@@ -69,11 +83,14 @@ pub(super) struct MailReplyDraftRow {
     thread: EntityId,
     /// The TURN of the message it answers.
     parent_turn: EntityId,
-    /// The delegated identity it sends through.
-    identity: EntityId,
+    /// The delegated identity a Gmail reply sends through; `None` for one
+    /// sent as the mailbox's own account (SMTP, Graph).
+    identity: Option<EntityId>,
     /// Bumped by each changed draft under the same request key.
     revision: u64,
-    /// The frozen Gmail send plan's content ref (`gmail:plan:v1:...`).
+    /// The frozen send's content ref: a Gmail send plan's
+    /// (`gmail:plan:v1:...`), or the frozen message's
+    /// (`mail-reply:message:v1:...`).
     plan_ref: String,
     /// The logical send this revision is: one per revision.
     send_ref: String,
@@ -89,6 +106,10 @@ pub(super) struct MailReplyDraftRow {
     outcome: Option<String>,
     drafted_at: u64,
     updated_at: u64,
+    /// The frozen message an IMAP or Microsoft 365 reply sends; `None` for a
+    /// Gmail reply, whose plan the Gmail plan store keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<ReplyMessage>,
 }
 
 /// `vault.mail.reply.draft`'s input.
@@ -235,14 +256,6 @@ fn reply_subject(subject: &str) -> String {
     }
 }
 
-/// Whether `provider` is a Google mailbox this slice sends from.
-const fn sends_google_mail(provider: MailProvider) -> bool {
-    matches!(
-        provider,
-        MailProvider::GoogleWorkspace | MailProvider::Google
-    )
-}
-
 /// The thread `conversation` as `actor` reads it: its source, that source's
 /// row, and the thread's present messages.
 fn thread_in(
@@ -274,27 +287,40 @@ fn thread_in(
     Ok((*source, row.clone(), messages))
 }
 
-/// The source `row` as one this slice replies from: an active Google
-/// personal mailbox whose identity may send. Its identity.
-fn sending_identity(row: &MailSourceRow) -> MemoryResult<EntityId> {
+/// How a source's replies leave it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplyRoute {
+    /// Through the source's delegated Gmail identity.
+    Gmail(EntityId),
+    /// As the mailbox's own account.
+    Account(ReplyTransport),
+}
+
+/// How the source `row` replies: an active personal mailbox of Google
+/// (through its delegated identity), IMAP (SMTP) or Microsoft 365 (Graph).
+fn reply_route(row: &MailSourceRow) -> MemoryResult<ReplyRoute> {
     if row.kind != MailSourceKind::PersonalMailbox {
         return Err(MemoryError::bad_request(
             "a drafted reply sends from a personal mailbox only; a group address needs its own approvers",
         ));
     }
-    if !sends_google_mail(row.provider) {
-        return Err(MemoryError::bad_request(
-            "a drafted reply sends from a Google mailbox only for now",
-        ));
-    }
     if row.status != MailSourceStatus::Active {
         return Err(invalid_state("the mail source is not syncing"));
     }
-    row.channel_identity.ok_or_else(|| {
-        MemoryError::bad_request(
-            "the mail source reads through no delegated identity that could send",
-        )
-    })
+    match row.provider {
+        MailProvider::GoogleWorkspace | MailProvider::Google => {
+            row.channel_identity.map(ReplyRoute::Gmail).ok_or_else(|| {
+                MemoryError::bad_request(
+                    "the mail source reads through no delegated identity that could send",
+                )
+            })
+        }
+        MailProvider::Imap => Ok(ReplyRoute::Account(ReplyTransport::Smtp)),
+        MailProvider::Microsoft365 => Ok(ReplyRoute::Account(ReplyTransport::Graph)),
+        MailProvider::Caldav | MailProvider::Ics => Err(MemoryError::bad_request(
+            "a drafted reply sends from a mailbox; a calendar sends no mail",
+        )),
+    }
 }
 
 /// The actor a delegated identity is bound to: its sends go out as that
@@ -342,6 +368,59 @@ fn parent_of(
     Ok((parent.turn, reply))
 }
 
+/// The one mailbox a reply to `parent` goes to: its `Reply-To` list, else
+/// its `From` list, each exactly one address; more than one is refused, not
+/// cut.
+fn reply_recipient(parent: &MailReplyHeaders) -> MemoryResult<String> {
+    let named: Vec<String> = if parent.reply_to.is_empty() {
+        parent.from.as_deref().map(mailboxes).unwrap_or_default()
+    } else {
+        parent
+            .reply_to
+            .iter()
+            .flat_map(|entry| mailboxes(entry))
+            .collect()
+    };
+    match named.as_slice() {
+        [only] if only.contains('@') => Ok(only.clone()),
+        [] | [_] => Err(MemoryError::bad_request(
+            "the message names no address to reply to",
+        )),
+        _ => Err(MemoryError::bad_request(
+            "the message names more than one address to reply to",
+        )),
+    }
+}
+
+/// The message a reply to `parent` from the mailbox `from` sends as that
+/// mailbox's own account: to the parent's `Reply-To`, else its sender,
+/// threaded by its `Message-ID` and `References`.
+fn message_for(
+    from: &str,
+    send_ref: &str,
+    parent: &MailReplyHeaders,
+    body: &str,
+    composed_at: u64,
+) -> MemoryResult<ReplyMessage> {
+    let to = reply_recipient(parent)?;
+    let parent_message_id = parent
+        .rfc_message_id
+        .as_deref()
+        .ok_or_else(|| MemoryError::bad_request("the message carries no Message-ID"))?;
+    let subject = reply_subject(parent.subject.as_deref().unwrap_or_default());
+    ReplyMessage::new(&ReplyDraft {
+        from,
+        to: &to,
+        subject: &subject,
+        body,
+        parent_message_id,
+        parent_references: &parent.references,
+        send_ref,
+        composed_at,
+    })
+    .map_err(|error| MemoryError::bad_request(error.to_string()))
+}
+
 /// The plan a reply to `parent` sends: from the adapter's mailbox to the
 /// parent's `Reply-To`, else its sender, threaded on the provider.
 fn plan_for(
@@ -352,26 +431,7 @@ fn plan_for(
     composed_at: u64,
 ) -> MemoryResult<GmailSendPlan> {
     let refuse = |message: &str| MemoryError::bad_request(message.to_owned());
-    // The one mailbox a reply goes to: the Reply-To list, else the From
-    // list, each exactly one address; more than one is refused, not cut.
-    let named: Vec<String> = if parent.reply_to.is_empty() {
-        parent.from.as_deref().map(mailboxes).unwrap_or_default()
-    } else {
-        parent
-            .reply_to
-            .iter()
-            .flat_map(|entry| mailboxes(entry))
-            .collect()
-    };
-    let to = match named.as_slice() {
-        [only] if only.contains('@') => only.clone(),
-        [] | [_] => return Err(refuse("the message names no address to reply to")),
-        _ => {
-            return Err(refuse(
-                "the message names more than one address to reply to",
-            ));
-        }
-    };
+    let to = reply_recipient(parent)?;
     let thread_id = parent
         .thread_id
         .as_deref()
@@ -395,30 +455,137 @@ fn plan_for(
     .map_err(|error| refuse(&error.to_string()))
 }
 
-/// The one dispatch request a draft's revision is, sent as `actor`, the
-/// identity's bound sender.
+/// What sends an approved reply.
+enum ReplyDispatcher<'v> {
+    /// The mailbox's delegated Gmail identity.
+    Gmail {
+        adapter: Box<GmailDelegatedAdapter>,
+        identity: EntityId,
+    },
+    /// The mailbox's own account (SMTP, Graph).
+    Account(Box<ReplySink<'v>>),
+}
+
+/// Drops the Gmail send plan the revision `row` kept, its words with it; a
+/// reply sent as the mailbox's own account keeps none. A drop that fails is
+/// logged: the plan sends nothing without its draft's approval.
+fn forget_kept_plan(vault: &Vault, row: &MailReplyDraftRow) {
+    if row.message.is_some() {
+        return;
+    }
+    if let Err(error) = GmailSendPlan::drop_kept(vault, &row.plan_ref) {
+        tracing::warn!(%error, "a superseded reply draft's kept Gmail plan stays");
+    }
+}
+
+/// The mailbox's owner as the human actor its account reply is sent by:
+/// the person who approves it sends it.
+fn human_actor(person: EntityId) -> OutboundDispatchActor {
+    OutboundDispatchActor {
+        actor_class: "human".to_owned(),
+        actor_ref: Some(person.to_hex()),
+        actor_entity_ref: Some(person),
+    }
+}
+
+/// Whether `effect` is the send of one drafted reply its mailbox's owner
+/// approved, sent as the mailbox's own account (fix list rows 17872,
+/// 17643): `email`/`send` by a human actor naming no sender identity, its
+/// content the frozen message of a draft that stands Approved at exactly
+/// that revision and send, from an active IMAP or Microsoft 365 personal
+/// mailbox whose owner is that actor. The gate takes the owner's one press
+/// for exactly that send's digest as its authority, as it takes a
+/// member-mail press.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn approved_source_reply_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &crate::gate::ExternalEffectGateInput,
+) -> Result<bool> {
+    if effect.channel != "email"
+        || effect.verb != "send"
+        || effect.channel_identity_ref.is_some()
+        || effect.actor.actor_class != "human"
+    {
+        return Ok(false);
+    }
+    let Some(actor) = effect.provenance.actor_entity_ref else {
+        return Ok(false);
+    };
+    let Some(content_ref) = effect
+        .provenance
+        .mail_content_ref
+        .as_deref()
+        .filter(|content_ref| content_ref.starts_with(REPLY_MESSAGE_REF_PREFIX))
+    else {
+        return Ok(false);
+    };
+    let Some(send_ref) = effect.send_ref.as_deref() else {
+        return Ok(false);
+    };
+    let Some(draft) = send_ref
+        .strip_prefix("outbound:mail-reply:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(draft, _)| EntityId::from_hex(draft).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(row) = DRAFTS.get(store, txn, &draft)? else {
+        return Ok(false);
+    };
+    if row.plan_ref != content_ref
+        || row.identity.is_some()
+        || row.message.is_none()
+        || row.state != MailReplyDraftState::Approved
+        || row.approved_at.is_none()
+        || send_ref != format!("outbound:{}", row.send_ref)
+    {
+        return Ok(false);
+    }
+    let Some(source) = SOURCES.get(store, txn, &row.source)? else {
+        return Ok(false);
+    };
+    Ok(source.owner == Some(actor)
+        && source.status == MailSourceStatus::Active
+        && source.kind == MailSourceKind::PersonalMailbox
+        && matches!(
+            source.provider,
+            MailProvider::Imap | MailProvider::Microsoft365
+        ))
+}
+
+/// The one dispatch request a draft's revision is, sent as `actor`: a
+/// Gmail reply's identity's bound sender, or the mailbox's owner for one
+/// sent as the mailbox's own account, which names no sender identity.
 fn request_for(
     id: EntityId,
     row: &MailReplyDraftRow,
-    actor: EntityId,
+    actor: OutboundDispatchActor,
     now: u64,
 ) -> OutboundDispatchRequest {
+    let author = actor.actor_ref.clone().unwrap_or_default();
     let intent = OutboundIntent::from_trigger(
-        OutboundIntentDraft::new(actor.to_hex(), "send", "email", row.to.clone())
+        OutboundIntentDraft::new(author, "send", "email", row.to.clone())
             .content_ref(row.plan_ref.clone()),
         OutboundIntentTrigger::agent_immediate(format!("mail-reply:{}", id.to_hex())),
     );
-    OutboundDispatchRequest::new(
+    let request = OutboundDispatchRequest::new(
         format!("outbound:{}", row.send_ref),
         row.send_ref.clone(),
         intent,
-        OutboundDispatchActor::agent(actor),
+        actor,
         OutboundDispatchGate::allow_when_policy_grants(),
         now,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .channel_identity_ref(row.identity)
-    .counterparty_ref(row.to.clone())
+    .counterparty_ref(row.to.clone());
+    match row.identity {
+        Some(identity) => request.channel_identity_ref(identity),
+        None => request,
+    }
 }
 
 impl Memory<'_> {
@@ -461,8 +628,7 @@ impl Memory<'_> {
             let prior = DRAFTS.get(&vault.store, &txn, &id)?;
             (source, row, messages, prior)
         };
-        let identity = sending_identity(&row)?;
-        let adapter = adapter_of(vault, identity)?;
+        let route = reply_route(&row)?;
         let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
         if let Some(prior) = &prior {
             if prior.state != MailReplyDraftState::Proposed {
@@ -477,17 +643,37 @@ impl Memory<'_> {
         let revision = prior.as_ref().map_or(1, |prior| prior.revision + 1);
         let send_ref = format!("mail-reply:{}:{revision}", id.to_hex());
         let now = crate::unix_seconds_now();
-        let plan = plan_for(&adapter, &send_ref, &parent, &input.body, now)?;
-        plan.keep(vault)?;
+        let (identity, plan_ref, to, message) = match route {
+            ReplyRoute::Gmail(identity) => {
+                let adapter = adapter_of(vault, identity)?;
+                let plan = plan_for(&adapter, &send_ref, &parent, &input.body, now)?;
+                plan.keep(vault)?;
+                (
+                    Some(identity),
+                    plan.content_ref().to_owned(),
+                    plan.recipient().to_owned(),
+                    None,
+                )
+            }
+            ReplyRoute::Account(_) => {
+                let message = message_for(&row.address, &send_ref, &parent, &input.body, now)?;
+                (
+                    None,
+                    message.content_ref(),
+                    message.to.clone(),
+                    Some(message),
+                )
+            }
+        };
         let row = MailReplyDraftRow {
             source,
             thread: conversation,
             parent_turn,
             identity,
             revision,
-            plan_ref: plan.content_ref().to_owned(),
+            plan_ref,
             send_ref,
-            to: plan.recipient().to_owned(),
+            to,
             subject: reply_subject(parent.subject.as_deref().unwrap_or_default()),
             body: input.body.clone(),
             drafted_by: Some(actor),
@@ -496,6 +682,7 @@ impl Memory<'_> {
             outcome: None,
             drafted_at: prior.as_ref().map_or(now, |prior| prior.drafted_at),
             updated_at: now,
+            message,
         };
         vault.with_write_txn_grouped(|txn| {
             // The draft lands only over exactly the row this call read, a
@@ -508,6 +695,11 @@ impl Memory<'_> {
             }
             DRAFTS.put(&vault.store, txn, &id, &row)
         })?;
+        // The revision it replaces never sends: its kept plan goes with its
+        // words (fix list row 17646).
+        if let Some(prior) = &prior {
+            forget_kept_plan(vault, prior);
+        }
         Ok(view(id, &row))
     }
 
@@ -576,6 +768,9 @@ impl Memory<'_> {
             DRAFTS.put(&vault.store, txn, &id, &row)?;
             Ok(row)
         })?;
+        // A discarded draft never sends: its kept plan goes with its words
+        // (fix list row 17646).
+        forget_kept_plan(vault, &row);
         Ok(view(id, &row))
     }
 
@@ -643,21 +838,52 @@ impl Vault {
                 return Err(invalid_state("the draft was discarded; it never sends"));
             }
         }
-        let identity = sending_identity(&source)?;
-        if identity != row.identity {
-            return Err(invalid_state(
-                "the mailbox now sends through another identity; draft again",
-            ));
-        }
-        let adapter = adapter_of(self, identity)?;
-        // The reply goes out as the actor the identity is bound to (an agent
-        // of the owner's, or the owner); the owner's proof is the approval.
-        let sender = bound_sender(self, identity)?;
         let now = crate::unix_seconds_now();
-        let request = request_for(id, &row, sender, now);
-        let digest = crate::channel_identity_provider::native_mail::canonical_mail_send_digest(
-            &request, identity, sender,
-        )?;
+        // The reply leaves the way its draft froze, while the mailbox still
+        // sends that way.
+        let (request, digest, dispatcher) = match (
+            reply_route(&source)?,
+            row.identity,
+            &row.message,
+        ) {
+            (ReplyRoute::Gmail(identity), Some(drafted), None) if identity == drafted => {
+                let adapter = adapter_of(self, identity)?;
+                // The reply goes out as the actor the identity is bound to
+                // (an agent of the owner's, or the owner); the owner's proof
+                // is the approval.
+                let sender = bound_sender(self, identity)?;
+                let request = request_for(id, &row, OutboundDispatchActor::agent(sender), now);
+                let digest =
+                    crate::channel_identity_provider::native_mail::canonical_mail_send_digest(
+                        &request, identity, sender,
+                    )?;
+                let dispatcher = ReplyDispatcher::Gmail {
+                    adapter: Box::new(adapter),
+                    identity,
+                };
+                (request, digest, dispatcher)
+            }
+            (ReplyRoute::Account(transport), None, Some(message)) => {
+                // Sent as the mailbox's own account, by its owner; the one
+                // press is minted for exactly this send's digest (FIX 6606).
+                let request = request_for(id, &row, human_actor(actor), now);
+                let digest = crate::outbound::outbound_approve_once_digest(self, &request)
+                    .map_err(|error| {
+                        MemoryError::bad_request(format!("the reply cannot be approved: {error}"))
+                    })?
+                    .ok_or_else(|| {
+                        invalid_state("the reply's send resolves a sender identity; draft again")
+                    })?;
+                let mail_source = self.mail_sync_source(row.source)?.ok_or_else(unknown)?;
+                let sink = ReplySink::new(self, mail_source, message.clone(), transport);
+                (request, digest, ReplyDispatcher::Account(Box::new(sink)))
+            }
+            _ => {
+                return Err(invalid_state(
+                    "the mailbox now sends another way or through another identity; draft again",
+                ));
+            }
+        };
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
             // that acts, and finds the mailbox still theirs.
@@ -694,9 +920,16 @@ impl Vault {
             }
             Ok(held)
         })?;
-        let wire = HttpGmailSendWire::new()?;
-        let mut sink = GmailSendSink::new(self, &adapter, identity, wire);
-        let answer = adapter.dispatch_send_recorded(self, request, &mut sink);
+        let answer = match dispatcher {
+            ReplyDispatcher::Gmail { adapter, identity } => {
+                let wire = HttpGmailSendWire::new()?;
+                let mut sink = GmailSendSink::new(self, &adapter, identity, wire);
+                adapter.dispatch_send_recorded(self, request, &mut sink)
+            }
+            ReplyDispatcher::Account(mut sink) => {
+                self.dispatch_outbound_intent_recorded(request, sink.as_mut())
+            }
+        };
         let (state, outcome) = match &answer {
             Ok(result) => match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => (
