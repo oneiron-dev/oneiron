@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1338 code-mode rows (1297 host rows, 41 run rows), 4717 declarations.
-// Replies: 1146 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1340 code-mode rows (1299 host rows, 41 run rows), 4726 declarations.
+// Replies: 1148 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2590,6 +2590,15 @@ declare namespace Sdk {
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
+  type CodeRepoSecretSeen = { kind: "ref_move"; name: string; new_commit: string } | { kind: "quarantine" } | { kind: "sync_landing" };
+  type CodeRepoSecretMark = { mark: EntityId; operation: EntityId; blob: string; path?: string | null; kind: string; seen: CodeRepoSecretSeen; custody?: EntityId | null; handle?: string | null; marked_at: number };
+  type CodeRepoSecretRemediationLink = { state: string; proposal: EntityId; commit?: string | null; paths: string[]; linked_at: number };
+  type CodeRepoSecretsView = { repo: EntityId; marks: CodeRepoSecretMark[]; remediations: CodeRepoSecretRemediationLink[] };
+  type CodeRepoSecretProposeRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; op_provenance: CodeOpProvenance; catalog?: LensCatalog | null };
+  type CodeRepoSecretRemediationStatus = "proposed" | "unresolved" | "stale" | "clean";
+  type CodeRepoSecretRemediationAction = { action: "replace_literals"; path: string; env_names: string[] } | { action: "remove_dotenv"; path: string } | { action: "write_example"; path: string; names: string[] } | { action: "ignore_dotenv"; entries: string[] } | { action: "declare_env_names"; env_names: string[] };
+  type CodeRepoSecretUnresolved = { path: string; reason: string; custody?: EntityId | null };
+  type CodeRepoSecretRemediation = { repo: EntityId; status: CodeRepoSecretRemediationStatus; base_commit: string; proposal?: EntityId | null; actions: CodeRepoSecretRemediationAction[]; unresolved: CodeRepoSecretUnresolved[] };
   type ForeignCodeRunRequest = { source: string; reads?: string[] };
   type ForeignCodeTier = "foreign";
   type ForeignCodeRead = { reference: string; path: string };
@@ -5956,6 +5965,12 @@ declare const vault: Sdk.VaultHost & {
     repos: {
       /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
       get(input: Sdk.CodeRepoGetRequest): Promise<Sdk.CodeRepoView | null | StoredResult>;
+    };
+    secrets: {
+      /** Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only. */
+      get(input: Sdk.CodeRepoRequest): Promise<Sdk.CodeRepoSecretsView | StoredResult>;
+      /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
+      propose(input: Sdk.CodeRepoSecretProposeRequest): Promise<Sdk.CodeRepoSecretRemediation | StoredResult>;
     };
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
