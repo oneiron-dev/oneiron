@@ -17053,6 +17053,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeRunCorrection",
+      "CodeRunCorrectionCheckpoint",
+      "CodeRunCorrectionOutcome",
+      "CodeRunCorrectionPolicy",
+      "ExecutorWireRepairs"
+     ],
+     "path": "src/code_run/correction.rs",
+     "purpose": "Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
@@ -17564,9 +17584,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 52,
+      "crate-vis": 53,
       "mod": 8,
-      "re-export": 33
+      "re-export": 35
      }
     },
     {
@@ -18054,7 +18074,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostInput",
@@ -18067,6 +18087,19 @@
      "surface": {
       "fn": 14,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopedChildGeneration",
+      "ScopedChildGenerationCall"
+     ],
+     "path": "src/code_run/scoped_generation.rs",
+     "purpose": "A host-profiled child's original generation accounting, lent to compaction",
+     "surface": {
+      "trait": 2
      }
     },
     {
@@ -18286,6 +18319,16 @@
      "purpose": "A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/corrections.rs",
+     "purpose": "The code-run correction table (CODE-RUNTIME-02 slice 1: FIX 4411, 4412): one row per model response the live…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -36001,6 +36044,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction/wait.rs",
+     "purpose": "Waiting for a run's existing pass without consuming its landing result",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -36038,6 +36091,16 @@
      "purpose": "A flight's self-written passes, filed before any of them lands (FIX 4465 B): every paid call, a try the gate…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction_host/wait.rs",
+     "purpose": "A blocking host can join the pass its full window is already waiting on",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -36268,9 +36331,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl/persistence.rs",
-     "purpose": "Durable REPL record loading, failed-step appends and wait resumption",
+     "purpose": "Durable REPL record loading, failed-step appends, refused-reply correction records and wait resumption",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36505,7 +36568,7 @@
      "path": "src/engine_executor/wire.rs",
      "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -37937,7 +38000,7 @@
      "path": "src/federation/peer_authority.rs",
      "purpose": "Peer authority-log admission (FED-03) and roster refolding",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 2,
       "fn": 4
      }
@@ -48967,7 +49030,7 @@
      "path": "src/memory/code_run_doors/mod.rs",
      "purpose": "The typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -48975,14 +49038,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CodeRunCorrectionsRequest",
+      "CodeRunCorrectionsView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
       "CodeRunTypeDiagnosticsRequest"
      ],
      "path": "src/memory/code_run_doors/types.rs",
-     "purpose": "The code run model-heal count request and view records",
+     "purpose": "The code run door request and view records: the model-heal count, a step's type feedback and a run's…",
      "surface": {
-      "struct": 3
+      "const": 2,
+      "struct": 5
      }
     },
     {
@@ -60522,7 +60588,7 @@
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -60727,7 +60793,17 @@
      "path": "src/ports/mutation.rs",
      "purpose": "Mutation audit composition",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/mutation/plan.rs",
+     "purpose": "The native audit append program and its ordered, caller-owned projection",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -60899,7 +60975,7 @@
      "path": "src/ports/time/recording_plan.rs",
      "purpose": "The native recording-clock row program and its caller-owned projection",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -87251,7 +87327,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1310
+      "fn": 1311
      }
     },
     {
@@ -93292,7 +93368,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 216,
+     "files": 219,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93614,7 +93690,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 55,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94062,7 +94138,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94631,7 +94707,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6693,
+   "source_files": 6699,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109401,7 +109477,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1278
+      "fn": 1279
      }
     },
     {
@@ -111194,7 +111270,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1279
+      "fn": 1280
      }
     },
     {
@@ -113194,7 +113270,7 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -113225,6 +113301,16 @@
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/profiled.rs",
+     "purpose": "A compaction seat on a host-profiled child's original generation",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -113465,6 +113551,16 @@
      "purpose": "The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer_thing/compaction.rs",
+     "purpose": "Compaction calls on the thing child's original generation count",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -116123,7 +116219,7 @@
      "path": "src/api/facade/code_run_doors.rs",
      "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -127545,7 +127641,7 @@
       "fn": 7,
       "struct": 4,
       "trait": 3,
-      "type": 4
+      "type": 5
      }
     },
     {
@@ -127667,7 +127763,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "struct": 1
      }
@@ -131296,11 +131392,21 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/reader_runner/child.rs",
      "purpose": "Execution and settlement of claimed reader children and summary jobs",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/reader_runner/child/compaction.rs",
+     "purpose": "The child's ordinary host-metered compaction, on its own spend scope",
      "surface": {
       "crate-vis": 4
      }
@@ -132766,7 +132872,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 127,
+     "files": 129,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133214,7 +133320,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 88,
+     "files": 89,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133305,9 +133411,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 57,
+   "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1706,
+   "source_files": 1709,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -135410,7 +135516,7 @@
      "path": "src/config/context_spec.rs",
      "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
      "surface": {
-      "const": 9,
+      "const": 5,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -144878,6 +144984,12 @@
       "CodeRepoPointer",
       "CodeRepoRequest",
       "CodeRepoView",
+      "CodeRunCorrection",
+      "CodeRunCorrectionCheckpoint",
+      "CodeRunCorrectionOutcome",
+      "CodeRunCorrectionPolicy",
+      "CodeRunCorrectionsRequest",
+      "CodeRunCorrectionsView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
       "CodeRunRoomSecretLiftRequest",
@@ -145636,6 +145748,7 @@
       "ExecutionCompute",
       "ExecutionPick",
       "ExecutionRuntime",
+      "ExecutorWireRepairs",
       "ExpectInput",
       "ExpectOutput",
       "ExpectedSpend",
@@ -148743,8 +148856,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1142,
-      "struct": 3482
+      "enum": 1143,
+      "struct": 3488
      }
     },
     {
